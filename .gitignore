@@ -1,0 +1,24 @@
+# Secrets and private access material
+WHIEDA_ACCESS_MAP_PRIVATE*.md
+**/.env
+**/.env.*
+**/credentials/
+**/*token*
+**/*secret*
+
+# Generated runtime artifacts
+n8n/backups/
+n8n/live-exports/
+n8n/workflow-backups/
+**/__pycache__/
+*.pyc
+*.log
+WHIEDA_ACCESS_MAP_PRIVATE_*.md
+reports/
+n8n/current/backups/
+**/.env
+**/.env.*
+**/node_modules/
+**/backups/
+99_Archive/
+**/id_ed25519
