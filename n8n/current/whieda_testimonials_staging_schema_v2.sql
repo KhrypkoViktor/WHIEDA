@@ -1,6 +1,10 @@
 -- Release 2 hardening: buffers are disposable; one transaction applies a run.
 ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS version_state text NOT NULL DEFAULT 'current';
 ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS superseded_by uuid;
+ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS source_medical_review_required boolean NOT NULL DEFAULT false;
+ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS source_marketing_allowed boolean NOT NULL DEFAULT false;
+ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS source_risk_level text;
+ALTER TABLE advisor_testimonial_records ADD COLUMN IF NOT EXISTS source_medical_criticality text;
 
 -- Release 2 routes confirmed source types explicitly. Keep legacy values readable,
 -- but allow the clearer `consent` label for new review items.

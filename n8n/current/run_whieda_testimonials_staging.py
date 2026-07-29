@@ -39,6 +39,10 @@ def pick(row: dict[str, str], *keys: str) -> str:
     return next((row[key] for key in keys if row.get(key)), "")
 
 
+def is_yes(value: str | None) -> bool:
+    return normalized(value) in {"да", "yes", "true", "1", "y"}
+
+
 def load_tsv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as file:
         return list(csv.DictReader(file, delimiter="\t"))
@@ -80,15 +84,19 @@ def classify(source_table: str, row: dict[str, str]) -> str:
 
 
 def review_types(record: dict[str, object]) -> list[str]:
-    """Review routing follows the source type; no inferred medical proof is created."""
+    """Accumulate every review obligation carried by the raw source."""
     source_table = str(record["table"])
     types: list[str] = []
     if source_table == "testimonials":
-        types.extend(("consent", "medical"))
-        if record["class"] == "positive":
-            types.append("marketing")
-    elif source_table == "safety_signals":
-        types.extend(("safety", "medical"))
+        types.append("consent")
+    if record["medical_review_required"]:
+        types.append("medical")
+    if record["class"] == "safety":
+        types.append("safety")
+    if record["class"] == "negative":
+        types.append("negative")
+    if source_table == "testimonials" and record["marketing_allowed"] and record["class"] == "positive":
+        types.append("marketing")
     return types
 
 
@@ -147,6 +155,10 @@ def prepare(source_dir: Path) -> tuple[list[dict[str, object]], list[dict[str, s
                 "url": url, "class": classify(source_table, row),
                 "finger": sha256((normalized(row.get("товар")) + "|" + normalized(quote) + "|" + normalized(pick(row, "автор"))).encode()),
                 "provenance": provenance,
+                "medical_review_required": is_yes(row.get("medical_review_required")),
+                "marketing_allowed": is_yes(row.get("можно_в_маркетинг")),
+                "risk_level": row.get("уровень_риска", ""),
+                "medical_criticality": row.get("мед_критичность", ""),
             })
     return records, media, errors, warnings, manifest
 
@@ -160,14 +172,29 @@ INSERT INTO advisor_testimonial_records(
   outcome_author_words, neutral_summary, source_format, source_url, testimonial_class,
   consent_state, publication_scope, medical_review_state, marketing_review_state,
   publication_status, duplicate_fingerprint, first_seen_run_id, last_seen_run_id
+  ,source_medical_review_required, source_marketing_allowed, source_risk_level, source_medical_criticality
 )
 SELECT tenant_id, source_table, external_record_id, content_hash, payload->>'source_id',
   payload->>'locator', payload->>'quote', payload->>'author', payload->>'role', payload->>'product',
   payload->>'situation', payload->>'use', payload->>'duration', payload->>'outcome', payload->>'summary',
   payload->>'format', payload->>'url', payload->>'class', 'unknown', 'internal_only', 'review_required',
   'review_required', 'blocked_raw', payload->>'finger', '{run_id}'::uuid, '{run_id}'::uuid
+  ,COALESCE((payload->>'medical_review_required')::boolean, false), COALESCE((payload->>'marketing_allowed')::boolean, false),
+  payload->>'risk_level', payload->>'medical_criticality'
 FROM advisor_testimonial_hardening_buffer WHERE import_run_id = '{run_id}'::uuid
 ON CONFLICT DO NOTHING;
+
+UPDATE advisor_testimonial_records record SET
+  source_medical_review_required = COALESCE((buffer.payload->>'medical_review_required')::boolean, false),
+  source_marketing_allowed = COALESCE((buffer.payload->>'marketing_allowed')::boolean, false),
+  source_risk_level = buffer.payload->>'risk_level',
+  source_medical_criticality = buffer.payload->>'medical_criticality',
+  last_seen_run_id = '{run_id}'::uuid,
+  updated_at = now()
+FROM advisor_testimonial_hardening_buffer buffer
+WHERE buffer.import_run_id = '{run_id}'::uuid
+  AND record.tenant_id = buffer.tenant_id AND record.source_table = buffer.source_table
+  AND record.external_record_id = buffer.external_record_id AND record.content_hash = buffer.content_hash;
 
 INSERT INTO advisor_testimonial_run_records(import_run_id, testimonial_staging_id, action)
 SELECT '{run_id}'::uuid, record.testimonial_staging_id,
@@ -245,6 +272,30 @@ WHERE buffer.import_run_id = '{run_id}'::uuid
   AND COALESCE(NULLIF(record.source_locator, ''), NULLIF(record.raw_quote, ''), NULLIF(record.source_url, '')) IS NULL
 ON CONFLICT(testimonial_staging_id, review_type) DO UPDATE
 SET last_evaluated_run_id = EXCLUDED.last_evaluated_run_id, updated_at = now();
+
+DO $$
+BEGIN
+  IF EXISTS (
+    WITH expected AS (
+      SELECT record.testimonial_staging_id, review.review_type
+      FROM advisor_testimonial_hardening_buffer buffer
+      JOIN advisor_testimonial_records record ON (
+        record.tenant_id = buffer.tenant_id AND record.source_table = buffer.source_table
+        AND record.external_record_id = buffer.external_record_id AND record.content_hash = buffer.content_hash
+      )
+      CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(buffer.payload->'review_types', '[]'::jsonb)) review(review_type)
+      WHERE buffer.import_run_id = '{run_id}'::uuid
+    )
+    SELECT 1 FROM expected
+    LEFT JOIN advisor_testimonial_review_queue queue ON (
+      queue.testimonial_staging_id = expected.testimonial_staging_id
+      AND queue.review_type = expected.review_type AND queue.queue_status = 'pending'
+    )
+    WHERE queue.review_id IS NULL
+  ) THEN
+    RAISE EXCEPTION 'review coverage assertion failed';
+  END IF;
+END $$;
 {fault_sql(fault, 'review_queue')}
 
 INSERT INTO advisor_testimonial_media_candidates(
@@ -288,6 +339,7 @@ def report_query(run_id: str) -> str:
       'video_without_consent', (SELECT count(*) FROM advisor_testimonial_media_candidates WHERE import_run_id = '{run_id}'::uuid AND media_link_status = 'blocked_unconfirmed_testimonial'),
       'non_testimonial_resources', (SELECT count(*) FROM advisor_testimonial_media_candidates WHERE import_run_id = '{run_id}'::uuid AND media_link_status = 'not_testimonial_media'),
       'review_by_type', (SELECT COALESCE(json_object_agg(review_type, total), '{{}}'::json) FROM (SELECT queue.review_type, count(*) AS total FROM advisor_testimonial_review_queue queue JOIN advisor_testimonial_run_records link ON link.testimonial_staging_id = queue.testimonial_staging_id WHERE link.import_run_id = '{run_id}'::uuid GROUP BY queue.review_type) totals),
+      'source_flags', (SELECT json_build_object('medical_review_required', count(*) FILTER (WHERE source_medical_review_required), 'safety_class', count(*) FILTER (WHERE testimonial_class = 'safety'), 'negative_class', count(*) FILTER (WHERE testimonial_class = 'negative'), 'marketing_allowed', count(*) FILTER (WHERE source_marketing_allowed)) FROM advisor_testimonial_run_records link JOIN advisor_testimonial_records record ON record.testimonial_staging_id = link.testimonial_staging_id WHERE link.import_run_id = '{run_id}'::uuid),
       'actions', (SELECT COALESCE(json_object_agg(action, total), '{{}}'::json) FROM (SELECT action, count(*) AS total FROM advisor_testimonial_run_records WHERE import_run_id = '{run_id}'::uuid GROUP BY action) totals)
     );"""
 
