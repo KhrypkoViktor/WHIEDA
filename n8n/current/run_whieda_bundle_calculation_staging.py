@@ -30,7 +30,13 @@ PAREN_RE = re.compile(r"\(([^)]*)\)")
 QUANTITY_RE = re.compile(r"^\s*(\d+)\s*(?:шт\.?|штук|уп\.?|упак(?:овка|овки)?|флак(?:он|она|онов)?)\s+", re.I)
 DOSAGE_RE = re.compile(r"\b\d+(?:[,.]\d+)?\s*(?:мг|г|мл|л|капсул\w*|таблет\w*|капл\w*|раз\w*)\b", re.I)
 GENERIC_NAMES = {
-    "различные добавки", "добавки", "минералы", "водородная вода", "витамины", "бады",
+    "различные добавки", "добавки", "минералы", "водородная вода", "витамины", "бады", "эликсиры",
+}
+PARSING_NOISE_NAMES = {"день"}
+COLOR_COMPANION_NAMES = {
+    "красный": "эликсир фохоу",
+    "зеленый": "эликсир саньцин",
+    "синий": "эликсир 3 драгоценности",
 }
 EXTERNAL_NAMES = {
     "чип из прокладки", "чип", "компресс", "вода", "питание", "массаж",
@@ -151,6 +157,9 @@ def split_product_text(value: object, source_stage: str) -> list[dict[str, objec
         dosage_parts = DOSAGE_RE.findall(without_parentheses)
         clean_name = DOSAGE_RE.sub(" ", without_parentheses)
         clean_name = normalize(clean_name)
+        clean_name = re.sub(r"^(?:далее|затем)\s+", "", clean_name)
+        if clean_name in PARSING_NOISE_NAMES:
+            continue
         if not clean_name:
             continue
         result.append({
@@ -165,8 +174,15 @@ def split_product_text(value: object, source_stage: str) -> list[dict[str, objec
 
 def normalized_bundle_items(primary: object, additional: object) -> list[dict[str, object]]:
     grouped: dict[str, dict[str, object]] = {}
+    raw_items: list[dict[str, object]] = []
     for source_stage, source in (("primary", primary), ("additional", additional)):
-        for item in split_product_text(source, source_stage):
+        raw_items.extend(split_product_text(source, source_stage))
+    all_names = {str(item["normalized_name"]) for item in raw_items}
+    for item in raw_items:
+        companion = COLOR_COMPANION_NAMES.get(str(item["normalized_name"]))
+        if companion and companion in all_names:
+            item["normalized_name"] = companion
+    for item in raw_items:
             key = str(item["normalized_name"])
             previous = grouped.get(key)
             if previous is None:
@@ -188,7 +204,7 @@ def classify_item(
 ) -> tuple[str, str | None, list[str], str | None]:
     normalized_name = str(item["normalized_name"])
     if normalized_name in GENERIC_NAMES or normalized_name.startswith((
-        "витамин", "коэнзим", "q10", "кальций", "железо", "селен", "детокс идеал",
+        "витамин", "коэнзим", "q10", "железо", "селен", "детокс идеал",
     )):
         return "generic", None, [], "generic_non_catalog"
     if normalized_name in EXTERNAL_NAMES or normalized_name.startswith("чип"):
