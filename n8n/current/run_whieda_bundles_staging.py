@@ -120,6 +120,7 @@ def build_run_sql(run_id: str, payloads: list[dict[str, object]], fail_phase: st
 SET lock_timeout = '10s';
 SET statement_timeout = '45s';
 BEGIN;
+SELECT pg_advisory_xact_lock(hashtext('whieda:bundle-staging-import'));
 INSERT INTO advisor_bundle_import_runs(import_run_id, tenant_id, source_manifest)
 VALUES ({sql_literal(run_id)}::uuid, {sql_literal(TENANT_ID)}, jsonb_build_array(jsonb_build_object('file','09_BUNDLE_CANDIDATES.tsv','rows',{len(payloads)})));
 CREATE TEMP TABLE bundle_buffer(payload jsonb NOT NULL) ON COMMIT DROP;
@@ -129,31 +130,52 @@ SELECT r.external_record_id, r.content_hash, r.bundle_staging_id
 FROM advisor_bundle_staging_records r
 JOIN bundle_buffer b ON b.payload->>'external_record_id' = r.external_record_id
 WHERE r.tenant_id={sql_literal(TENANT_ID)} AND r.version_state='current';
+UPDATE advisor_bundle_staging_records old
+SET version_state='superseded', superseded_by=NULL, updated_at=now()
+FROM bundle_previous previous
+JOIN bundle_buffer b ON b.payload->>'external_record_id'=previous.external_record_id
+WHERE old.bundle_staging_id=previous.bundle_staging_id
+  AND previous.content_hash<>b.payload->>'content_hash';
 INSERT INTO advisor_bundle_staging_records(
  tenant_id,external_record_id,content_hash,source_id,source_locator,raw_quote,title,goal_text,primary_product,additional_products,bundle_logic,application_order,restrictions_text,expected_result_text,source_status,publication_status,medical_review_required,business_review_required,owner_approved,block_reason,first_seen_run_id,last_seen_run_id)
 SELECT {sql_literal(TENANT_ID)},p->>'external_record_id',p->>'content_hash',p->>'source_id',NULLIF(p->>'source_locator',''),NULLIF(p->>'raw_quote',''),p->>'title',NULLIF(p->>'goal_text',''),p->>'primary_product',NULLIF(p->>'additional_products',''),NULLIF(p->>'bundle_logic',''),NULLIF(p->>'application_order',''),NULLIF(p->>'restrictions_text',''),NULLIF(p->>'expected_result_text',''),NULLIF(p->>'source_status',''),p->>'publication_status',(p->>'medical_review_required')::boolean,(p->>'business_review_required')::boolean,(p->>'owner_approved')::boolean,NULLIF(p->>'block_reason',''),{sql_literal(run_id)}::uuid,{sql_literal(run_id)}::uuid
 FROM bundle_buffer
 CROSS JOIN LATERAL (SELECT payload AS p) s
 ON CONFLICT (tenant_id,external_record_id,content_hash) DO UPDATE
-SET last_seen_run_id=EXCLUDED.last_seen_run_id, updated_at=now();
+SET last_seen_run_id=EXCLUDED.last_seen_run_id,
+    version_state='current',
+    superseded_by=NULL,
+    updated_at=now();
 UPDATE advisor_bundle_staging_records old
 SET version_state='superseded', superseded_by=fresh.bundle_staging_id, updated_at=now()
 FROM bundle_previous previous
-JOIN advisor_bundle_staging_records fresh ON fresh.tenant_id={sql_literal(TENANT_ID)} AND fresh.external_record_id=previous.external_record_id AND fresh.version_state='current' AND fresh.content_hash<>previous.content_hash
-WHERE old.bundle_staging_id=previous.bundle_staging_id AND old.version_state='current';
+JOIN bundle_buffer b ON b.payload->>'external_record_id'=previous.external_record_id
+JOIN advisor_bundle_staging_records fresh
+  ON fresh.tenant_id={sql_literal(TENANT_ID)}
+ AND fresh.external_record_id=previous.external_record_id
+ AND fresh.content_hash=b.payload->>'content_hash'
+ AND fresh.version_state='current'
+WHERE old.bundle_staging_id=previous.bundle_staging_id
+  AND previous.content_hash<>b.payload->>'content_hash';
+UPDATE advisor_bundle_review_queue review
+SET queue_status='superseded', updated_at=now()
+FROM advisor_bundle_staging_records bundle
+WHERE review.bundle_staging_id=bundle.bundle_staging_id
+  AND bundle.version_state='superseded'
+  AND review.queue_status='pending';
 INSERT INTO advisor_bundle_run_records(import_run_id,bundle_staging_id,action)
 SELECT {sql_literal(run_id)}::uuid,r.bundle_staging_id,
 CASE WHEN previous.bundle_staging_id IS NOT NULL AND previous.content_hash<>r.content_hash THEN 'new_version'
      WHEN r.first_seen_run_id={sql_literal(run_id)}::uuid THEN 'inserted' ELSE 'reused' END
 FROM bundle_buffer b
-JOIN advisor_bundle_staging_records r ON r.tenant_id={sql_literal(TENANT_ID)} AND r.external_record_id=b.payload->>'external_record_id' AND r.content_hash=b.payload->>'content_hash'
+JOIN advisor_bundle_staging_records r ON r.tenant_id={sql_literal(TENANT_ID)} AND r.external_record_id=b.payload->>'external_record_id' AND r.content_hash=b.payload->>'content_hash' AND r.version_state='current'
 LEFT JOIN bundle_previous previous ON previous.external_record_id=r.external_record_id
 ON CONFLICT(import_run_id,bundle_staging_id) DO UPDATE SET action=EXCLUDED.action;
 DO $$ BEGIN {fail_records} END $$;
 INSERT INTO advisor_bundle_review_queue(bundle_staging_id,review_type,last_evaluated_run_id)
 SELECT r.bundle_staging_id,t.review_type,{sql_literal(run_id)}::uuid
 FROM bundle_buffer b
-JOIN advisor_bundle_staging_records r ON r.tenant_id={sql_literal(TENANT_ID)} AND r.external_record_id=b.payload->>'external_record_id' AND r.content_hash=b.payload->>'content_hash'
+JOIN advisor_bundle_staging_records r ON r.tenant_id={sql_literal(TENANT_ID)} AND r.external_record_id=b.payload->>'external_record_id' AND r.content_hash=b.payload->>'content_hash' AND r.version_state='current'
 CROSS JOIN LATERAL jsonb_array_elements_text(b.payload->'review_types') t(review_type)
 ON CONFLICT(bundle_staging_id,review_type) DO UPDATE SET last_evaluated_run_id=EXCLUDED.last_evaluated_run_id,updated_at=now(),queue_status='pending';
 DO $$ BEGIN {fail_review} END $$;

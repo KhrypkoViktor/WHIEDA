@@ -61,3 +61,6 @@ CREATE TABLE IF NOT EXISTS advisor_bundle_review_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bundle_staging_current ON advisor_bundle_staging_records(tenant_id, version_state, publication_status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_bundle_one_current_version
+  ON advisor_bundle_staging_records(tenant_id, external_record_id)
+  WHERE version_state = 'current';
