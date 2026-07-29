@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS advisor_bundle_staging_records (
   application_order text,
   restrictions_text text,
   expected_result_text text,
+  safety_signals jsonb NOT NULL DEFAULT '[]'::jsonb,
   source_status text,
   publication_status text NOT NULL DEFAULT 'blocked_raw',
   medical_review_required boolean NOT NULL DEFAULT false,
@@ -64,3 +65,16 @@ CREATE INDEX IF NOT EXISTS idx_bundle_staging_current ON advisor_bundle_staging_
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bundle_one_current_version
   ON advisor_bundle_staging_records(tenant_id, external_record_id)
   WHERE version_state = 'current';
+
+-- Release 3.2 migration for databases created before safety signals existed.
+ALTER TABLE advisor_bundle_staging_records
+  ADD COLUMN IF NOT EXISTS safety_signals jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+CREATE TABLE IF NOT EXISTS advisor_bundle_alias_dictionary (
+  normalized_alias text PRIMARY KEY,
+  canonical_sku text NOT NULL,
+  canonical_name text NOT NULL,
+  source_kind text NOT NULL CHECK (source_kind IN ('catalog','curated_bundle')),
+  review_status text NOT NULL DEFAULT 'approved_internal' CHECK (review_status IN ('approved_internal','needs_review')),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);

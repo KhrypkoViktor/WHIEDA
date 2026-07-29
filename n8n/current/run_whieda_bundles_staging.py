@@ -16,6 +16,14 @@ from pathlib import Path
 TENANT_ID = "whieda"
 REQUIRED = {"record_id", "название_ситуации", "основной_товар", "source_id", "publication_status"}
 FAIL_PHASES = {"records", "review_queue"}
+SAFETY_PATTERNS = {
+    "oncology": ("онколог", "рак", "опухол"),
+    "surgery": ("альтернатива операции", "вместо операции", "после операции", "постоперац"),
+    "glaucoma": ("глауком",),
+    "abscess": ("абсцесс", "флюс"),
+    "children": ("ребен", "дети", "детск"),
+    "resuscitation": ("реанимац",),
+}
 
 
 def normalized(value: str | None) -> str:
@@ -97,6 +105,15 @@ def make_payload(row: dict[str, str]) -> dict[str, object]:
         "business_review_required": is_yes(clean["business_review_required"]),
         "owner_approved": is_yes(clean["owner_approved"]), "block_reason": clean["block_reason"],
     }
+    safety_text = " ".join(str(payload.get(field) or "") for field in (
+        "title", "goal_text", "bundle_logic", "application_order", "restrictions_text",
+        "expected_result_text", "raw_quote",
+    ))
+    normalized_safety_text = normalized(safety_text)
+    payload["safety_signals"] = [
+        signal for signal, patterns in SAFETY_PATTERNS.items()
+        if any(pattern in normalized_safety_text for pattern in patterns)
+    ]
     review_types: list[str] = []
     if payload["medical_review_required"]:
         review_types.append("medical")
@@ -106,7 +123,9 @@ def make_payload(row: dict[str, str]) -> dict[str, object]:
         review_types.append("owner")
     if not payload["source_locator"]:
         review_types.append("provenance")
-    # blocked_raw means unpublished, not dangerous. Safety requires an explicit future safety signal.
+    if payload["safety_signals"]:
+        review_types.append("safety")
+    # blocked_raw means unpublished, not dangerous. Safety is driven by explicit corpus signals.
     payload["review_types"] = review_types
     payload["content_hash"] = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     return payload
@@ -137,12 +156,13 @@ JOIN bundle_buffer b ON b.payload->>'external_record_id'=previous.external_recor
 WHERE old.bundle_staging_id=previous.bundle_staging_id
   AND previous.content_hash<>b.payload->>'content_hash';
 INSERT INTO advisor_bundle_staging_records(
- tenant_id,external_record_id,content_hash,source_id,source_locator,raw_quote,title,goal_text,primary_product,additional_products,bundle_logic,application_order,restrictions_text,expected_result_text,source_status,publication_status,medical_review_required,business_review_required,owner_approved,block_reason,first_seen_run_id,last_seen_run_id)
-SELECT {sql_literal(TENANT_ID)},p->>'external_record_id',p->>'content_hash',p->>'source_id',NULLIF(p->>'source_locator',''),NULLIF(p->>'raw_quote',''),p->>'title',NULLIF(p->>'goal_text',''),p->>'primary_product',NULLIF(p->>'additional_products',''),NULLIF(p->>'bundle_logic',''),NULLIF(p->>'application_order',''),NULLIF(p->>'restrictions_text',''),NULLIF(p->>'expected_result_text',''),NULLIF(p->>'source_status',''),p->>'publication_status',(p->>'medical_review_required')::boolean,(p->>'business_review_required')::boolean,(p->>'owner_approved')::boolean,NULLIF(p->>'block_reason',''),{sql_literal(run_id)}::uuid,{sql_literal(run_id)}::uuid
+ tenant_id,external_record_id,content_hash,source_id,source_locator,raw_quote,title,goal_text,primary_product,additional_products,bundle_logic,application_order,restrictions_text,expected_result_text,safety_signals,source_status,publication_status,medical_review_required,business_review_required,owner_approved,block_reason,first_seen_run_id,last_seen_run_id)
+SELECT {sql_literal(TENANT_ID)},p->>'external_record_id',p->>'content_hash',p->>'source_id',NULLIF(p->>'source_locator',''),NULLIF(p->>'raw_quote',''),p->>'title',NULLIF(p->>'goal_text',''),p->>'primary_product',NULLIF(p->>'additional_products',''),NULLIF(p->>'bundle_logic',''),NULLIF(p->>'application_order',''),NULLIF(p->>'restrictions_text',''),NULLIF(p->>'expected_result_text',''),COALESCE(p->'safety_signals','[]'::jsonb),NULLIF(p->>'source_status',''),p->>'publication_status',(p->>'medical_review_required')::boolean,(p->>'business_review_required')::boolean,(p->>'owner_approved')::boolean,NULLIF(p->>'block_reason',''),{sql_literal(run_id)}::uuid,{sql_literal(run_id)}::uuid
 FROM bundle_buffer
 CROSS JOIN LATERAL (SELECT payload AS p) s
 ON CONFLICT (tenant_id,external_record_id,content_hash) DO UPDATE
 SET last_seen_run_id=EXCLUDED.last_seen_run_id,
+    safety_signals=EXCLUDED.safety_signals,
     version_state='current',
     superseded_by=NULL,
     updated_at=now();
