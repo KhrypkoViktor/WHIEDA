@@ -525,15 +525,25 @@ function isAmbiguousShortAlias(text, bestAlias = '') {
 function weakColorOrBeltClarification(text) {
   const value = normalize(text);
   if (!value) return null;
+  const tokens = value.split(/\s+/).filter(Boolean);
+  const hasTokenStarting = (stem) => tokens.some((token) => token.startsWith(stem));
+  const hasFollowingDescriptor = (stem) => tokens.some((token, index) => token.startsWith(stem)
+    && /^(эликсир|банка|коробка|этикетка)/.test(tokens[index + 1] || ''));
 
   // A colour together with "пояс" is never allowed to resolve to an elixir.
-  if (/\bпояс(?:а|у|ом|е|ы)?\b/.test(value)) {
+  if (hasTokenStarting('пояс')) {
     // The approved plural alias is concrete enough for a direct product action:
     // "дай фото пояса" should send the Magnetic Belt photo, not loop on a question.
-    if (/\bпояса\b/.test(value)) return null;
+    if (tokens.includes('пояса')) {
+      return {
+        alias: 'пояса', sku: 'T003', canonical_name: 'Магнитный пояс', direct: true,
+        answer: '',
+      };
+    }
     return {
       alias: 'пояс', sku: 'T003', canonical_name: 'Магнитный пояс',
-      direct: /\b(?:магнитн|турмалин)\w*\s+пояс/.test(value),
+      direct: tokens.some((token, index) => (token.startsWith('магнитн') || token.startsWith('турмалин'))
+        && (tokens[index + 1] || '').startsWith('пояс')),
       answer: 'Вы про Магнитный пояс? Нужна цена, описание или применение?',
     };
   }
@@ -544,9 +554,9 @@ function weakColorOrBeltClarification(text) {
     ['син', 'F002-02', 'Эликсир 3 Драгоценности', 'синий эликсир «3 Драгоценности»'],
   ];
   for (const [stem, sku, canonicalName, label] of choices) {
-    if (!new RegExp('\\b' + stem + '[а-я]*\\b').test(value)) continue;
+    if (!hasTokenStarting(stem)) continue;
     // Full colour aliases are confirmed product names and should answer directly.
-    const direct = new RegExp('\\b' + stem + '[а-я]*\\s+(?:эликсир|банка|коробка|этикетка)').test(value);
+    const direct = hasFollowingDescriptor(stem);
     return {
       alias: stem, sku, canonical_name: canonicalName,
       direct,
@@ -2230,6 +2240,11 @@ if (!best && /фото|фотк|фотограф|картин|изображен
 const explicitPhotoIntent = /фото|фотк|фотограф|картин|изображен/i.test(userText);
 const explicitVideoIntent = /видео|ютуб|youtube|обзор/i.test(userText);
 const explicitCertificateIntent = /сертифик|декларац|сгр|патент|халяль/i.test(userText);
+// Inflected plural "пояса" is an explicit request for the only confirmed belt
+// product. Resolve it before any generic media fallback can ask Dify to guess.
+if (!best && explicitPhotoIntent && normalize(userText).includes('пояса')) {
+  best = { alias: 'пояса', canonical_sku: 'T003', canonical_name: 'Магнитный пояс' };
+}
 if (best && (explicitPhotoIntent || explicitVideoIntent || explicitCertificateIntent)) {
   const product = findProductBySku(products, best.canonical_sku);
   const card = findCardBySku(productCards, best.canonical_sku);
