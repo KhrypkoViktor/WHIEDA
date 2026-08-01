@@ -390,6 +390,8 @@ def main() -> None:
     parser.add_argument("--apply-safe", action="store_true")
     parser.add_argument("--skip-smoke-plan", action="store_true")
     parser.add_argument("--rebuild-source", action="store_true")
+    parser.add_argument("--probe-safe", action="store_true", help="Run live API probe for safe_test_candidate rows")
+    parser.add_argument("--probe-limit", type=int, default=20)
     args = parser.parse_args()
 
     if args.source_batch is not None and not args.source_batch.exists():
@@ -423,6 +425,24 @@ def main() -> None:
         report["source_processing"] = process_source_batch(args.source_batch, args.cycles, args.rebuild_source)
         if args.apply_safe:
             report["publication"] = "candidate_artifacts_updated_only"
+        if args.probe_safe:
+            probe_script = BASE_DIR / "run_whieda_sql_quality_safe_probe_2026-08-01.py"
+            candidates_path = Path(report["source_processing"]["candidate_report"])
+            completed = subprocess.run(
+                [sys.executable, str(probe_script), "--candidates", str(candidates_path), "--limit", str(args.probe_limit)],
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=1800,
+            )
+            report["safe_probe"] = {
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout.strip(),
+                "stderr_tail": completed.stderr[-800:],
+            }
+            if completed.returncode != 0:
+                raise RuntimeError(f"safe probe failed: {completed.stderr[-800:]}")
 
     EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     report_path = EXPORT_ROOT / "WHIEDA_sql_quality_cycle_baseline.json"
