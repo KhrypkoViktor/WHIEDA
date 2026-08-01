@@ -14,7 +14,7 @@
 
 ## Частично
 
-- Structured-ответы, материалы, сравнения и контекст работают, но нужен единый smoke по API/ref/правам/отказам внешних сервисов.
+- Structured-ответы, материалы, сравнения и контекст работают; **единый smoke** `whieda_unified_smoke_pack_2026-08-01.py` (API/ref/sync/partners/Dify-off).
 - Права лидеров переведены на `lead_actors` + `lead_actor_roles` (2026-08-01); watcher-маршрут через `website_lead_watchers` в SQL-проверках доступа.
 - Аудит вопросов/gap есть; `/report` расширен и проверен live (пользователи, SQL/RAG/fallback, уточнения, заявки, ref-воронка).
 - Website API live (`wwc-advisor-public-v1`, smoke с `ref=ladnaya` зелёный); контракт `whieda-advisor-api-v1`.

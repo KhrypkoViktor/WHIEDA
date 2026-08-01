@@ -18,6 +18,7 @@ def run(script: str, timeout: int = 180):
 
 def main():
     health = run("run_whieda_health_check.py")
+    unified_smoke = run("whieda_unified_smoke_pack_2026-08-01.py", timeout=420)
     sheet_smoke = run("whieda_live_sheet_smoke_2026-07-26.py", timeout=360)
     regression_path = OUT / "WHIEDA_live_regression_suite_v1.json"
     regression = json.loads(regression_path.read_text(encoding="utf-8")) if regression_path.exists() else None
@@ -25,11 +26,13 @@ def main():
         "checked_at": datetime.now().astimezone().isoformat(),
         "master_data_changed": False,
         "health": health,
+        "unified_smoke": unified_smoke,
         "sheet_smoke": sheet_smoke,
         "latest_regression": regression.get("meta") if regression else None,
         "alerts": [],
     }
     if health["exit_code"] != 0: report["alerts"].append("health_check_failed")
+    if unified_smoke["exit_code"] != 0: report["alerts"].append("unified_smoke_failed")
     if sheet_smoke["exit_code"] != 0: report["alerts"].append("sheet_smoke_failed")
     if regression and regression.get("meta", {}).get("failed", 0): report["alerts"].append("regression_failures_present")
     report["status"] = "green" if not report["alerts"] else "attention"
