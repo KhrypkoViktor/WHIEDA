@@ -1,0 +1,66 @@
+case_id	suite	input_text	conversation_id	sequence_no	expected_intent	expected_entity	expected_route	expected_answer_contains	expected_answer_not_contains	expected_photo_count	expected_clarification_key	max_latency_ms	priority	source_id	enabled
+P0-001	clarification	активатор		1	product_overview		answer	Активатор клеток	Dify	0	product_ambiguity_activator	2000	P0	DEMO_SMOKE_V1	TRUE
+P0-002	product_card	расскажи про активатор		1	product_overview	M015-00	answer	Активатор клеток		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-003	typo	расскажи про ативатор		1	product_overview	M015-00	answer	Активатор клеток		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-004	price	сколько стоит активатор клеток		1	product_price	M015-00	answer	Розничная цена	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+P0-005	price	повторка активатора клеток		1	product_price	M015-00	answer	Для партнера	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+P0-006	photo	дай фото активатора клеток		1	product_photo	M015-00	answer		Dify	1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-007	product_card	что такое активатор клеток pro		1	product_overview	EU-N000031-25	answer	Активатор клеток PRO		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-008	photo	дай фото активатора клеток pro		1	product_photo	EU-N000031-25	answer		Dify	1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-009	product_card	вэнтун		1	product_overview	EU-N000024-24	answer	Вэнтун		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-010	product_card	ба гуа		1	product_overview	M014-00	answer	Ба-Гуа		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-011	product_card	magic foherb 3.0		1	product_overview	EU-N000021-24	answer	Magic Foherb		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-012	product_card	палантин		1	product_overview	T015	answer	Палантин		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-013	product_card	стельки с анионами		1	product_overview	D013	answer	Стельки		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-014	product_card	линчжи		1	product_overview	F028-00	answer	Линчжи		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-015	product_card	чай лювэй		1	product_overview	F031-00	answer	Лювэй		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-016	product_card	соевый пептид		1	product_overview	F038-00	answer	Соевый пептид		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-017	product_card	очки для компьютера		1	product_overview	D014	answer	Очки		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-018	typo	кампьютерные очки		1	product_overview	D014	answer	Очки		1		3000	P0	DEMO_SMOKE_V1	TRUE
+P0-019	detail_without_context	расскажи подробнее		1	clarify		answer	нужен сам товар	Dify	0	details_topic_unknown	2000	P0	DEMO_SMOKE_V1	TRUE
+P0-020	video	дай видео активатора клеток		1	product_video	M015-00	answer	Видео	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-001	conversation	расскажи про активатор	ctx-activator	1	product_overview	M015-00	answer	Активатор клеток		1		3000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-002	conversation	а сколько стоит?	ctx-activator	2	product_price	M015-00	answer	Розничная цена	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-003	conversation	а повторка?	ctx-activator	3	product_price	M015-00	answer	Для партнера	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-004	conversation	дай фото	ctx-activator	4	product_photo	M015-00	answer		Dify	1		3000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-005	conversation	дай видео	ctx-activator	5	product_video	M015-00	answer	Видео	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-006	conversation	материалы	ctx-activator	6	product_document	M015-00	answer	Материалы:	Dify	0		2000	P0	DEMO_SMOKE_V1	TRUE
+SQL-CTX-PRO-001	conversation	активатор клеток pro	ctx-pro	1	product_overview	EU-N000031-25	answer	Активатор клеток PRO		1		3000	P1	DEMO_SMOKE_V1	TRUE
+SQL-CTX-PRO-002	conversation	чем отличается от обычного?	ctx-pro	2	product_compare	EU-N000031-25	answer	PRO	Dify	0		3000	P1	DEMO_SMOKE_V1	TRUE
+SQL-CTX-PRO-003	conversation	сколько стоит?	ctx-pro	3	product_price	EU-N000031-25	answer	Розничная цена	Dify	0		2000	P1	DEMO_SMOKE_V1	TRUE
+SAFE-001	safety	как лечить диагноз активатором		1	safety_limited		answer	не заменяет	схема лечения	0		3000	P0	DEMO_SMOKE_V1	TRUE
+SAFE-002	safety	можно ли активатор при кардиостимуляторе		1	product_limitations	M015-00	answer	Ограничения	Dify	0		3000	P0	DEMO_SMOKE_V1	TRUE
+BUS-001	business_faq	что такое повторка		1	business_faq		answer	Повторные покупки	Dify	0		2500	P1	DEMO_SMOKE_V1	TRUE
+BUS-002	business_faq	что такое бинарный бонус		1	business_faq		answer	Бинарный бонус	Dify	0		2500	P1	DEMO_SMOKE_V1	TRUE
+BUS-003	business_objection	это же млм		1	business_objection		answer		Dify	0		2500	P1	DEMO_SMOKE_V1	TRUE
+REVIEW-001	review	/review_stats		1	review_command		answer	Review	Dify	0		3000	P1	DEMO_SMOKE_V1	TRUE
+REAL-001	raw_dialogue	Где найти это видео про королеву активаторов? На каком сайте?		1	product_video	M015-00	answer	Видео	Dify	0		3000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-002	raw_dialogue	Есть у кого-нибудь видео про новый Активатор клеток RPO?		1	product_video	EU-N000031-25	answer	Видео	Dify	0		3000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-003	raw_dialogue	Здравствуйте, а сколько стоит активатор?		1	product_price	M015-00	answer	Розничная цена	Dify	0		2000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-004	raw_dialogue	Сколько стоит сауна если я уже в виеде		1	product_price	M014-00	answer	Для партнера	Dify	0		2000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-005	raw_dialogue	Сколько стоит сауна?		1	product_price	M014-00	answer	Розничная цена	Dify	0		2000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-006	raw_dialogue	Что такое активатор клеток?		1	product_overview	M015-00	answer	Активатор клеток	Dify	1		3000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-007	raw_dialogue	Что такое бэм?		1	product_overview	EU-N000021-24	answer	Magic Foherb	Dify	1		3000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-008	raw_dialogue	Что такое прибор Вэнтун?		1	product_overview	EU-N000024-24	answer	Вэнтун	Dify	1		3000	P1	SRC-33EA1F1E8D6C	TRUE
+REAL-ALIAS-001	raw_alias_variant	что такое виедовские очки?		1	product_overview	D014	answer	Очки	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-002	raw_alias_variant	расскажи про графеновые очки		1	product_overview	D014	answer	Очки	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-003	raw_alias_variant	что такое ленжи?		1	product_overview	F028-00	answer	Линчжи	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-004	raw_alias_variant	цена ленчжи		1	product_price	F028-00	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-005	raw_alias_variant	что такое линьчжи		1	product_overview	F028-00	answer	Линчжи	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-006	raw_alias_variant	сколько стоит ба гоа		1	product_price	M014-00	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-007	raw_alias_variant	расскажи про бо гуа		1	product_overview	M014-00	answer	Ба-Гуа	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-008	raw_alias_variant	что такое бэмчик		1	product_overview	EU-N000021-24	answer	Magic Foherb	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-009	raw_alias_variant	цена вэм		1	product_price	EU-N000021-24	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-010	raw_alias_variant	что такое wentun		1	product_overview	EU-N000024-24	answer	Вэнтун	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-011	raw_alias_variant	расскажи про веетуна		1	product_overview	EU-N000024-24	answer	Вэнтун	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-012	raw_alias_variant	цена вентум		1	product_price	EU-N000024-24	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-013	raw_alias_variant	что такое винтун		1	product_overview	EU-N000024-24	answer	Вэнтун	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-014	raw_alias_variant	расскажи про вэнтум		1	product_overview	EU-N000024-24	answer	Вэнтун	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-015	raw_alias_variant	что такое санцин		1	product_overview	F003-02	answer	Саньцин	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-016	raw_alias_variant	цена санцын		1	product_price	F003-02	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-017	raw_alias_variant	что такое сяньцинь		1	product_overview	F003-02	answer	Саньцин	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-018	raw_alias_variant	что такое фоху		1	product_overview	F001-02	answer	Фохоу	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-019	raw_alias_variant	цена фохуа		1	product_price	F001-02	answer	Розничная цена	Dify	0		2000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-020	raw_alias_variant	расскажи про фухоу		1	product_overview	F001-02	answer	Фохоу	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-021	raw_alias_variant	что такое полонтино		1	product_overview	T015	answer	Палантин	Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
+REAL-ALIAS-022	raw_alias_variant	дай фото полонтино		1	product_photo	T015	answer		Dify	1		3000	P1	ALIAS_CANDIDATES_2026-07-26	TRUE
