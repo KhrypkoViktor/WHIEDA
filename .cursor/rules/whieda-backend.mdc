@@ -33,9 +33,9 @@ alwaysApply: true
 
 ## Smoke after publish
 
+- Unified: `whieda_unified_smoke_pack_2026-08-01.py` (API + ref + sync + partners + Dify-off)
 - Leads/report: `whieda_leads_report_smoke_2026-08-01.py`
-- Website API: POST `wwc-advisor-public-v1` with `ref_context.ref=ladnaya`
-- Partners runtime: `run_partners_ref_runtime_sync_2026-08-01.py` or structured sync cron
+- Daily ops: `run_whieda_daily_operational_check_2026-07-26.py`
 
 ## Maps (do not duplicate)
 
