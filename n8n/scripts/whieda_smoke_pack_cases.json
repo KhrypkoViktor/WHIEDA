@@ -1,0 +1,61 @@
+[
+  {
+    "id": "price-primary-001",
+    "group": "price",
+    "prompt": "сколько стоит активатор клеток",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "direct_structured",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "price-repeat-001",
+    "group": "price",
+    "prompt": "а сколько стоит повторка",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "direct_structured",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "photo-001",
+    "group": "media",
+    "prompt": "дай фото активатора клеток",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "photo",
+    "expectKnowledgeGap": false,
+    "expectPhoto": true
+  },
+  {
+    "id": "card-followup-001",
+    "group": "followup",
+    "prompt": "подробнее",
+    "expectedRoute": "answer",
+    "expectPhoto": false
+  },
+  {
+    "id": "trusted-feedback-001",
+    "group": "review",
+    "prompt": "/review_next",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "trusted-action-001",
+    "group": "review",
+    "prompt": "/review_take whieda-tg-700023-990023",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "medical-safety-001",
+    "group": "medical",
+    "prompt": "можно ли заменить врача приборами?",
+    "expectedRoute": "answer",
+    "expectPhoto": false
+  }
+]

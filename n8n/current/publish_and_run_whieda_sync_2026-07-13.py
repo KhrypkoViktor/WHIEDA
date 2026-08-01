@@ -322,6 +322,18 @@ def build_workflow(code: str) -> dict:
                 "position": [2688, -144],
             },
             {
+                "parameters": {
+                    "method": "GET",
+                    "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1733124410",
+                    "options": {},
+                },
+                "id": "whieda-sync-http-partners-ref",
+                "name": "HTTP: Partners Ref TSV",
+                "type": "n8n-nodes-base.httpRequest",
+                "typeVersion": 4.4,
+                "position": [2912, -144],
+            },
+            {
                 "parameters": {"jsCode": code},
                 "id": "whieda-sync-code",
                 "name": "Code: Build Structured Sync SQL",
@@ -578,6 +590,19 @@ def build_workflow(code: str) -> dict:
             },
             {
                 "parameters": {
+                    "operation": "executeQuery",
+                    "query": '={{ $("Code: Build Structured Sync SQL").first().json.query_partners_runtime }}',
+                    "options": {},
+                },
+                "id": "whieda-sync-postgres-partners-runtime",
+                "name": "Postgres: Sync Partners Runtime",
+                "type": "n8n-nodes-base.postgres",
+                "typeVersion": 2.6,
+                "position": [4720, -144],
+                "credentials": {"postgres": WORKFLOW_CREDENTIAL},
+            },
+            {
+                "parameters": {
                     "jsCode": """const source = $('Code: Build Structured Sync SQL').first().json;
 return [{
   json: {
@@ -600,6 +625,7 @@ return [{
     rows_clarification_prompts: source.rows_clarification_prompts,
     rows_capability_responses: source.rows_capability_responses,
     rows_canonical_questions: source.rows_canonical_questions,
+    rows_partners_ref: source.rows_partners_ref,
     sync_started_at: source.sync_started_at,
     synced_at: new Date().toISOString(),
   },
@@ -646,7 +672,8 @@ return [{
             "HTTP: Intent Registry TSV": {"main": [[{"node": "HTTP: Clarification Prompts TSV", "type": "main", "index": 0}]]},
             "HTTP: Clarification Prompts TSV": {"main": [[{"node": "HTTP: Capability Responses TSV", "type": "main", "index": 0}]]},
             "HTTP: Capability Responses TSV": {"main": [[{"node": "HTTP: Canonical Questions TSV", "type": "main", "index": 0}]]},
-            "HTTP: Canonical Questions TSV": {"main": [[{"node": "Code: Build Structured Sync SQL", "type": "main", "index": 0}]]},
+            "HTTP: Canonical Questions TSV": {"main": [[{"node": "HTTP: Partners Ref TSV", "type": "main", "index": 0}]]},
+            "HTTP: Partners Ref TSV": {"main": [[{"node": "Code: Build Structured Sync SQL", "type": "main", "index": 0}]]},
             "Code: Build Structured Sync SQL": {"main": [[{"node": "Postgres: Sync Products", "type": "main", "index": 0}]]},
             "Postgres: Sync Products": {"main": [[{"node": "Postgres: Sync Aliases", "type": "main", "index": 0}]]},
             "Postgres: Sync Aliases": {"main": [[{"node": "Postgres: Sync Resources", "type": "main", "index": 0}]]},
@@ -666,7 +693,8 @@ return [{
             "Postgres: Sync Intent Registry": {"main": [[{"node": "Postgres: Sync Clarification Prompts", "type": "main", "index": 0}]]},
             "Postgres: Sync Clarification Prompts": {"main": [[{"node": "Postgres: Sync Capability Responses", "type": "main", "index": 0}]]},
             "Postgres: Sync Capability Responses": {"main": [[{"node": "Postgres: Sync Canonical Questions", "type": "main", "index": 0}]]},
-            "Postgres: Sync Canonical Questions": {"main": [[{"node": "Code: Sync Summary", "type": "main", "index": 0}]]},
+            "Postgres: Sync Canonical Questions": {"main": [[{"node": "Postgres: Sync Partners Runtime", "type": "main", "index": 0}]]},
+            "Postgres: Sync Partners Runtime": {"main": [[{"node": "Code: Sync Summary", "type": "main", "index": 0}]]},
             "Code: Sync Summary": {"main": [[{"node": "Postgres: Write Sync Audit", "type": "main", "index": 0}]]},
         },
         "settings": {

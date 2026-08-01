@@ -1,0 +1,56 @@
+[
+  {
+    "id": "review-help-001",
+    "group": "review",
+    "prompt": "/review_help",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "review-next-001",
+    "group": "review",
+    "prompt": "/review_next",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "review-take-001",
+    "group": "review",
+    "prompt": "/review_take whieda-tg-700023-990023",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "review-apply-001",
+    "group": "review",
+    "prompt": "/review_apply whieda-tg-700023-990023",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "review-verify-001",
+    "group": "review",
+    "prompt": "/review_verify whieda-tg-700023-990023",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  },
+  {
+    "id": "review-close-001",
+    "group": "review",
+    "prompt": "/review_close whieda-tg-700023-990023",
+    "expectedRoute": "answer",
+    "expectedAnswerModeIncludes": "review",
+    "expectKnowledgeGap": false,
+    "expectPhoto": false
+  }
+]

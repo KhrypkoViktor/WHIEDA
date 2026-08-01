@@ -1,0 +1,44 @@
+---
+description: WHIEDA backend-only workflow, deploy, and sheet sync conventions
+alwaysApply: true
+---
+
+# WHIEDA Backend Agent
+
+## Workspace
+
+- Root: `D:\Projects\WHIEDA`
+- **Edit:** `n8n/`, `postgres/`, backend scripts, SQL, audits, contracts
+- **Do not edit:** `03_Website/` (HTML/CSS/site content). Site nginx/API proxy is ops reference only.
+
+## Deploy pattern (n8n)
+
+1. Backup live workflow JSON to `n8n/backups/` (gitignored)
+2. Patch via `n8n/current/publish_*.py` or REST API
+3. `docker exec n8n-n8n-1 n8n publish:workflow --id=<id>` on host `whieda-n8n` (`185.252.232.93`)
+4. `docker restart n8n-n8n-1` when webhooks must reload
+5. Temp sheet-write webhooks: **publish only**, no docker restart; wait ~5s and retry
+
+## Data flow
+
+- **Google Sheets** = master editor (`Partners_Ref`, products, access)
+- **Postgres** = runtime (`advisor_structured_*`, `lead_actors`, `referral_profiles`)
+- **15-min cron:** `WHIEDA Structured Sync Cron` / webhook `whieda-structured-sync-v1`
+- **Website API:** `wwc-advisor-public-v1` (site) + `whieda-advisor-api-v1` (contract)
+
+## Commits
+
+- Commit logical backend slices without asking; skip `execution_*.json`, `_debug*`, backups
+- Secrets stay inline in publish scripts until env migration
+
+## Smoke after publish
+
+- Leads/report: `whieda_leads_report_smoke_2026-08-01.py`
+- Website API: POST `wwc-advisor-public-v1` with `ref_context.ref=ladnaya`
+- Partners runtime: `run_partners_ref_runtime_sync_2026-08-01.py` or structured sync cron
+
+## Maps (do not duplicate)
+
+- `00_READ_FIRST_WHIEDA_DEVELOPMENT_BIBLE_V1_2026-07-14.md`
+- `WHIEDA_FILE_MAP_CURRENT.md`
+- `n8n/current/WHIEDA_BACKEND_CORE_AUDIT_2026-07-29.md`

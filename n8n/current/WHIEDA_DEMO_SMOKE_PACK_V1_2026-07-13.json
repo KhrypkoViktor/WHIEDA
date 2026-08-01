@@ -1,0 +1,441 @@
+{
+  "meta": {
+    "project": "WHIEDA",
+    "created_at": "2026-07-13",
+    "purpose": "P0 and extended smoke pack for live demo validation",
+    "notes": [
+      "Independent cases should use separate private test chats where possible.",
+      "Follow-up sequences must keep the same chat and user to validate context retention.",
+      "Structured product requests are expected to avoid LLM unless marked otherwise."
+    ]
+  },
+  "cases": [
+    {
+      "id": "P0-001",
+      "type": "independent",
+      "input": "активатор",
+      "expected": {
+        "intent": "clarify",
+        "sku": null,
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0
+      }
+    },
+    {
+      "id": "P0-002",
+      "type": "independent",
+      "input": "расскажи про активатор",
+      "expected": {
+        "intent": "card",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-003",
+      "type": "independent",
+      "input": "расскажи про ативатор",
+      "expected": {
+        "intent": "card",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-004",
+      "type": "independent",
+      "input": "сколько стоит активатор клеток",
+      "expected": {
+        "intent": "price_primary",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0
+      }
+    },
+    {
+      "id": "P0-005",
+      "type": "independent",
+      "input": "повторка активатора клеток",
+      "expected": {
+        "intent": "price_repeat",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0
+      }
+    },
+    {
+      "id": "P0-006",
+      "type": "independent",
+      "input": "дай фото активатора клеток",
+      "expected": {
+        "intent": "photo",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-007",
+      "type": "independent",
+      "input": "что такое активатор клеток pro",
+      "expected": {
+        "intent": "card",
+        "sku": "EU-N000031-25",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-008",
+      "type": "independent",
+      "input": "дай фото активатора клеток pro",
+      "expected": {
+        "intent": "photo",
+        "sku": "EU-N000031-25",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-009",
+      "type": "independent",
+      "input": "вэнтун",
+      "expected": {
+        "intent": "card",
+        "sku": "EU-N000024-24",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-010",
+      "type": "independent",
+      "input": "ба гуа",
+      "expected": {
+        "intent": "card",
+        "sku": "M014-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-011",
+      "type": "independent",
+      "input": "magic foherb 3.0",
+      "expected": {
+        "intent": "card",
+        "sku": "EU-N000021-24",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-012",
+      "type": "independent",
+      "input": "палантин",
+      "expected": {
+        "intent": "card",
+        "sku": "T015",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-013",
+      "type": "independent",
+      "input": "стельки с анионами",
+      "expected": {
+        "intent": "card",
+        "sku": "D013",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-014",
+      "type": "independent",
+      "input": "линчжи",
+      "expected": {
+        "intent": "card",
+        "sku": "F028-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-015",
+      "type": "independent",
+      "input": "чай лювэй",
+      "expected": {
+        "intent": "card",
+        "sku": "F031-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-016",
+      "type": "independent",
+      "input": "соевый пептид",
+      "expected": {
+        "intent": "card",
+        "sku": "F038-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-017",
+      "type": "independent",
+      "input": "очки для компьютера",
+      "expected": {
+        "intent": "card",
+        "sku": "D014",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true
+      }
+    },
+    {
+      "id": "P0-018",
+      "type": "independent",
+      "input": "компьютерные очки",
+      "expected": {
+        "intent": "card",
+        "sku": "D014",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true,
+        "note": "Retest after sync window"
+      }
+    },
+    {
+      "id": "P0-019",
+      "type": "independent",
+      "input": "расскажи подробнее",
+      "expected": {
+        "intent": "clarify",
+        "sku": null,
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0
+      }
+    },
+    {
+      "id": "P0-020",
+      "type": "independent",
+      "input": "дай видео активатора клеток",
+      "expected": {
+        "intent": "video",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0
+      }
+    },
+    {
+      "id": "CTX-001",
+      "type": "follow_up_sequence",
+      "sequence": [
+        "расскажи про активатор",
+        "а сколько стоит?",
+        "а повторка?",
+        "дай фото",
+        "дай видео",
+        "подробнее"
+      ],
+      "expected": {
+        "sku_stable": "M015-00",
+        "llm_called": false,
+        "context_loss": false
+      }
+    },
+    {
+      "id": "CTX-002",
+      "type": "follow_up_sequence",
+      "sequence": [
+        "активатор клеток pro",
+        "чем отличается от обычного?",
+        "сколько стоит?",
+        "дай фото"
+      ],
+      "expected": {
+        "sku_stable": "EU-N000031-25",
+        "llm_called": false,
+        "context_loss": false
+      }
+    },
+    {
+      "id": "CTX-003",
+      "type": "follow_up_sequence",
+      "sequence": [
+        "очки для компьютера",
+        "а сколько стоит?",
+        "дай фото",
+        "подробнее"
+      ],
+      "expected": {
+        "sku_stable": "D014",
+        "llm_called": false,
+        "context_loss": false
+      }
+    },
+    {
+      "id": "CTX-004",
+      "type": "follow_up_sequence",
+      "sequence": [
+        "палантин",
+        "а сколько стоит?",
+        "дай видео"
+      ],
+      "expected": {
+        "sku_stable": "T015",
+        "llm_called": false,
+        "context_loss": false
+      }
+    },
+    {
+      "id": "SAFE-001",
+      "type": "independent",
+      "input": "как лечить диагноз активатором",
+      "expected": {
+        "intent": "safety_limited",
+        "sku": null,
+        "source": "structured_sql_or_guardrail",
+        "llm_called": false,
+        "answer_mode": "direct_safety_limit",
+        "forbid_text": [
+          "рекомендуется следующая схема",
+          "1-2 раз в день",
+          "неделя применения"
+        ]
+      }
+    },
+    {
+      "id": "SAFE-002",
+      "type": "independent",
+      "input": "можно ли активатор при кардиостимуляторе",
+      "expected": {
+        "intent": "details",
+        "sku": "M015-00",
+        "source": "structured_sql_or_guardrail",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "TYPO-001",
+      "type": "independent",
+      "input": "ативатор",
+      "expected": {
+        "intent": "clarify",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "TYPO-002",
+      "type": "independent",
+      "input": "кампьютерные очки",
+      "expected": {
+        "intent": "card",
+        "sku": "D014",
+        "source": "structured_sql",
+        "llm_called": false
+      }
+    },
+    {
+      "id": "GROUP-001",
+      "type": "group_mention",
+      "input": "@whieda_advisor_bot дай фото активатора клеток",
+      "expected": {
+        "intent": "photo",
+        "sku": "M015-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 1,
+        "caption_empty": true,
+        "duplicate_response": false
+      }
+    },
+    {
+      "id": "GROUP-002",
+      "type": "group_mention",
+      "input": "@whieda_advisor_bot линчжи",
+      "expected": {
+        "intent": "card",
+        "sku": "F028-00",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 2,
+        "photos": 1,
+        "caption_empty": true,
+        "duplicate_response": false
+      }
+    },
+    {
+      "id": "REVIEW-001",
+      "type": "review_smoke",
+      "input": "/review_stats",
+      "expected": {
+        "intent": "review_command",
+        "source": "review_queue",
+        "llm_called": false
+      }
+    }
+  ]
+}

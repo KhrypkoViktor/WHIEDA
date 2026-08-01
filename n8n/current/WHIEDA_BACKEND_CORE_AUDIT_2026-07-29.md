@@ -18,7 +18,7 @@
 - Права лидеров переведены на `lead_actors` + `lead_actor_roles` (2026-08-01); watcher-маршрут через `website_lead_watchers` в SQL-проверках доступа.
 - Аудит вопросов/gap есть; `/report` расширен и проверен live (пользователи, SQL/RAG/fallback, уточнения, заявки, ref-воронка).
 - Website API live (`wwc-advisor-public-v1`, smoke с `ref=ladnaya` зелёный); контракт `whieda-advisor-api-v1`.
-- `Partners_Ref`: колонки поддоменов/focus-group (`public_site_url`, `site_type`, `focus_group`, `access_tier`) заполнены для фокус-группы.
+- `Partners_Ref`: колонки поддоменов/focus-group заполнены; **runtime sync в 15-мин cron** (`query_partners_runtime` в `WHIEDA Structured Sync Cron`).
 
 ## Отсутствует
 
@@ -30,4 +30,4 @@
 2. ~~Перевести права лидеров с hardcode на существующие `lead_actors`/`lead_actor_roles`.~~ Сделано 2026-08-01.
 3. ~~Собрать read-only super-admin отчёт и расширить smoke.~~ `/report` расширен; smoke `whieda_leads_report_smoke_2026-08-01.py`.
 4. ~~Реализовать endpoint API строго по контракту, без изменений сайта.~~ Live: `wwc-advisor-public-v1` + `whieda-advisor-api-v1` (2026-08-01).
-5. ~~Structure Basic: sync `Partners_Ref` → `referral_profiles` / runtime; профиль, ref, персонализация.~~ Runtime sync script `run_partners_ref_runtime_sync_2026-08-01.py` (live `success: true`); встроить в 15-мин cron — следующий шаг.
+5. ~~Structure Basic: sync `Partners_Ref` → runtime.~~ В cron с 2026-08-01; smoke structured sync `success`.
