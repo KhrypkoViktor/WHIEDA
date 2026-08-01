@@ -1,6 +1,14 @@
 const PROJECT_ID = 'whieda';
 
-const envelope = { ...$('Code: Merge Envelope + Session').first().json, ...$input.first().json };
+function mergeEnvelopeJson() {
+  try {
+    return $('Code: Merge Website API Session').first().json;
+  } catch (error) {
+    return $('Code: Merge Envelope + Session').first().json;
+  }
+}
+const mergeEnvelope = mergeEnvelopeJson();
+const envelope = { ...mergeEnvelope, ...$input.first().json };
 const userText = String(envelope.message_text ?? '').trim();
 const isFeedbackCommand = /^(fail|correct|style|missing|ошибка|не\s*так|неверно|исправь|исправить|дополни|добавь|уточни|стиль)[:\s-]/i.test(userText);
 const isNaturalFeedback = envelope.is_feedback_candidate === true && envelope.feedback_input_mode === 'natural_reply';

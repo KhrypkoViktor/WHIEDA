@@ -5,6 +5,7 @@ Read-only against live except triggering structured sync webhook (idempotent).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import time
@@ -12,7 +13,6 @@ import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import paramiko
 import requests
 import urllib3
 
@@ -30,9 +30,7 @@ ADVISOR_WORKFLOW_ID = "advisor-whieda-phase1"
 TELEGRAM_WEBHOOK = f"{BASE_URL}/webhook/advisor-whieda-v0"
 OUT_PATH = BASE_DIR.parent / "live-exports" / date.today().isoformat() / "WHIEDA_unified_smoke_pack_2026-08-01.json"
 
-SERVER_HOST = "185.252.232.93"
-SERVER_USER = "root"
-SERVER_PASSWORD = "***REMOVED***"
+POSTGRES_CREDENTIAL = {"postgres": {"id": "RmjHh3rdZri7axzq", "name": "advisor-dev-postgres"}}
 FOCUS_REFS = ("ladnaya", "mariam")
 CHAT_ID = 1147735602
 USERNAME = "Khrypko_pro"
@@ -236,39 +234,94 @@ def smoke_structured_sync(session) -> dict:
 
 
 def query_runtime_rows(query: str) -> list[dict]:
-    """Read advisor runtime tables via SSH + n8n Postgres (no TEMP workflows)."""
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        SERVER_HOST,
-        username=SERVER_USER,
-        password=SERVER_PASSWORD,
-        look_for_keys=False,
-        allow_agent=False,
-        timeout=20,
+    """Read advisor runtime tables via Supabase credential (not local n8n Postgres)."""
+    helper_path = BASE_DIR / "publish_and_run_whieda_sync_2026-07-13.py"
+    spec = importlib.util.spec_from_file_location("whieda_sync", helper_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load {helper_path}")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    session = helper.login_session()
+    suffix = uuid.uuid4().hex[:10]
+    path = f"whieda-smoke-readonly-{suffix}"
+    clean_query = " ".join(query.split()).rstrip(";")
+    wrapped = (
+        "SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS rows "
+        f"FROM ({clean_query}) x;"
     )
+    workflow = {
+        "name": f"TEMP WHIEDA Smoke Readonly {suffix}",
+        "active": False,
+        "nodes": [
+            {
+                "parameters": {"httpMethod": "GET", "path": path, "responseMode": "responseNode", "options": {}},
+                "id": "webhook",
+                "name": "Webhook",
+                "type": "n8n-nodes-base.webhook",
+                "typeVersion": 2,
+                "position": [-200, 0],
+            },
+            {
+                "parameters": {"operation": "executeQuery", "query": wrapped, "options": {}},
+                "id": "query",
+                "name": "Read-only DB query",
+                "type": "n8n-nodes-base.postgres",
+                "typeVersion": 2.6,
+                "position": [0, 0],
+                "credentials": POSTGRES_CREDENTIAL,
+            },
+            {
+                "parameters": {"respondWith": "json", "responseBody": "={{ $json }}", "options": {"responseCode": 200}},
+                "id": "respond",
+                "name": "Respond",
+                "type": "n8n-nodes-base.respondToWebhook",
+                "typeVersion": 1.1,
+                "position": [200, 0],
+            },
+        ],
+        "connections": {
+            "Webhook": {"main": [[{"node": "Read-only DB query", "type": "main", "index": 0}]]},
+            "Read-only DB query": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]},
+        },
+        "settings": {"executionOrder": "v1"},
+    }
+    workflow_id = None
     try:
-        clean_query = " ".join(query.split())
-        wrapped = (
-            "SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) "
-            f"FROM ({clean_query.rstrip(';')}) x;"
+        created = session.post(f"{helper.BASE_URL}/rest/workflows", json=workflow, verify=False, timeout=60)
+        created.raise_for_status()
+        data = created.json().get("data", created.json())
+        workflow_id = data["id"]
+        version = data.get("versionId")
+        activate = session.post(
+            f"{helper.BASE_URL}/rest/workflows/{workflow_id}/activate",
+            json={"versionId": version},
+            verify=False,
+            timeout=60,
         )
-        cmd = (
-            "docker exec n8n-postgres-1 psql -U n8n -d n8n -At "
-            f"-c {json.dumps(wrapped)}"
-        )
-        _, stdout, stderr = client.exec_command(cmd, timeout=60)
-        out = stdout.read().decode("utf-8", "replace").strip()
-        err = stderr.read().decode("utf-8", "replace").strip()
-        code = stdout.channel.recv_exit_status()
-        if code != 0:
-            raise RuntimeError(err or out or f"psql exit {code}")
-        payload = json.loads(out or "[]")
-        if isinstance(payload, list):
-            return payload
-        return [payload]
+        if activate.status_code == 409:
+            fresh = session.get(f"{helper.BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60).json()["data"]
+            version = fresh.get("versionId")
+            activate = session.post(
+                f"{helper.BASE_URL}/rest/workflows/{workflow_id}/activate",
+                json={"versionId": version},
+                verify=False,
+                timeout=60,
+            )
+        activate.raise_for_status()
+        helper.ssh_run(f"docker exec n8n-n8n-1 n8n publish:workflow --id={workflow_id}")
+        time.sleep(5)
+        result = requests.get(f"{helper.BASE_URL}/webhook/{path}", verify=False, timeout=60)
+        result.raise_for_status()
+        payload = result.json()
+        rows = payload.get("rows", payload)
+        if isinstance(rows, str):
+            rows = json.loads(rows)
+        if isinstance(rows, list):
+            return rows
+        return [rows]
     finally:
-        client.close()
+        if workflow_id:
+            session.delete(f"{helper.BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60)
 
 
 def smoke_partners_runtime(_session=None) -> dict:
@@ -428,6 +481,17 @@ def login_session():
 
 
 def main() -> None:
+    try:
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(BASE_DIR / "run_whieda_deactivate_temp_workflows_2026-08-01.py")],
+            check=False,
+            timeout=120,
+        )
+    except Exception:
+        pass
+
     try:
         session = login_session()
     except requests.RequestException as exc:
