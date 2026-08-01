@@ -12,6 +12,7 @@ import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import paramiko
 import requests
 import urllib3
 
@@ -29,7 +30,9 @@ ADVISOR_WORKFLOW_ID = "advisor-whieda-phase1"
 TELEGRAM_WEBHOOK = f"{BASE_URL}/webhook/advisor-whieda-v0"
 OUT_PATH = BASE_DIR.parent / "live-exports" / date.today().isoformat() / "WHIEDA_unified_smoke_pack_2026-08-01.json"
 
-POSTGRES_CREDENTIAL = {"postgres": {"id": "RmjHh3rdZri7axzq", "name": "advisor-dev-postgres"}}
+SERVER_HOST = "185.252.232.93"
+SERVER_USER = "root"
+SERVER_PASSWORD = "***REMOVED***"
 FOCUS_REFS = ("ladnaya", "mariam")
 CHAT_ID = 1147735602
 USERNAME = "Khrypko_pro"
@@ -37,7 +40,7 @@ FIRST_NAME = "Viktor Test"
 
 PARTNERS_QUERY = """
 SELECT ref_code,
-       owner_actor_id,
+       owner_id,
        enabled,
        public_profile->>'public_site_url' AS public_site_url,
        public_profile->>'site_type' AS site_type,
@@ -232,74 +235,46 @@ def smoke_structured_sync(session) -> dict:
     )
 
 
-def readonly_query(session, query: str) -> list[dict]:
-    suffix = uuid.uuid4().hex[:12]
-    path = f"whieda-unified-readonly-{suffix}"
-    workflow = {
-        "name": f"TEMP WHIEDA Unified Readonly {suffix}",
-        "active": False,
-        "nodes": [
-            {
-                "parameters": {"httpMethod": "GET", "path": path, "responseMode": "responseNode", "options": {}},
-                "id": "webhook",
-                "name": "Webhook",
-                "type": "n8n-nodes-base.webhook",
-                "typeVersion": 2,
-                "position": [-260, 0],
-            },
-            {
-                "parameters": {"operation": "executeQuery", "query": query, "options": {}},
-                "id": "query",
-                "name": "Read-only DB query",
-                "type": "n8n-nodes-base.postgres",
-                "typeVersion": 2.6,
-                "position": [0, 0],
-                "credentials": POSTGRES_CREDENTIAL,
-            },
-            {
-                "parameters": {"respondWith": "json", "responseBody": "={{ $json }}", "options": {"responseCode": 200}},
-                "id": "respond",
-                "name": "Respond",
-                "type": "n8n-nodes-base.respondToWebhook",
-                "typeVersion": 1.1,
-                "position": [260, 0],
-            },
-        ],
-        "connections": {
-            "Webhook": {"main": [[{"node": "Read-only DB query", "type": "main", "index": 0}]]},
-            "Read-only DB query": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]},
-        },
-        "settings": {"executionOrder": "v1"},
-    }
-    workflow_id = None
+def query_runtime_rows(query: str) -> list[dict]:
+    """Read advisor runtime tables via SSH + n8n Postgres (no TEMP workflows)."""
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        SERVER_HOST,
+        username=SERVER_USER,
+        password=SERVER_PASSWORD,
+        look_for_keys=False,
+        allow_agent=False,
+        timeout=20,
+    )
     try:
-        created = session.post(f"{BASE_URL}/rest/workflows", json=workflow, verify=False, timeout=60)
-        created.raise_for_status()
-        data = created.json().get("data", created.json())
-        workflow_id = data["id"]
-        version = data.get("versionId")
-        session.post(
-            f"{BASE_URL}/rest/workflows/{workflow_id}/activate",
-            json={"versionId": version},
-            verify=False,
-            timeout=60,
-        ).raise_for_status()
-        time.sleep(5)
-        response = requests.get(f"{BASE_URL}/webhook/{path}", verify=False, timeout=60)
-        response.raise_for_status()
-        payload = response.json()
+        clean_query = " ".join(query.split())
+        wrapped = (
+            "SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) "
+            f"FROM ({clean_query.rstrip(';')}) x;"
+        )
+        cmd = (
+            "docker exec n8n-postgres-1 psql -U n8n -d n8n -At "
+            f"-c {json.dumps(wrapped)}"
+        )
+        _, stdout, stderr = client.exec_command(cmd, timeout=60)
+        out = stdout.read().decode("utf-8", "replace").strip()
+        err = stderr.read().decode("utf-8", "replace").strip()
+        code = stdout.channel.recv_exit_status()
+        if code != 0:
+            raise RuntimeError(err or out or f"psql exit {code}")
+        payload = json.loads(out or "[]")
         if isinstance(payload, list):
             return payload
         return [payload]
     finally:
-        if workflow_id:
-            session.delete(f"{BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60)
+        client.close()
 
 
-def smoke_partners_runtime(session) -> dict:
+def smoke_partners_runtime(_session=None) -> dict:
     errors: list[str] = []
     try:
-        rows = readonly_query(session, PARTNERS_QUERY)
+        rows = query_runtime_rows(PARTNERS_QUERY)
     except Exception as exc:
         return case_result("partners_runtime_refs", status="fail", errors=[f"query_failed:{exc}"])
 
