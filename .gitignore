@@ -22,3 +22,9 @@ n8n/current/backups/
 **/backups/
 99_Archive/
 **/id_ed25519
+
+# Local debug / one-off probes (not part of release artifacts)
+n8n/current/_*
+n8n/current/execution_*.json
+n8n/current/*.decoded-summary.json
+n8n/current/_sheet_meta.json
