@@ -30,4 +30,4 @@
 2. ~~Перевести права лидеров с hardcode на существующие `lead_actors`/`lead_actor_roles`.~~ Сделано 2026-08-01.
 3. ~~Собрать read-only super-admin отчёт и расширить smoke.~~ `/report` расширен; smoke `whieda_leads_report_smoke_2026-08-01.py`.
 4. ~~Реализовать endpoint API строго по контракту, без изменений сайта.~~ Live: `wwc-advisor-public-v1` + `whieda-advisor-api-v1` (2026-08-01).
-5. Structure Basic: sync `Partners_Ref` → `referral_profiles` / runtime; профиль, ref, персонализация.
+5. ~~Structure Basic: sync `Partners_Ref` → `referral_profiles` / runtime; профиль, ref, персонализация.~~ Runtime sync script `run_partners_ref_runtime_sync_2026-08-01.py` (live `success: true`); встроить в 15-мин cron — следующий шаг.
