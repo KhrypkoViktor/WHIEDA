@@ -5,7 +5,6 @@ Read-only against live except triggering structured sync webhook (idempotent).
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import time
@@ -21,7 +20,6 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 BASE_DIR = Path(__file__).resolve().parent
-HELPER_PATH = BASE_DIR / "publish_and_run_whieda_sync_2026-07-13.py"
 BASE_URL = "https://sysarchn8n.duckdns.org"
 PUBLIC_API = f"{BASE_URL}/webhook/wwc-advisor-public-v1"
 CONTRACT_API = f"{BASE_URL}/webhook/whieda-advisor-api-v1"
@@ -50,13 +48,6 @@ WHERE tenant_id = 'whieda'
   AND ref_code IN ('ladnaya', 'mariam')
 ORDER BY ref_code;
 """
-
-
-def load_helper():
-    spec = importlib.util.spec_from_file_location("whieda_sync", HELPER_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def case_result(case_id: str, *, status: str, errors: list[str], detail: dict | None = None) -> dict:
