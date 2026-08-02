@@ -5,15 +5,14 @@ import argparse
 
 import paramiko
 
-HOST = "185.252.232.93"
-USER = "root"
-PASSWORD = "Nordman2026"
+from whieda_runtime_env import ssh_config
 
 
 def ssh(cmd: str, timeout: int = 120) -> str:
+    cfg = ssh_config()
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, username=USER, password=PASSWORD, look_for_keys=False, allow_agent=False, timeout=20)
+    client.connect(cfg["host"], username=cfg["user"], password=cfg["password"], look_for_keys=False, allow_agent=False, timeout=20)
     try:
         _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
         out = stdout.read().decode("utf-8", "replace")

@@ -14,16 +14,18 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import requests
-import urllib3
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from whieda_runtime_env import n8n_base_url, n8n_login, tls_verify
+from whieda_runtime_pg_bootstrap import ensure_pgpassword
+from whieda_runtime_read import query_rows as runtime_query_rows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 BASE_DIR = Path(__file__).resolve().parent
-BASE_URL = "https://sysarchn8n.duckdns.org"
+BASE_URL = n8n_base_url()
 PUBLIC_API = f"{BASE_URL}/webhook/wwc-advisor-public-v1"
 CONTRACT_API = f"{BASE_URL}/webhook/whieda-advisor-api-v1"
+PUBLIC_REF_API = f"{BASE_URL}/webhook/whieda-public-ref-v1"
 SYNC_WEBHOOK = f"{BASE_URL}/webhook/whieda-structured-sync-v1"
 SYNC_WORKFLOW_ID = "9roEvXNsDpnwqjzH"
 ADVISOR_WORKFLOW_ID = "advisor-whieda-phase1"
@@ -61,7 +63,7 @@ def case_result(case_id: str, *, status: str, errors: list[str], detail: dict | 
 
 
 def post_json(url: str, payload: dict, *, timeout: int = 90) -> tuple[int, dict | list | str]:
-    response = requests.post(url, json=payload, verify=False, timeout=timeout)
+    response = requests.post(url, json=payload, verify=tls_verify(), timeout=timeout)
     try:
         body = response.json()
     except ValueError:
@@ -189,7 +191,7 @@ def smoke_api_contract() -> dict:
 def latest_execution(session, workflow_id: str, *, after_id: int = 0) -> dict | None:
     response = session.get(
         f"{BASE_URL}/rest/executions?limit=20&workflowId={workflow_id}",
-        verify=False,
+        verify=tls_verify(),
         timeout=30,
     )
     response.raise_for_status()
@@ -206,7 +208,7 @@ def latest_execution(session, workflow_id: str, *, after_id: int = 0) -> dict | 
 def smoke_structured_sync(session) -> dict:
     before = latest_execution(session, SYNC_WORKFLOW_ID)
     before_id = int((before or {}).get("id") or 0)
-    trigger = requests.post(SYNC_WEBHOOK, verify=False, timeout=120)
+    trigger = requests.post(SYNC_WEBHOOK, verify=tls_verify(), timeout=120)
     errors = []
     if trigger.status_code not in {200, 201, 202, 204}:
         errors.append(f"trigger_http_{trigger.status_code}")
@@ -233,95 +235,40 @@ def smoke_structured_sync(session) -> dict:
     )
 
 
-def query_runtime_rows(query: str) -> list[dict]:
-    """Read advisor runtime tables via Supabase credential (not local n8n Postgres)."""
-    helper_path = BASE_DIR / "publish_and_run_whieda_sync_2026-07-13.py"
-    spec = importlib.util.spec_from_file_location("whieda_sync", helper_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Cannot load {helper_path}")
-    helper = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(helper)
-    session = helper.login_session()
-    suffix = uuid.uuid4().hex[:10]
-    path = f"whieda-smoke-readonly-{suffix}"
-    clean_query = " ".join(query.split()).rstrip(";")
-    wrapped = (
-        "SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS rows "
-        f"FROM ({clean_query}) x;"
-    )
-    workflow = {
-        "name": f"TEMP WHIEDA Smoke Readonly {suffix}",
-        "active": False,
-        "nodes": [
-            {
-                "parameters": {"httpMethod": "GET", "path": path, "responseMode": "responseNode", "options": {}},
-                "id": "webhook",
-                "name": "Webhook",
-                "type": "n8n-nodes-base.webhook",
-                "typeVersion": 2,
-                "position": [-200, 0],
-            },
-            {
-                "parameters": {"operation": "executeQuery", "query": wrapped, "options": {}},
-                "id": "query",
-                "name": "Read-only DB query",
-                "type": "n8n-nodes-base.postgres",
-                "typeVersion": 2.6,
-                "position": [0, 0],
-                "credentials": POSTGRES_CREDENTIAL,
-            },
-            {
-                "parameters": {"respondWith": "json", "responseBody": "={{ $json }}", "options": {"responseCode": 200}},
-                "id": "respond",
-                "name": "Respond",
-                "type": "n8n-nodes-base.respondToWebhook",
-                "typeVersion": 1.1,
-                "position": [200, 0],
-            },
-        ],
-        "connections": {
-            "Webhook": {"main": [[{"node": "Read-only DB query", "type": "main", "index": 0}]]},
-            "Read-only DB query": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]},
-        },
-        "settings": {"executionOrder": "v1"},
-    }
-    workflow_id = None
+def smoke_public_ref_api() -> dict:
+    errors: list[str] = []
     try:
-        created = session.post(f"{helper.BASE_URL}/rest/workflows", json=workflow, verify=False, timeout=60)
-        created.raise_for_status()
-        data = created.json().get("data", created.json())
-        workflow_id = data["id"]
-        version = data.get("versionId")
-        activate = session.post(
-            f"{helper.BASE_URL}/rest/workflows/{workflow_id}/activate",
-            json={"versionId": version},
-            verify=False,
-            timeout=60,
+        known = requests.get(f"{PUBLIC_REF_API}", params={"ref": "ladnaya"}, verify=tls_verify(), timeout=30)
+        missing = requests.get(
+            f"{PUBLIC_REF_API}",
+            params={"ref": "smoke-missing-ref-xyz"},
+            verify=tls_verify(),
+            timeout=30,
         )
-        if activate.status_code == 409:
-            fresh = session.get(f"{helper.BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60).json()["data"]
-            version = fresh.get("versionId")
-            activate = session.post(
-                f"{helper.BASE_URL}/rest/workflows/{workflow_id}/activate",
-                json={"versionId": version},
-                verify=False,
-                timeout=60,
-            )
-        activate.raise_for_status()
-        helper.ssh_run(f"docker exec n8n-n8n-1 n8n publish:workflow --id={workflow_id}")
-        time.sleep(5)
-        result = requests.get(f"{helper.BASE_URL}/webhook/{path}", verify=False, timeout=60)
-        result.raise_for_status()
-        payload = result.json()
-        rows = payload.get("rows", payload)
-        if isinstance(rows, str):
-            rows = json.loads(rows)
-        if isinstance(rows, list):
-            return rows
-        return [rows]
-    finally:
-        if workflow_id:
-            session.delete(f"{helper.BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60)
+    except requests.RequestException as exc:
+        return case_result("public_ref_api", status="fail", errors=[f"request_failed:{exc}"])
+
+    known_body = known.json() if known.text else {}
+    missing_body = missing.json() if missing.text else {}
+    if known.status_code != 200:
+        errors.append(f"known_http_{known.status_code}")
+    if not isinstance(known_body, dict) or known_body.get("ok") is not True:
+        errors.append("known_not_ok")
+    if missing.status_code != 404:
+        errors.append(f"missing_http_{missing.status_code}")
+    if not isinstance(missing_body, dict) or missing_body.get("error") != "ref_not_found":
+        errors.append("missing_not_ref_not_found")
+    return case_result(
+        "public_ref_api",
+        status="pass" if not errors else "fail",
+        errors=errors,
+        detail={"known_status": known.status_code, "missing_status": missing.status_code},
+    )
+
+
+def query_runtime_rows(query: str) -> list[dict]:
+    ensure_pgpassword()
+    return runtime_query_rows(query)
 
 
 def smoke_partners_runtime(_session=None) -> dict:
@@ -382,7 +329,7 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
     try:
         before_rows = session.get(
             f"{BASE_URL}/rest/executions?limit=5&workflowId={ADVISOR_WORKFLOW_ID}",
-            verify=False,
+            verify=tls_verify(),
             timeout=60,
         ).json().get("data", {}).get("results", [])
     except requests.RequestException as exc:
@@ -402,7 +349,7 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
         },
     }
     try:
-        requests.post(TELEGRAM_WEBHOOK, json=payload, verify=False, timeout=90).raise_for_status()
+        requests.post(TELEGRAM_WEBHOOK, json=payload, verify=tls_verify(), timeout=90).raise_for_status()
     except requests.RequestException as exc:
         return case_result("telegram_capability_no_dify", status="fail", errors=[f"webhook_failed:{exc}"])
 
@@ -414,7 +361,7 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
         try:
             rows = session.get(
                 f"{BASE_URL}/rest/executions?limit=30&workflowId={ADVISOR_WORKFLOW_ID}",
-                verify=False,
+                verify=tls_verify(),
                 timeout=60,
             ).json().get("data", {}).get("results", [])
         except requests.RequestException:
@@ -426,7 +373,7 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
             try:
                 detail = session.get(
                     f"{BASE_URL}/rest/executions/{exec_id}?includeData=true",
-                    verify=False,
+                    verify=tls_verify(),
                     timeout=90,
                 ).json()
             except requests.RequestException:
@@ -469,11 +416,12 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
 
 
 def login_session():
+    email, password = n8n_login()
     session = requests.Session()
     response = session.post(
         f"{BASE_URL}/rest/login",
-        json={"emailOrLdapLoginId": "khrypko.viktar@gmail.com", "password": "XdyLnC73KQGeaiT"},
-        verify=False,
+        json={"emailOrLdapLoginId": email, "password": password},
+        verify=tls_verify(),
         timeout=60,
     )
     response.raise_for_status()
@@ -515,6 +463,7 @@ def main() -> None:
         smoke_api_public_price(),
         smoke_api_public_greeting(),
         smoke_api_contract(),
+        smoke_public_ref_api(),
         smoke_structured_sync(session),
         smoke_partners_runtime(session),
         smoke_telegram_greeting_no_dify(session),
