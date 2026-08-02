@@ -43,7 +43,7 @@ REPORT = {
             "title": "Public partner-admin webhook exposed with static token",
             "detail": "whieda-partner-profile-admin-v1 published with hardcoded token; forbidden branch still wired to SQL upsert.",
             "fix": "publish_whieda_public_ref_api_readonly_2026-08-02.py removes admin path; partner edits via Partners_Ref sync only",
-            "status": "pending_live_publish",
+            "status": "resolved_live",
         },
     ],
     "evidence": {
