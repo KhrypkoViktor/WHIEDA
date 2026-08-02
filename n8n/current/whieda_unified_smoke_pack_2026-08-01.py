@@ -417,15 +417,24 @@ def smoke_telegram_greeting_no_dify(session) -> dict:
 
 def login_session():
     email, password = n8n_login()
-    session = requests.Session()
-    response = session.post(
-        f"{BASE_URL}/rest/login",
-        json={"emailOrLdapLoginId": email, "password": password},
-        verify=tls_verify(),
-        timeout=60,
-    )
-    response.raise_for_status()
-    return session
+    deadline = time.time() + 120
+    last_error = None
+    while time.time() < deadline:
+        session = requests.Session()
+        try:
+            response = session.post(
+                f"{BASE_URL}/rest/login",
+                json={"emailOrLdapLoginId": email, "password": password},
+                verify=tls_verify(),
+                timeout=30,
+            )
+            if response.ok:
+                return session
+            last_error = f"login={response.status_code}"
+        except requests.RequestException as exc:
+            last_error = str(exc)
+        time.sleep(3)
+    raise requests.RequestException(f"n8n login failed: {last_error}")
 
 
 def main() -> None:
