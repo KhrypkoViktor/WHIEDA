@@ -42,8 +42,9 @@ def main() -> None:
     delivery = query_rows(
         """
         SELECT count(*)::int AS attempts,
-               count(*) FILTER (WHERE status = 'delivered')::int AS delivered,
-               count(*) FILTER (WHERE status = 'failed')::int AS failed
+               count(*) FILTER (WHERE status = 'sent')::int AS sent,
+               count(*) FILTER (WHERE status = 'failed')::int AS failed,
+               count(*) FILTER (WHERE status = 'pending')::int AS pending
         FROM lead_delivery_attempts
         WHERE created_at >= now() - interval '14 days'
         """
@@ -59,7 +60,7 @@ def main() -> None:
             "activated_partners": partners.get("focus_group", 0),
             "lead_submit_rate_7d": leads.get("last_7d", 0),
             "delivery_success_rate": round(
-                (delivery.get("delivered", 0) / delivery.get("attempts", 1)) * 100, 2
+                (delivery.get("sent", 0) / delivery.get("attempts", 1)) * 100, 2
             )
             if delivery.get("attempts")
             else None,

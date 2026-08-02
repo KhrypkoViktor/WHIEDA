@@ -287,6 +287,146 @@
       }
     },
     {
+      "id": "P0-021",
+      "type": "independent",
+      "input": "дай официальный канал WHIEDA",
+      "expected": {
+        "answer_mode": "direct_structured_community",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "t.me/Whieda_world_club"
+      }
+    },
+    {
+      "id": "P0-022",
+      "type": "independent",
+      "input": "какие ближайшие мероприятия WHIEDA",
+      "expected": {
+        "answer_mode": "direct_structured_event",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "Кальварийская, 4"
+      }
+    },
+    {
+      "id": "P0-023",
+      "type": "independent",
+      "input": "PV это деньги?",
+      "expected": {
+        "answer_mode": "direct_structured_business_faq",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "не одно и то же"
+      }
+    },
+    {
+      "id": "P0-024",
+      "type": "independent",
+      "input": "кэшбэк можно вывести?",
+      "expected": {
+        "answer_mode": "direct_structured_business_faq",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "повторных покупок"
+      }
+    },
+    {
+      "id": "P0-025",
+      "type": "independent",
+      "input": "это млм",
+      "expected": {
+        "answer_mode": "direct_structured_business_objection",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "неприятный опыт"
+      }
+    },
+    {
+      "id": "P0-026",
+      "type": "independent",
+      "input": "я подумаю",
+      "expected": {
+        "answer_mode": "direct_structured_business_objection",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "над чем именно"
+      }
+    },
+    {
+      "id": "P0-027",
+      "type": "independent",
+      "input": "коуч",
+      "expected": {
+        "answer_mode": "direct_coach_objections_menu",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "Выбери ситуацию"
+      }
+    },
+    {
+      "id": "P0-028",
+      "type": "independent",
+      "input": "коуч старт",
+      "expected": {
+        "answer_mode": "direct_coach_first_week_start",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "День 1. Твоя опора"
+      }
+    },
+    {
+      "id": "P0-029",
+      "type": "independent",
+      "input": "коуч готово",
+      "expected": {
+        "answer_mode": "direct_coach_first_week_complete",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "День 2. Короткое знакомство"
+      }
+    },
+    {
+      "id": "P0-030",
+      "type": "independent",
+      "input": "коуч продолжить",
+      "expected": {
+        "answer_mode": "direct_coach_first_week_continue",
+        "source": "structured_sql",
+        "llm_called": false,
+        "messages": 1,
+        "photos": 0,
+        "structured_hit": false,
+        "contains": "День 2. Короткое знакомство"
+      }
+    },
+    {
       "id": "CTX-001",
       "type": "follow_up_sequence",
       "sequence": [

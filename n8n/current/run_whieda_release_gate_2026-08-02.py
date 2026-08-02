@@ -148,6 +148,11 @@ def main() -> None:
     if unified["exit_code"] != 0 or not unified_ok:
         failures.append("unified_smoke_failed")
 
+    lead_ref = run_script("lead_ref_pilot", "whieda_lead_ref_pilot_smoke_2026-08-02.py", timeout=300)
+    gates["lead_ref_pilot"] = lead_ref
+    if lead_ref["exit_code"] != 0:
+        failures.append("lead_ref_pilot_failed")
+
     if not args.skip_heavy:
         p0 = run_script("p0", "whieda_live_p0_smoke_2026-07-13.py", timeout=1200)
         gates["p0"] = p0

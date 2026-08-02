@@ -18,7 +18,7 @@ OUT = BASE_DIR.parent / "live-exports" / datetime.now(timezone.utc).date().isofo
 PUBLIC_REF = f"{n8n_base_url()}/webhook/whieda-public-ref-v1"
 PUBLIC_API = f"{n8n_base_url()}/webhook/wwc-advisor-public-v1"
 
-FOCUS_REFS = ("ladnaya", "mariam", "test_pilot")
+FOCUS_REFS = ("ladnaya", "mariam", "onlineelena")
 
 
 def case(case_id: str, *, pass_: bool, errors: list[str], detail: dict | None = None) -> dict:
@@ -54,7 +54,7 @@ def smoke_runtime_registry() -> dict:
                public_profile->>'public_site_url' AS public_site_url
         FROM referral_profiles
         WHERE tenant_id = 'whieda'
-          AND ref_code IN ('ladnaya', 'mariam', 'test_pilot')
+          AND ref_code IN ('ladnaya', 'mariam', 'onlineelena')
         ORDER BY ref_code
         """
     )

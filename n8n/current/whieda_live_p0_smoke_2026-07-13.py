@@ -190,7 +190,7 @@ def evaluate(case: dict, summary: dict | None) -> dict:
     failures = []
     if summary.get("execution_status") != "success":
         failures.append(f"execution_status={summary.get('execution_status')}")
-    expected_mode = INTENT_TO_MODE.get(expected.get("intent"))
+    expected_mode = expected.get("answer_mode") or INTENT_TO_MODE.get(expected.get("intent"))
     if expected_mode and summary.get("answer_mode") != expected_mode:
         if not (expected.get("intent") == "video" and summary.get("structured_hit") is True):
             failures.append(f"answer_mode={summary.get('answer_mode')}")
@@ -198,7 +198,7 @@ def evaluate(case: dict, summary: dict | None) -> dict:
     if summary.get("route") != "answer":
         failures.append(f"route={summary.get('route')}")
 
-    if summary.get("structured_hit") is not True:
+    if expected.get("structured_hit", True) is True and summary.get("structured_hit") is not True:
         failures.append("structured_hit=false")
 
     expected_sku = expected.get("sku")
@@ -213,6 +213,10 @@ def evaluate(case: dict, summary: dict | None) -> dict:
 
     if expected.get("caption_empty") is True and summary.get("telegram_photo_caption") not in (None, ""):
         failures.append("caption_not_empty")
+
+    contains = expected.get("contains")
+    if contains and contains.lower() not in str(summary.get("reply_text") or "").lower():
+        failures.append(f"missing_text={contains}")
 
     if summary.get("knowledge_gap") is True:
         failures.append("knowledge_gap=true")
