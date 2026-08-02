@@ -120,7 +120,17 @@ UPSERT_SQL = """WITH params AS (
   CROSS JOIN surface_id s
   ON CONFLICT (client_id, conversation_id)
   DO UPDATE SET
-    context = advisor_conversation_context.context || EXCLUDED.context,
+    context = advisor_conversation_context.context
+      || jsonb_strip_nulls(jsonb_build_object(
+        'active_ref', NULLIF(s.ref_code, ''),
+        'last_product_slug', NULLIF(s.slug, ''),
+        'surface', 'website'
+      ))
+      || CASE
+        WHEN coalesce(advisor_conversation_context.context->>'first_ref', '') = ''
+        THEN jsonb_strip_nulls(jsonb_build_object('first_ref', NULLIF(s.ref_code, '')))
+        ELSE '{}'::jsonb
+      END,
     updated_at = NOW()
   RETURNING conversation_id::text AS conversation_id
 )

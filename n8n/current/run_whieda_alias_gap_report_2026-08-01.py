@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import csv
-import importlib.util
 import json
 import re
-import time
-import uuid
 from datetime import date
 from pathlib import Path
-
-import requests
 
 BASE_DIR = Path(__file__).resolve().parent
 RAG_ALIASES = (
@@ -22,7 +17,6 @@ RAG_ALIASES = (
     / "02_ALIASES.tsv"
 )
 EXPORT_DIR = BASE_DIR.parent / "live-exports" / date.today().isoformat()
-POSTGRES_CREDENTIAL = {"postgres": {"id": "RmjHh3rdZri7axzq", "name": "advisor-dev-postgres"}}
 
 
 def normalize(value: str) -> str:
@@ -57,48 +51,18 @@ def load_corpus_aliases() -> list[dict]:
 
 
 def fetch_live_aliases() -> list[dict]:
-    helper_path = BASE_DIR / "publish_and_run_whieda_sync_2026-07-13.py"
-    spec = importlib.util.spec_from_file_location("h", helper_path)
-    helper = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(helper)
-    session = helper.login_session()
-    suffix = uuid.uuid4().hex[:8]
-    path = f"whieda-alias-gap-{suffix}"
-    query = """
-SELECT alias, canonical_sku, canonical_name, match_type, priority, active::text AS active
-FROM advisor_structured_aliases
-WHERE client_id = 'whieda'
-ORDER BY alias
-"""
-    wrapped = f"SELECT COALESCE(json_agg(row_to_json(x)), '[]'::json) AS rows FROM ({query}) x"
-    workflow = {
-        "name": f"TEMP alias gap {suffix}",
-        "active": False,
-        "nodes": [
-            {"parameters": {"httpMethod": "GET", "path": path, "responseMode": "responseNode", "options": {}}, "id": "w", "name": "Webhook", "type": "n8n-nodes-base.webhook", "typeVersion": 2, "position": [0, 0]},
-            {"parameters": {"operation": "executeQuery", "query": wrapped, "options": {}}, "id": "q", "name": "Q", "type": "n8n-nodes-base.postgres", "typeVersion": 2.6, "position": [200, 0], "credentials": POSTGRES_CREDENTIAL},
-            {"parameters": {"respondWith": "json", "responseBody": "={{ $json }}", "options": {"responseCode": 200}}, "id": "r", "name": "Respond", "type": "n8n-nodes-base.respondToWebhook", "typeVersion": 1.1, "position": [400, 0]},
-        ],
-        "connections": {"Webhook": {"main": [[{"node": "Q", "type": "main", "index": 0}]]}, "Q": {"main": [[{"node": "Respond", "type": "main", "index": 0}]]}},
-        "settings": {"executionOrder": "v1"},
-    }
-    workflow_id = None
-    try:
-        data = session.post(f"{helper.BASE_URL}/rest/workflows", json=workflow, verify=False, timeout=60).json()["data"]
-        workflow_id = data["id"]
-        session.post(
-            f"{helper.BASE_URL}/rest/workflows/{workflow_id}/activate",
-            json={"versionId": data["versionId"]},
-            verify=False,
-            timeout=60,
-        ).raise_for_status()
-        helper.ssh_run(f"docker exec n8n-n8n-1 n8n publish:workflow --id={workflow_id}")
-        time.sleep(5)
-        payload = requests.get(f"{helper.BASE_URL}/webhook/{path}", verify=False, timeout=60).json()
-        return payload.get("rows", payload) if isinstance(payload, dict) else payload
-    finally:
-        if workflow_id:
-            session.delete(f"{helper.BASE_URL}/rest/workflows/{workflow_id}", verify=False, timeout=60)
+    from whieda_runtime_pg_bootstrap import ensure_pgpassword
+    from whieda_runtime_read import query_rows
+
+    ensure_pgpassword()
+    return query_rows(
+        """
+        SELECT alias, canonical_sku, canonical_name, match_type, priority, active::text AS active
+        FROM advisor_structured_aliases
+        WHERE client_id = 'whieda'
+        ORDER BY alias
+        """
+    )
 
 
 def main() -> None:

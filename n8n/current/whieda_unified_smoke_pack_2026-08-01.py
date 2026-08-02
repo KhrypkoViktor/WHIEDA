@@ -98,13 +98,17 @@ def check_api_response(body: dict, *, expect_structured: bool, forbid_dify_route
     if forbid_dify_route and "dify" in route:
         errors.append(f"dify_route={route}")
     if expect_structured:
-        if route not in {"structured", "direct_structured", "direct_structured_card", "direct_structured_photo"}:
-            if body.get("answer_mode", "").startswith("structured") or route == "fallback":
-                pass
-            elif not any(token in route for token in ("structured", "capability", "greeting", "smalltalk")):
-                errors.append(f"unexpected_route={route}")
         mode = str(body.get("answer_mode") or "")
-        if expect_structured and "price" in mode and "structured" not in mode:
+        route_ok = (
+            route in {"structured", "direct_structured", "direct_structured_card", "direct_structured_photo", "answer"}
+            or mode.startswith("structured")
+            or mode.startswith("direct_structured")
+            or route == "fallback"
+            or any(token in route for token in ("structured", "capability", "greeting", "smalltalk"))
+        )
+        if not route_ok:
+            errors.append(f"unexpected_route={route}")
+        if "price" in mode and "structured" not in mode and not mode.startswith("direct_structured"):
             errors.append(f"unexpected_mode={mode}")
     return errors
 

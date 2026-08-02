@@ -1,6 +1,6 @@
 # WHIEDA Live Status
 
-Updated: 2026-08-02 (Partner Pilot P0)
+Updated: 2026-08-02 (Partner Pilot P0, gate fixes)
 
 ## Current focus
 Partner pilot backend/Telegram. RAG/distillate frozen in staging only.
@@ -10,9 +10,12 @@ Partner pilot backend/Telegram. RAG/distillate frozen in staging only.
 $env:WHIEDA_N8N_EMAIL="..."
 $env:WHIEDA_N8N_PASSWORD="..."
 $env:WHIEDA_SSH_PASSWORD="..."   # or NORDMAN_LIVE_SSH_PASSWORD
+$env:PGPASSWORD="..."          # or fetched via fetch_pg_password_from_n8n.py
 python n8n/current/run_whieda_release_gate_2026-08-02.py
 python n8n/current/run_whieda_release_gate_2026-08-02.py --require-consecutive 2
 ```
+
+Gate now includes: TEMP=0, canary, unified smoke, lead/ref pilot smoke, P0≥30, regression≥98%.
 
 ## External canary
 `python n8n/current/whieda_external_canary_2026-08-02.py`
