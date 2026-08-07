@@ -7,12 +7,6 @@
     "verified_staging": "proved on empty local DB or Core HTTP smoke",
     "live_blocked": "requires owner sign-off or live infra"
   },
-  "summary": {
-    "total": 32,
-    "implemented_local": 29,
-    "verified_staging": 0,
-    "live_blocked": 3
-  },
   "production_rails_unchanged": {
     "CORE_ROUTE_PUBLIC_REF": "core",
     "CORE_ROUTE_LEADS": "core",
@@ -191,10 +185,9 @@
     },
     {
       "id": "test-02",
-      "title": "Empty-DB staging SQL apply proof",
+      "title": "Empty-DB staging SQL apply + RLS proof (Docker 55432)",
       "status": "implemented_local",
-      "verify": "python postgres/scripts/verify_staging_apply_empty.py",
-      "note": "Postgres not reachable on dev machine during last run — re-run to promote to verified_staging"
+      "verify": "python postgres/scripts/run_local_staging_proof.py"
     },
     {
       "id": "test-03",

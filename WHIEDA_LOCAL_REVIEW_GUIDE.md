@@ -1,50 +1,60 @@
 # WHIEDA Core — Local Review Guide
 
-**Scope:** `backend/platform-api/`, `postgres/sql/`, `postgres/scripts/`, `n8n/current/*smoke*` (read-only ops reference).  
-**Out of scope for Core developer:** `03_Website/`, live n8n, Telegram webhook, prod SQL, Google Sheets.
+**Scope:** `backend/platform-api/`, `postgres/sql/`, `postgres/scripts/`.  
+**Out of scope:** `03_Website/`, live n8n, Telegram webhook, prod SQL, Google Sheets, Supabase.
 
-## Honest block manifest
+## One-command local staging proof
 
-[`WHIEDA_LOCAL_BUILD_BLOCKS_V1.json`](WHIEDA_LOCAL_BUILD_BLOCKS_V1.json) — **32 atomic tasks**, no filler rows.
-
-Statuses:
-
-| Status | Meaning |
-|--------|---------|
-| `implemented_local` | Code + unit tests in repo |
-| `verified_staging` | Proved on empty local DB or HTTP smoke with Core up |
-| `live_blocked` | Needs owner / live infra |
-
-## Verify (Core)
+**Requires:** Docker Desktop (or Docker Engine) installed locally. The script does not install Docker.
 
 ```powershell
 cd D:\Projects\WHIEDA\backend\platform-api
 python -m pytest tests/ -q
 
 cd D:\Projects\WHIEDA
-python postgres\scripts\verify_staging_apply_empty.py
-
-# Optional — only when Core listens on :8080:
-python n8n\current\whieda_core_p0_local_full_smoke_2026-08-07.py --base-url http://127.0.0.1:8080
-python n8n\current\whieda_staging_journey_e2e_2026-08-07.py --base-url http://127.0.0.1:8080
+python postgres\scripts\run_local_staging_proof.py
 ```
 
-## Staging SQL apply order (full)
+### What the proof does
+
+1. Starts `postgres:16-alpine` via `postgres/docker-compose.local-staging.yml` on port **55432**
+2. Creates temporary DB `whieda_platform_staging_verify_<random>`
+3. Applies all staging SQL **twice** (idempotency check)
+4. Creates local-only API role `whieda_platform_api_proof` (NOBYPASSRLS, not superuser)
+5. Verifies RLS isolation `whieda` vs `test-acme` on:
+   - `website_leads`
+   - `referral_profiles`
+   - `website_events`
+   - `website_lead_watchers`
+   - `referral_agreements`
+6. Drops the temporary database; **container stays running**
+
+### Expected output (success)
+
+```
+=== LOCAL STAGING PROOF: PASS ===
+  SQL files x2: 12 (+ seed)
+  RLS tables: website_leads, referral_profiles, ...
+  Role: whieda_platform_api_proof (NOBYPASSRLS)
+  dropped temporary database whieda_platform_staging_verify_...
+```
+
+Exit code `0`.
+
+### Manual Docker control
 
 ```powershell
-.\postgres\scripts\apply_staging_platform_all.ps1 -DbHost 127.0.0.1 -Db whieda_platform -CreateDb
+docker compose -f postgres\docker-compose.local-staging.yml up -d
+docker compose -f postgres\docker-compose.local-staging.yml down   # when finished
 ```
 
-1. `platform_tenant_registry_v1.sql`
-2. `platform_tenant_rls_v1.sql`
-3. `platform_api_session_context_v1.sql`
-4. `platform_identity_journey_v1.sql`
-5. `platform_onboarding_v1.sql`
-6. `platform_user_memory_v1.sql`
-7. `platform_pilot_telemetry_v1.sql`
-8. `platform_retention_export_v1.sql`
-9. `platform_whieda_telegram_binding_v1.sql`
-10. `staging_seed_whieda_journey_v1.sql` (optional seed)
+## Block manifest
+
+[`WHIEDA_LOCAL_BUILD_BLOCKS_V1.json`](WHIEDA_LOCAL_BUILD_BLOCKS_V1.json) — 31 tasks; counts from `blocks[]`.
+
+## Staging SQL apply order
+
+See `postgres/scripts/staging_proof_lib.py` → `APPLY_ORDER` (same as `apply_staging_platform_all.ps1`).
 
 ## Production rails (unchanged)
 
@@ -53,19 +63,8 @@ python n8n\current\whieda_staging_journey_e2e_2026-08-07.py --base-url http://12
 | CORE_ROUTE_TELEGRAM | **legacy** |
 | CORE_ROUTE_ADVISOR | shadow |
 
-## Telegram delivery rule
-
-1. `sendPhoto` — **без caption**
-2. `sendMessage` — полный текст ответа
-3. Если `sendPhoto` упал → всё равно `sendMessage`
-
-Supported modes: `app/telegram/modes.py` → `TELEGRAM_DELIVERABLE_MODES` (includes `structured_product_detail`, `structured_comparison_layer`).
-
 ## LIVE BLOCKED
 
-- Webhook cutover (`CORE_ROUTE_TELEGRAM=core`)
-- Prod SQL apply
-- n8n legacy greeting media
-- Gate 3 real Telegram E2E
+- Webhook cutover, prod SQL, n8n legacy greeting media, Gate 3 Telegram E2E
 
-See [`CORE_LOCAL_BUILD_REPORT.md`](CORE_LOCAL_BUILD_REPORT.md) for last run results.
+Report: [`LOCAL_STAGING_PROOF_REPORT.md`](LOCAL_STAGING_PROOF_REPORT.md)
