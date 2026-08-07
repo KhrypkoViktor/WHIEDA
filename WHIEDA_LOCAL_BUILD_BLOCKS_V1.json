@@ -1,0 +1,213 @@
+{
+  "version": "2.0",
+  "scope": "backend/platform-api + postgres — Core developer only; site/n8n/webhook out of scope",
+  "generated_at": "2026-08-07",
+  "status_legend": {
+    "implemented_local": "code + unit tests in repo",
+    "verified_staging": "proved on empty local DB or Core HTTP smoke",
+    "live_blocked": "requires owner sign-off or live infra"
+  },
+  "summary": {
+    "total": 32,
+    "implemented_local": 29,
+    "verified_staging": 0,
+    "live_blocked": 3
+  },
+  "production_rails_unchanged": {
+    "CORE_ROUTE_PUBLIC_REF": "core",
+    "CORE_ROUTE_LEADS": "core",
+    "CORE_ROUTE_ADVISOR": "shadow",
+    "CORE_ROUTE_TELEGRAM": "legacy",
+    "CORE_ROUTE_DEEP": "off"
+  },
+  "blocks": [
+    {
+      "id": "parity-01",
+      "title": "Service intents return empty media (SERVICE-GREETING-NO-MEDIA)",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_advisor_service_no_media.py"
+    },
+    {
+      "id": "parity-02",
+      "title": "media_assertions.py — parity checks for advisor responses",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_media_assertions.py"
+    },
+    {
+      "id": "parity-03",
+      "title": "formatters.empty_media() returns fresh dict per call",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_media_assertions.py"
+    },
+    {
+      "id": "tg-01",
+      "title": "telegram/modes.py — single TELEGRAM_DELIVERABLE_MODES incl. structured_product_detail",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_telegram_photo_delivery.py"
+    },
+    {
+      "id": "tg-02",
+      "title": "Photo-first: sendPhoto без caption, затем sendMessage; fallback text при ошибке фото",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_telegram_photo_delivery.py"
+    },
+    {
+      "id": "tg-03",
+      "title": "processor.py Core path: start token → onboarding → advisor",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_telegram_processor.py"
+    },
+    {
+      "id": "tg-04",
+      "title": "routes.py uses unified modes + deliver_structured_advisor_response",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_telegram_delivery.py"
+    },
+    {
+      "id": "tg-05",
+      "title": "Telegram webhook cutover CORE_ROUTE_TELEGRAM=core",
+      "status": "live_blocked",
+      "verify": "owner sign-off + staging binding"
+    },
+    {
+      "id": "sql-01",
+      "title": "Full staging apply order: registry → rls → session_context → journey → onboarding → memory → pilot → retention → bot binding",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_staging_sql_order.py; postgres/scripts/verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-02",
+      "title": "platform_identity_journey_v1.sql — sessions, tokens, events",
+      "status": "implemented_local",
+      "verify": "verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-03",
+      "title": "platform_onboarding_v1.sql + staging seed",
+      "status": "implemented_local",
+      "verify": "verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-04",
+      "title": "platform_user_memory_v1.sql",
+      "status": "implemented_local",
+      "verify": "verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-05",
+      "title": "platform_pilot_telemetry_v1.sql + platform_retention_export_v1.sql",
+      "status": "implemented_local",
+      "verify": "verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-06",
+      "title": "platform_whieda_telegram_binding_v1.sql — whieda-advisor-bot",
+      "status": "implemented_local",
+      "verify": "verify_staging_apply_empty.py"
+    },
+    {
+      "id": "sql-07",
+      "title": "Prod SQL apply",
+      "status": "live_blocked",
+      "verify": "owner-only migration window"
+    },
+    {
+      "id": "id-01",
+      "title": "POST /v1/telegram-link-tokens create",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_identity_link_tokens.py"
+    },
+    {
+      "id": "id-02",
+      "title": "POST /v1/telegram-link-tokens/exchange + memory facts on exchange",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_identity_link_tokens.py"
+    },
+    {
+      "id": "journey-01",
+      "title": "POST /v1/interaction-events (idempotent)",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_journey_events.py"
+    },
+    {
+      "id": "journey-02",
+      "title": "PUT/GET /v1/visitor-sessions",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_journey_events.py"
+    },
+    {
+      "id": "journey-03",
+      "title": "journey/bridge.py session hints for advisor",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_journey_bridge.py"
+    },
+    {
+      "id": "journey-04",
+      "title": "Leads attach visitor_session_id + lead_created event",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_lead_journey_link.py"
+    },
+    {
+      "id": "onb-01",
+      "title": "Onboarding enroll + command API (7-day FSM)",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_onboarding.py"
+    },
+    {
+      "id": "onb-02",
+      "title": "Onboarding reminder scheduled job",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_onboarding_reminders.py"
+    },
+    {
+      "id": "rep-01",
+      "title": "GET /v1/reports/leader-digest + CSV",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_reports.py"
+    },
+    {
+      "id": "mem-01",
+      "title": "PUT/GET /v1/memory-facts",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_memory_and_delivery.py"
+    },
+    {
+      "id": "pilot-01",
+      "title": "Pilot outcomes + summary API",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_pilot_telemetry.py"
+    },
+    {
+      "id": "ret-01",
+      "title": "Retention registry + export requests (no auto-delete)",
+      "status": "implemented_local",
+      "verify": "pytest tests/test_retention_export.py"
+    },
+    {
+      "id": "test-01",
+      "title": "pytest full suite",
+      "status": "implemented_local",
+      "verify": "cd backend/platform-api && python -m pytest tests/ -q"
+    },
+    {
+      "id": "test-02",
+      "title": "Empty-DB staging SQL apply proof",
+      "status": "implemented_local",
+      "verify": "python postgres/scripts/verify_staging_apply_empty.py",
+      "note": "Postgres not reachable on dev machine during last run — re-run to promote to verified_staging"
+    },
+    {
+      "id": "test-03",
+      "title": "P0 HTTP smoke (28 checks) with Core running",
+      "status": "live_blocked",
+      "verify": "python n8n/current/whieda_core_p0_local_full_smoke_2026-08-07.py --base-url http://127.0.0.1:8080",
+      "note": "0/28 without Core — not a regression, server was down"
+    },
+    {
+      "id": "legacy-01",
+      "title": "n8n legacy greeting media pollution fix",
+      "status": "live_blocked",
+      "verify": "owner n8n publish only"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "gate": "G0",
+  "name": "Preflight — local only",
+  "status": "pass",
+  "checks": [
+    "production_rails_unchanged",
+    "no_live_n8n_in_diff",
+    "WHIEDA_LOCAL_BUILD_BLOCKS_V1.json present"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "gate": "G1",
+  "name": "SQL parity / advisor media",
+  "status": "pass_local",
+  "verify": [
+    "pytest tests/test_advisor_service_no_media.py",
+    "pytest tests/test_media_assertions.py",
+    "python n8n/current/whieda_core_service_media_smoke_2026-08-07.py"
+  ],
+  "live_blocked": ["legacy_n8n_greeting_media"]
+}

@@ -1,0 +1,1 @@
+"""Confirmed user memory facts."""

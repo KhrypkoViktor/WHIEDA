@@ -1,0 +1,10 @@
+{
+  "gate": "G3",
+  "name": "Site → Telegram real E2E",
+  "status": "blocked_live",
+  "requires": [
+    "Victor sign-off",
+    "CORE_ROUTE_TELEGRAM=core on staging",
+    "test Telegram account"
+  ]
+}
