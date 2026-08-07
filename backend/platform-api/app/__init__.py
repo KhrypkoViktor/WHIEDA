@@ -1,0 +1,1 @@
+"""WHIEDA Platform Core API."""

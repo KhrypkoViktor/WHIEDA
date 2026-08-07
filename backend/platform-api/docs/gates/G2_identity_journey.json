@@ -1,0 +1,10 @@
+{
+  "gate": "G2",
+  "name": "Identity + journey + onboarding APIs",
+  "status": "pass_local",
+  "verify": [
+    "pytest tests/test_identity_link_tokens.py",
+    "pytest tests/test_journey_events.py",
+    "pytest tests/test_onboarding.py"
+  ]
+}
