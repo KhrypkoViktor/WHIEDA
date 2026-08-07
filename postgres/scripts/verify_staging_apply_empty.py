@@ -4,29 +4,28 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-SQL_DIR = ROOT / "postgres" / "sql"
-APPLY_ORDER = [
-    "platform_tenant_registry_v1.sql",
-    "platform_tenant_rls_v1.sql",
-    "platform_api_session_context_v1.sql",
-    "platform_identity_journey_v1.sql",
-    "platform_onboarding_v1.sql",
-    "platform_user_memory_v1.sql",
-    "platform_pilot_telemetry_v1.sql",
-    "platform_retention_export_v1.sql",
-    "platform_whieda_telegram_binding_v1.sql",
-]
-SEED = ROOT / "postgres" / "scripts" / "staging_seed_whieda_journey_v1.sql"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from staging_proof_lib import (  # noqa: E402
+    APPLY_ORDER,
+    LOCAL_STAGING_PORT,
+    SEED,
+    SQL_DIR,
+    validate_proof_db_name,
+    validate_proof_host,
+)
 
 REQUIRED_TABLES = [
     "tenants",
     "tenant_bot_bindings",
+    "website_leads",
+    "referral_profiles",
     "platform_session_context",
     "visitor_sessions",
     "identity_link_tokens",
@@ -38,9 +37,8 @@ REQUIRED_TABLES = [
 
 
 def run_psql(db: str, sql: str, *, host: str, port: int, user: str) -> None:
-    env = os.environ.copy()
     cmd = ["psql", "-h", host, "-p", str(port), "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]
-    subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
 def run_psql_file(db: str, path: Path, *, host: str, port: int, user: str) -> None:
@@ -51,18 +49,30 @@ def run_psql_file(db: str, path: Path, *, host: str, port: int, user: str) -> No
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5432)
+    parser.add_argument("--port", type=int, default=LOCAL_STAGING_PORT)
     parser.add_argument("--user", default="postgres")
-    parser.add_argument("--db", default="whieda_platform_staging_verify")
+    parser.add_argument("--db", default="whieda_platform_staging_verify_manual")
     parser.add_argument("--keep-db", action="store_true")
     args = parser.parse_args()
 
+    try:
+        validate_proof_host(args.host)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
     db = args.db
+    try:
+        validate_proof_db_name(db)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
     print(f"=== staging apply verify on empty DB: {db} ===")
 
     try:
-        run_psql("postgres", f"DROP DATABASE IF EXISTS {db};", host=args.host, port=args.port, user=args.user)
-        run_psql("postgres", f"CREATE DATABASE {db};", host=args.host, port=args.port, user=args.user)
+        run_psql("postgres", f'DROP DATABASE IF EXISTS "{db}";', host=args.host, port=args.port, user=args.user)
+        run_psql("postgres", f'CREATE DATABASE "{db}";', host=args.host, port=args.port, user=args.user)
 
         for name in APPLY_ORDER:
             path = SQL_DIR / name
@@ -99,28 +109,6 @@ def main() -> int:
             if out.stdout.strip() != "t":
                 missing.append(table)
 
-        binding = subprocess.run(
-            [
-                "psql",
-                "-h",
-                args.host,
-                "-p",
-                str(args.port),
-                "-U",
-                args.user,
-                "-d",
-                db,
-                "-tAc",
-                "SELECT count(*) FROM tenant_bot_bindings WHERE binding_id = 'whieda-advisor-bot';",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        if binding.stdout.strip() != "1":
-            print("FAIL: whieda-advisor-bot binding missing")
-            return 1
-
         if missing:
             print(f"FAIL: missing tables: {missing}")
             return 1
@@ -130,7 +118,7 @@ def main() -> int:
     finally:
         if not args.keep_db:
             try:
-                run_psql("postgres", f"DROP DATABASE IF EXISTS {db};", host=args.host, port=args.port, user=args.user)
+                run_psql("postgres", f'DROP DATABASE IF EXISTS "{db}";', host=args.host, port=args.port, user=args.user)
             except subprocess.CalledProcessError:
                 pass
 

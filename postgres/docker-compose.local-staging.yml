@@ -1,0 +1,25 @@
+# Local staging Postgres only — not production or remote hosted DB.
+# Usage: docker compose -f postgres/docker-compose.local-staging.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: whieda-local-staging-postgres
+    restart: unless-stopped
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local_staging_proof
+      POSTGRES_DB: postgres
+    volumes:
+      - whieda_local_staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  whieda_local_staging_pgdata:
+    name: whieda_local_staging_pgdata
