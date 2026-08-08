@@ -1,0 +1,15 @@
+# Local Platform Core API — connects to staging Postgres on host port 55432.
+# Usage (from backend/platform-api):
+#   docker compose -f docker-compose.local-core.yml up -d --build
+
+services:
+  platform-api:
+    build: .
+    container_name: whieda-local-core-api
+    restart: "no"
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.local.example
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
