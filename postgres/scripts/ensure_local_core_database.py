@@ -22,7 +22,7 @@ from staging_proof_lib import (  # noqa: E402
 )
 
 LOCAL_CORE_DB = "whieda_platform_local_core"
-INIT_MARKER_TABLE = "platform_tenants"
+INIT_MARKER_TABLE = "tenants"
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> None:
