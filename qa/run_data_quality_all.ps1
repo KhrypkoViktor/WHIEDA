@@ -10,6 +10,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 python qa\data_quality\run_data_quality.py --manifest qa\data_quality\fixtures\manifest.test.json --report
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+python qa\data_quality\verify_rules_coverage.py
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 Push-Location backend\platform-api
 python -m pytest tests\data_quality\ -q
 $pytestExit = $LASTEXITCODE
