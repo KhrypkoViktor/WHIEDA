@@ -106,13 +106,14 @@ def test_group_minimums(cases: list[dict]) -> None:
 def test_demo_products_coverage(cases: list[dict]) -> None:
     product_hits: Counter[str] = Counter()
     for row in cases:
-        product = row.get("expected_product")
-        if product:
-            product_hits[str(product)] += 1
         blob = json.dumps(row, ensure_ascii=False)
-        for product in DEMO_PRODUCTS_MIN5:
-            if product in blob:
-                product_hits[product] += 1
+        matched = {
+            product
+            for product in DEMO_PRODUCTS_MIN5
+            if product in blob or row.get("expected_product") == product
+        }
+        for product in matched:
+            product_hits[product] += 1
     for product in DEMO_PRODUCTS_MIN5:
         assert product_hits[product] >= 5, f"{product}: {product_hits[product]}"
 
