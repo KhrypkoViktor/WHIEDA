@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "rule_id": "empty_layer",
+      "layer": "*",
+      "severity": "warning",
+      "description": "Layer export file has zero data rows",
+      "fixture_scenario": "empty_products",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "required_field_empty",
+      "layer": "*",
+      "severity": "error",
+      "description": "Required column is empty",
+      "fixture_scenario": "empty_alias",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "invalid_number",
+      "layer": "products_prices",
+      "severity": "error",
+      "description": "Numeric field contains non-numeric text",
+      "fixture_scenario": "price_string",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "number_below_min",
+      "layer": "products_prices",
+      "severity": "error",
+      "description": "Numeric value below configured minimum",
+      "fixture_scenario": "negative_pv",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "zero_forbidden",
+      "layer": "products_prices",
+      "severity": "error",
+      "description": "Zero value where zero is forbidden",
+      "fixture_scenario": "zero_price",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "invalid_boolean",
+      "layer": "*",
+      "severity": "error",
+      "description": "Boolean field has invalid value",
+      "fixture_scenario": "invalid_boolean",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "invalid_url",
+      "layer": "*",
+      "severity": "error",
+      "description": "URL must start with https://",
+      "fixture_scenario": "bad_url",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "invalid_date",
+      "layer": "events",
+      "severity": "error",
+      "description": "Date field cannot be parsed",
+      "fixture_scenario": "invalid_date_event",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "enum_violation",
+      "layer": "resource_links",
+      "severity": "warning",
+      "description": "Value not in allowed enum",
+      "fixture_scenario": "enum_resource_type_warn",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "duplicate_key",
+      "layer": "*",
+      "severity": "error",
+      "description": "Duplicate unique key within layer",
+      "fixture_scenario": "dup_sku",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "missing_product_ref",
+      "layer": "resource_links",
+      "severity": "error",
+      "description": "SKU reference column is empty where required",
+      "fixture_scenario": "resource_missing_sku",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "unknown_product_ref",
+      "layer": "product_aliases",
+      "severity": "error",
+      "description": "Referenced SKU does not exist in products",
+      "fixture_scenario": "alias_missing_sku",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "faq_missing_answer",
+      "layer": "business_faq",
+      "severity": "error",
+      "description": "Active FAQ without answer text",
+      "fixture_scenario": "faq_empty_answer",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "promotion_missing_end",
+      "layer": "promotions",
+      "severity": "error",
+      "description": "Promotion without end date",
+      "fixture_scenario": "promo_missing_end",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "promotion_date_order",
+      "layer": "promotions",
+      "severity": "error",
+      "description": "Promotion end date before start date",
+      "fixture_scenario": "promo_bad_dates",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "bundle_unknown_product",
+      "layer": "solution_bundles",
+      "severity": "error",
+      "description": "Bundle references unknown SKU",
+      "fixture_scenario": "bundle_unknown",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "inactive_product_in_active_bundle",
+      "layer": "solution_bundles",
+      "severity": "error",
+      "description": "Inactive product inside active bundle",
+      "fixture_scenario": "inactive_in_bundle",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "price_conflict",
+      "layer": "products_prices",
+      "severity": "error",
+      "description": "Conflicting active prices for same SKU/country/type",
+      "fixture_scenario": "two_active_prices",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "suspicious_artifact",
+      "layer": "*",
+      "severity": "error",
+      "description": "Suspicious AI/debug text artifact in data",
+      "fixture_scenario": "nordman_artifact",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "medical_language",
+      "layer": "product_cards",
+      "severity": "warning",
+      "description": "Potentially unsafe medical wording in card or bundle copy",
+      "fixture_scenario": "medical_warning_card",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    },
+    {
+      "rule_id": "missing_material_type",
+      "layer": "resource_links",
+      "severity": "error",
+      "description": "Photo/video/certificate link without material type",
+      "fixture_scenario": "missing_material_type",
+      "pytest_ref": "test_quality_checks_detect_issues",
+      "status": "active"
+    }
+  ]
+}

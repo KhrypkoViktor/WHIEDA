@@ -94,10 +94,11 @@ def _check_references(
                 norm = normalize_row(row, contract)
                 val = str(norm.get(ref["column"], "")).strip()
                 if not val:
-                    if ref.get("when_present"):
-                        continue
                     if layer in {"certificates", "resource_links"} and ref["column"] == "sku":
                         issues.append(_issue(ref.get("severity", "error"), "missing_product_ref", layer, file_paths.get(layer, ""), idx, ref["column"], "SKU reference is empty"))
+                        continue
+                    if ref.get("when_present"):
+                        continue
                     continue
                 if val not in target_index:
                     issues.append(
