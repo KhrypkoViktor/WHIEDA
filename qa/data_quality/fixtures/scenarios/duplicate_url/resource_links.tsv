@@ -1,0 +1,4 @@
+resource_id	sku	resource_type	title	url	active
+R-001	M015-00	photo	Фото	https://cdn.example/activator.jpg	true
+R-002	M015-00	video	Видео	https://cdn.example/activator.mp4	true
+R-003	M015-00	photo	Dup	https://cdn.example/activator.jpg	true

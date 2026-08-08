@@ -1,0 +1,16 @@
+{
+  "layer": "solution_bundles",
+  "description": "Solution Bundles export",
+  "id_fields": ["bundle_id"],
+  "columns": {
+    "bundle_id": {"type": "string", "required": true},
+    "title": {"type": "string", "required": true},
+    "primary_sku": {"type": "string", "required": true, "aliases": ["основной_товар"]},
+    "additional_skus": {"type": "string", "required": false, "aliases": ["доп_товары"]},
+    "restrictions": {"type": "string", "required": false, "aliases": ["ограничения"]},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["bundle_id"]],
+  "references": [{"column": "primary_sku", "target_layer": "products_prices", "target_column": "sku", "severity": "error"}],
+  "medical_scan_fields": ["restrictions"]
+}

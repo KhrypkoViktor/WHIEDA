@@ -1,0 +1,3 @@
+user_id	email	role	active
+U-001	ops@example.test	editor	true
+U-001	other@test	admin	true

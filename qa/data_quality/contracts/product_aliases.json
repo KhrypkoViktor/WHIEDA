@@ -1,0 +1,16 @@
+{
+  "layer": "product_aliases",
+  "description": "Product Aliases sheet export",
+  "id_fields": ["alias"],
+  "columns": {
+    "alias": {"type": "string", "required": true, "aliases": ["алиас"]},
+    "canonical_sku": {"type": "string", "required": true, "aliases": ["sku"]},
+    "canonical_name": {"type": "string", "required": false},
+    "match_type": {"type": "string", "required": false},
+    "priority": {"type": "number", "min": 0, "allow_zero": true},
+    "active": {"type": "boolean", "required": false, "default": true},
+    "answer_scope": {"type": "string", "required": false}
+  },
+  "unique": [["alias"]],
+  "references": [{"column": "canonical_sku", "target_layer": "products_prices", "target_column": "sku", "severity": "error"}]
+}

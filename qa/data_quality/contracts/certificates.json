@@ -1,0 +1,15 @@
+{
+  "layer": "certificates",
+  "description": "Certificates / compliance materials",
+  "id_fields": ["certificate_id"],
+  "columns": {
+    "certificate_id": {"type": "string", "required": true},
+    "sku": {"type": "string", "required": true},
+    "title": {"type": "string", "required": false},
+    "resource_type": {"type": "string", "required": true, "enum": ["certificate", "document"]},
+    "url": {"type": "url", "required": true},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["certificate_id"]],
+  "references": [{"column": "sku", "target_layer": "products_prices", "target_column": "sku", "severity": "error"}]
+}

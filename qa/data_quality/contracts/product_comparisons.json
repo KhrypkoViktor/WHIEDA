@@ -1,0 +1,18 @@
+{
+  "layer": "product_comparisons",
+  "description": "Product Comparisons sheet export",
+  "id_fields": ["comparison_id"],
+  "columns": {
+    "comparison_id": {"type": "string", "required": true},
+    "sku_a": {"type": "string", "required": true},
+    "sku_b": {"type": "string", "required": true},
+    "title": {"type": "string", "required": false},
+    "summary": {"type": "string", "required": false},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["comparison_id"]],
+  "references": [
+    {"column": "sku_a", "target_layer": "products_prices", "target_column": "sku", "severity": "error"},
+    {"column": "sku_b", "target_layer": "products_prices", "target_column": "sku", "severity": "error"}
+  ]
+}

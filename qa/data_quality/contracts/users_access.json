@@ -1,0 +1,12 @@
+{
+  "layer": "users_access",
+  "description": "Users Access sheet export",
+  "id_fields": ["user_id"],
+  "columns": {
+    "user_id": {"type": "string", "required": true},
+    "email": {"type": "string", "required": false},
+    "role": {"type": "string", "required": true},
+    "active": {"type": "boolean", "required": true, "default": true}
+  },
+  "unique": [["user_id"]]
+}

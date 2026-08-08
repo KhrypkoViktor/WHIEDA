@@ -49,3 +49,7 @@ postgres/sql/tmp_*.sql
 
 # Large JSON smoke dumps (keep curated packs only)
 n8n/current/WHIEDA_live_followup_and_review_smoke_2026-07-13.json
+
+# Generated data quality artifacts (local only)
+qa/data_quality/baselines/
+qa/data_quality/reports/

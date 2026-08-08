@@ -1,0 +1,20 @@
+{
+  "layer": "product_cards",
+  "description": "Product Cards sheet export",
+  "id_fields": ["sku"],
+  "columns": {
+    "sku": {"type": "string", "required": true},
+    "canonical_name": {"type": "string", "required": true, "aliases": ["name"]},
+    "short_name": {"type": "string", "required": false},
+    "category": {"type": "string", "required": false},
+    "what_it_is": {"type": "string", "required": false},
+    "contraindications_short": {"type": "string", "required": false},
+    "do_not_claim": {"type": "string", "required": false},
+    "primary_image_url": {"type": "url", "required": false},
+    "source_status": {"type": "string", "required": false},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["sku"]],
+  "references": [{"column": "sku", "target_layer": "products_prices", "target_column": "sku", "severity": "error"}],
+  "medical_scan_fields": ["what_it_is", "contraindications_short", "do_not_claim"]
+}

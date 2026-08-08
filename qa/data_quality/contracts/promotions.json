@@ -1,0 +1,15 @@
+{
+  "layer": "promotions",
+  "description": "Promotions sheet export",
+  "id_fields": ["promotion_id"],
+  "columns": {
+    "promotion_id": {"type": "string", "required": true},
+    "title": {"type": "string", "required": true},
+    "start_date": {"type": "date", "required": true},
+    "end_date": {"type": "date", "required": true},
+    "active": {"type": "boolean", "required": false, "default": true},
+    "sku": {"type": "string", "required": false}
+  },
+  "unique": [["promotion_id"]],
+  "references": [{"column": "sku", "target_layer": "products_prices", "target_column": "sku", "severity": "warning", "when_present": true}]
+}
