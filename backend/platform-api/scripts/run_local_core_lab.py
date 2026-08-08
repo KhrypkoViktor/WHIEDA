@@ -110,7 +110,7 @@ def main() -> int:
 
         print("\n=== LOCAL CORE RUNTIME LAB: PASS ===")
         return 0
-    except RuntimeError as exc:
+    except (RuntimeError, TimeoutError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -141,6 +141,30 @@ def check_blocked_integration_config(base: str) -> None:
     print("  PASS local-core-routes")
 
 
+def check_legacy_webhook_not_used(base: str) -> None:
+    """Core route accepts webhook locally; response must not expose legacy n8n URLs."""
+    payload = json.dumps(
+        {"update_id": 1, "message": {"chat": {"id": 1}, "text": "smoke ping"}}
+    ).encode("utf-8")
+    status, body, _ = request(
+        "POST",
+        f"{base}/v1/telegram/local-lab-smoke/webhook",
+        headers={"Host": "wwc.best", "Content-Type": "application/json"},
+        data=payload,
+    )
+    if status != 200:
+        raise AssertionError(f"telegram webhook expected 200 got {status} body={body}")
+    data = json.loads(body)
+    if data.get("ok") is not True:
+        raise AssertionError(f"telegram webhook expected ok=true got {data}")
+    low = body.lower()
+    for frag in ("duckdns.org", "sysarchn8n", "/webhook/advisor-whieda-v0", "185.252."):
+        if frag in low:
+            raise AssertionError(f"telegram webhook response exposes legacy URL fragment {frag!r}")
+    assert_no_secrets(body, context="telegram-webhook")
+    print("  PASS telegram-webhook-core-entry")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE)
@@ -160,6 +184,7 @@ def main() -> int:
         check_tenant_isolation(base)
         check_no_legacy_paths_in_openapi(base)
         check_blocked_integration_config(base)
+        check_legacy_webhook_not_used(base)
     except AssertionError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

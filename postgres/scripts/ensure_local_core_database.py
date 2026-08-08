@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_POSTGRES_SCRIPTS = _SCRIPT_DIR.parents[1] / "postgres" / "scripts"
-if str(_POSTGRES_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_POSTGRES_SCRIPTS))
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
 from staging_proof_lib import (  # noqa: E402
     APPLY_ORDER,
@@ -22,6 +22,7 @@ from staging_proof_lib import (  # noqa: E402
 )
 
 LOCAL_CORE_DB = "whieda_platform_local_core"
+INIT_MARKER_TABLE = "platform_tenants"
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> None:
@@ -58,12 +59,8 @@ def _psql_file(db: str, path: Path) -> None:
     )
 
 
-def main() -> int:
-    if shutil.which("docker") is None:
-        print("Docker required", file=sys.stderr)
-        return 1
-
-    exists = subprocess.run(
+def _database_exists() -> bool:
+    proc = subprocess.run(
         _psql_cmd(
             "postgres",
             LOCAL_STAGING_SUPERUSER,
@@ -74,13 +71,55 @@ def main() -> int:
         capture_output=True,
         text=True,
     )
-    if exists.stdout.strip() != "1":
-        _psql_exec("postgres", f'CREATE DATABASE "{LOCAL_CORE_DB}";')
+    return proc.stdout.strip() == "1"
 
+
+def _schema_initialized() -> bool:
+    if not _database_exists():
+        return False
+    proc = subprocess.run(
+        _psql_cmd(
+            LOCAL_CORE_DB,
+            LOCAL_STAGING_SUPERUSER,
+            LOCAL_STAGING_SUPERPASSWORD,
+            "-tAc",
+            "SELECT 1 FROM information_schema.tables "
+            f"WHERE table_schema = 'public' AND table_name = '{INIT_MARKER_TABLE}';",
+        ),
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() == "1"
+
+
+def _apply_schema() -> None:
     for name in APPLY_ORDER:
         _psql_file(LOCAL_CORE_DB, SQL_DIR / name)
     if SEED.is_file():
         _psql_file(LOCAL_CORE_DB, SEED)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Ensure local Core database on staging Postgres")
+    parser.add_argument(
+        "--force-reapply",
+        action="store_true",
+        help="Re-run all SQL even if schema already present",
+    )
+    args = parser.parse_args()
+
+    if shutil.which("docker") is None:
+        print("Docker required", file=sys.stderr)
+        return 1
+
+    if _schema_initialized() and not args.force_reapply:
+        print(f"OK: {LOCAL_CORE_DB} already initialized (use --force-reapply to rebuild)")
+        return 0
+
+    if not _database_exists():
+        _psql_exec("postgres", f'CREATE DATABASE "{LOCAL_CORE_DB}";')
+
+    _apply_schema()
 
     print(f"OK: {LOCAL_CORE_DB} ready ({len(APPLY_ORDER)} SQL files + seed)")
     return 0
