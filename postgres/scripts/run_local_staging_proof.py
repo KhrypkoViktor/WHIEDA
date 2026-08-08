@@ -303,10 +303,14 @@ INSERT INTO website_leads (
 def drop_db(db: str) -> None:
     psql_exec(
         "postgres",
-        f"""
-SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db}' AND pid <> pg_backend_pid();
-DROP DATABASE IF EXISTS "{db}";
-""",
+        f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db}' AND pid <> pg_backend_pid();",
+        user=LOCAL_STAGING_SUPERUSER,
+        password=LOCAL_STAGING_SUPERPASSWORD,
+    )
+    # DROP DATABASE cannot run inside the transaction created by a multi-statement psql -c call.
+    psql_exec(
+        "postgres",
+        f'DROP DATABASE IF EXISTS "{db}";',
         user=LOCAL_STAGING_SUPERUSER,
         password=LOCAL_STAGING_SUPERPASSWORD,
     )

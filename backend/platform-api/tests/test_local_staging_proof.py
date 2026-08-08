@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from collections import Counter
@@ -31,6 +32,14 @@ MANIFEST = ROOT / "WHIEDA_LOCAL_BUILD_BLOCKS_V1.json"
 PROOF_SCRIPT = SCRIPTS / "run_local_staging_proof.py"
 VERIFY_SCRIPT = SCRIPTS / "verify_staging_apply_empty.py"
 COMPOSE = ROOT / "postgres" / "docker-compose.local-staging.yml"
+
+
+def _load_proof_module():
+    spec = importlib.util.spec_from_file_location("run_local_staging_proof", PROOF_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_compose_uses_local_port_only():
@@ -109,3 +118,18 @@ def test_manifest_status_counts_from_blocks():
 def test_allowed_db_regex_matches_proof_pattern():
     assert ALLOWED_VERIFY_DB.match("whieda_platform_staging_verify_deadbeef01")
     assert not ALLOWED_VERIFY_DB.match("whieda_platform_staging_verify")
+
+
+def test_proof_cleanup_terminates_then_drops_in_separate_psql_calls(monkeypatch):
+    proof = _load_proof_module()
+    calls = []
+
+    def fake_psql_exec(db, sql, **kwargs):
+        calls.append((db, sql, kwargs))
+
+    monkeypatch.setattr(proof, "psql_exec", fake_psql_exec)
+    proof.drop_db("whieda_platform_staging_verify_deadbeef01")
+
+    assert len(calls) == 2
+    assert "pg_terminate_backend" in calls[0][1]
+    assert "drop database" in calls[1][1].lower()
