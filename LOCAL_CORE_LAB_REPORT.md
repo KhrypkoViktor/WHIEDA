@@ -49,6 +49,7 @@ Script does **not** attempt `docker compose down` when Docker is missing.
 | `/openapi.json` | Valid OpenAPI, no external legacy URLs |
 | Invalid JSON → POST `/api/v1/leads` | 400 or 422, no traceback |
 | Tenant isolation | `ladnaya` on `wwc.best` → 200; missing Host → 404; `acme.test.local` → 404 |
+| Telegram webhook | POST `/v1/telegram/local-lab-smoke/webhook` → 200 `{ok:true}`, no legacy URLs in response |
 | No legacy outbound | Smoke refuses non-localhost base URL; no Telegram/n8n webhook calls |
 | Response hygiene | No passwords, connection strings, tokens, traceback |
 
@@ -67,3 +68,10 @@ python backend\platform-api\scripts\run_local_core_lab.py
 ```
 
 Env template: `backend/platform-api/.env.local.example`
+
+## Honest limits (verified 2026-08-08)
+
+- **E2E lab not run on this machine** — Docker not in PATH; only static tests + script exit code verified.
+- **Full PASS requires Docker** on your side: `python backend\platform-api\scripts\run_local_core_lab.py`
+- **`postgres/sql/platform_tenant_rls_legacy_leads_v1.sql`** referenced by staging proof but **not in git** (pre-existing gap); lab needs this file on disk locally.
+- **`ensure_local_core_database.py`** skips re-apply if `platform_tenants` exists (second run safe); use `--force-reapply` to rebuild.

@@ -83,7 +83,17 @@ def test_lab_script_requires_docker():
     assert proc.returncode == 0
 
 
-def test_http_smoke_rejects_remote_base_url():
+def test_ensure_core_db_skips_reapply_when_initialized():
+    text = (ROOT / "postgres" / "scripts" / "ensure_local_core_database.py").read_text(encoding="utf-8")
+    assert "_schema_initialized()" in text
+    assert "--force-reapply" in text
+    assert "already initialized" in text
+
+
+def test_http_smoke_checks_telegram_webhook_entry():
+    text = HTTP_SMOKE.read_text(encoding="utf-8")
+    assert "check_legacy_webhook_not_used" in text
+    assert "/v1/telegram/local-lab-smoke/webhook" in text
     proc = subprocess.run(
         [sys.executable, str(HTTP_SMOKE), "--base-url", "https://wwc.best"],
         capture_output=True,
