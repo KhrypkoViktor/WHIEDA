@@ -55,3 +55,11 @@ qa/data_quality/baselines/
 qa/data_quality/reports/
 qa/data_quality/snapshots/*
 !qa/data_quality/snapshots/.gitkeep
+
+# Acceptance lab generated artifacts (local only)
+qa/acceptance/acceptance_target.local.json
+qa/acceptance/raw_responses/
+qa/acceptance/baselines/*
+!qa/acceptance/baselines/.gitkeep
+qa/acceptance/reports/*
+!qa/acceptance/reports/.gitkeep
