@@ -56,6 +56,27 @@ GROUP_MINIMUMS = {
 
 ALLOWED_PRIORITIES = {"P0", "P1", "P2"}
 
+ALLOWED_EXPECTED_MODES = {
+    "structured_price",
+    "structured_card",
+    "structured_photo",
+    "structured_video",
+    "structured_certificate",
+    "structured_product_detail",
+    "structured_comparison",
+    "structured_comparison_layer",
+    "structured_business",
+    "structured_business_faq",
+    "structured_business_objection",
+    "structured_promotion",
+    "structured_event",
+    "structured_community",
+    "structured_starter_basket",
+    "structured_cart",
+    "clarification",
+    "knowledge_gap",
+}
+
 PLACEHOLDER_PATTERNS = (
     re.compile(r"\bTODO\b", re.I),
     re.compile(r"\bexample\s*1\b", re.I),
@@ -180,6 +201,10 @@ def validate_cases(cases: list[dict]) -> list[str]:
         priority = row.get("priority")
         if priority not in ALLOWED_PRIORITIES:
             errors.append(f"{case_id}: invalid priority {priority!r}")
+
+        expected_mode = row.get("expected_mode")
+        if expected_mode not in ALLOWED_EXPECTED_MODES:
+            errors.append(f"{case_id}: invalid expected_mode {expected_mode!r}")
 
         input_text = str(row.get("input", "")).strip()
         if len(input_text) < 2:

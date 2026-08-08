@@ -35,6 +35,7 @@ DEMO_PRODUCTS_MIN5 = (
     "Очки",
     "Стельки",
     "Палантин",
+    "Магнитный пояс",
     "Линчжи",
     "Лювэй",
     "Соевый пептид",
@@ -106,14 +107,9 @@ def test_group_minimums(cases: list[dict]) -> None:
 def test_demo_products_coverage(cases: list[dict]) -> None:
     product_hits: Counter[str] = Counter()
     for row in cases:
-        blob = json.dumps(row, ensure_ascii=False)
-        matched = {
-            product
-            for product in DEMO_PRODUCTS_MIN5
-            if product in blob or row.get("expected_product") == product
-        }
-        for product in matched:
-            product_hits[product] += 1
+        product = row.get("expected_product")
+        if product in DEMO_PRODUCTS_MIN5:
+            product_hits[str(product)] += 1
     for product in DEMO_PRODUCTS_MIN5:
         assert product_hits[product] >= 5, f"{product}: {product_hits[product]}"
 

@@ -133,6 +133,7 @@ def build_cases() -> list[dict]:
         ("что такое компьютерные очки", "Очки", PRODUCTS["glasses"]),
         ("что за сауна для дома", "Ба-Гуа", PRODUCTS["bagua"]),
         ("расскажи про красный эликсир", "Фохоу", PRODUCTS["fohou_red"]),
+        ("расскажи про магнитный пояс", "пояс", PRODUCTS["belt"]),
     ]
     for text, token, product in card_inputs:
         add("catalog_card", "P0", text, "structured_card", [token], product, prefix="CAT")
