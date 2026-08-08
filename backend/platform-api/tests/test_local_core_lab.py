@@ -49,6 +49,8 @@ def test_env_local_example_is_localhost_only():
     assert "127.0.0.1" in text
     assert "host.docker.internal" in text
     assert "55432" in text
+    assert "postgresql://postgres:" not in text
+    assert "whieda_platform_api_local" in text
 
 
 def test_http_smoke_does_not_call_telegram_or_n8n():
@@ -89,6 +91,8 @@ def test_ensure_core_db_skips_reapply_when_initialized():
     assert "--force-reapply" in text
     assert "already initialized" in text
     assert 'INIT_MARKER_TABLE = "tenants"' in text
+    assert 'LOCAL_CORE_API_ROLE = "whieda_platform_api_local"' in text
+    assert "NOBYPASSRLS" in text
     registry = (ROOT / "postgres" / "sql" / "platform_tenant_registry_v1.sql").read_text(encoding="utf-8")
     assert "create table if not exists tenants" in registry.lower()
 
