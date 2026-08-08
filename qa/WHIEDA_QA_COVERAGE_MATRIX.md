@@ -2,14 +2,14 @@
 
 **Corpus:** `qa/cases/whieda_regression_cases_v1.jsonl`  
 **Runner:** `qa/run_whieda_regression.py` (offline)  
-**Last validated:** 264 cases, validation PASS
+**Last validated:** generated locally from the current corpus; run `qa/run_all_qa.ps1` for the exact count.
 
 ## Coverage by block
 
 | Блок | Кейсов | P0 | Что проверяем | Пробелы |
 |---|---:|---:|---|---|
-| `catalog_card` | 37 | 36 | Карточка товара, canonical name, описание | Нет проверки live-фото URL |
-| `catalog_price` | 37 | 36 | Розница, PV, повторка, partner price | Live-курс валют не проверяется |
+| `catalog_card` | 38 | 37 | Карточка товара, canonical name, описание | Нет проверки live-фото URL |
+| `catalog_price` | 36 | 35 | Розница, PV, повторка, partner price | Live-курс валют не проверяется |
 | `aliases_typo` | 38 | 5 | Опечатки, транслит, короткие алиасы | Не все sheet-алиасы из prod |
 | `followup_context` | 31 | 31 | «а цена?», «дай фото» после карточки | Session persistence только в live Core |
 | `photo_video_certificate` | 26 | 25 | structured_photo/video/certificate/detail | Байты медиа не проверяются офлайн |
@@ -79,6 +79,5 @@ cd D:\Projects\WHIEDA
 ## Known gaps (honest)
 
 1. Corpus offline — не вызывает advisor API; нужен отдельный live smoke для PASS/FAIL по ответам.
-2. `platform_tenant_rls_legacy_leads_v1.sql` всё ещё вне git — влияет на local Core lab, не на corpus.
-3. Promotion/community cases — P2, зависят от свежести контента.
-4. Media cases проверяют mode contract, не HTTP 200 на CDN URL.
+2. Promotion/community cases — P2, зависят от свежести контента.
+3. Media cases проверяют mode contract, не HTTP 200 на CDN URL.
