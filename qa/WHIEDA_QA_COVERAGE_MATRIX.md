@@ -2,22 +2,22 @@
 
 **Corpus:** `qa/cases/whieda_regression_cases_v1.jsonl`  
 **Runner:** `qa/run_whieda_regression.py` (offline)  
-**Last validated:** 262 cases, validation PASS
+**Last validated:** 264 cases, validation PASS
 
 ## Coverage by block
 
 | Блок | Кейсов | P0 | Что проверяем | Пробелы |
 |---|---:|---:|---|---|
-| `catalog_card` | 38 | 35 | Карточка товара, canonical name, описание | Нет проверки live-фото URL |
-| `catalog_price` | 36 | 35 | Розница, PV, повторка, partner price | Live-курс валют не проверяется |
-| `aliases_typo` | 38 | 5+ | Опечатки, транслит, короткие алиасы | Не все sheet-алиасы из prod |
-| `followup_context` | 31 | 28 | «а цена?», «дай фото» после карточки | Session persistence только в live Core |
+| `catalog_card` | 37 | 36 | Карточка товара, canonical name, описание | Нет проверки live-фото URL |
+| `catalog_price` | 37 | 36 | Розница, PV, повторка, partner price | Live-курс валют не проверяется |
+| `aliases_typo` | 38 | 5 | Опечатки, транслит, короткие алиасы | Не все sheet-алиасы из prod |
+| `followup_context` | 31 | 31 | «а цена?», «дай фото» после карточки | Session persistence только в live Core |
 | `photo_video_certificate` | 26 | 25 | structured_photo/video/certificate/detail | Байты медиа не проверяются офлайн |
 | `comparison` | 21 | 0 | PRO vs base, эликсиры, наборы | Сложные compare-layer — частично |
-| `cart_and_basket` | 21 | 1 | Корзина, starter basket, сумма PV | Starter basket rules — legacy parity |
+| `cart_and_basket` | 21 | 0 | Корзина, starter basket, сумма PV | Starter basket rules — legacy parity |
 | `business_faq` | 21 | 0 | PV, повторка, MLM-возражения | Нет live marketing plan numbers |
 | `promotion_event` | 16 | 0 | Акции, ивенты, community | Контент акций устаревает — P2 only |
-| `safety_and_clarification` | 16 | 7 | Не-диагноз, clarification паста/цвет | Нет юридической экспертизы формулировок |
+| `safety_and_clarification` | 16 | 8 | Не-диагноз, clarification паста/цвет | Нет юридической экспертизы формулировок |
 
 ## Что уже можно проверять Core (offline corpus + unit tests)
 
