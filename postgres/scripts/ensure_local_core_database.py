@@ -23,6 +23,8 @@ from staging_proof_lib import (  # noqa: E402
 
 LOCAL_CORE_DB = "whieda_platform_local_core"
 INIT_MARKER_TABLE = "tenants"
+LOCAL_CORE_API_ROLE = "whieda_platform_api_local"
+LOCAL_CORE_API_PASSWORD = "local_core_api_only"
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> None:
@@ -99,6 +101,31 @@ def _apply_schema() -> None:
         _psql_file(LOCAL_CORE_DB, SEED)
 
 
+def _ensure_api_role() -> None:
+    _psql_exec(
+        "postgres",
+        f"""
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{LOCAL_CORE_API_ROLE}') THEN
+    CREATE ROLE {LOCAL_CORE_API_ROLE} WITH LOGIN PASSWORD '{LOCAL_CORE_API_PASSWORD}'
+      NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+  END IF;
+END $$;
+""",
+    )
+    _psql_exec(
+        LOCAL_CORE_DB,
+        f"""
+GRANT CONNECT ON DATABASE \"{LOCAL_CORE_DB}\" TO {LOCAL_CORE_API_ROLE};
+GRANT USAGE ON SCHEMA public TO {LOCAL_CORE_API_ROLE};
+GRANT EXECUTE ON FUNCTION platform_set_tenant_context(text) TO {LOCAL_CORE_API_ROLE};
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {LOCAL_CORE_API_ROLE};
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {LOCAL_CORE_API_ROLE};
+""",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Ensure local Core database on staging Postgres")
     parser.add_argument(
@@ -112,16 +139,20 @@ def main() -> int:
         print("Docker required", file=sys.stderr)
         return 1
 
-    if _schema_initialized() and not args.force_reapply:
-        print(f"OK: {LOCAL_CORE_DB} already initialized (use --force-reapply to rebuild)")
-        return 0
+    already_initialized = _schema_initialized()
+    if not already_initialized or args.force_reapply:
+        if not _database_exists():
+            _psql_exec("postgres", f'CREATE DATABASE "{LOCAL_CORE_DB}";')
+        _apply_schema()
+    else:
+        print(f"OK: {LOCAL_CORE_DB} already initialized; refreshing local API role grants")
 
-    if not _database_exists():
-        _psql_exec("postgres", f'CREATE DATABASE "{LOCAL_CORE_DB}";')
+    _ensure_api_role()
 
-    _apply_schema()
-
-    print(f"OK: {LOCAL_CORE_DB} ready ({len(APPLY_ORDER)} SQL files + seed)")
+    print(
+        f"OK: {LOCAL_CORE_DB} ready ({len(APPLY_ORDER)} SQL files + seed; "
+        f"API role {LOCAL_CORE_API_ROLE} is NOBYPASSRLS)"
+    )
     return 0
 
 
