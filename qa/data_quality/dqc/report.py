@@ -23,8 +23,10 @@ def build_report_payload(
     layer_stats: dict[str, int],
     diff: dict[str, Any],
     manifest_path: str,
+    gate: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    status = overall_status(issues, missing_sources)
+    validation_status = overall_status(issues, [] if gate else missing_sources)
+    status = gate["status"] if gate else validation_status
     errors = [i for i in issues if i["severity"] == "error"]
     warnings = [i for i in issues if i["severity"] == "warning"]
     top = sorted(issues, key=lambda x: (0 if x["severity"] == "error" else 1, x["layer"], x.get("row", 0)))[:20]
@@ -34,10 +36,11 @@ def build_report_payload(
         "aliases": [i for i in issues if i["layer"] == "product_aliases" or "alias" in i.get("check", "")],
         "safety": [i for i in issues if i.get("check") in {"medical_language", "suspicious_artifact"} or "safety" in i.get("check", "")],
     }
-    return {
+    payload: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "manifest": manifest_path,
         "status": status,
+        "validation_status": validation_status,
         "layer_stats": layer_stats,
         "missing_sources": missing_sources,
         "error_count": len(errors),
@@ -48,6 +51,14 @@ def build_report_payload(
         "blocks": blocks,
         "diff": diff,
     }
+    if gate:
+        payload["mode"] = gate["mode"]
+        payload["required_layers"] = gate["required_layers"]
+        payload["found_layers"] = gate["found_layers"]
+        payload["missing_layers"] = gate["missing_layers"]
+        payload["missing_required_layers"] = gate["missing_required_layers"]
+        payload["can_sync"] = "yes" if gate["can_sync"] else "no"
+    return payload
 
 
 def write_reports(payload: dict[str, Any], md_path: Path, json_path: Path) -> None:
@@ -65,11 +76,28 @@ def _render_md(payload: dict[str, Any]) -> str:
         f"**Manifest:** `{payload['manifest']}`",
         f"**Status:** **{payload['status']}**",
         "",
+    ]
+    if payload.get("mode"):
+        lines.extend(
+            [
+                "## Sync gate",
+                "",
+                f"- **Mode:** `{payload['mode']}`",
+                f"- **Required layers:** {', '.join(f'`{l}`' for l in payload.get('required_layers') or []) or 'none'}",
+                f"- **Found layers:** {', '.join(f'`{l}`' for l in payload.get('found_layers') or []) or 'none'}",
+                f"- **Missing layers:** {', '.join(f'`{l}`' for l in payload.get('missing_layers') or []) or 'none'}",
+                f"- **Can sync:** **{payload.get('can_sync', 'unknown')}**",
+                "",
+            ]
+        )
+    lines.extend(
+        [
         "## Row counts by layer",
         "",
         "| Layer | Rows |",
         "|---|---:|",
-    ]
+        ]
+    )
     for layer, count in sorted((payload.get("layer_stats") or {}).items()):
         lines.append(f"| `{layer}` | {count} |")
 

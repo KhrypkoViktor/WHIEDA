@@ -53,12 +53,31 @@ def _run_engine(manifest: Path, *flags: str) -> subprocess.CompletedProcess[str]
     return subprocess.run(cmd, capture_output=True, text=True, cwd=str(ROOT))
 
 
-def _validate_scenario(scenario: str) -> dict:
+def _manifest_release_minimal() -> Path:
+    base = json.loads((DQC / "source_manifest.json").read_text(encoding="utf-8"))
+    required = {"products_prices", "product_cards", "product_aliases", "resource_links"}
+    scenario_dir = FIX / "valid_full"
+    sources = []
+    for src in base["sources"]:
+        if src["layer"] not in required:
+            continue
+        entry = dict(src)
+        candidate = scenario_dir / src["file"]
+        if candidate.is_file():
+            entry["path"] = str(candidate.relative_to(ROOT)).replace("\\", "/")
+            sources.append(entry)
+    mini = {"version": 1, "exports_root": str(scenario_dir.relative_to(ROOT)).replace("\\", "/"), "sources": sources}
+    tmp = Path(tempfile.mkdtemp()) / "release_minimal.manifest.json"
+    tmp.write_text(json.dumps(mini, ensure_ascii=False, indent=2), encoding="utf-8")
+    return tmp
+
+
+def _validate_scenario(scenario: str, *, mode: str = "dev") -> dict:
     sys.path.insert(0, str(DQC))
     from dqc.engine import DataQualityEngine
 
     manifest = _manifest_for_scenario(scenario)
-    engine = DataQualityEngine(ROOT, manifest)
+    engine = DataQualityEngine(ROOT, manifest, mode=mode)
     return engine.validate()
 
 
@@ -117,9 +136,69 @@ def test_quality_checks_detect_issues(scenario: str, expected_check: str):
 
 
 def test_production_manifest_reports_missing_sources():
-    proc = _run_engine(DQC / "source_manifest.json", "--validate")
+    proc = _run_engine(DQC / "source_manifest.json", "--mode", "dev", "--validate")
     assert "SOURCE MISSING" in proc.stdout + proc.stderr
+    assert "Status: WARN" in proc.stdout
     assert proc.returncode == 0
+
+
+def test_dev_mode_without_files_is_warn():
+    proc = _run_engine(DQC / "source_manifest.json", "--mode", "dev", "--validate")
+    assert proc.returncode == 0
+    assert "Status: WARN" in proc.stdout
+    assert "Can sync: yes" in proc.stdout
+
+
+def test_release_mode_without_required_is_fail():
+    proc = _run_engine(DQC / "source_manifest.json", "--mode", "release", "--validate")
+    assert proc.returncode == 1
+    assert "Status: FAIL" in proc.stdout
+    assert "Can sync: no" in proc.stdout
+
+
+def test_full_mode_without_any_layer_is_fail():
+    proc = _run_engine(DQC / "source_manifest.json", "--mode", "full", "--validate")
+    assert proc.returncode == 1
+    assert "Status: FAIL" in proc.stdout
+
+
+def test_release_mode_with_minimal_valid_set_passes():
+    proc = _run_engine(_manifest_release_minimal(), "--mode", "release", "--validate")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Status: PASS" in proc.stdout
+    assert "Can sync: yes" in proc.stdout
+
+
+def test_baseline_blocked_on_fail(tmp_path: Path):
+    sys.path.insert(0, str(DQC))
+    from dqc.engine import DataQualityEngine
+
+    engine = DataQualityEngine(ROOT, DQC / "source_manifest.json", mode="release")
+    engine.baseline_path = tmp_path / "baseline.json"
+    result = engine.validate()
+    with pytest.raises(RuntimeError, match="FAIL"):
+        engine.save_baseline_snapshot(
+            result["baseline"],
+            layer_stats=result["layer_stats"],
+            gate=result["gate"],
+        )
+    assert not engine.baseline_path.is_file()
+
+
+def test_baseline_blocked_on_empty_dataset(tmp_path: Path):
+    sys.path.insert(0, str(DQC))
+    from dqc.engine import DataQualityEngine
+
+    manifest = _manifest_for_scenario("empty_products")
+    engine = DataQualityEngine(ROOT, manifest, mode="dev")
+    engine.baseline_path = tmp_path / "baseline.json"
+    result = engine.validate()
+    with pytest.raises(RuntimeError, match="no data rows"):
+        engine.save_baseline_snapshot(
+            result["baseline"],
+            layer_stats=result["layer_stats"],
+            gate=result["gate"],
+        )
 
 
 def test_runner_has_no_network_calls():
@@ -153,10 +232,14 @@ def test_baseline_and_diff_flow(tmp_path: Path):
     from dqc.engine import DataQualityEngine
 
     manifest = _manifest_for_scenario("valid_full")
-    engine = DataQualityEngine(ROOT, manifest)
+    engine = DataQualityEngine(ROOT, manifest, mode="dev")
     engine.baseline_path = tmp_path / "baseline.json"
     first = engine.validate()
-    engine.save_baseline_snapshot(first["baseline"])
+    engine.save_baseline_snapshot(
+        first["baseline"],
+        layer_stats=first["layer_stats"],
+        gate=first["gate"],
+    )
     second = engine.validate()
     assert second["diff"]["status"] == "ok"
     for info in (second["diff"].get("layers") or {}).values():
@@ -192,7 +275,12 @@ def test_alias_removed_diff(tmp_path: Path):
     base_m = _manifest_for_scenario("valid_full")
     engine = DataQualityEngine(ROOT, base_m)
     engine.baseline_path = tmp_path / "b.json"
-    engine.save_baseline_snapshot(engine.validate()["baseline"])
+    base_result = engine.validate()
+    engine.save_baseline_snapshot(
+        base_result["baseline"],
+        layer_stats=base_result["layer_stats"],
+        gate=base_result["gate"],
+    )
 
     rem_m = _manifest_for_scenario("alias_removed_v2")
     engine2 = DataQualityEngine(ROOT, rem_m)
@@ -208,7 +296,12 @@ def test_safety_change_diff(tmp_path: Path):
     base_m = _manifest_for_scenario("valid_full")
     engine = DataQualityEngine(ROOT, base_m)
     engine.baseline_path = tmp_path / "b2.json"
-    engine.save_baseline_snapshot(engine.validate()["baseline"])
+    base_result = engine.validate()
+    engine.save_baseline_snapshot(
+        base_result["baseline"],
+        layer_stats=base_result["layer_stats"],
+        gate=base_result["gate"],
+    )
 
     ch_m = _manifest_for_scenario("safety_change_v2")
     engine2 = DataQualityEngine(ROOT, ch_m)

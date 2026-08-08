@@ -19,6 +19,12 @@ from dqc.engine import DataQualityEngine  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description="WHIEDA data quality control plane")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
+    parser.add_argument(
+        "--mode",
+        choices=("dev", "release", "full"),
+        default="dev",
+        help="dev=missing sources WARN; release=4 core layers required; full=all 12 required",
+    )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--validate", action="store_true")
     group.add_argument("--baseline", action="store_true")
@@ -27,13 +33,22 @@ def main() -> int:
     group.add_argument("--all", action="store_true")
     args = parser.parse_args()
 
-    engine = DataQualityEngine(ROOT, args.manifest.resolve())
+    engine = DataQualityEngine(ROOT, args.manifest.resolve(), mode=args.mode)
     result = engine.validate()
     payload = result["payload"]
+    gate = result["gate"]
 
     if args.baseline or args.all:
-        engine.save_baseline_snapshot(result["baseline"])
-        print(f"Baseline saved: {engine.baseline_path.relative_to(ROOT)}")
+        try:
+            engine.save_baseline_snapshot(
+                result["baseline"],
+                layer_stats=result["layer_stats"],
+                gate=gate,
+            )
+            print(f"Baseline saved: {engine.baseline_path.relative_to(ROOT)}")
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     if args.diff or args.all:
         diff = result["diff"]
@@ -49,8 +64,13 @@ def main() -> int:
         print(f"Report: {engine.report_json.relative_to(ROOT)}")
 
     if args.validate or args.all:
+        print(f"Mode: {gate['mode']}")
         print(f"Status: {payload['status']}")
+        print(f"Can sync: {'yes' if gate['can_sync'] else 'no'}")
         print(f"Errors: {payload['error_count']}  Warnings: {payload['warning_count']}")
+        if gate["required_layers"]:
+            print(f"Required layers: {', '.join(gate['required_layers'])}")
+        print(f"Found layers: {', '.join(gate['found_layers']) or 'none'}")
         for item in result["missing"]:
             print(f"SOURCE MISSING: {item['layer']} -> {item['expected_path']}")
 
