@@ -68,12 +68,16 @@ def test_http_smoke_does_not_call_telegram_or_n8n():
 
 def test_lab_script_does_not_remove_postgres_volume():
     text = LAB_SCRIPT.read_text(encoding="utf-8")
-    lower = text.lower()
-    assert "volume rm" not in lower
-    assert "down --volumes" not in lower
-    assert "down -v" not in lower
-    assert "run_local_staging_proof.py" in text
-    assert "ensure_local_core_database.py" in text
+    orch = (ROOT / "backend" / "platform-api" / "scripts" / "local_core_lab" / "orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+    for src in (text, orch):
+        lower = src.lower()
+        assert "volume rm" not in lower
+        assert "down --volumes" not in lower
+        assert "down -v" not in lower
+    assert "run_local_staging_proof.py" in text or "STAGING_PROOF" in orch
+    assert "ensure_local_core_database.py" in orch or "ENSURE_CORE_DB" in orch
 
 
 def test_lab_script_requires_docker():
@@ -83,6 +87,7 @@ def test_lab_script_requires_docker():
         text=True,
     )
     assert proc.returncode == 0
+    assert "--e2e" in proc.stdout
 
 
 def test_ensure_core_db_skips_reapply_when_initialized():
