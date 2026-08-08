@@ -17,6 +17,9 @@ sys.path.insert(0, str(ACCEPTANCE_ROOT))
 
 from lab.check_target import check_target_contract  # noqa: E402
 from lab.offline import run_offline_checks  # noqa: E402
+from lab.baseline import build_baseline, compare_baselines, load_baseline, save_baseline  # noqa: E402
+from lab.report import write_reports  # noqa: E402
+from lab.runner import run_cases  # noqa: E402
 from lab.target import TargetConfigError, load_target  # noqa: E402
 from lab.transport import urllib_request_fn  # noqa: E402
 
@@ -59,14 +62,60 @@ def cmd_offline(target_path: Path, corpus_path: Path) -> int:
     return 0
 
 
+def cmd_run(args: argparse.Namespace) -> int:
+    raw_dir = ACCEPTANCE_ROOT / "raw_responses"
+    reports_dir = ACCEPTANCE_ROOT / "reports"
+    baselines_dir = ACCEPTANCE_ROOT / "baselines"
+    payload = run_cases(
+        target_path=args.target,
+        corpus_path=args.corpus,
+        priority=args.priority,
+        case_id=args.case_id,
+        limit=args.limit,
+        fail_fast=args.fail_fast,
+        timeout_seconds=args.timeout_seconds,
+        dry_run=args.dry_run,
+        raw_dir=None if args.dry_run else raw_dir,
+    )
+    summary = payload["summary"]
+    md_path = reports_dir / f"ACCEPTANCE_REPORT_{payload['run_id']}.md"
+    json_path = reports_dir / f"ACCEPTANCE_REPORT_{payload['run_id']}.json"
+    write_reports(payload, md_path, json_path)
+
+    baseline_path = baselines_dir / "latest.json"
+    prev = load_baseline(baseline_path)
+    current_baseline = build_baseline(payload)
+    diff = compare_baselines(current_baseline, prev)
+    if not args.dry_run:
+        save_baseline(baseline_path, current_baseline)
+
+    print(f"Run id: {payload['run_id']}")
+    print(f"Live status: {payload['live_status']}")
+    print(
+        f"Total {summary['total']} | pass {summary['pass']} fail {summary['fail']} "
+        f"skip {summary['skip']} unasserted {summary['unasserted']}"
+    )
+    print(f"Report: {md_path.relative_to(ROOT)}")
+    print(f"Baseline diff: {diff.get('status')} regressions={len(diff.get('regressions') or [])}")
+    if args.dry_run:
+        print("Dry-run: no HTTP requests were sent.")
+    return 0 if payload["live_status"] in {"PASS", "NOT_RUN"} else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="WHIEDA Advisor Acceptance Lab")
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
-    parser.add_argument("--timeout-seconds", type=float, default=15.0)
+    parser.add_argument("--timeout-seconds", type=float, default=30.0)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check-target", action="store_true")
     group.add_argument("--offline", action="store_true")
+    group.add_argument("--run", action="store_true")
+    parser.add_argument("--priority", choices=("P0", "P1", "P2"))
+    parser.add_argument("--case-id")
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--fail-fast", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     target_path = args.target.resolve()
@@ -77,7 +126,9 @@ def main() -> int:
 
     if args.check_target:
         return cmd_check_target(target_path, args.timeout_seconds)
-    return cmd_offline(target_path, args.corpus)
+    if args.offline:
+        return cmd_offline(target_path, args.corpus)
+    return cmd_run(args)
 
 
 if __name__ == "__main__":
