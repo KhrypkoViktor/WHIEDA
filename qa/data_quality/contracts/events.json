@@ -1,0 +1,14 @@
+{
+  "layer": "events",
+  "description": "Events sheet export",
+  "id_fields": ["event_id"],
+  "columns": {
+    "event_id": {"type": "string", "required": true},
+    "title": {"type": "string", "required": true},
+    "start_date": {"type": "date", "required": true},
+    "end_date": {"type": "date", "required": false},
+    "url": {"type": "url", "required": false},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["event_id"]]
+}

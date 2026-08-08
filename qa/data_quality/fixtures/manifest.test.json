@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "exports_root": "qa/data_quality/fixtures/scenarios/valid_full",
+  "sources": [
+    {
+      "layer": "products_prices",
+      "file": "products_prices.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "products_prices.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/products_prices.tsv"
+    },
+    {
+      "layer": "product_cards",
+      "file": "product_cards.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_cards.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/product_cards.tsv"
+    },
+    {
+      "layer": "product_aliases",
+      "file": "product_aliases.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_aliases.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/product_aliases.tsv"
+    },
+    {
+      "layer": "resource_links",
+      "file": "resource_links.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "resource_links.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/resource_links.tsv"
+    },
+    {
+      "layer": "product_comparisons",
+      "file": "product_comparisons.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_comparisons.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/product_comparisons.tsv"
+    },
+    {
+      "layer": "solution_bundles",
+      "file": "solution_bundles.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "solution_bundles.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/solution_bundles.tsv"
+    },
+    {
+      "layer": "business_faq",
+      "file": "business_faq.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "business_faq.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/business_faq.tsv"
+    },
+    {
+      "layer": "promotions",
+      "file": "promotions.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "promotions.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/promotions.tsv"
+    },
+    {
+      "layer": "events",
+      "file": "events.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "events.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/events.tsv"
+    },
+    {
+      "layer": "users_access",
+      "file": "users_access.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "users_access.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/users_access.tsv"
+    },
+    {
+      "layer": "structure_owners",
+      "file": "structure_owners.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "structure_owners.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/structure_owners.tsv"
+    },
+    {
+      "layer": "certificates",
+      "file": "certificates.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "certificates.json",
+      "path": "qa/data_quality/fixtures/scenarios/valid_full/certificates.tsv"
+    }
+  ]
+}

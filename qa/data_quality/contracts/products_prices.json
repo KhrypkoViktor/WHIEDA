@@ -1,0 +1,22 @@
+{
+  "layer": "products_prices",
+  "description": "Products / Prices sheet export",
+  "id_fields": ["sku"],
+  "columns": {
+    "sku": {"type": "string", "required": true},
+    "canonical_name": {"type": "string", "required": true, "aliases": ["name", "Название"]},
+    "category": {"type": "string", "required": false},
+    "retail_price_rub": {"type": "number", "min": 0, "allow_zero": false, "aliases": ["retail_price", "price_rub"]},
+    "retail_w": {"type": "number", "min": 0, "allow_zero": true},
+    "retail_price_byn": {"type": "number", "min": 0, "allow_zero": false},
+    "partner_price_rub": {"type": "number", "min": 0, "allow_zero": false},
+    "partner_w": {"type": "number", "min": 0, "allow_zero": true},
+    "partner_price_byn": {"type": "number", "min": 0, "allow_zero": false},
+    "partner_points": {"type": "number", "min": 0, "allow_zero": false, "aliases": ["pv", "PV"]},
+    "active": {"type": "boolean", "required": false, "default": true},
+    "country": {"type": "string", "required": false},
+    "price_type": {"type": "string", "required": false, "enum": ["retail", "partner", "repeat"]}
+  },
+  "unique": [["sku"], ["sku", "country", "price_type"]],
+  "price_conflict_keys": ["sku", "country", "price_type"]
+}

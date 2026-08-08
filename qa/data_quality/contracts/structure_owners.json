@@ -1,0 +1,12 @@
+{
+  "layer": "structure_owners",
+  "description": "Structure Owners sheet export",
+  "id_fields": ["owner_id"],
+  "columns": {
+    "owner_id": {"type": "string", "required": true},
+    "structure_code": {"type": "string", "required": true},
+    "owner_name": {"type": "string", "required": true},
+    "active": {"type": "boolean", "required": false, "default": true}
+  },
+  "unique": [["owner_id"], ["structure_code"]]
+}

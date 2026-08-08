@@ -1,0 +1,18 @@
+{
+  "layer": "resource_links",
+  "description": "Resource Links sheet export",
+  "id_fields": ["resource_id"],
+  "columns": {
+    "resource_id": {"type": "string", "required": true},
+    "sku": {"type": "string", "required": false},
+    "canonical_name": {"type": "string", "required": false},
+    "alias": {"type": "string", "required": false},
+    "resource_type": {"type": "string", "required": true, "aliases": ["type"], "enum": ["photo", "video", "certificate", "document", "link"]},
+    "title": {"type": "string", "required": false},
+    "url": {"type": "url", "required": true},
+    "active": {"type": "boolean", "required": false, "default": true},
+    "priority": {"type": "number", "min": 0, "allow_zero": true}
+  },
+  "unique": [["resource_id"], ["url"]],
+  "references": [{"column": "sku", "target_layer": "products_prices", "target_column": "sku", "severity": "error", "when_present": true}]
+}

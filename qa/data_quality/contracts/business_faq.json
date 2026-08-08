@@ -1,0 +1,15 @@
+{
+  "layer": "business_faq",
+  "description": "Business FAQ sheet export",
+  "id_fields": ["faq_id"],
+  "columns": {
+    "faq_id": {"type": "string", "required": true},
+    "title": {"type": "string", "required": true},
+    "aliases": {"type": "string", "required": false},
+    "answer_text": {"type": "string", "required": true},
+    "do_not_say": {"type": "string", "required": false},
+    "active": {"type": "boolean", "required": true, "default": true},
+    "priority": {"type": "number", "min": 0, "allow_zero": true}
+  },
+  "unique": [["faq_id"]]
+}

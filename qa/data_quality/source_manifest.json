@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "exports_root": "qa/data_quality/exports",
+  "sources": [
+    {
+      "layer": "products_prices",
+      "file": "products_prices.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "products_prices.json"
+    },
+    {
+      "layer": "product_cards",
+      "file": "product_cards.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_cards.json"
+    },
+    {
+      "layer": "product_aliases",
+      "file": "product_aliases.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_aliases.json"
+    },
+    {
+      "layer": "resource_links",
+      "file": "resource_links.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "resource_links.json"
+    },
+    {
+      "layer": "product_comparisons",
+      "file": "product_comparisons.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "product_comparisons.json"
+    },
+    {
+      "layer": "solution_bundles",
+      "file": "solution_bundles.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "solution_bundles.json"
+    },
+    {
+      "layer": "business_faq",
+      "file": "business_faq.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "business_faq.json"
+    },
+    {
+      "layer": "promotions",
+      "file": "promotions.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "promotions.json"
+    },
+    {
+      "layer": "events",
+      "file": "events.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "events.json"
+    },
+    {
+      "layer": "users_access",
+      "file": "users_access.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "users_access.json"
+    },
+    {
+      "layer": "structure_owners",
+      "file": "structure_owners.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "structure_owners.json"
+    },
+    {
+      "layer": "certificates",
+      "file": "certificates.tsv",
+      "format": "tsv",
+      "required": false,
+      "contract": "certificates.json"
+    }
+  ]
+}
