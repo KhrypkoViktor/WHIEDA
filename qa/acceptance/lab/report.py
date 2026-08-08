@@ -49,6 +49,8 @@ def build_report_payload(run_payload: dict[str, Any]) -> dict[str, Any]:
         "target": run_payload.get("target"),
         "corpus": run_payload.get("corpus"),
         "dry_run": run_payload.get("dry_run", False),
+        "baseline": run_payload.get("baseline") or {},
+        "target_check": run_payload.get("target_check") or {},
     }
 
 
@@ -76,17 +78,40 @@ def _render_md(report: dict[str, Any], run_payload: dict[str, Any]) -> str:
         f"**Status:** **{report.get('status')}**",
         f"**Dry run:** {report.get('dry_run')}",
         "",
-        "## Summary",
-        "",
-        f"- Total: {summary.get('total', 0)}",
-        f"- Pass: {summary.get('pass', 0)}",
-        f"- Fail: {summary.get('fail', 0)}",
-        f"- Skip: {summary.get('skip', 0)}",
-        f"- Unasserted: {summary.get('unasserted', 0)}",
-        "",
-        "## By priority",
-        "",
     ]
+    baseline = report.get("baseline") or {}
+    if baseline:
+        lines.extend(
+            [
+                "## Baseline",
+                "",
+                f"- **Saved:** {baseline.get('saved')}",
+                f"- **Reason:** {baseline.get('reason', 'unknown')}",
+                "",
+            ]
+        )
+    target_check = report.get("target_check") or {}
+    if target_check:
+        lines.extend(["## Target check", ""])
+        lines.append(f"- **Status:** {target_check.get('status')}")
+        for err in target_check.get("errors") or []:
+            lines.append(f"- {err}")
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Summary",
+            "",
+            f"- Total: {summary.get('total', 0)}",
+            f"- Pass: {summary.get('pass', 0)}",
+            f"- Fail: {summary.get('fail', 0)}",
+            f"- Skip: {summary.get('skip', 0)}",
+            f"- Unasserted: {summary.get('unasserted', 0)}",
+            "",
+            "## By priority",
+            "",
+        ]
+    )
     for pr, bucket in sorted((summary.get("by_priority") or {}).items()):
         lines.append(f"- **{pr}**: pass {bucket.get('pass', 0)}, fail {bucket.get('fail', 0)}, unasserted {bucket.get('unasserted', 0)}")
 

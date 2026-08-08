@@ -44,6 +44,18 @@ Compare two runs:
 python qa\acceptance\compare_acceptance_runs.py qa\acceptance\reports\ACCEPTANCE_REPORT_<id>.json qa\acceptance\baselines\latest.json
 ```
 
+## Baseline policy
+
+- Ordinary `--run` **never** updates baseline automatically.
+- Use `--accept-baseline` only after a clean live PASS (no FAIL, no UNASSERTED, not dry-run).
+- Failed or blocked runs never overwrite `baselines/latest.json`.
+
+## Target gate
+
+- Live `--run` (without `--dry-run`) always runs `--check-target` first.
+- If target check fails: status `NOT_RUN`, no advisor HTTP, no raw responses, exit `1`.
+- `--dry-run` skips target check and HTTP.
+
 ## Status semantics
 
 | Status | Meaning |
