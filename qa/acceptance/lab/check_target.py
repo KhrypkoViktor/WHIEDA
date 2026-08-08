@@ -14,11 +14,16 @@ def check_target_contract(target: dict[str, Any], request_fn: RequestFn) -> dict
 
     health_path = str(target["health_path"])
     status, body = request_fn("GET", f"{base}{health_path}", {"Accept": "application/json"}, None)
-    if status != 200:
+    if status == 0:
+        errors.append(f"health {health_path} unreachable: {body}")
+    elif status != 200:
         errors.append(f"health {health_path} returned HTTP {status}")
 
     openapi_path = str(target["openapi_path"])
     ostatus, obody = request_fn("GET", f"{base}{openapi_path}", {"Accept": "application/json"}, None)
+    if ostatus == 0:
+        errors.append(f"openapi {openapi_path} unreachable: {obody}")
+        return {"status": "FAIL", "errors": errors, "openapi": None}
     if ostatus != 200:
         errors.append(f"openapi {openapi_path} returned HTTP {ostatus}")
         return {"status": "FAIL", "errors": errors, "openapi": None}

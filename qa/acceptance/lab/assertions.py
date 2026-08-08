@@ -29,7 +29,7 @@ def evaluate_result(
     case: dict[str, Any],
     http_status: int | None,
     latency_ms: float | None,
-    extracted: dict[str, Any] | None,
+    extracted: dict[str, Any] | None = None,
     error: str | None = None,
     timeout: bool = False,
 ) -> tuple[str, str]:

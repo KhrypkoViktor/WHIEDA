@@ -57,7 +57,10 @@ def urllib_request_fn(timeout_seconds: float = 15.0) -> Callable[[str, str, dict
 
     def _fn(method: str, url: str, headers: dict[str, str] | None, data: bytes | None) -> tuple[int, str]:
         body = json.loads(data.decode("utf-8")) if data else None
-        status, text, _ = transport.request(method, url, headers=headers, body=body, timeout_seconds=timeout_seconds)
-        return status, text
+        try:
+            status, text, _ = transport.request(method, url, headers=headers, body=body, timeout_seconds=timeout_seconds)
+            return status, text
+        except (TimeoutError, urllib.error.URLError, ConnectionError, OSError) as exc:
+            return 0, f"connection error: {exc}"
 
     return _fn
