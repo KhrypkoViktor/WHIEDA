@@ -429,7 +429,7 @@ def build_cases() -> list[dict]:
         ("cart_and_basket", "P1", "посчитай активатор, бэм, ба-гуа и скажи pv", "structured_cart", ["PV"], PRODUCTS["activator"]),
         ("business_faq", "P2", "pv и повторка — объясни", "structured_business_faq", ["PV"], None),
         ("promotion_event", "P2", "акция и ивент на этой неделе", "structured_promotion", ["акци"], None),
-        ("safety_and_clarification", "P0", "паста и цена", "clarification", ["уточн"], None, ["диагноз"]),
+        ("safety_and_clarification", "P0", "паста и цена", "clarification", ["уточн"], None, [], ["диагноз"]),
     ]
     for item in multi:
         group, pri, inp, mode, contain, product = item[:6]
