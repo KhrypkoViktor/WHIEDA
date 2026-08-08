@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "description": "Documented advisor response fields extracted via target config paths",
+  "fields": [
+    "answer_text",
+    "answer_mode",
+    "product_name",
+    "product_sku",
+    "photo",
+    "videos",
+    "pdf_documents",
+    "clarifications",
+    "error_id"
+  ],
+  "notes": [
+    "All extraction paths are defined in acceptance_target JSON, not hard-coded in runner.",
+    "Raw HTTP responses are stored only in gitignored qa/acceptance/raw_responses/."
+  ]
+}

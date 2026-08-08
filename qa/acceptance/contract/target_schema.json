@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WHIEDA Acceptance Target",
+  "type": "object",
+  "required": [
+    "version",
+    "base_url",
+    "health_path",
+    "openapi_path",
+    "advisor"
+  ],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "name": {"type": "string"},
+    "base_url": {"type": "string"},
+    "health_path": {"type": "string"},
+    "openapi_path": {"type": "string"},
+    "advisor": {
+      "type": "object",
+      "required": ["path", "method", "request", "response"],
+      "properties": {
+        "path": {"type": "string"},
+        "method": {"type": "string"},
+        "headers": {"type": "object"},
+        "request": {"type": "object"},
+        "response": {"type": "object"}
+      }
+    },
+    "openapi_contract": {
+      "type": "object",
+      "required": ["required_paths", "advisor_path", "advisor_method"],
+      "properties": {
+        "required_paths": {"type": "array", "items": {"type": "string"}},
+        "advisor_path": {"type": "string"},
+        "advisor_method": {"type": "string"}
+      }
+    }
+  }
+}
