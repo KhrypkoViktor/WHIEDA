@@ -15,6 +15,21 @@ cd D:\Projects\WHIEDA
 python postgres\scripts\run_local_staging_proof.py
 ```
 
+## One-command local Core runtime lab
+
+**Requires:** Docker (same staging Postgres on port 55432).
+
+```powershell
+cd D:\Projects\WHIEDA
+python backend\platform-api\scripts\run_local_core_lab.py
+```
+
+Flow: staging Postgres → SQL proof → Core DB → Platform API on **8080** → HTTP contract smoke → stop Core (Postgres stays up).
+
+Env template: `backend/platform-api/.env.local.example` (copy to `.env.local` if needed).
+
+Report: [`LOCAL_CORE_LAB_REPORT.md`](LOCAL_CORE_LAB_REPORT.md)
+
 ### What the proof does
 
 1. Starts `postgres:16-alpine` via `postgres/docker-compose.local-staging.yml` on port **55432**

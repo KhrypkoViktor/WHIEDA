@@ -2,6 +2,7 @@
 WHIEDA_ACCESS_MAP_PRIVATE*.md
 **/.env
 **/.env.*
+!**/.env.local.example
 **/credentials/
 **/*token*
 **/*secret*
@@ -18,6 +19,7 @@ reports/
 n8n/current/backups/
 **/.env
 **/.env.*
+!**/.env.local.example
 **/node_modules/
 **/backups/
 99_Archive/
