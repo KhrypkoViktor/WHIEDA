@@ -88,6 +88,9 @@ def test_ensure_core_db_skips_reapply_when_initialized():
     assert "_schema_initialized()" in text
     assert "--force-reapply" in text
     assert "already initialized" in text
+    assert 'INIT_MARKER_TABLE = "tenants"' in text
+    registry = (ROOT / "postgres" / "sql" / "platform_tenant_registry_v1.sql").read_text(encoding="utf-8")
+    assert "create table if not exists tenants" in registry.lower()
 
 
 def test_http_smoke_checks_telegram_webhook_entry():

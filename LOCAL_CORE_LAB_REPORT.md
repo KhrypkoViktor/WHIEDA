@@ -18,7 +18,7 @@ python backend\platform-api\scripts\run_local_core_lab.py
 ### pytest
 
 ```
-151 passed in 1.61s
+152 passed in 1.87s
 ```
 
 ### run_local_core_lab.py
@@ -74,4 +74,5 @@ Env template: `backend/platform-api/.env.local.example`
 - **E2E lab not run on this machine** — Docker not in PATH; only static tests + script exit code verified.
 - **Full PASS requires Docker** on your side: `python backend\platform-api\scripts\run_local_core_lab.py`
 - **`postgres/sql/platform_tenant_rls_legacy_leads_v1.sql`** referenced by staging proof but **not in git** (pre-existing gap); lab needs this file on disk locally.
-- **`ensure_local_core_database.py`** skips re-apply if `platform_tenants` exists (second run safe); use `--force-reapply` to rebuild.
+- **`ensure_local_core_database.py`** skips re-apply if `tenants` table exists (second run safe); use `--force-reapply` to rebuild.
+- **Fixed 2026-08-08:** init marker was wrongly `platform_tenants` (nonexistent) → idempotency broken on 2nd run; corrected to `tenants`.

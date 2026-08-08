@@ -25,7 +25,19 @@ API_BASE = "http://127.0.0.1:8080"
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
     label = " ".join(cmd[:5])
     print(f"\n>>> {label}{'...' if len(cmd) > 5 else ''}")
-    return subprocess.run(cmd, cwd=str(cwd) if cwd else None, check=check, text=True)
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        check=check,
+        text=True,
+        capture_output=False,
+    )
+
+
+def run_checked_step(cmd: list[str], *, step: str, cwd: Path | None = None) -> None:
+    proc = run(cmd, cwd=cwd, check=False)
+    if proc.returncode != 0:
+        raise RuntimeError(f"{step} failed (exit {proc.returncode})")
 
 
 def require_docker() -> None:
@@ -87,26 +99,20 @@ def main() -> int:
         docker_ok = True
         start_staging_postgres()
 
-        proof = run([sys.executable, str(STAGING_PROOF)], check=False)
-        if proof.returncode != 0:
-            raise RuntimeError("run_local_staging_proof.py failed")
-
-        ensure = run([sys.executable, str(ENSURE_CORE_DB)], check=False)
-        if ensure.returncode != 0:
-            raise RuntimeError("ensure_local_core_database.py failed")
+        run_checked_step([sys.executable, str(STAGING_PROOF)], step="run_local_staging_proof.py")
+        run_checked_step([sys.executable, str(ENSURE_CORE_DB)], step="ensure_local_core_database.py")
 
         compose_cmd = ["docker", "compose", "-f", str(CORE_COMPOSE), "up", "-d"]
         if not args.skip_build:
             compose_cmd.append("--build")
-        up = run(compose_cmd, cwd=PLATFORM_API, check=False)
-        if up.returncode != 0:
-            raise RuntimeError("failed to start local Core")
+        run_checked_step(compose_cmd, step="docker compose up local Core", cwd=PLATFORM_API)
 
         wait_api_health()
 
-        smoke = run([sys.executable, str(HTTP_SMOKE), "--base-url", API_BASE], check=False)
-        if smoke.returncode != 0:
-            raise RuntimeError("local_http_contract_smoke.py failed")
+        run_checked_step(
+            [sys.executable, str(HTTP_SMOKE), "--base-url", API_BASE],
+            step="local_http_contract_smoke.py",
+        )
 
         print("\n=== LOCAL CORE RUNTIME LAB: PASS ===")
         return 0
