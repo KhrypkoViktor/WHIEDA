@@ -63,3 +63,8 @@ qa/acceptance/baselines/*
 !qa/acceptance/baselines/.gitkeep
 qa/acceptance/reports/*
 !qa/acceptance/reports/.gitkeep
+qa/parity/raw_responses/
+qa/parity/reports/*
+!qa/parity/reports/.gitkeep
+qa/parity/baselines/*
+!qa/parity/baselines/.gitkeep
