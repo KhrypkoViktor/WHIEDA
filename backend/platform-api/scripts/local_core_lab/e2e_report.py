@@ -25,6 +25,7 @@ class E2EReport:
     check_target: dict[str, Any] = field(default_factory=dict)
     p0_acceptance: dict[str, Any] = field(default_factory=dict)
     verify_e2e: dict[str, Any] = field(default_factory=dict)
+    parity_run: dict[str, Any] = field(default_factory=dict)
     steps: list[dict[str, Any]] = field(default_factory=list)
     failure_stage: str | None = None
     failure_message: str | None = None

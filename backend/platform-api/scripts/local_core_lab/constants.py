@@ -24,6 +24,8 @@ ACCEPTANCE_LOCAL_TARGET = ACCEPTANCE_ROOT / "acceptance_target.local.json"
 ACCEPTANCE_EXAMPLE_TARGET = ACCEPTANCE_ROOT / "acceptance_target.example.json"
 
 E2E_REPORTS_DIR = PLATFORM_API / "reports" / "local_core_e2e"
+PARITY_RUNNER = ROOT / "qa" / "parity" / "run_core_local_parity.py"
+PARITY_CORPUS = ROOT / "qa" / "parity" / "core_local_parity_cases_v2.jsonl"
 
 LOCAL_STAGING_PORT = 55432
 API_PORT = 8080
