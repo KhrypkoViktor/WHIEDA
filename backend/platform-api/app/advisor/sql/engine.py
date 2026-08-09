@@ -158,7 +158,17 @@ async def run_structured_query(
 
     if not skip_canonical:
         async with tenant_connection(tenant.tenant_id) as conn:
-            canonical = await repo.find_canonical_question(conn, tenant.tenant_id, question)
+            # A plain product name must open the current product card.  Canonical
+            # answers are historical shortcuts and may contain an old price-only
+            # response for the same phrase.
+            direct_product = (
+                None
+                if is_pv_definition_question(question)
+                else await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+            )
+            canonical = None if direct_product else await repo.find_canonical_question(
+                conn, tenant.tenant_id, question
+            )
             if canonical:
                 canonical_response = await try_canonical_response(
                     conn,
