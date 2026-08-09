@@ -120,6 +120,38 @@ async def test_bem_question_returns_product_card_not_faq(whieda_tenant):
 
 
 @pytest.mark.asyncio
+async def test_plain_product_name_skips_stale_canonical_price_answer(whieda_tenant):
+    """A direct product lookup wins over an old canonical shortcut."""
+
+    @asynccontextmanager
+    async def fake_tenant_connection(_tenant_id: str):
+        yield object()
+
+    canonical_lookup = AsyncMock(return_value={"answer_key": "old-price-answer"})
+    with patch("app.advisor.sql.engine.tenant_connection", fake_tenant_connection):
+        with patch("app.advisor.sql.engine.repo.find_canonical_question", canonical_lookup):
+            with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value={})):
+                with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=None)):
+                        with patch("app.advisor.sql.engine._resolve_product", AsyncMock(return_value=BASE_ACTIVATOR)):
+                            with patch("app.advisor.sql.engine.try_ambiguity_clarification", AsyncMock(return_value=None)):
+                                with patch(
+                                    "app.advisor.sql.engine.repo.load_product_card",
+                                    AsyncMock(return_value={"what_it_is": "Домашний прибор."}),
+                                ):
+                                    with patch("app.advisor.sql.engine.session_ctx.merge_session_context", AsyncMock()):
+                                        result = await run_structured_query(
+                                            whieda_tenant,
+                                            {"question": "активатор клеток", "session": "plain-product-1"},
+                                            "trace-plain-product",
+                                        )
+
+    canonical_lookup.assert_not_awaited()
+    assert result["answer_mode"] == "structured_card"
+    assert result["product"]["canonical_name"] == "Активатор клеток"
+
+
+@pytest.mark.asyncio
 async def test_pv_question_returns_business_faq(whieda_tenant):
     @asynccontextmanager
     async def fake_tenant_connection(_tenant_id: str):
