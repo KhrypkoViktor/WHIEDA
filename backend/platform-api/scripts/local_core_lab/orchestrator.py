@@ -29,6 +29,8 @@ from local_core_lab.constants import (
     LOCAL_CORE_DB,
     PARITY_CORPUS,
     PARITY_RUNNER,
+    NO_BLIND_ZONE_RUNNER,
+    NO_BLIND_ZONE_DB_PROOF,
     PLATFORM_API,
     POSTGRES_COMPOSE,
     SEED,
@@ -47,6 +49,7 @@ class OrchestratorConfig:
     python: str = field(default_factory=lambda: sys.executable)
     e2e_mode: bool = False
     parity_mode: bool = False
+    no_blind_zone_mode: bool = False
 
 
 @dataclass
@@ -161,6 +164,8 @@ def _parse_parity_summary(combined: str) -> dict[str, Any]:
             summary["p1_line"] = stripped
         if stripped.startswith("total:"):
             summary["total_line"] = stripped
+        if stripped.startswith("NBZ corpus:"):
+            summary["total_line"] = stripped
         if stripped.startswith("not_run:"):
             try:
                 summary["not_run"] = int(stripped.split(":", 1)[1].strip())
@@ -217,6 +222,8 @@ def run_lab(
         print("=== E2E mode: Docker + acceptance + verify ===")
     if config.parity_mode:
         print("=== Parity mode: full advisor HTTP parity corpus ===")
+    if config.no_blind_zone_mode:
+        print("=== No blind zone mode: guided gap regression corpus ===")
 
     try:
         require_docker()
@@ -226,6 +233,8 @@ def run_lab(
         preflight_failed = False
         parity_failed = False
         verify_failed = False
+        nbz_failed = False
+        nbz_db_failed = False
 
         step = run_capture_fn(
             ["docker", "compose", "-f", str(POSTGRES_COMPOSE), "up", "-d"],
@@ -430,7 +439,40 @@ def run_lab(
                 failed = [c["name"] for c in verify_result["checks"] if c["status"] == "FAIL"]
                 print(f"verify_local_core_e2e FAIL: {', '.join(failed)}", file=sys.stderr)
 
-        if preflight_failed or parity_failed or verify_failed:
+        if config.no_blind_zone_mode:
+            step = run_capture_fn(
+                [config.python, str(NO_BLIND_ZONE_RUNNER), "--live"],
+                name="no_blind_zone_run",
+            )
+            _record_step(state, step)
+            combined = step.stdout + step.stderr
+            parsed = _parse_parity_summary(combined)
+            report.no_blind_zone_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+                **parsed,
+            }
+            if not step.ok:
+                nbz_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
+            step = run_capture_fn(
+                [config.python, str(NO_BLIND_ZONE_DB_PROOF), "--base-url", API_BASE],
+                name="no_blind_zone_db_proof",
+            )
+            _record_step(state, step)
+            report.no_blind_zone_db_proof = {
+                "status": "PASS" if step.ok else "FAIL",
+                "summary": (step.stdout or step.stderr).strip()[-1000:],
+            }
+            if not step.ok:
+                nbz_db_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
+        if preflight_failed or parity_failed or verify_failed or nbz_failed or nbz_db_failed:
             parts = []
             if preflight_failed:
                 parts.append("preflight_smoke")
@@ -438,11 +480,19 @@ def run_lab(
                 parts.append("parity_corpus")
             if verify_failed:
                 parts.append("verify_e2e")
+            if nbz_failed:
+                parts.append("no_blind_zone")
+            if nbz_db_failed:
+                parts.append("no_blind_zone_db_proof")
             report.status = "FAIL"
             if preflight_failed:
                 report.failure_stage = "acceptance"
             elif parity_failed:
                 report.failure_stage = "parity"
+            elif nbz_failed:
+                report.failure_stage = "no_blind_zone"
+            elif nbz_db_failed:
+                report.failure_stage = "no_blind_zone_db_proof"
             else:
                 report.failure_stage = "verify_e2e"
             report.failure_message = f"failed: {', '.join(parts)}"

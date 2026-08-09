@@ -16,6 +16,11 @@ CAPABILITY_RE = re.compile(
 PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", re.I)
 EVENT_RE = re.compile(r"(мероприят|событ|встреч|семинар|тренинг|конферен)", re.I)
 COMMUNITY_RE = re.compile(r"(чат|сообществ|групп|канал|telegram)", re.I)
+OUT_OF_SCOPE_RE = re.compile(
+    r"(погод|курс\s+валют|крипт|бирж|инвестир|акци[яи]\s+компан|"
+    r"политик|международн\w*\s+логистик)",
+    re.I,
+)
 BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|подбери|бюджет.*pv|pv.*бюджет)", re.I)
 DETAILS_RE = re.compile(r"(подробн|детал|состав|противопоказ|как принимать|как использовать)", re.I)
 FOLLOWUP_RE = re.compile(
@@ -156,6 +161,11 @@ def has_event_intent(question: str) -> bool:
 
 def has_community_intent(question: str) -> bool:
     return bool(COMMUNITY_RE.search(question))
+
+
+def is_unsupported_topic(question: str) -> bool:
+    """Recognise plainly external topics without guessing that they are products."""
+    return bool(OUT_OF_SCOPE_RE.search(question))
 
 
 def has_basket_intent(question: str) -> bool:

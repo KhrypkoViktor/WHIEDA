@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-MISSING_PRICE_TEXT = "Цена пока не указана в базе"
-MISSING_CERTIFICATE_TEXT = "Сертификат для этого товара пока не добавлен в базу"
-MISSING_PHOTO_TEXT = "Фото для этого товара пока не добавлено в базу"
+MISSING_PRICE_TEXT = "Цена для этого товара пока не опубликована"
+MISSING_CERTIFICATE_TEXT = "Сертификат для этого товара пока не прикреплён"
+MISSING_PHOTO_TEXT = "Фото для этого товара пока не прикреплено"
 
 
 def empty_media() -> dict[str, Any]:
@@ -116,8 +116,10 @@ def ok_response(
     media: dict[str, Any] | None = None,
     clarifications: list[str] | None = None,
     context: dict[str, Any] | None = None,
+    gap_kind: str | None = None,
+    next_steps: list[str] | None = None,
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "answer_text": answer_text,
         "answer_mode": answer_mode,
@@ -130,3 +132,8 @@ def ok_response(
         "error_id": None,
         "trace_id": trace_id,
     }
+    if gap_kind:
+        payload["gap_kind"] = gap_kind
+    if next_steps:
+        payload["next_steps"] = next_steps[:3]
+    return payload

@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from app.advisor.sql import context as session_ctx
+from app.advisor.gap import emit_gap_response, sanitize_user_text, GAP_TEXTS
 from app.advisor.sql import formatters as fmt
 from app.advisor.sql import repository as repo
 from app.advisor.sql.ambiguity import try_ambiguity_clarification
@@ -27,6 +28,7 @@ from app.advisor.sql.text import (
     has_promotion_intent,
     is_context_followup,
     is_materials_request,
+    is_unsupported_topic,
     is_pv_definition_question,
     is_product_definition_question,
     normalize_text,
@@ -95,9 +97,7 @@ MLM_OBJECTION_FALLBACK = (
     "Доход партнёра зависит от личных продаж и работы с клиентами, а не только от приглашений."
 )
 
-DETAILS_TOPIC_UNKNOWN_FALLBACK = (
-    "Чтобы рассказать подробнее, нужен сам товар — уточните название или артикул."
-)
+DETAILS_TOPIC_UNKNOWN_FALLBACK = GAP_TEXTS["unknown_followup"]
 
 LIMITATIONS_FALLBACK = (
     "при кардиостимуляторе, беременности и хронических заболеваниях "
@@ -121,10 +121,21 @@ async def run_structured_query(
     sku = str(body.get("sku") or "").strip() or None
     slug = str(body.get("slug") or "").strip() or None
     normalized = normalize_text(question)
+    channel = str(body.get("channel") or body.get("surface") or "advisor").strip()[:32] or "advisor"
 
     service_intent = detect_service_intent(question)
     if service_intent:
         return await _service_intent_response(tenant.tenant_id, service_intent, trace_id)
+
+    if is_unsupported_topic(question):
+        return await emit_gap_response(
+            tenant.tenant_id,
+            session=session,
+            question=question,
+            gap_kind="unsupported_topic",
+            trace_id=trace_id,
+            channel=channel,
+        )
 
     coach_cmd = parse_coach_command(question)
     if coach_cmd:
@@ -330,11 +341,13 @@ async def run_structured_query(
             )
 
         if SAFETY_TREATMENT_RE.search(question):
-            return fmt.ok_response(
-                "Прибор и продукты WHIEDA не заменяет схему лечения диагноза. "
-                "Уточните задачу — подскажу по применению и ограничениям из карточки.",
-                "clarification",
-                trace_id,
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="medical_or_safety_boundary",
+                trace_id=trace_id,
+                channel=channel,
                 clarifications=["safety_no_treatment_advice"],
             )
 
@@ -353,10 +366,13 @@ async def run_structured_query(
         ):
             details_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
             if not details_product:
-                return fmt.ok_response(
-                    DETAILS_TOPIC_UNKNOWN_FALLBACK,
-                    "clarification",
-                    trace_id,
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="unknown_followup",
+                    trace_id=trace_id,
+                    channel=channel,
                     clarifications=["details_topic_unknown"],
                 )
 
@@ -425,10 +441,21 @@ async def run_structured_query(
             prompt = await repo.load_clarification_prompt(
                 conn, tenant.tenant_id, "compare_pair_unknown"
             )
-            return fmt.ok_response(
-                prompt or "Не нашёл готовое сравнение. Уточните два товара, например: «сравни Спирулину и Активатор».",
-                "clarification",
-                trace_id,
+            compare_text = sanitize_user_text(
+                prompt
+                or "Не нашёл готовое сравнение. Уточните два товара, например: «сравни Спирулину и Активатор».",
+                fallback_kind="unsupported_topic",
+            )
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="unsupported_topic",
+                trace_id=trace_id,
+                channel=channel,
+                text=compare_text,
+                answer_mode="clarification",
+                clarifications=["compare_pair_unknown"],
             )
 
         product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
@@ -445,7 +472,35 @@ async def run_structured_query(
         )
         if ambiguity:
             text, mode, keys = ambiguity
-            return fmt.ok_response(text, mode, trace_id, clarifications=keys)
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="ambiguous_product",
+                trace_id=trace_id,
+                channel=channel,
+                text=text,
+                answer_mode=mode,
+                clarifications=keys,
+            )
+
+        if (
+            not product
+            and not stored.get("last_product_sku")
+            and (
+                is_context_followup(question)
+                or (has_media_intent(question) and not has_compare_intent(question))
+            )
+        ):
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="unknown_followup",
+                trace_id=trace_id,
+                channel=channel,
+                clarifications=["unknown_followup"],
+            )
 
         if not product and has_price_intent(question) and stored.get("last_product_sku"):
             product = await repo.resolve_product_by_sku(
@@ -458,13 +513,31 @@ async def run_structured_query(
             )
 
         if not product and has_price_intent(question):
+            if _should_use_knowledge_gap(question, normalized):
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="unknown_product",
+                    trace_id=trace_id,
+                    channel=channel,
+                )
             prompt = await repo.load_clarification_prompt(
                 conn, tenant.tenant_id, "price_product_unknown"
             )
-            return fmt.ok_response(
+            price_text = sanitize_user_text(
                 prompt or "Уточните, пожалуйста, название товара или артикул — тогда назову цену.",
-                "clarification",
-                trace_id,
+                fallback_kind="unknown_followup",
+            )
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="unknown_followup",
+                trace_id=trace_id,
+                channel=channel,
+                text=price_text,
+                answer_mode="clarification",
                 clarifications=["product_name_or_sku"],
             )
 
@@ -498,35 +571,71 @@ async def run_structured_query(
             elif CERT_RE.search(question) or PDF_RE.search(question):
                 kind = "certificate"
             media = fmt.build_media_payload(card, resources, kind)
+            ctx = {
+                "last_product_sku": product["sku"],
+                "last_product_name": product["canonical_name"],
+            }
             if kind == "photo" and media.get("photo_url"):
-                text = f"Отправляю фото: {product['canonical_name']}"
-                mode = "structured_photo"
-            elif kind == "video" and media.get("videos"):
-                text = f"Видео по {product['canonical_name']}: {media['videos'][0]['url']}"
-                mode = "structured_video"
-            elif kind == "certificate" and media.get("documents"):
-                text = f"Материалы: {media['documents'][0]['url']}"
-                mode = "structured_certificate"
-            elif kind == "certificate":
+                response = fmt.ok_response(
+                    f"Отправляю фото: {product['canonical_name']}",
+                    "structured_photo",
+                    trace_id,
+                    product={"sku": product["sku"], "canonical_name": product["canonical_name"]},
+                    media=media,
+                    context=ctx,
+                )
+                await session_ctx.merge_session_context(conn, tenant.tenant_id, session, ctx)
+                return response
+            if kind == "video" and media.get("videos"):
+                response = fmt.ok_response(
+                    f"Видео по {product['canonical_name']}: {media['videos'][0]['url']}",
+                    "structured_video",
+                    trace_id,
+                    product={"sku": product["sku"], "canonical_name": product["canonical_name"]},
+                    media=media,
+                    context=ctx,
+                )
+                await session_ctx.merge_session_context(conn, tenant.tenant_id, session, ctx)
+                return response
+            if kind == "certificate" and media.get("documents"):
+                response = fmt.ok_response(
+                    f"Материалы: {media['documents'][0]['url']}",
+                    "structured_certificate",
+                    trace_id,
+                    product={"sku": product["sku"], "canonical_name": product["canonical_name"]},
+                    media=media,
+                    context=ctx,
+                )
+                await session_ctx.merge_session_context(conn, tenant.tenant_id, session, ctx)
+                return response
+            if kind == "certificate":
                 text = fmt.MISSING_CERTIFICATE_TEXT
                 mode = "structured_certificate"
             elif kind == "photo" and not media.get("photo_url"):
                 text = f"{fmt.MISSING_PHOTO_TEXT}: {product['canonical_name']}"
                 mode = "structured_photo"
             else:
-                text = f"По {product['canonical_name']} пока нет подходящего материала в базе."
+                text = sanitize_user_text(
+                    f"По {product['canonical_name']} такого материала пока нет. "
+                    "Могу показать карточку, цену или другое доступное фото или видео.",
+                    fallback_kind="missing_resource",
+                )
                 mode = "clarification"
-            response = fmt.ok_response(
-                text,
-                mode,
-                trace_id,
+            response = await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="missing_resource",
+                trace_id=trace_id,
+                channel=channel,
+                text=text,
+                answer_mode=mode,
                 product={"sku": product["sku"], "canonical_name": product["canonical_name"]},
-                media=media,
-                context={"last_product_sku": product["sku"], "last_product_name": product["canonical_name"]},
+                context=ctx,
+                detected_product=product["canonical_name"],
             )
-            await session_ctx.merge_session_context(
-                conn, tenant.tenant_id, session, response["context"]
-            )
+            response["media"] = media
+            await session_ctx.merge_session_context(conn, tenant.tenant_id, session, ctx)
             return response
 
         if product and is_context_followup(question):
@@ -581,11 +690,13 @@ async def run_structured_query(
             return response
 
         if not product and _should_use_knowledge_gap(question, normalized):
-            return fmt.ok_response(
-                await _knowledge_gap_text(tenant.tenant_id, trace_id),
-                "knowledge_gap",
-                trace_id,
-                media=fmt.empty_media(),
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="unknown_product",
+                trace_id=trace_id,
+                channel=channel,
             )
 
         if normalized and len(normalized) >= 4:
@@ -593,13 +704,24 @@ async def run_structured_query(
                 conn, tenant.tenant_id, "product_ambiguity_general"
             )
             if prompt:
-                return fmt.ok_response(prompt, "clarification", trace_id)
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="unknown_product",
+                    trace_id=trace_id,
+                    channel=channel,
+                    text=sanitize_user_text(prompt, fallback_kind="unknown_product"),
+                    answer_mode="clarification",
+                )
 
-    return fmt.ok_response(
-        await _knowledge_gap_text(tenant.tenant_id, trace_id),
-        "knowledge_gap",
-        trace_id,
-        media=fmt.empty_media(),
+    return await emit_gap_response(
+        tenant.tenant_id,
+        session=session,
+        question=question,
+        gap_kind="unknown_product",
+        trace_id=trace_id,
+        channel=channel,
     )
 
 
@@ -626,18 +748,6 @@ def _business_faq_fallback(question: str) -> str | None:
         if needle in normalized:
             return text
     return None
-
-
-async def _knowledge_gap_text(tenant_id: str, trace_id: str) -> str:
-    async with tenant_connection(tenant_id) as conn:
-        for key in ("knowledge_gap_generic", "fallback_unknown", "product_ambiguity_general"):
-            prompt = await repo.load_clarification_prompt(conn, tenant_id, key)
-            if prompt:
-                return prompt
-    return (
-        "Пока нет подтверждённого ответа в базе WHIEDA. "
-        "Уточните название товара или артикул — или я передам вопрос команде."
-    )
 
 
 async def _service_intent_response(tenant_id: str, intent_id: str, trace_id: str) -> dict[str, Any]:
