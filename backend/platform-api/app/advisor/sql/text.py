@@ -16,7 +16,7 @@ CAPABILITY_RE = re.compile(
 PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", re.I)
 EVENT_RE = re.compile(r"(мероприят|событ|встреч|семинар|тренинг|конферен)", re.I)
 COMMUNITY_RE = re.compile(r"(чат|сообществ|групп|канал|telegram)", re.I)
-BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|бюджет.*pv|pv.*бюджет)", re.I)
+BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|подбери|бюджет.*pv|pv.*бюджет)", re.I)
 DETAILS_RE = re.compile(r"(подробн|детал|состав|противопоказ|как принимать|как использовать)", re.I)
 FOLLOWUP_RE = re.compile(
     r"^(?:дай\s+)?(?:а\s+)?(цена|сколько|фото|видео|подробнее|ещё|еще|материалы?)\??$",
@@ -25,7 +25,7 @@ FOLLOWUP_RE = re.compile(
 
 PRODUCT_NOISE_RE = re.compile(
     r"^(?:цена|стоимость|сколько стоит|фото|видео|покажи|дай|расскажи|про|о|"
-    r"что такое|что это|что значит)\s+",
+    r"что такое|что это|что значит|подробнее|подробн|pdf)\s+",
     re.I,
 )
 
@@ -63,7 +63,13 @@ RETAIL_PRICE_RE = re.compile(r"(рознич|первичк|основн\w*\s+ц
 PHOTO_RE = re.compile(r"(фото|фотк|фотограф|картин|изображен)", re.I)
 VIDEO_RE = re.compile(r"(видео|ютуб|youtube|обзор)", re.I)
 CERT_RE = re.compile(r"(сертифик|декларац|сгр|патент|халяль)", re.I)
+PDF_RE = re.compile(r"\bpdf\b", re.I)
 COMPARE_RE = re.compile(r"(сравни|сравнение|чем отличается|или лучше)", re.I)
+COLOR_ELIXIR_SHORTHAND_RE = re.compile(
+    r"(?:красн|зел[её]н|син).*эликсир|эликсир.*(?:красн|зел[eё]н|син)",
+    re.I,
+)
+PRODUCT_PRICE_NICKNAME_RE = re.compile(r"^сауны?$", re.I)
 
 
 def normalize_text(value: str) -> str:
@@ -80,17 +86,25 @@ def detect_service_intent(question: str) -> str | None:
         return "greeting"
     if SMALLTALK_STATUS_RE.match(normalized):
         return "smalltalk_status"
-    if CAPABILITY_RE.search(normalized):
-        return "capabilities"
     if normalized in {"помощь", "помоги", "меню", "команды", "help"}:
         return "help"
+    if CAPABILITY_RE.search(normalized):
+        return "capabilities"
     return None
+
+
+def has_implicit_price_intent(question: str) -> bool:
+    normalized = normalize_text(question)
+    return bool(
+        COLOR_ELIXIR_SHORTHAND_RE.search(normalized)
+        or PRODUCT_PRICE_NICKNAME_RE.match(normalized)
+    )
 
 
 def has_price_intent(question: str) -> bool:
     if PV_DEFINITION_RE.search(question) or BUSINESS_DEFINITION_RE.search(question):
         return False
-    return bool(PRICE_RE.search(question))
+    return bool(PRICE_RE.search(question) or has_implicit_price_intent(question))
 
 
 def wants_partner_price(question: str) -> bool:
@@ -105,12 +119,27 @@ def is_pv_definition_question(question: str) -> bool:
     return bool(PV_DEFINITION_RE.search(question))
 
 
+def is_product_definition_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    if not re.search(r"что\s+(?:такое|это|значит|за)\s+\S", normalized):
+        return False
+    if is_pv_definition_question(question) or BUSINESS_DEFINITION_RE.search(question):
+        return False
+    entity = product_query_text(question)
+    return bool(entity and len(entity) >= 2)
+
+
 def has_compare_intent(question: str) -> bool:
     return bool(COMPARE_RE.search(question))
 
 
 def has_media_intent(question: str) -> bool:
-    return bool(PHOTO_RE.search(question) or VIDEO_RE.search(question) or CERT_RE.search(question))
+    return bool(
+        PHOTO_RE.search(question)
+        or VIDEO_RE.search(question)
+        or CERT_RE.search(question)
+        or PDF_RE.search(question)
+    )
 
 
 def is_materials_request(question: str) -> bool:

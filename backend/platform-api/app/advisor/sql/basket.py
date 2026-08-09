@@ -160,7 +160,7 @@ def build_starter_basket(
     if not selected:
         cheapest = min(ranked, key=lambda row: row["price"])
         return (
-            f"В заданный бюджет готовый вариант пока не помещается. "
+            f"В заданный бюджет стартовую корзину пока не собрать. "
             f"Самый доступный: {cheapest['canonical_name']} — {cheapest['price']:.0f} BYN, {cheapest['pv']:.0f} PV.",
             [str(cheapest["sku"])],
         )

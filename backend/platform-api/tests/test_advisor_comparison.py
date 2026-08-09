@@ -21,3 +21,11 @@ def test_format_partner_price_only():
     product = {"retail_price_byn": 1750, "partner_price_byn": 1050, "partner_w": 300}
     text = format_price(product, "BY", partner_only=True)
     assert "1050" in text
+
+
+def test_format_russian_retail_price_uses_explicit_label():
+    from app.advisor.sql.formatters import format_price
+
+    assert format_price({"retail_price_rub": 50000, "partner_w": 300}, "RU") == (
+        "Розничная цена: 50000 RUB, PV 300"
+    )

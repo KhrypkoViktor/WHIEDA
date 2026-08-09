@@ -24,8 +24,10 @@ class E2EReport:
     health: dict[str, Any] = field(default_factory=dict)
     check_target: dict[str, Any] = field(default_factory=dict)
     p0_acceptance: dict[str, Any] = field(default_factory=dict)
+    preflight_smoke: dict[str, Any] = field(default_factory=dict)
     verify_e2e: dict[str, Any] = field(default_factory=dict)
     parity_run: dict[str, Any] = field(default_factory=dict)
+    cleanup_status: str = "NOT_RUN"
     steps: list[dict[str, Any]] = field(default_factory=list)
     failure_stage: str | None = None
     failure_message: str | None = None
@@ -107,6 +109,27 @@ def render_markdown(report: E2EReport) -> str:
         lines.append(f"  - summary: {report.p0_acceptance['summary']}")
     if report.p0_acceptance.get("report_path"):
         lines.append(f"  - report: `{report.p0_acceptance['report_path']}`")
+
+    preflight = report.preflight_smoke or report.p0_acceptance
+    if preflight.get("summary") or preflight.get("status") not in ("", "NOT_RUN", None):
+        lines.extend(["", "## Preflight smoke", ""])
+        lines.append(f"- status: `{preflight.get('status', 'NOT_RUN')}`")
+        if preflight.get("summary"):
+            lines.append(f"- summary: {preflight['summary']}")
+
+    parity = report.parity_run
+    if parity:
+        lines.extend(["", "## Parity corpus", ""])
+        lines.append(f"- status: `{parity.get('status', 'NOT_RUN')}`")
+        if parity.get("summary_line"):
+            lines.append(f"- summary: {parity['summary_line']}")
+        if parity.get("not_run") is not None:
+            lines.append(f"- not_run: {parity['not_run']}")
+        if parity.get("timeout"):
+            lines.append(f"- timeout: `{parity['timeout']}`")
+
+    lines.extend(["", "## Cleanup", ""])
+    lines.append(f"- status: `{report.cleanup_status}`")
 
     lines.extend(["", "## verify_local_core_e2e", ""])
     ve = report.verify_e2e.get("status", "NOT_RUN")

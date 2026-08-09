@@ -24,8 +24,10 @@ def build_cart_list_response(
     missing: list[str],
 ) -> tuple[str, list[str]]:
     if not resolved:
+        label = ", ".join(missing or names)
         return (
-            "Не узнал товары в списке. Напишите через запятую, например: посчитай: активатор, БЭМ, Ба-Гуа.",
+            f"Не узнал товары в списке: {label}. "
+            "Напишите через запятую, например: посчитай: активатор, БЭМ, Ба-Гуа.",
             [],
         )
     total_retail = sum(float(row.get("retail_price_byn") or 0) for row in resolved)

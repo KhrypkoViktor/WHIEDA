@@ -138,7 +138,8 @@ def test_context_override_case_exists():
 
 def test_price_without_pv_forbidden_in_format_price():
     text = FORMAT_PRICE.read_text(encoding="utf-8")
-    assert "цена уточняется" in text
+    assert "MISSING_PRICE_TEXT" in text
+    assert "Цена пока не указана в базе" in text
     assert '"0 BYN"' not in text
 
 

@@ -51,9 +51,14 @@ def main() -> int:
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--accept-baseline", action="store_true")
-    parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--case-timeout", type=float, default=5.0, help="Per-case HTTP timeout (seconds)")
+    parser.add_argument("--run-timeout", type=float, default=300.0, help="Overall parity run timeout (seconds)")
+    parser.add_argument("--timeout-seconds", type=float, help=argparse.SUPPRESS)
     parser.add_argument("--skip-target-check", action="store_true")
     args = parser.parse_args()
+    case_timeout = args.case_timeout
+    if args.timeout_seconds is not None:
+        case_timeout = args.timeout_seconds
 
     target_path = args.target.resolve()
     if not target_path.is_file():
@@ -73,7 +78,7 @@ def main() -> int:
         return 1
 
     if not args.dry_run and not args.skip_target_check:
-        check = check_target.check_target_ready(target_path, timeout_seconds=args.timeout_seconds)
+        check = check_target.check_target_ready(target_path, timeout_seconds=case_timeout)
         if check.get("status") != "PASS":
             print("Target check: FAIL")
             for err in check.get("errors") or []:
@@ -89,7 +94,8 @@ def main() -> int:
         case_id=args.case_id,
         limit=args.limit,
         fail_fast=args.fail_fast,
-        timeout_seconds=args.timeout_seconds,
+        timeout_seconds=case_timeout,
+        run_timeout_seconds=args.run_timeout,
         dry_run=args.dry_run,
     )
 
@@ -115,10 +121,24 @@ def main() -> int:
 
     summary = payload["summary"]
     print(f"Live status: {payload['live_status']}")
+    by_priority = summary.get("by_priority") or {}
+    for pr in ("P0", "P1", "P2"):
+        bucket = by_priority.get(pr)
+        if bucket:
+            pr_total = sum(int(bucket.get(k, 0) or 0) for k in ("pass", "fail", "skip", "unasserted", "not_run"))
+            print(f"{pr}: {bucket.get('pass', 0)}/{pr_total}")
+    print(f"total: {summary['pass']}/{summary['total']}")
     print(
         f"Total {summary['total']} | pass {summary['pass']} fail {summary['fail']} "
         f"unasserted {summary['unasserted']} | P0 fail {summary.get('p0_fail', 0)}"
     )
+    print(f"not_run: {summary.get('not_run', 0)}")
+    print(f"timeout: {summary.get('timeout', False)}")
+    if payload.get("not_run_case_ids"):
+        preview = ", ".join(payload["not_run_case_ids"][:12])
+        if len(payload["not_run_case_ids"]) > 12:
+            preview += ", ..."
+        print(f"not_run cases: {preview}")
     lat = summary.get("latency_ms") or {}
     print(f"Latency ms p50={lat.get('p50')} p95={lat.get('p95')} max={lat.get('max')}")
     print(f"Report: {md_path.relative_to(REPO_ROOT)}")
@@ -128,6 +148,10 @@ def main() -> int:
             print(f"  FAIL {row.get('case_id')}: {row.get('reason')}")
 
     if summary.get("p0_fail", 0) > 0:
+        return 1
+    if payload.get("timed_out"):
+        return 1
+    if summary.get("not_run", 0) > 0:
         return 1
     if payload["live_status"] == "FAIL":
         return 1

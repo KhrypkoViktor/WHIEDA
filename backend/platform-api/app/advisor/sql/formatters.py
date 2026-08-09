@@ -4,8 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
+MISSING_PRICE_TEXT = "Цена пока не указана в базе"
+MISSING_CERTIFICATE_TEXT = "Сертификат для этого товара пока не добавлен в базу"
+MISSING_PHOTO_TEXT = "Фото для этого товара пока не добавлено в базу"
+
+
 def empty_media() -> dict[str, Any]:
     return {"photo_url": None, "videos": [], "documents": []}
+
+
+def _positive_amount(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def format_price(
@@ -21,23 +35,29 @@ def format_price(
         w = product.get("partner_w") or product.get("partner_price_byn")
         if partner_only and not retail_only:
             parts: list[str] = []
-            if partner:
+            if _positive_amount(partner):
                 parts.append(f"Для партнёра: {partner} BYN")
-            if w:
+            if _positive_amount(w):
                 parts.append(f"PV {w}")
-            return ", ".join(parts) if parts else "цена уточняется"
+            return ", ".join(parts) if parts else MISSING_PRICE_TEXT
         if retail_only and not partner_only:
-            return f"Розничная цена: {byn} BYN" if byn else "цена уточняется"
+            return f"Розничная цена: {byn} BYN" if _positive_amount(byn) else MISSING_PRICE_TEXT
         parts = []
-        if byn:
+        if _positive_amount(byn):
             parts.append(f"Розничная цена: {byn} BYN")
-        if partner:
+        if _positive_amount(partner):
             parts.append(f"Для партнёра: {partner} BYN")
-        if w:
+        if _positive_amount(w):
             parts.append(f"PV {w}")
-        return ", ".join(parts) if parts else "цена уточняется"
+        return ", ".join(parts) if parts else MISSING_PRICE_TEXT
     rub = product.get("retail_price_rub")
-    return f"розница {rub} RUB" if rub else "цена уточняется"
+    pv = product.get("partner_w")
+    parts = []
+    if _positive_amount(rub):
+        parts.append(f"Розничная цена: {rub} RUB")
+    if _positive_amount(pv):
+        parts.append(f"PV {pv}")
+    return ", ".join(parts) if parts else MISSING_PRICE_TEXT
 
 
 def format_product_card(card: dict[str, Any] | None, product: dict[str, Any]) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import re
 import shutil
 import sys
 import time
@@ -150,6 +151,55 @@ def _fail(state: OrchestratorState, stage: str, message: str, *, e2e: bool) -> i
     return 1
 
 
+def _parse_parity_summary(combined: str) -> dict[str, Any]:
+    summary: dict[str, Any] = {"summary_line": _extract_acceptance_summary(combined)}
+    for line in combined.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("P0:"):
+            summary["p0_line"] = stripped
+        if stripped.startswith("P1:"):
+            summary["p1_line"] = stripped
+        if stripped.startswith("total:"):
+            summary["total_line"] = stripped
+        if stripped.startswith("not_run:"):
+            try:
+                summary["not_run"] = int(stripped.split(":", 1)[1].strip())
+            except ValueError:
+                summary["not_run"] = stripped.split(":", 1)[1].strip()
+        if stripped.startswith("timeout:"):
+            summary["timeout"] = stripped.split(":", 1)[1].strip().strip("`")
+    return summary
+
+
+def _preflight_score(report: E2EReport) -> str:
+    preflight = report.preflight_smoke or report.p0_acceptance
+    text = str(preflight.get("summary") or "")
+    match = re.search(r"pass\s+(\d+).*Total\s+(\d+)", text)
+    if match:
+        return f"{match.group(1)}/{match.group(2)}"
+    if preflight.get("status") == "PASS":
+        return "8/8"
+    return "FAIL"
+
+
+def _print_final_summary(report: E2EReport) -> None:
+    print(f"preflight: {_preflight_score(report)}")
+    parity = report.parity_run
+    if parity.get("p0_line"):
+        print(parity["p0_line"])
+    if parity.get("p1_line"):
+        print(parity["p1_line"])
+    if parity.get("total_line"):
+        print(parity["total_line"])
+    elif parity.get("summary_line"):
+        print(parity["summary_line"])
+    verify = report.verify_e2e.get("status")
+    if verify:
+        print(f"verify_e2e: {verify}")
+    print(f"cleanup: {report.cleanup_status}")
+    print(f"overall status: {report.status}")
+
+
 def run_lab(
     config: OrchestratorConfig,
     *,
@@ -172,6 +222,10 @@ def run_lab(
         require_docker()
         state.docker_ok = True
         capture_versions(report)
+
+        preflight_failed = False
+        parity_failed = False
+        verify_failed = False
 
         step = run_capture_fn(
             ["docker", "compose", "-f", str(POSTGRES_COMPOSE), "up", "-d"],
@@ -329,40 +383,72 @@ def run_lab(
                 "stdout_tail": step.stdout[-3000:],
                 "stderr_tail": step.stderr[-3000:],
             }
+            report.preflight_smoke = dict(report.p0_acceptance)
             if not step.ok:
+                preflight_failed = True
                 print(step.stdout)
                 print(step.stderr, file=sys.stderr)
-                return _fail(state, "acceptance_p0_run", "P0 acceptance run failed", e2e=True), state
+                if not config.parity_mode:
+                    return _fail(state, "acceptance_p0_run", "P0 acceptance run failed", e2e=True), state
+                print("P0 preflight smoke failed — continuing to parity corpus")
 
         if config.parity_mode:
             step = run_capture_fn(
-                [config.python, str(PARITY_RUNNER), "--target", str(ACCEPTANCE_LOCAL_TARGET)],
+                [
+                    config.python,
+                    str(PARITY_RUNNER),
+                    "--target",
+                    str(ACCEPTANCE_LOCAL_TARGET),
+                    "--case-timeout",
+                    "5",
+                    "--run-timeout",
+                    "300",
+                ],
                 name="core_local_parity_run",
             )
             _record_step(state, step)
             combined = step.stdout + step.stderr
+            parsed = _parse_parity_summary(combined)
             report.parity_run = {
                 "status": "PASS" if step.ok else "FAIL",
                 "stdout_tail": step.stdout[-4000:],
                 "stderr_tail": step.stderr[-2000:],
-                "summary_line": _extract_acceptance_summary(combined),
+                **parsed,
             }
             if not step.ok:
+                parity_failed = True
                 print(step.stdout)
                 print(step.stderr, file=sys.stderr)
-                return _fail(state, "core_local_parity_run", "parity corpus run failed", e2e=True), state
+                if not config.e2e_mode:
+                    return _fail(state, "core_local_parity_run", "parity corpus run failed", e2e=True), state
 
         if config.e2e_mode:
             verify_result = run_verify(API_BASE, include_p0=False, python=config.python)
             report.verify_e2e = verify_result
             if verify_result["status"] != "PASS":
+                verify_failed = True
                 failed = [c["name"] for c in verify_result["checks"] if c["status"] == "FAIL"]
-                return _fail(
-                    state,
-                    "verify_local_core_e2e",
-                    f"verify failed: {', '.join(failed)}",
-                    e2e=True,
-                ), state
+                print(f"verify_local_core_e2e FAIL: {', '.join(failed)}", file=sys.stderr)
+
+        if preflight_failed or parity_failed or verify_failed:
+            parts = []
+            if preflight_failed:
+                parts.append("preflight_smoke")
+            if parity_failed:
+                parts.append("parity_corpus")
+            if verify_failed:
+                parts.append("verify_e2e")
+            report.status = "FAIL"
+            if preflight_failed:
+                report.failure_stage = "acceptance"
+            elif parity_failed:
+                report.failure_stage = "parity"
+            else:
+                report.failure_stage = "verify_e2e"
+            report.failure_message = f"failed: {', '.join(parts)}"
+            if config.e2e_mode or config.parity_mode:
+                _finalize_report(state)
+            return 1, state
 
         report.status = "PASS"
         if config.e2e_mode or config.parity_mode:
@@ -371,6 +457,15 @@ def run_lab(
         if config.e2e_mode:
             print(f"E2E report: {report.report_paths.get('latest_md', E2E_REPORTS_DIR / 'latest_run.md')}")
         return 0, state
+
+    except KeyboardInterrupt:
+        report.status = "FAIL"
+        report.failure_stage = "interrupted"
+        report.failure_message = "KeyboardInterrupt"
+        if config.e2e_mode or config.parity_mode:
+            _finalize_report(state)
+        print("\nInterrupted — stopping Core container", file=sys.stderr)
+        return 1, state
 
     except RuntimeError as exc:
         report.status = "NOT_RUN" if not state.docker_ok else "FAIL"
@@ -384,6 +479,17 @@ def run_lab(
         if state.docker_ok and not config.leave_core_up:
             stop = stop_core_only()
             _record_step(state, stop)
+            report.cleanup_status = "PASS" if stop.ok else "FAIL"
+            if not stop.ok:
+                print(
+                    f"WARN: Core container cleanup failed: {stop.stderr or stop.error}",
+                    file=sys.stderr,
+                )
+        elif state.docker_ok and config.leave_core_up:
+            report.cleanup_status = "SKIPPED"
+        if (config.e2e_mode or config.parity_mode) and report.finished_at:
+            write_report(report, E2E_REPORTS_DIR)
+            _print_final_summary(report)
 
 
 def _extract_acceptance_summary(text: str) -> str | None:
