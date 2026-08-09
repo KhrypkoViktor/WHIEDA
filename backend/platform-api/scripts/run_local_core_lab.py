@@ -36,10 +36,17 @@ def main() -> int:
         action="store_true",
         help="Run full Core advisor parity corpus (requires --e2e)",
     )
+    parser.add_argument(
+        "--no-blind-zone",
+        action="store_true",
+        help="Run no-blind-zone HTTP corpus (requires --e2e)",
+    )
     parser.add_argument("--health-timeout", type=int, default=120)
     args = parser.parse_args()
     if args.parity and not args.e2e:
         parser.error("--parity requires --e2e")
+    if args.no_blind_zone and not args.e2e:
+        parser.error("--no-blind-zone requires --e2e")
 
     config = OrchestratorConfig(
         skip_build=args.skip_build,
@@ -47,6 +54,7 @@ def main() -> int:
         health_timeout_sec=args.health_timeout,
         e2e_mode=args.e2e,
         parity_mode=args.parity,
+        no_blind_zone_mode=args.no_blind_zone,
     )
     code, state = run_lab(config)
     _print_step_output(state)

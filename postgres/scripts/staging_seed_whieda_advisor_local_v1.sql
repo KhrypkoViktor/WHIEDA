@@ -121,7 +121,7 @@ insert into advisor_structured_clarification_prompts (client_id,clarification_ke
 ('whieda','product_ambiguity_activator','Вы про Активатор клеток или Активатор клеток PRO?',true),
 ('whieda','product_ambiguity_belt','Вы про Магнитный пояс? Нужна цена, описание или применение?',true),
 ('whieda','product_ambiguity_color_красн','Вы про красный эликсир Фохоу? Нужна цена, описание или применение?',true),
-('whieda','knowledge_gap_generic','Пока нет подтверждённого ответа в базе WHIEDA. Уточните название товара или артикул.',true),
+('whieda','knowledge_gap_generic','Я пока не нашёл такой товар в текущем каталоге. Назовите товар или артикул — подскажу цену, карточку или сравнение.',true),
 ('whieda','safety_clarification','Уточните симптомы и обратитесь к специалисту — локальный тест без медицинских claims.',true)
 on conflict (client_id,clarification_key) do update set prompt_text=excluded.prompt_text, enabled=true;
 

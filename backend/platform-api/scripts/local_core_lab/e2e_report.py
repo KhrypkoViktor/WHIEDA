@@ -27,6 +27,8 @@ class E2EReport:
     preflight_smoke: dict[str, Any] = field(default_factory=dict)
     verify_e2e: dict[str, Any] = field(default_factory=dict)
     parity_run: dict[str, Any] = field(default_factory=dict)
+    no_blind_zone_run: dict[str, Any] = field(default_factory=dict)
+    no_blind_zone_db_proof: dict[str, Any] = field(default_factory=dict)
     cleanup_status: str = "NOT_RUN"
     steps: list[dict[str, Any]] = field(default_factory=list)
     failure_stage: str | None = None
@@ -127,6 +129,24 @@ def render_markdown(report: E2EReport) -> str:
             lines.append(f"- not_run: {parity['not_run']}")
         if parity.get("timeout"):
             lines.append(f"- timeout: `{parity['timeout']}`")
+
+    nbz = report.no_blind_zone_run
+    if nbz:
+        lines.extend(["", "## No blind zone corpus", ""])
+        lines.append(f"- status: `{nbz.get('status', 'NOT_RUN')}`")
+        if nbz.get("total_line"):
+            lines.append(f"- summary: {nbz['total_line']}")
+        if nbz.get("p0_line"):
+            lines.append(f"- {nbz['p0_line']}")
+        if nbz.get("p1_line"):
+            lines.append(f"- {nbz['p1_line']}")
+
+    nbz_db = report.no_blind_zone_db_proof
+    if nbz_db:
+        lines.extend(["", "## No blind zone DB proof", ""])
+        lines.append(f"- status: `{nbz_db.get('status', 'NOT_RUN')}`")
+        if nbz_db.get("summary"):
+            lines.append(f"- summary: {nbz_db['summary']}")
 
     lines.extend(["", "## Cleanup", ""])
     lines.append(f"- status: `{report.cleanup_status}`")
