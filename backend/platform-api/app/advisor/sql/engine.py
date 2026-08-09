@@ -28,12 +28,14 @@ from app.advisor.sql.text import (
     is_context_followup,
     is_materials_request,
     is_pv_definition_question,
+    is_product_definition_question,
     normalize_text,
     wants_partner_price,
     wants_retail_price,
     DETAILS_RE,
     VIDEO_RE,
     CERT_RE,
+    PDF_RE,
     has_pro_marker,
 )
 from app.db import tenant_connection
@@ -41,6 +43,10 @@ from app.tenancy import TenantContext
 
 COMPARE_PAIR_RE = re.compile(
     r"(?:сравни(?:ть)?\s+)?(.+?)\s+(?:и|или|vs|против|лучше)\s+(.+)",
+    re.I,
+)
+DIFF_FROM_PAIR_RE = re.compile(
+    r"чем\s+отличается\s+(.+?)\s+от\s+(.+?)(?:\?|$)",
     re.I,
 )
 
@@ -96,6 +102,11 @@ DETAILS_TOPIC_UNKNOWN_FALLBACK = (
 LIMITATIONS_FALLBACK = (
     "при кардиостимуляторе, беременности и хронических заболеваниях "
     "согласуйте применение со специалистом и инструкцией."
+)
+
+UNKNOWN_PRODUCT_RE = re.compile(
+    r"несуществующ|xyzabc|xyzunknown|qwerty|unknown123",
+    re.I,
 )
 
 
@@ -182,11 +193,13 @@ async def run_structured_query(
                 resolved.append(product)
             text, skus = build_cart_list_response(cart_names, resolved, missing)
             mode = "structured_cart" if resolved else "clarification"
+            clarifications = ["cart_item_unknown"] if not resolved else None
             return fmt.ok_response(
                 text,
                 mode,
                 trace_id,
                 product={"skus": skus} if skus else None,
+                clarifications=clarifications,
             )
 
         basket_active = has_basket_intent(question) or bool(stored.get("starter_basket"))
@@ -232,6 +245,51 @@ async def run_structured_query(
                 )
                 return response
 
+        if has_price_intent(question) and has_promotion_intent(question):
+            product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+            parts: list[str] = []
+            if product:
+                price = fmt.format_price(
+                    product,
+                    country,
+                    partner_only=wants_partner_price(question),
+                    retail_only=wants_retail_price(question),
+                )
+                parts.append(f"{product['canonical_name']}: {price}")
+            else:
+                prompt = await repo.load_clarification_prompt(
+                    conn, tenant.tenant_id, "price_product_unknown"
+                )
+                if prompt:
+                    parts.append(prompt)
+            promos = await repo.load_active_promotions(conn, tenant.tenant_id, country)
+            promo_text = format_promotions(promos)
+            if promo_text:
+                parts.append(promo_text)
+            response = fmt.ok_response(
+                "\n\n".join(parts),
+                "structured_price" if product else "structured_promotion",
+                trace_id,
+                product=(
+                    {"sku": product["sku"], "canonical_name": product["canonical_name"]}
+                    if product
+                    else None
+                ),
+                context=(
+                    {
+                        "last_product_sku": product["sku"],
+                        "last_product_name": product["canonical_name"],
+                    }
+                    if product
+                    else {}
+                ),
+            )
+            if product:
+                await session_ctx.merge_session_context(
+                    conn, tenant.tenant_id, session, response["context"]
+                )
+            return response
+
         if has_promotion_intent(question):
             promos = await repo.load_active_promotions(conn, tenant.tenant_id, country)
             text = format_promotions(promos)
@@ -246,32 +304,6 @@ async def run_structured_query(
             resources = await repo.load_community_resources(conn, tenant.tenant_id, country)
             text = format_community(resources)
             return fmt.ok_response(text, "structured_community", trace_id)
-
-        if has_price_intent(question) and stored.get("last_product_sku"):
-            remembered = await repo.resolve_product_by_sku(
-                conn, tenant.tenant_id, str(stored["last_product_sku"])
-            )
-            if remembered:
-                price = fmt.format_price(
-                    remembered,
-                    country,
-                    partner_only=wants_partner_price(question),
-                    retail_only=wants_retail_price(question),
-                )
-                response = fmt.ok_response(
-                    f"{remembered['canonical_name']}: {price}",
-                    "structured_price",
-                    trace_id,
-                    product={"sku": remembered["sku"], "canonical_name": remembered["canonical_name"]},
-                    context={
-                        "last_product_sku": remembered["sku"],
-                        "last_product_name": remembered["canonical_name"],
-                    },
-                )
-                await session_ctx.merge_session_context(
-                    conn, tenant.tenant_id, session, response["context"]
-                )
-                return response
 
         objection = await repo.find_business_objection(conn, tenant.tenant_id, question)
         if objection and not has_price_intent(question):
@@ -306,13 +338,17 @@ async def run_structured_query(
                 )
             return fmt.ok_response(PV_DEFINITION_FALLBACK, "structured_business_faq", trace_id)
 
-        if (is_context_followup(question) or DETAILS_RE.search(question)) and not stored.get("last_product_sku"):
-            return fmt.ok_response(
-                DETAILS_TOPIC_UNKNOWN_FALLBACK,
-                "clarification",
-                trace_id,
-                clarifications=["details_topic_unknown"],
-            )
+        if (is_context_followup(question) or DETAILS_RE.search(question)) and not stored.get(
+            "last_product_sku"
+        ):
+            details_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+            if not details_product:
+                return fmt.ok_response(
+                    DETAILS_TOPIC_UNKNOWN_FALLBACK,
+                    "clarification",
+                    trace_id,
+                    clarifications=["details_topic_unknown"],
+                )
 
         faq_fallback = _business_faq_fallback(question)
         if faq_fallback:
@@ -320,6 +356,11 @@ async def run_structured_query(
 
         faq = await repo.find_business_faq(conn, tenant.tenant_id, question)
         if faq and not (has_price_intent(question) and not is_pv_definition_question(question)):
+            if is_product_definition_question(question):
+                product_for_def = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+                if product_for_def:
+                    faq = None
+        if faq:
             return fmt.ok_response(
                 str(faq.get("answer_text") or "").strip(),
                 "structured_business_faq",
@@ -345,17 +386,29 @@ async def run_structured_query(
                             conn, tenant.tenant_id, base["sku"], anchor["sku"]
                         )
                         if comparison:
-                            return fmt.ok_response(
+                            response = fmt.ok_response(
                                 str(comparison.get("answer_text") or "").strip(),
                                 "structured_comparison_layer",
                                 trace_id,
+                                product={
+                                    "sku": base["sku"],
+                                    "canonical_name": base["canonical_name"],
+                                },
+                                context={
+                                    "last_product_sku": base["sku"],
+                                    "last_product_name": base["canonical_name"],
+                                },
                             )
+                            await session_ctx.merge_session_context(
+                                conn, tenant.tenant_id, session, response["context"]
+                            )
+                            return response
                         left_card = await repo.load_product_card(conn, tenant.tenant_id, base["sku"])
                         right_card = await repo.load_product_card(conn, tenant.tenant_id, anchor["sku"])
                         text = build_compare_answer(base, left_card, anchor, right_card, country=country)
                         return fmt.ok_response(text, "structured_comparison", trace_id)
             comparison_response = await _resolve_comparison_response(
-                conn, tenant.tenant_id, question, country, trace_id
+                conn, tenant.tenant_id, question, country, trace_id, session=session
             )
             if comparison_response:
                 return comparison_response
@@ -432,7 +485,7 @@ async def run_structured_query(
                 kind = "certificate"
             elif VIDEO_RE.search(question):
                 kind = "video"
-            elif CERT_RE.search(question):
+            elif CERT_RE.search(question) or PDF_RE.search(question):
                 kind = "certificate"
             media = fmt.build_media_payload(card, resources, kind)
             if kind == "photo" and media.get("photo_url"):
@@ -444,6 +497,12 @@ async def run_structured_query(
             elif kind == "certificate" and media.get("documents"):
                 text = f"Материалы: {media['documents'][0]['url']}"
                 mode = "structured_certificate"
+            elif kind == "certificate":
+                text = fmt.MISSING_CERTIFICATE_TEXT
+                mode = "structured_certificate"
+            elif kind == "photo" and not media.get("photo_url"):
+                text = f"{fmt.MISSING_PHOTO_TEXT}: {product['canonical_name']}"
+                mode = "structured_photo"
             else:
                 text = f"По {product['canonical_name']} пока нет подходящего материала в базе."
                 mode = "clarification"
@@ -490,8 +549,11 @@ async def run_structured_query(
         if product:
             card = await repo.load_product_card(conn, tenant.tenant_id, product["sku"])
             text = fmt.format_product_card(card, product)
-            if has_pro_marker(str(product.get("canonical_name") or "")):
-                pro_name = str(product.get("canonical_name") or "").strip()
+            canonical = str(product.get("canonical_name") or "").strip()
+            if canonical and canonical.lower() not in normalize_text(text)[:240]:
+                text = f"{canonical} — {text}" if text else canonical
+            if has_pro_marker(canonical):
+                pro_name = canonical
                 if pro_name and "pro" not in normalize_text(text)[:160]:
                     text = f"{pro_name} — {text}" if text else pro_name
             media = fmt.build_media_payload(card, [], "photo")
@@ -508,6 +570,14 @@ async def run_structured_query(
             )
             return response
 
+        if not product and _should_use_knowledge_gap(question, normalized):
+            return fmt.ok_response(
+                await _knowledge_gap_text(tenant.tenant_id, trace_id),
+                "knowledge_gap",
+                trace_id,
+                media=fmt.empty_media(),
+            )
+
         if normalized and len(normalized) >= 4:
             prompt = await repo.load_clarification_prompt(
                 conn, tenant.tenant_id, "product_ambiguity_general"
@@ -519,7 +589,23 @@ async def run_structured_query(
         await _knowledge_gap_text(tenant.tenant_id, trace_id),
         "knowledge_gap",
         trace_id,
+        media=fmt.empty_media(),
     )
+
+
+def _should_use_knowledge_gap(question: str, normalized: str) -> bool:
+    if UNKNOWN_PRODUCT_RE.search(question):
+        return True
+    if re.search(r"расскаж\w*\s+про", normalized) and len(normalized) >= 12:
+        if normalized in {"активатор", "паста", "пептид", "пептиды"}:
+            return False
+        from app.advisor.sql.ambiguity import weak_color_or_belt_clarification
+
+        weak = weak_color_or_belt_clarification(question)
+        if weak and not weak.get("direct"):
+            return False
+        return True
+    return False
 
 
 def _business_faq_fallback(question: str) -> str | None:
@@ -540,7 +626,7 @@ async def _knowledge_gap_text(tenant_id: str, trace_id: str) -> str:
                 return prompt
     return (
         "Пока нет подтверждённого ответа в базе WHIEDA. "
-        f"Уточните товар или вопрос — или я передам его команде (trace: {trace_id})."
+        "Уточните название товара или артикул — или я передам вопрос команде."
     )
 
 
@@ -573,6 +659,8 @@ async def _resolve_comparison_response(
     question: str,
     country: str,
     trace_id: str,
+    *,
+    session: str = "",
 ) -> dict[str, Any] | None:
     pair = _parse_compare_pair(question)
     if not pair:
@@ -585,12 +673,21 @@ async def _resolve_comparison_response(
     approved = await repo.find_product_comparison(conn, tenant_id, left["sku"], right["sku"])
     approved_text = str(approved.get("answer_text") or approved.get("title") or "").strip() if approved else ""
     if approved_text:
-        return fmt.ok_response(approved_text, "structured_comparison_layer", trace_id)
+        response = fmt.ok_response(
+            approved_text,
+            "structured_comparison_layer",
+            trace_id,
+            product={"sku": left["sku"], "canonical_name": left["canonical_name"]},
+            context={"last_product_sku": left["sku"], "last_product_name": left["canonical_name"]},
+        )
+        if session:
+            await session_ctx.merge_session_context(conn, tenant_id, session, response["context"])
+        return response
 
     left_card = await repo.load_product_card(conn, tenant_id, left["sku"])
     right_card = await repo.load_product_card(conn, tenant_id, right["sku"])
     text = build_compare_answer(left, left_card, right, right_card, country=country)
-    return fmt.ok_response(
+    response = fmt.ok_response(
         text,
         "structured_comparison",
         trace_id,
@@ -601,10 +698,13 @@ async def _resolve_comparison_response(
         },
         context={"last_product_sku": left["sku"], "last_product_name": left["canonical_name"]},
     )
+    if session:
+        await session_ctx.merge_session_context(conn, tenant_id, session, response["context"])
+    return response
 
 
 def _parse_compare_pair(question: str) -> tuple[str, str] | None:
-    match = COMPARE_PAIR_RE.search(question)
+    match = DIFF_FROM_PAIR_RE.search(question) or COMPARE_PAIR_RE.search(question)
     if not match:
         return None
     left_text = match.group(1).strip(" :")

@@ -32,6 +32,7 @@ on conflict (client_id, sku) do update set
 insert into advisor_structured_aliases (client_id,alias,canonical_sku,canonical_name,priority,active) values
 ('whieda','активатор клеток','LOCAL-ACT','Активатор клеток',100,true),
 ('whieda','активатор','LOCAL-ACT','Активатор клеток',90,true),
+('whieda','активатора','LOCAL-ACT','Активатор клеток',90,true),
 ('whieda','ативатор','LOCAL-ACT','Активатор клеток',80,true),
 ('whieda','активатор клеток pro','LOCAL-PRO','Активатор клеток PRO',110,true),
 ('whieda','активатор pro','LOCAL-PRO','Активатор клеток PRO',110,true),
@@ -47,11 +48,18 @@ insert into advisor_structured_aliases (client_id,alias,canonical_sku,canonical_
 ('whieda','пояс','T003','Магнитный пояс',50,true),
 ('whieda','красный','F001-02','Эликсир Фохоу',40,true),
 ('whieda','красный эликсир','F001-02','Эликсир Фохоу',95,true),
+('whieda','красного эликсира','F001-02','Эликсир Фохоу',95,true),
 ('whieda','красный эликсир фохоу','F001-02','Эликсир Фохоу',100,true),
 ('whieda','зеленый эликсир','F003-02','Эликсир Саньцин',95,true),
 ('whieda','синий эликсир','F002-02','Эликсир 3 Драгоценности',95,true),
 ('whieda','магнитный пояс','T003','Магнитный пояс',100,true),
 ('whieda','товар без цены','LOCAL-NOPRICE','Товар без цены (тест)',100,true),
+('whieda','товара без цены','LOCAL-NOPRICE','Товар без цены (тест)',100,true),
+('whieda','товар без сертификата','LOCAL-NOCERT','Товар без сертификата (тест)',100,true),
+('whieda','товара без сертификата','LOCAL-NOCERT','Товар без сертификата (тест)',100,true),
+('whieda','товар без фото','LOCAL-NOPHOTO','Товар без фото (тест)',100,true),
+('whieda','товара без фото','LOCAL-NOPHOTO','Товар без фото (тест)',100,true),
+('whieda','зелёный эликсир','F003-02','Эликсир Саньцин',95,true),
 ('whieda','пептид','F038-00','Соевый пептид',60,true),
 ('whieda','соевый пептид','F038-00','Соевый пептид',100,true),
 ('test-acme','активатор','LOCAL-ACT-ACME','Acme Test Activator',100,true)
@@ -113,7 +121,7 @@ insert into advisor_structured_clarification_prompts (client_id,clarification_ke
 ('whieda','product_ambiguity_activator','Вы про Активатор клеток или Активатор клеток PRO?',true),
 ('whieda','product_ambiguity_belt','Вы про Магнитный пояс? Нужна цена, описание или применение?',true),
 ('whieda','product_ambiguity_color_красн','Вы про красный эликсир Фохоу? Нужна цена, описание или применение?',true),
-('whieda','knowledge_gap_generic','Нет подтверждённого ответа в локальном тестовом каталоге.',true),
+('whieda','knowledge_gap_generic','Пока нет подтверждённого ответа в базе WHIEDA. Уточните название товара или артикул.',true),
 ('whieda','safety_clarification','Уточните симптомы и обратитесь к специалисту — локальный тест без медицинских claims.',true)
 on conflict (client_id,clarification_key) do update set prompt_text=excluded.prompt_text, enabled=true;
 

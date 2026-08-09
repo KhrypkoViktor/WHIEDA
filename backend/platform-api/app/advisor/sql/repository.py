@@ -165,6 +165,29 @@ async def load_product_card(conn, tenant_id: str, sku: str) -> dict[str, Any] | 
     )
 
 
+FAQ_GENERIC_TOKENS = frozenset(
+    {
+        "что",
+        "такое",
+        "это",
+        "значит",
+        "объясни",
+        "расскажи",
+        "про",
+        "какой",
+        "какая",
+        "какие",
+        "как",
+        "для",
+        "или",
+    }
+)
+
+
+def _faq_substantive_tokens(alias: str) -> list[str]:
+    return [token for token in alias.split() if len(token) >= 3 and token not in FAQ_GENERIC_TOKENS]
+
+
 async def find_business_faq(conn, tenant_id: str, question: str) -> dict[str, Any] | None:
     normalized = question.lower()
     rows = await fetch_all(
@@ -205,12 +228,19 @@ async def find_business_faq(conn, tenant_id: str, question: str) -> dict[str, An
         for alias in [part.strip() for part in alias_blob.split("|") if part.strip()]:
             if len(alias) < 4:
                 continue
-            if alias in normalized or all(token in normalized for token in alias.split() if len(token) >= 3):
-                score = len(alias) + int(row.get("priority") or 0)
-                if alias in normalized:
-                    score += 20
-                if not best or score > best[0]:
-                    best = (score, row)
+            substantive = _faq_substantive_tokens(alias)
+            matched = False
+            if alias in normalized:
+                matched = True
+            elif substantive and all(token in normalized for token in substantive):
+                matched = True
+            if not matched:
+                continue
+            score = len(alias) + int(row.get("priority") or 0)
+            if alias in normalized:
+                score += 20
+            if not best or score > best[0]:
+                best = (score, row)
     return best[1] if best else None
 
 

@@ -123,10 +123,19 @@ async def try_ambiguity_clarification(
         text = await repo.load_clarification_prompt(conn, tenant_id, key)
         return (text or str(weak.get("fallback") or ""), "clarification", [key])
 
-    activator_exact = normalized in {"активатор", "ативатор"}
-    if is_activator_like(question) and (
-        activator_exact
-        or (not best_product and (has_description_intent(question) or is_explicit_product_ask(question)))
+    activator_exact = normalized == "активатор"
+    if activator_exact:
+        if tenant_id != "whieda" and best_product:
+            return None
+        text = await repo.load_clarification_prompt(conn, tenant_id, "product_ambiguity_activator")
+        return (
+            text or "Вы про Активатор клеток или Активатор клеток PRO?",
+            "clarification",
+            ["product_ambiguity_activator"],
+        )
+
+    if is_activator_like(question) and not best_product and (
+        has_description_intent(question) or is_explicit_product_ask(question)
     ):
         text = await repo.load_clarification_prompt(conn, tenant_id, "product_ambiguity_activator")
         return (

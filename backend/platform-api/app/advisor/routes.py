@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+import json
+
+from fastapi import APIRouter, HTTPException, Request
 
 from app.advisor.legacy_adapter import post_legacy_json
 from app.advisor.shadow import compare_advisor_responses, log_shadow_comparison
@@ -32,7 +34,10 @@ async def _advisor_query(request: Request) -> dict:
     require_entitlement(tenant, "structure_basic")
     trace_id = get_trace_id(request)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail={"ok": False, "error": "invalid_json"}) from exc
     if not isinstance(body, dict):
         body = {}
 
@@ -42,6 +47,8 @@ async def _advisor_query(request: Request) -> dict:
 
     try:
         core_response = await handle_structured_query(tenant, body, trace_id)
+    except HTTPException:
+        raise
     except Exception:
         return advisor_error(request)
 

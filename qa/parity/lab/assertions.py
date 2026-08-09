@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 ARTIFACTS = ("This needs human review", "Traceback", "Nordman", "duckdns.org", "api.telegram.org")
+
+# Standalone zero amounts only — "1050 BYN" must not match "0 BYN".
+ZERO_PRICE_AMOUNT_RE = re.compile(
+    r"(?:^|[\s,;])0\s+(?:BYN|RUB|W\$|PV)(?:[\s,;.]|$)",
+    re.I,
+)
 
 
 def has_required_assertions(case: dict[str, Any]) -> bool:
@@ -16,7 +23,17 @@ def has_required_assertions(case: dict[str, Any]) -> bool:
         return False
     if case.get("max_latency_ms") is None:
         return False
-    return bool(case.get("must_contain"))
+    return bool(case.get("must_contain") or case.get("expected_mode"))
+
+
+def _check_price_assertions(case: dict[str, Any], answer_text: str) -> tuple[str, str] | None:
+    spec = case.get("price_assertions") or {}
+    forbid_zero = spec.get("forbid_zero_amounts")
+    if forbid_zero is None and case.get("forbid_zero_price"):
+        forbid_zero = True
+    if forbid_zero and ZERO_PRICE_AMOUNT_RE.search(answer_text):
+        return "FAIL", "forbidden zero price amount (0 BYN/RUB/W$)"
+    return None
 
 
 def evaluate_parity_case(
@@ -29,8 +46,6 @@ def evaluate_parity_case(
     error: str | None = None,
     timeout: bool = False,
 ) -> tuple[str, str]:
-    case_id = case.get("case_id", "?")
-
     if timeout:
         return "FAIL", "request timeout"
     if error:
@@ -73,6 +88,10 @@ def evaluate_parity_case(
         if str(token).lower() in answer_text.lower():
             return "FAIL", f"forbidden must_not_contain {token!r}"
 
+    price_fail = _check_price_assertions(case, answer_text)
+    if price_fail:
+        return price_fail
+
     expected_mode = case.get("expected_mode")
     if expected_mode and answer_mode != expected_mode:
         return "FAIL", f"expected_mode {expected_mode!r} got {answer_mode!r}"
@@ -91,10 +110,12 @@ def evaluate_parity_case(
     videos = (extracted or {}).get("videos") or []
     docs = (extracted or {}).get("pdf_documents") or []
 
-    if media_spec.get("photo") == "required" and not photo:
+    photo_rule = str(media_spec.get("photo") or "none").lower()
+    if photo_rule == "required" and not photo:
         return "FAIL", "expected photo but media.photo_url empty"
-    if media_spec.get("photo") == "none" and photo:
+    if photo_rule == "none" and photo:
         return "FAIL", "expected no photo but media.photo_url present"
+    # "allow" — photo optional, no assertion
 
     min_v = int(media_spec.get("video_count_min") or 0)
     if len(videos) < min_v:
@@ -106,7 +127,7 @@ def evaluate_parity_case(
 
     ctx_spec = case.get("expected_context") or {}
     expected_last = ctx_spec.get("last_product_name")
-    if expected_last:
+    if expected_last is not None and expected_last != "":
         ctx = (raw_payload or {}).get("context") or {}
         last = str(ctx.get("last_product_name") or ctx.get("product_name") or "")
         product_name = str((extracted or {}).get("product_name") or "")
@@ -117,6 +138,11 @@ def evaluate_parity_case(
         )
         if not found:
             return "FAIL", f"expected context product {expected_last!r} not reflected"
+    elif expected_last is None and ctx_spec:
+        ctx = (raw_payload or {}).get("context") or {}
+        last = str(ctx.get("last_product_name") or "").strip()
+        if last:
+            return "FAIL", f"expected empty context but last_product_name={last!r}"
 
     max_lat = case.get("max_latency_ms")
     if max_lat is not None and latency_ms is not None and latency_ms > float(max_lat):
