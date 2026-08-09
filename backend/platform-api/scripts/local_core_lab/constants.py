@@ -19,6 +19,7 @@ VERIFY_E2E = SCRIPTS / "verify_local_core_e2e.py"
 
 ACCEPTANCE_ROOT = ROOT / "qa" / "acceptance"
 ACCEPTANCE_RUNNER = ACCEPTANCE_ROOT / "run_acceptance.py"
+LOCAL_CORE_SMOKE_CORPUS = ACCEPTANCE_ROOT / "local_core_seed_smoke_v1.jsonl"
 ACCEPTANCE_LOCAL_TARGET = ACCEPTANCE_ROOT / "acceptance_target.local.json"
 ACCEPTANCE_EXAMPLE_TARGET = ACCEPTANCE_ROOT / "acceptance_target.example.json"
 

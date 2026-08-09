@@ -1,0 +1,8 @@
+{"case_id":"LCORE-001","priority":"P0","input":"расскажи про активатор клеток","expected_product":"Активатор клеток","expected_mode":"structured_card","must_contain":["Активатор"]}
+{"case_id":"LCORE-002","priority":"P0","input":"сколько стоит активатор клеток","expected_product":"Активатор клеток","expected_mode":"structured_price","must_contain":["Розничная цена","PV"]}
+{"case_id":"LCORE-003","priority":"P0","input":"дай фото активатора клеток","expected_product":"Активатор клеток","expected_mode":"structured_photo","must_contain":["фото"]}
+{"case_id":"LCORE-004","priority":"P0","input":"дай видео активатора клеток","expected_product":"Активатор клеток","expected_mode":"structured_video","must_contain":["Видео"]}
+{"case_id":"LCORE-005","priority":"P0","input":"сертификат активатора","expected_product":"Активатор клеток","expected_mode":"structured_certificate","must_contain":["Материалы"]}
+{"case_id":"LCORE-006","priority":"P0","input":"что такое бэм","expected_product":"Magic Foherb","expected_mode":"structured_card","must_contain":["Magic"]}
+{"case_id":"LCORE-007","priority":"P0","input":"цена сауны","expected_product":"Ба-Гуа","expected_mode":"structured_price","must_contain":["Ба-Гуа"]}
+{"case_id":"LCORE-008","priority":"P0","input":"сравни активатор клеток и активатор pro","expected_product":"Активатор клеток","expected_mode":"structured_comparison","must_contain":["PRO"]}
