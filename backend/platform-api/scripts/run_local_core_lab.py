@@ -31,14 +31,22 @@ def main() -> int:
         action="store_true",
         help="Full E2E: staging SQL + Core + acceptance P0 + verify + report",
     )
+    parser.add_argument(
+        "--parity",
+        action="store_true",
+        help="Run full Core advisor parity corpus (requires --e2e)",
+    )
     parser.add_argument("--health-timeout", type=int, default=120)
     args = parser.parse_args()
+    if args.parity and not args.e2e:
+        parser.error("--parity requires --e2e")
 
     config = OrchestratorConfig(
         skip_build=args.skip_build,
         leave_core_up=args.leave_core_up,
         health_timeout_sec=args.health_timeout,
         e2e_mode=args.e2e,
+        parity_mode=args.parity,
     )
     code, state = run_lab(config)
     _print_step_output(state)

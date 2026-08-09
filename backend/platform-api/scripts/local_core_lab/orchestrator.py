@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import shutil
 import sys
 import time
@@ -25,6 +26,8 @@ from local_core_lab.constants import (
     HTTP_SMOKE,
     LOCAL_CORE_SMOKE_CORPUS,
     LOCAL_CORE_DB,
+    PARITY_CORPUS,
+    PARITY_RUNNER,
     PLATFORM_API,
     POSTGRES_COMPOSE,
     SEED,
@@ -42,6 +45,7 @@ class OrchestratorConfig:
     health_timeout_sec: int = 120
     python: str = field(default_factory=lambda: sys.executable)
     e2e_mode: bool = False
+    parity_mode: bool = False
 
 
 @dataclass
@@ -101,8 +105,8 @@ def wait_api_health(timeout_sec: int) -> dict[str, Any]:
             if exc.code != 503:
                 body = exc.read().decode("utf-8", errors="replace")
                 return {"status": "FAIL", "http_status": exc.code, "body_preview": body[:200]}
-        except urllib.error.URLError as exc:
-            last_error = str(exc.reason)
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+            last_error = str(getattr(exc, "reason", exc))
         time.sleep(2)
     return {"status": "FAIL", "error": f"timeout after {timeout_sec}s", "last_error": last_error}
 
@@ -161,6 +165,8 @@ def run_lab(
     print("=== WHIEDA local Core runtime lab ===")
     if config.e2e_mode:
         print("=== E2E mode: Docker + acceptance + verify ===")
+    if config.parity_mode:
+        print("=== Parity mode: full advisor HTTP parity corpus ===")
 
     try:
         require_docker()
@@ -193,7 +199,10 @@ def run_lab(
                 e2e=config.e2e_mode,
             ), state
 
-        step = run_capture_fn([config.python, str(ENSURE_CORE_DB)], name="ensure_core_database")
+        ensure_cmd = [config.python, str(ENSURE_CORE_DB)]
+        if config.parity_mode:
+            ensure_cmd.append("--force-reapply")
+        step = run_capture_fn(ensure_cmd, name="ensure_core_database")
         _record_step(state, step)
         if not step.ok:
             print(step.stdout)
@@ -202,8 +211,19 @@ def run_lab(
                 state,
                 "ensure_core_database",
                 "ensure_local_core_database.py failed",
-                e2e=config.e2e_mode,
+                e2e=config.e2e_mode or config.parity_mode,
             ), state
+
+        if config.parity_mode:
+            step = run_capture_fn(ensure_cmd, name="ensure_core_database_reapply")
+            _record_step(state, step)
+            if not step.ok:
+                return _fail(
+                    state,
+                    "ensure_core_database_reapply",
+                    "second schema apply failed",
+                    e2e=True,
+                ), state
 
         compose_cmd = ["docker", "compose", "-f", str(CORE_COMPOSE), "up", "-d"]
         if not config.skip_build:
@@ -314,6 +334,25 @@ def run_lab(
                 print(step.stderr, file=sys.stderr)
                 return _fail(state, "acceptance_p0_run", "P0 acceptance run failed", e2e=True), state
 
+        if config.parity_mode:
+            step = run_capture_fn(
+                [config.python, str(PARITY_RUNNER), "--target", str(ACCEPTANCE_LOCAL_TARGET)],
+                name="core_local_parity_run",
+            )
+            _record_step(state, step)
+            combined = step.stdout + step.stderr
+            report.parity_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+                "summary_line": _extract_acceptance_summary(combined),
+            }
+            if not step.ok:
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+                return _fail(state, "core_local_parity_run", "parity corpus run failed", e2e=True), state
+
+        if config.e2e_mode:
             verify_result = run_verify(API_BASE, include_p0=False, python=config.python)
             report.verify_e2e = verify_result
             if verify_result["status"] != "PASS":
@@ -326,7 +365,7 @@ def run_lab(
                 ), state
 
         report.status = "PASS"
-        if config.e2e_mode:
+        if config.e2e_mode or config.parity_mode:
             _finalize_report(state)
         print("\n=== LOCAL CORE RUNTIME LAB: PASS ===")
         if config.e2e_mode:
@@ -337,7 +376,7 @@ def run_lab(
         report.status = "NOT_RUN" if not state.docker_ok else "FAIL"
         report.failure_stage = "precheck"
         report.failure_message = str(exc)
-        if config.e2e_mode:
+        if config.e2e_mode or config.parity_mode:
             _finalize_report(state)
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1, state
