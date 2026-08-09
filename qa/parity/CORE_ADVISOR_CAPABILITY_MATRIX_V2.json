@@ -1,0 +1,271 @@
+{
+  "version": 2,
+  "name": "Core Advisor Parity Capability Matrix V2",
+  "generated_note": "Readiness counts are computed from capability status fields — do not edit manually.",
+  "capabilities": [
+    {
+      "capability_id": "CAP-01",
+      "name": "Приветствие, помощь, возможности бота",
+      "core_module": "app/advisor/sql/engine.py + capability_responses",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-001, PARITY-P0-002, PARITY-P1-121",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_business mode", "no media on service intents"],
+      "not_checked": ["Telegram formatting", "legacy n8n wording parity"],
+      "source": "existing code + staging_seed_whieda_advisor_local_v1.sql"
+    },
+    {
+      "capability_id": "CAP-02",
+      "name": "Карточка товара",
+      "core_module": "app/advisor/sql/formatters.format_product_card",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-010..014, PARITY-P1-110..112",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_card", "product name in answer"],
+      "not_checked": ["owner-locked card copy", "production photos"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-03",
+      "name": "Цена: розница, партнёрская, PV, RUB, BYN",
+      "core_module": "app/advisor/sql/formatters.format_price",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-020..023, PARITY-P1-124..125",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_price", "PV present", "country BY/RU"],
+      "not_checked": ["live Sheets price sync"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-04",
+      "name": "Алиасы, опечатки, формы слов",
+      "core_module": "app/advisor/sql/resolver.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-030..031, PARITY-P1-110..111, PARITY-P1-133..134",
+      "status": "covered_by_http_e2e",
+      "checks": ["typo ativator", "сауна/сауны", "magic foherb"],
+      "not_checked": ["full production alias table"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-05",
+      "name": "Фото, видео, PDF, сертификат",
+      "core_module": "app/advisor/sql/formatters.build_media_payload",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-040..042, PARITY-P1-126..127",
+      "status": "covered_by_http_e2e",
+      "checks": ["photo/video/certificate modes", "example.invalid URLs only"],
+      "not_checked": ["CDN delivery", "Telegram photo send"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-06",
+      "name": "Follow-up: цена, фото, видео, подробнее",
+      "core_module": "app/advisor/sql/context.py + engine follow-up",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-050..051, PARITY-P1-113..114",
+      "status": "covered_by_http_e2e",
+      "checks": ["context_before session", "follow-up intents"],
+      "not_checked": ["multi-turn Telegram session store"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-07",
+      "name": "Контекст: новый товар сильнее прошлого",
+      "core_module": "app/advisor/sql/engine.py explicit product resolution",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-052, PARITY-P1-131..132",
+      "status": "covered_by_http_e2e",
+      "checks": ["цена сауны after BEM context"],
+      "not_checked": ["long multi-product dialogs"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-08",
+      "name": "Неоднозначность: паста, цвет, пояс, короткое название",
+      "core_module": "app/advisor/sql/ambiguity.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-060..064, PARITY-P1-115..116",
+      "status": "covered_by_http_e2e",
+      "checks": ["clarification mode", "weak vs strong color alias"],
+      "not_checked": ["all production ambiguity keys"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-09",
+      "name": "Сравнение товаров",
+      "core_module": "app/advisor/sql/comparison.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-070, PARITY-P1-128",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_comparison_layer"],
+      "not_checked": ["3+ product comparisons"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-10",
+      "name": "Корзина из нескольких товаров",
+      "core_module": "app/advisor/sql/cart_list.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-071..072, PARITY-P1-117",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_cart", "duplicate + unknown lines"],
+      "not_checked": ["persistent cart state"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-11",
+      "name": "Стартовая корзина по бюджету/PV",
+      "core_module": "app/advisor/sql/basket.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-100",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_starter_basket"],
+      "not_checked": ["full recommendation rules catalog"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-12",
+      "name": "Акции",
+      "core_module": "app/advisor/sql/business_formatters.format_promotions",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-101",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_promotion"],
+      "not_checked": ["Sheets promotions sync"],
+      "source": "existing code + advisor_promotions local table"
+    },
+    {
+      "capability_id": "CAP-13",
+      "name": "FAQ: PV, повторка, Step, бинар",
+      "core_module": "app/advisor/sql/repository.find_business_faq",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-102..105",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_business_faq"],
+      "not_checked": ["full FAQ corpus"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-14",
+      "name": "Возражения",
+      "core_module": "app/advisor/sql/repository.find_business_objection",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-106",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_business_objection"],
+      "not_checked": ["coach objection practice flow"],
+      "source": "existing code + local fixture"
+    },
+    {
+      "capability_id": "CAP-15",
+      "name": "События и сообщество",
+      "core_module": "app/advisor/sql/business_formatters",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-107..108",
+      "status": "covered_by_http_e2e",
+      "checks": ["structured_event", "structured_community"],
+      "not_checked": ["calendar reminders", "Telegram event posts"],
+      "source": "existing code + local events/community tables"
+    },
+    {
+      "capability_id": "CAP-16",
+      "name": "Несколько намерений в одном сообщении",
+      "core_module": "app/advisor/sql/engine.py primary intent routing",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-129",
+      "status": "implemented_local",
+      "checks": ["price wins over promotion keyword in test case"],
+      "not_checked": ["true multi-intent decomposition"],
+      "source": "existing code"
+    },
+    {
+      "capability_id": "CAP-17",
+      "name": "Controlled knowledge gap",
+      "core_module": "app/advisor/sql/engine._knowledge_gap_text",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-093, PARITY-P1-130",
+      "status": "covered_by_http_e2e",
+      "checks": ["knowledge_gap mode", "no empty fallback"],
+      "not_checked": ["gap review queue workflow"],
+      "source": "existing code + clarification prompts fixture"
+    },
+    {
+      "capability_id": "CAP-18",
+      "name": "Safety/medical clarification",
+      "core_module": "app/advisor/sql/engine.py SAFETY_TREATMENT_RE",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-109",
+      "status": "covered_by_http_e2e",
+      "checks": ["clarification without medical claims"],
+      "not_checked": ["full medical review queue"],
+      "source": "existing code"
+    },
+    {
+      "capability_id": "CAP-19",
+      "name": "Пустые media для service intents",
+      "core_module": "app/advisor/parity/media_assertions.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-001, PARITY-P0-094",
+      "status": "covered_by_http_e2e",
+      "checks": ["media.photo none on greeting"],
+      "not_checked": ["legacy media pollution regression on prod"],
+      "source": "existing code + parity runner assertions"
+    },
+    {
+      "capability_id": "CAP-20",
+      "name": "Media только текущего товара",
+      "core_module": "app/advisor/parity/media_assertions.evaluate_media_for_case",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-118..119",
+      "status": "covered_by_http_e2e",
+      "checks": ["photo then price same product SKU"],
+      "not_checked": ["cross-product media leak exhaustive matrix"],
+      "source": "existing code + parity runner"
+    },
+    {
+      "capability_id": "CAP-21",
+      "name": "Tenant isolation",
+      "core_module": "app/tenancy + advisor repository client_id",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-080..081, PARITY-P1-135",
+      "status": "covered_by_http_e2e",
+      "checks": ["wwc.best vs acme.test.local different products"],
+      "not_checked": ["RLS on advisor tables (tenant uses client_id column)"],
+      "source": "platform_tenant_registry seed + local fixture"
+    },
+    {
+      "capability_id": "CAP-22",
+      "name": "Ошибочный JSON и 4xx",
+      "core_module": "app/advisor/routes.py",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-090",
+      "status": "covered_by_http_e2e",
+      "checks": ["invalid JSON returns 4xx not 500"],
+      "not_checked": ["OpenAPI error schema parity"],
+      "source": "existing code + parity runner"
+    },
+    {
+      "capability_id": "CAP-23",
+      "name": "Недоступный внешний provider не ломает SQL Core",
+      "core_module": "app/advisor/routes.py CORE_ROUTE_ADVISOR=core",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P1-120 + .env.local.example blackhole URLs",
+      "status": "implemented_local",
+      "checks": ["Core answers without n8n/Dify", "blocked URLs in env"],
+      "not_checked": ["shadow mode", "legacy cutover"],
+      "source": "existing code + local Core compose env"
+    },
+    {
+      "capability_id": "CAP-24",
+      "name": "Отсутствующая цена не становится нулём",
+      "core_module": "app/advisor/sql/formatters.format_price",
+      "endpoint": "POST /v1/advisor/query",
+      "local_test": "PARITY-P0-091",
+      "status": "covered_by_http_e2e",
+      "checks": ["цена уточняется text", "must_not 0 BYN"],
+      "not_checked": ["null vs zero in API JSON fields"],
+      "source": "existing code + LOCAL-NOPRICE fixture"
+    }
+  ]
+}

@@ -56,4 +56,49 @@ create table if not exists advisor_structured_canonical_questions (
   real_examples text, answer_key text, frequency integer not null default 0, status text not null default 'approved',
   primary key (client_id, question_id)
 );
+
+-- Extended local-only tables (mirror runtime snapshot shape; never apply to prod).
+create table if not exists advisor_promotions (
+  client_id text not null, promotion_id text not null, tenant_id text not null default 'by',
+  title text not null, short_text text, full_text text, country text, city text,
+  starts_at timestamptz not null, ends_at timestamptz not null, timezone text, promotion_type text,
+  product_ids text, min_amount text, min_pv text, benefit_text text, source_url text, image_url text,
+  priority integer not null default 100, status text not null default 'draft', owner text, updated_at text,
+  primary key (client_id, promotion_id)
+);
+create table if not exists advisor_product_recommendation_rules (
+  client_id text not null, product_id text not null, tenant_id text not null default 'by',
+  registration_enabled boolean not null default true, availability_status text not null default 'available',
+  universality_score integer not null default 0, popularity_score integer not null default 0,
+  demo_score integer not null default 0, gift_score integer not null default 0, resale_score integer not null default 0,
+  personal_use_score integer not null default 0, explanation_difficulty integer not null default 0,
+  price_sensitivity integer not null default 0, business_priority integer not null default 0,
+  reason_short text, status text not null default 'active', owner text, updated_at text,
+  primary key (client_id, product_id)
+);
+create table if not exists advisor_starter_basket_templates (
+  client_id text not null, template_id text not null, tenant_id text not null default 'by',
+  title text not null, goal text not null default 'balanced', budget_min text, budget_max text,
+  target_pv_min text, target_pv_max text, required_product_ids text, preferred_product_ids text,
+  excluded_product_ids text, description text, priority integer not null default 100,
+  status text not null default 'draft', owner text, updated_at text,
+  primary key (client_id, template_id)
+);
+create table if not exists advisor_whieda_events (
+  client_id text not null, event_id text not null, tenant_id text not null default 'by',
+  title text not null, event_type text, description text, starts_at timestamptz not null, ends_at timestamptz,
+  timezone text, country text, city text, address text, online_url text, contact text,
+  audience_segment text, leader_id text, image_url text, source_url text, reminder_offsets text,
+  status text not null default 'draft', owner text, updated_at text, recurrence_rule text,
+  primary key (client_id, event_id)
+);
+create table if not exists advisor_whieda_community_resources (
+  client_id text not null, resource_id text not null, tenant_id text not null default 'by',
+  leader_id text, title text not null, category text, description text, url text not null,
+  platform text, country text, city text, audience text, topic_tags text,
+  access_level text not null default 'public', priority integer not null default 100,
+  is_official boolean not null default false, status text not null default 'draft',
+  last_checked_at text, owner text, updated_at text, notes text,
+  primary key (client_id, resource_id)
+);
 commit;
