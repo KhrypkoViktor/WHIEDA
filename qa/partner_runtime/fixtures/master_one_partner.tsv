@@ -1,0 +1,2 @@
+partner_id	display_name	ref_code	owner_actor_id	site_type	page_mode	active	plan_status
+retired-partner	Retired Partner	retired-partner	retired-partner	ref_query	standard_ref	true	active

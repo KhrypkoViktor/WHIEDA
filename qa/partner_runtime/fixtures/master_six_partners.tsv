@@ -1,0 +1,7 @@
+partner_id	display_name	ref_code	owner_actor_id	site_type	page_mode	active	plan_status	country
+nnm	WWC Platform	nnm	viktor	platform_root	anonymous_ref	true	active	GLOBAL
+ladnaya	Anna Ladnaya	ladnaya	ladnaya	subdomain_site	subdomain_site	true	active	BY
+mariam	Mariam	mariam	mariam	subdomain_site	subdomain_site	true	active	BY
+harold	Harold	harold	harold	ref_query	standard_ref	true	active	BY
+onlineelena	Elena Datskevich	onlineelena	onlineelena	ref_query	standard_ref	true	active	BY
+olga-samtsova	Olga Samtsova	olga-samtsova	olga-samtsova	ref_query	standard_ref	true	active	BY
