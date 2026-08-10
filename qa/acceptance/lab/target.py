@@ -84,7 +84,9 @@ def build_advisor_request(target: dict[str, Any], case: dict[str, Any]) -> tuple
     req_map = advisor["request"]
 
     session_spec = req_map["session"]
-    body[str(session_spec["field"])] = str(session_spec.get("default") or "acceptance-lab")
+    session_field = str(session_spec["field"])
+    from_case = session_spec.get("from_case", "session")
+    body[session_field] = str(case.get(from_case) or session_spec.get("default") or "acceptance-lab")
 
     ref_spec = req_map["ref"]
     body[str(ref_spec["field"])] = str(ref_spec.get("default") or "")

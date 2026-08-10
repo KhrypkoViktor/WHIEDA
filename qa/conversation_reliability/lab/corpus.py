@@ -22,6 +22,7 @@ REQUIRED_TURN_KEYS = (
     "must_contain",
     "must_not_contain",
     "expected_media",
+    "max_latency_ms",
 )
 
 

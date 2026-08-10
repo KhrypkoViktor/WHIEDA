@@ -45,6 +45,8 @@ insert into advisor_structured_aliases (client_id,alias,canonical_sku,canonical_
 ('whieda','сауна','LOCAL-BAG','Ба-Гуа',70,true),
 ('whieda','сауны','LOCAL-BAG','Ба-Гуа',70,true),
 ('whieda','паста','LOCAL-PASTE-A','Паста с экстрактом полыни',50,true),
+('whieda','полын','LOCAL-PASTE-A','Паста с экстрактом полыни',95,true),
+('whieda','полыни','LOCAL-PASTE-A','Паста с экстрактом полыни',90,true),
 ('whieda','пояс','T003','Магнитный пояс',50,true),
 ('whieda','красный','F001-02','Эликсир Фохоу',40,true),
 ('whieda','красный эликсир','F001-02','Эликсир Фохоу',95,true),
@@ -95,6 +97,7 @@ insert into advisor_structured_resources (
   client_id,resource_id,sku,canonical_name,resource_type,title,url,priority,active
 ) values
 ('whieda','L-ACT-VIDEO','LOCAL-ACT','Активатор клеток','video','Видео Активатор','https://example.invalid/local/activator-video.mp4',10,true),
+('whieda','L-PRO-VIDEO','LOCAL-PRO','Активатор клеток PRO','video','Видео PRO','https://example.invalid/local/activator-pro-video.mp4',10,true),
 ('whieda','L-ACT-CERT','LOCAL-ACT','Активатор клеток','certificate','Сертификат Активатор','https://example.invalid/local/activator-cert.pdf',10,true),
 ('whieda','L-WEN-CERT','LOCAL-WEN','Вэнтун','certificate','Сертификат Вэнтун','https://example.invalid/local/wentong-cert.pdf',10,true),
 ('whieda','L-ACT-PDF','LOCAL-ACT','Активатор клеток','document','PDF Активатор','https://example.invalid/local/activator-doc.pdf',5,true)

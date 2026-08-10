@@ -102,7 +102,7 @@ ANSWER_MODE_BY_KIND: dict[str, str] = {
     "unknown_product": "knowledge_gap",
     "ambiguous_product": "clarification",
     "unknown_followup": "clarification",
-    "unsupported_topic": "knowledge_gap",
+    "unsupported_topic": "clarification",
     "missing_resource": "clarification",
     "medical_or_safety_boundary": "clarification",
 }

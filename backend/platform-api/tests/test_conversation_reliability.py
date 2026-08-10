@@ -54,6 +54,61 @@ def test_corpus_lint_rejects_incomplete_flow(tmp_path):
     assert any("no turns" in err for err in errors)
 
 
+def test_corpus_lint_rejects_turn_without_max_latency(tmp_path):
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text(
+        json.dumps(
+            {
+                "flow_id": "BAD",
+                "priority": "P0",
+                "session": "s",
+                "terminal_context": {},
+                "turns": [
+                    {
+                        "turn": 1,
+                        "input": "цена",
+                        "expected_mode": "clarification",
+                        "must_contain": [],
+                        "must_not_contain": ["Traceback"],
+                        "expected_media": {"photo": "none", "video_count_min": 0, "document_count_min": 0},
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    flows = corpus.load_flows(bad)
+    errors = corpus.validate_flows(flows, min_flows=1, min_turns=1)
+    assert any("max_latency_ms" in err for err in errors)
+
+
+def test_valid_flow_turn_cannot_hit_unasserted_for_latency(flows):
+    """Regression: generated turns must carry max_latency_ms so parity never returns UNASSERTED."""
+    for flow in flows:
+        for turn in flow.get("turns") or []:
+            assert turn.get("max_latency_ms") is not None
+            case = {
+                **turn,
+                "session": flow.get("session"),
+                "country": flow.get("country") or "BY",
+            }
+            status, reason = assertions.parity_assertions.evaluate_parity_case(
+                case=case,
+                http_status=200,
+                latency_ms=10.0,
+                extracted={
+                    "answer_text": "ok",
+                    "answer_mode": turn["expected_mode"],
+                    "photo": None,
+                    "videos": [],
+                    "pdf_documents": [],
+                },
+                raw_payload={},
+            )
+            assert status != "UNASSERTED", reason
+
+
 def test_target_guard_rejects_public_url():
     with pytest.raises(ValueError):
         guard.validate_local_target("https://sysarchn8n.duckdns.org")

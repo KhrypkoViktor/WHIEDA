@@ -51,8 +51,9 @@ def run_conversation_flows(
     for flow in selected:
         flow_failed = False
         flow_results: list[dict[str, Any]] = []
+        flow_session = f"{flow.get('session')}-{run_id}"
         for turn in flow.get("turns") or []:
-            case = {**turn, "session": flow.get("session"), "country": flow.get("country") or "BY"}
+            case = {**turn, "session": flow_session, "country": flow.get("country") or "BY"}
             method, url, headers, body = build_advisor_request(target, case)
             t0 = time.perf_counter()
             status, text, latency_ms = client.request(
@@ -64,6 +65,7 @@ def run_conversation_flows(
             except json.JSONDecodeError:
                 payload = {}
             extracted = extract_response_fields(target, payload)
+            extracted["raw_payload"] = payload
             extracted["answer_text"] = payload.get("answer_text") or extracted.get("answer_text")
             extracted["answer_mode"] = payload.get("answer_mode") or extracted.get("answer_mode")
             extracted["gap_kind"] = payload.get("gap_kind")
