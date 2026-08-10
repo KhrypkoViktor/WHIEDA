@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "tenant_id": "whieda",
+  "description": "Platform/system actors retained outside Partners_Ref master rows. Separate from business partner sync.",
+  "platform_root_allowlist": [
+    {
+      "actor_id": "viktor",
+      "kind": "platform_owner",
+      "reason": "Platform owner; referral profile nnm owner_actor_id. Not a Partners_Ref partner_id row.",
+      "retain_roles": true
+    },
+    {
+      "actor_id": "viktor-test",
+      "kind": "test_admin",
+      "reason": "Isolated Telegram test super-admin binding (khrypko_pro). Operational access, not a sheet partner row.",
+      "retain_roles": true
+    }
+  ]
+}

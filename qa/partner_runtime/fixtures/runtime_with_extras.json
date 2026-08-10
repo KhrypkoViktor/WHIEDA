@@ -1,0 +1,18 @@
+{
+  "actors": [
+    {"actor_id": "nnm", "display_name": "WWC Platform", "active": true},
+    {"actor_id": "ladnaya", "display_name": "Anna Ladnaya", "active": true},
+    {"actor_id": "mariam", "display_name": "Mariam", "active": true},
+    {"actor_id": "harold", "display_name": "Harold", "active": true},
+    {"actor_id": "onlineelena", "display_name": "Elena", "active": true},
+    {"actor_id": "olga-samtsova", "display_name": "Olga", "active": true},
+    {"actor_id": "viktor", "display_name": "Viktor Khripko", "active": true},
+    {"actor_id": "viktor-test", "display_name": "Viktor Test", "active": true},
+    {"actor_id": "retired-partner", "display_name": "Retired Partner", "active": true}
+  ],
+  "profiles": [
+    {"ref_code": "nnm", "owner_id": "viktor", "enabled": true},
+    {"ref_code": "ladnaya", "owner_id": "ladnaya", "enabled": true},
+    {"ref_code": "retired-partner", "owner_id": "retired-partner", "enabled": true}
+  ]
+}
