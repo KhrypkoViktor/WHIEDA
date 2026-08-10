@@ -528,6 +528,22 @@ const productsDeduped = dedupeByKeys(products, ['client_id', 'sku']);
 const aliasesDeduped = dedupeByKeys(aliases, ['client_id', 'alias', 'canonical_sku']);
 const resourcesDeduped = dedupeByKeys(resources, ['client_id', 'resource_id']);
 const productCardsDeduped = dedupeByKeys(productCards, ['client_id', 'sku']);
+
+// P0 circuit breaker: these master layers must never be replaced by a blank
+// or obviously truncated Google TSV export. Throwing here happens before any
+// Postgres node is reached, leaving the last known-good runtime cache intact.
+const criticalLayerMinimums = [
+  ['Products', productsDeduped.length, 20],
+  ['Product aliases', aliasesDeduped.length, 60],
+  ['Resource links', resourcesDeduped.length, 25],
+  ['Product cards', productCardsDeduped.length, 10],
+];
+for (const [layerName, actualRows, minimumRows] of criticalLayerMinimums) {
+  if (actualRows < minimumRows) {
+    throw new Error(`Structured sync aborted before runtime writes: ${layerName} has ${actualRows} rows, minimum is ${minimumRows}. Keep last-known-good cache and inspect the Google Sheet export.`);
+  }
+}
+
 const productDetailsDeduped = dedupeByKeys(productDetails, ['client_id', 'detail_id']);
 const productComparisonsDeduped = dedupeByKeys(productComparisons, ['client_id', 'comparison_id']);
 const usersAccessDeduped = dedupeByKeys(usersAccess, ['client_id', 'telegram_user_id']);
