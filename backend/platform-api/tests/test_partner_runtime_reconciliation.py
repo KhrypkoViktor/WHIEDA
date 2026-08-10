@@ -229,6 +229,46 @@ def test_v2_report_classifies_platform_roots_safe(master_six_rows, runtime_eight
     proposed = {item["actor_id"] for item in report["runtime_only_disable_candidates"]}
     assert "viktor" not in proposed
     assert "retired-partner" in proposed
+    assert set(report["in_sync_master_actors"]) == set(plan.master_actor_ids)
+    assert report["master_only_needing_upsert"] == []
+
+
+def test_v2_report_buckets_disjoint_and_exhaustive(allowlist):
+    ro = _load_readonly_module()
+    master_rows = validate_master_rows(parse_partners_ref_tsv(FIXTURES / "master_six_partners.tsv"))
+    runtime = runtime_state_from_rows(
+        [
+            ("nnm", "WWC Platform", True),
+            ("viktor", "Viktor", True),
+            ("viktor-test", "Viktor Test", True),
+            ("only-runtime", "Only Runtime", True),
+            ("retired-partner", "Retired Partner", True),
+        ],
+        profiles=[("only-ref", "only-runtime", True)],
+    )
+    missing_master = [row for row in master_rows if row["partner_id"] != "nnm"]
+    plan = build_reconciliation_plan(missing_master, runtime, allowlist)
+    report = ro["build_v2_parity_report"](
+        plan,
+        master_rows=missing_master,
+        allowlist=allowlist,
+        master_review_rows=[],
+        runtime_source="fixture",
+        runtime_profile_count=1,
+    )
+    in_sync = set(report["in_sync_master_actors"])
+    upsert = set(report["master_only_needing_upsert"])
+    disable = {item["actor_id"] for item in report["runtime_only_disable_candidates"]}
+    allowlist_ids = set(report["allowlisted_platform_roots"])
+    master_ids = set(plan.master_actor_ids)
+
+    assert in_sync & upsert == set()
+    assert in_sync | upsert == master_ids
+    assert "nnm" not in master_ids
+    assert "only-runtime" in disable
+    assert "retired-partner" in disable
+    assert allowlist_ids & disable == set()
+    assert allowlist_ids == {"viktor", "viktor-test"}
 
 
 def test_duplicate_master_aborts_via_cli_logic():
