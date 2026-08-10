@@ -41,12 +41,26 @@ def main() -> int:
         action="store_true",
         help="Run no-blind-zone HTTP corpus (requires --e2e)",
     )
+    parser.add_argument(
+        "--gap-operator",
+        action="store_true",
+        help="Run gap operator queue verification (requires --e2e)",
+    )
+    parser.add_argument(
+        "--conversation-reliability",
+        action="store_true",
+        help="Run conversation reliability HTTP corpus (requires --e2e)",
+    )
     parser.add_argument("--health-timeout", type=int, default=120)
     args = parser.parse_args()
     if args.parity and not args.e2e:
         parser.error("--parity requires --e2e")
     if args.no_blind_zone and not args.e2e:
         parser.error("--no-blind-zone requires --e2e")
+    if args.gap_operator and not args.e2e:
+        parser.error("--gap-operator requires --e2e")
+    if args.conversation_reliability and not args.e2e:
+        parser.error("--conversation-reliability requires --e2e")
 
     config = OrchestratorConfig(
         skip_build=args.skip_build,
@@ -55,6 +69,8 @@ def main() -> int:
         e2e_mode=args.e2e,
         parity_mode=args.parity,
         no_blind_zone_mode=args.no_blind_zone,
+        gap_operator_mode=args.gap_operator,
+        conversation_reliability_mode=args.conversation_reliability,
     )
     code, state = run_lab(config)
     _print_step_output(state)

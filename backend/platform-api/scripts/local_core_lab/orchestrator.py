@@ -31,6 +31,8 @@ from local_core_lab.constants import (
     PARITY_RUNNER,
     NO_BLIND_ZONE_RUNNER,
     NO_BLIND_ZONE_DB_PROOF,
+    GAP_OPERATOR_RUNNER,
+    CONVERSATION_RELIABILITY_RUNNER,
     PLATFORM_API,
     POSTGRES_COMPOSE,
     SEED,
@@ -50,6 +52,8 @@ class OrchestratorConfig:
     e2e_mode: bool = False
     parity_mode: bool = False
     no_blind_zone_mode: bool = False
+    gap_operator_mode: bool = False
+    conversation_reliability_mode: bool = False
 
 
 @dataclass
@@ -224,6 +228,8 @@ def run_lab(
         print("=== Parity mode: full advisor HTTP parity corpus ===")
     if config.no_blind_zone_mode:
         print("=== No blind zone mode: guided gap regression corpus ===")
+    if config.gap_operator_mode:
+        print("=== Gap operator mode: review queue + export proof ===")
 
     try:
         require_docker()
@@ -234,6 +240,8 @@ def run_lab(
         parity_failed = False
         verify_failed = False
         nbz_failed = False
+        gap_operator_failed = False
+        conv_rel_failed = False
         nbz_db_failed = False
 
         step = run_capture_fn(
@@ -472,7 +480,50 @@ def run_lab(
                 print(step.stdout)
                 print(step.stderr, file=sys.stderr)
 
-        if preflight_failed or parity_failed or verify_failed or nbz_failed or nbz_db_failed:
+        if config.gap_operator_mode:
+            step = run_capture_fn(
+                [config.python, str(GAP_OPERATOR_RUNNER)],
+                name="gap_operator_run",
+            )
+            _record_step(state, step)
+            report.gap_operator_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+            }
+            if not step.ok:
+                gap_operator_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
+        if config.conversation_reliability_mode:
+            step = run_capture_fn(
+                [config.python, str(CONVERSATION_RELIABILITY_RUNNER), "--live"],
+                name="conversation_reliability_run",
+            )
+            _record_step(state, step)
+            combined = step.stdout + step.stderr
+            parsed = _parse_parity_summary(combined)
+            report.conversation_reliability_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+                **parsed,
+            }
+            if not step.ok:
+                conv_rel_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
+        if (
+            preflight_failed
+            or parity_failed
+            or verify_failed
+            or nbz_failed
+            or nbz_db_failed
+            or gap_operator_failed
+            or conv_rel_failed
+        ):
             parts = []
             if preflight_failed:
                 parts.append("preflight_smoke")
@@ -482,6 +533,10 @@ def run_lab(
                 parts.append("verify_e2e")
             if nbz_failed:
                 parts.append("no_blind_zone")
+            if gap_operator_failed:
+                parts.append("gap_operator")
+            if conv_rel_failed:
+                parts.append("conversation_reliability")
             if nbz_db_failed:
                 parts.append("no_blind_zone_db_proof")
             report.status = "FAIL"
@@ -493,6 +548,10 @@ def run_lab(
                 report.failure_stage = "no_blind_zone"
             elif nbz_db_failed:
                 report.failure_stage = "no_blind_zone_db_proof"
+            elif gap_operator_failed:
+                report.failure_stage = "gap_operator"
+            elif conv_rel_failed:
+                report.failure_stage = "conversation_reliability"
             else:
                 report.failure_stage = "verify_e2e"
             report.failure_message = f"failed: {', '.join(parts)}"
