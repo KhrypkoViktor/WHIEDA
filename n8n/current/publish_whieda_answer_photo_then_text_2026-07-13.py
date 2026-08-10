@@ -11,12 +11,12 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://sysarchn8n.duckdns.org"
-EMAIL = "khrypko.viktar@gmail.com"
-PASSWORD = "***REMOVED***"
+EMAIL = os.environ.get("WHIEDA_N8N_EMAIL", "")
+PASSWORD = os.environ.get("WHIEDA_N8N_PASSWORD", "")
 WORKFLOW_ID = "advisor-whieda-phase1"
 SERVER_HOST = "185.252.232.93"
 SERVER_USER = "root"
-SERVER_PASSWORD = "***REMOVED***"
+SERVER_PASSWORD = os.environ.get("WHIEDA_SSH_PASSWORD", "")
 
 STRUCTURED_SHEET_LOOKUP_NODE_ID = "whieda-structured-sheet-lookup"
 STRUCTURED_RESOURCE_LOOKUP_NODE_ID = "whieda-structured-resource-lookup"
@@ -892,6 +892,8 @@ def build_followup_text_node(position):
 
 
 def main() -> None:
+    if not EMAIL or not PASSWORD or not SERVER_PASSWORD:
+        raise RuntimeError("Set WHIEDA_N8N_EMAIL, WHIEDA_N8N_PASSWORD and WHIEDA_SSH_PASSWORD before publishing.")
     structured_sheet_code = Path(__file__).with_name("structured_sheet_lookup_current.js").read_text(encoding="utf-8")
     structured_resource_code = Path(__file__).with_name("structured_resource_lookup_current.js").read_text(encoding="utf-8")
     validate_dify_code = Path(__file__).with_name("validate_dify_response_current.js").read_text(encoding="utf-8")

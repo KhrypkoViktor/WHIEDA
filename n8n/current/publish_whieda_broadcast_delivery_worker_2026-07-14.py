@@ -4,6 +4,7 @@ The worker is intentionally separate from the advisor workflow: ordinary product
 answers must not depend on a long-running Telegram fan-out.
 """
 import json
+import os
 import time
 
 import paramiko
@@ -13,11 +14,11 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://sysarchn8n.duckdns.org"
-EMAIL = "khrypko.viktar@gmail.com"
-PASSWORD = "***REMOVED***"
+EMAIL = os.environ.get("WHIEDA_N8N_EMAIL", "")
+PASSWORD = os.environ.get("WHIEDA_N8N_PASSWORD", "")
 SERVER_HOST = "185.252.232.93"
 SERVER_USER = "root"
-SERVER_PASSWORD = "***REMOVED***"
+SERVER_PASSWORD = os.environ.get("WHIEDA_SSH_PASSWORD", "")
 WORKFLOW_NAME = "WHIEDA Broadcast Delivery Worker"
 WEBHOOK_PATH = "whieda-broadcast-delivery-v1"
 POSTGRES_CREDENTIAL = {"id": "RmjHh3rdZri7axzq", "name": "advisor-dev-postgres"}
@@ -85,6 +86,8 @@ def ssh_run(command):
     finally: client.close()
 
 def main():
+    if not EMAIL or not PASSWORD or not SERVER_PASSWORD:
+        raise RuntimeError("Set WHIEDA_N8N_EMAIL, WHIEDA_N8N_PASSWORD and WHIEDA_SSH_PASSWORD before publishing.")
     s=requests.Session(); s.post(f"{BASE_URL}/rest/login",json={"emailOrLdapLoginId":EMAIL,"password":PASSWORD},verify=False,timeout=30).raise_for_status()
     items=s.get(f"{BASE_URL}/rest/workflows?limit=200",verify=False,timeout=30).json().get("data",[])
     found=next((x for x in items if x.get("name")==WORKFLOW_NAME),None); payload=workflow()

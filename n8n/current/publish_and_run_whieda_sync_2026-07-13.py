@@ -12,8 +12,8 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_URL = "https://sysarchn8n.duckdns.org"
-EMAIL = "khrypko.viktar@gmail.com"
-PASSWORD = "***REMOVED***"
+EMAIL = os.environ.get("WHIEDA_N8N_EMAIL", "")
+PASSWORD = os.environ.get("WHIEDA_N8N_PASSWORD", "")
 WORKFLOW_NAME = "WHIEDA Structured Sync Cron"
 WEBHOOK_PATH = "whieda-structured-sync-v1"
 WORKFLOW_CREDENTIAL = {
@@ -60,7 +60,7 @@ VALUES (
 RETURNING run_id, project_id, status, finished_at;"""
 SERVER_HOST = "185.252.232.93"
 SERVER_USER = "root"
-SERVER_PASSWORD = "***REMOVED***"
+SERVER_PASSWORD = os.environ.get("WHIEDA_SSH_PASSWORD", "")
 
 
 def build_workflow(code: str) -> dict:
@@ -767,6 +767,15 @@ def login_session(timeout_seconds: int = 90) -> requests.Session:
 
 
 def main() -> None:
+    required = {
+        "WHIEDA_N8N_EMAIL": EMAIL,
+        "WHIEDA_N8N_PASSWORD": PASSWORD,
+        "WHIEDA_SSH_PASSWORD": SERVER_PASSWORD,
+    }
+    missing = [name for name, value in required.items() if not value]
+    if missing:
+        raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
+
     code = Path(__file__).with_name("whieda_structured_sync_code_2026-07-13.js").read_text(encoding="utf-8")
     workflow = build_workflow(code)
 
