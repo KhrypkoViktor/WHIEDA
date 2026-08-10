@@ -28,6 +28,8 @@ PARITY_RUNNER = ROOT / "qa" / "parity" / "run_core_local_parity.py"
 PARITY_CORPUS = ROOT / "qa" / "parity" / "core_local_parity_cases_v2.jsonl"
 NO_BLIND_ZONE_RUNNER = ROOT / "qa" / "no_blind_zone" / "run_no_blind_zone.py"
 NO_BLIND_ZONE_CORPUS = ROOT / "qa" / "no_blind_zone" / "whieda_no_blind_zone_cases_v1.jsonl"
+GAP_OPERATOR_RUNNER = ROOT / "qa" / "gap_operator" / "run_gap_operator.py"
+CONVERSATION_RELIABILITY_RUNNER = ROOT / "qa" / "conversation_reliability" / "run_conversation_reliability.py"
 NO_BLIND_ZONE_DB_PROOF = ROOT / "qa" / "no_blind_zone" / "verify_gap_db_proof.py"
 
 LOCAL_STAGING_PORT = 55432
