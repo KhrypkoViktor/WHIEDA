@@ -18,6 +18,9 @@ PROHIB = ["Traceback"]
 
 
 def flow(flow_id, name, priority, session, turns, terminal_context=None):
+    max_latency_ms = 2000 if priority == "P0" else 4000
+    for turn in turns:
+        turn.setdefault("max_latency_ms", max_latency_ms)
     return {
         "flow_id": flow_id,
         "name": name,
@@ -308,7 +311,7 @@ FLOWS = [
         "conv-f26",
         [
             t(1, "активатор", "clarification", None, ["PRO"], MEDIA_NONE, {}),
-            t(2, "совсем другой товар xyz", "knowledge_gap", None, ["уточн"], MEDIA_NONE, {}),
+            t(2, "совсем другой товар xyz", "clarification", None, ["уточн"], MEDIA_NONE, {}),
             t(3, "активатор pro", "structured_card", "PRO", ["PRO"], MEDIA_ALLOW, {"last_product_name": "PRO"}),
         ],
     ),

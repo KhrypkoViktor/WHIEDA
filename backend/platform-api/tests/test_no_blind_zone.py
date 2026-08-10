@@ -340,6 +340,93 @@ async def test_missing_resource_known_product():
     assert "прикреп" in result["answer_text"].lower()
 
 
+@pytest.mark.asyncio
+async def test_product_name_with_photo_word_returns_card_not_media_gap():
+    conn = AsyncMock()
+    product = {
+        "sku": "LOCAL-NOPHOTO",
+        "canonical_name": "Товар без фото (тест)",
+        "retail_price_byn": 525,
+        "partner_w": 150,
+    }
+
+    with patch("app.advisor.sql.engine.tenant_connection", _fake_tenant_connection(conn)):
+        with patch("app.advisor.sql.engine.repo.find_canonical_question", AsyncMock(return_value=None)):
+            with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value={})):
+                with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=None)):
+                        with patch("app.advisor.sql.engine._resolve_product", AsyncMock(return_value=product)):
+                            with patch(
+                                "app.advisor.sql.engine.try_ambiguity_clarification",
+                                AsyncMock(return_value=None),
+                            ):
+                                with patch(
+                                    "app.advisor.sql.engine.repo.load_product_card",
+                                    AsyncMock(
+                                        return_value={
+                                            "what_it_is": "Товар для проверки отсутствия фото.",
+                                            "primary_image_url": None,
+                                        }
+                                    ),
+                                ):
+                                    with patch(
+                                        "app.advisor.sql.engine.session_ctx.merge_session_context",
+                                        AsyncMock(),
+                                    ):
+                                        with patch("app.advisor.gap.record_advisor_gap", AsyncMock()) as gap_mock:
+                                            result = await run_structured_query(
+                                                WHIEDA,
+                                                {
+                                                    "question": "товар без фото",
+                                                    "session": "nbz-name-photo",
+                                                },
+                                                "trace-nbz-name-photo",
+                                            )
+
+    assert result["answer_mode"] == "structured_card"
+    assert "без фото" in result["answer_text"].lower()
+    gap_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bare_video_unknown_followup():
+    conn = AsyncMock()
+
+    with patch("app.advisor.sql.engine.tenant_connection", _fake_tenant_connection(conn)):
+        with patch("app.advisor.sql.engine.repo.find_canonical_question", AsyncMock(return_value=None)):
+            with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value={})):
+                with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=None)):
+                        with patch("app.advisor.sql.engine._resolve_product", AsyncMock(return_value=None)):
+                            with patch(
+                                "app.advisor.sql.engine.try_ambiguity_clarification",
+                                AsyncMock(return_value=None),
+                            ):
+                                with patch("app.advisor.gap.record_advisor_gap", AsyncMock(return_value={})):
+                                    result = await run_structured_query(
+                                        WHIEDA,
+                                        {"question": "видео", "session": "nbz-video"},
+                                        "trace-nbz-video",
+                                    )
+
+    assert result["gap_kind"] == "unknown_followup"
+
+
+@pytest.mark.asyncio
+async def test_dollar_rate_is_unsupported_topic_not_product():
+    conn = AsyncMock()
+
+    with patch("app.advisor.gap.record_advisor_gap", AsyncMock(return_value={})):
+        result = await run_structured_query(
+            WHIEDA,
+            {"question": "курс доллара сегодня", "session": "nbz-fx"},
+            "trace-nbz-fx",
+        )
+
+    assert result["gap_kind"] == "unsupported_topic"
+    assert result["answer_mode"] == "clarification"
+
+
 def test_next_steps_nonempty_for_all_kinds():
     for gap_kind in GAP_KINDS:
         steps = build_next_steps(gap_kind)

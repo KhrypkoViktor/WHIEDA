@@ -17,17 +17,16 @@ PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", 
 EVENT_RE = re.compile(r"(мероприят|событ|встреч|семинар|тренинг|конферен)", re.I)
 COMMUNITY_RE = re.compile(r"(чат|сообществ|групп|канал|telegram)", re.I)
 OUT_OF_SCOPE_RE = re.compile(
-    r"(погод|курс\s+валют|крипт|бирж|инвестир|акци[яи]\s+компан|"
-    r"политик|международн\w*\s+логистик)",
+    r"(погод|курс\s+валют|курс\s+доллар|доллар.*курс|курс.*доллар|крипт|бирж|инвестир|"
+    r"акци[яи]\s+компан|политик|международн\w*\s+логистик)",
     re.I,
 )
 BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|подбери|бюджет.*pv|pv.*бюджет)", re.I)
 DETAILS_RE = re.compile(r"(подробн|детал|состав|противопоказ|как принимать|как использовать)", re.I)
 FOLLOWUP_RE = re.compile(
-    r"^(?:дай\s+)?(?:а\s+)?(цена|сколько|фото|видео|подробнее|ещё|еще|материалы?)\??$",
+    r"^(?:дай\s+)?(?:а\s+)?(цена|сколько|фото|видео|подробнее|ещё|еще|материалы?|карточк\w*)\??$",
     re.I,
 )
-
 PRODUCT_NOISE_RE = re.compile(
     r"^(?:цена|стоимость|сколько стоит|фото|видео|покажи|дай|расскажи|про|о|"
     r"что такое|что это|что значит|подробнее|подробн|pdf)\s+",
@@ -145,6 +144,24 @@ def has_media_intent(question: str) -> bool:
         or CERT_RE.search(question)
         or PDF_RE.search(question)
     )
+
+
+def media_request_is_product_followup(question: str) -> bool:
+    """True when the user asks for media about a session/resolved product, not when
+    the media word is part of a product name (e.g. «товар без фото»)."""
+    if is_materials_request(question):
+        return True
+    normalized = normalize_text(question)
+    if re.match(
+        r"^(?:дай\s+)?(?:а\s+)?(?:фото|видео|сертификат|pdf|материал)\b",
+        normalized,
+    ):
+        return True
+    if re.search(r"(?:^|\s)(?:фото|видео|сертификат|pdf|материал)\s+\S", normalized):
+        return True
+    if is_context_followup(question) and has_media_intent(question):
+        return True
+    return False
 
 
 def is_materials_request(question: str) -> bool:

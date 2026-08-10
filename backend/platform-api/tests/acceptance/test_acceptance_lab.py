@@ -326,6 +326,11 @@ def test_build_advisor_request_uses_config(example_target):
     assert headers["Host"] == "wwc.best"
 
 
+def test_build_advisor_request_uses_case_session(example_target):
+    _, _, _, body = build_advisor_request(example_target, {"input": "цена", "session": "conv-f21"})
+    assert body["session"] == "conv-f21"
+
+
 def test_extract_response_fields_config_paths(example_target):
     payload = ok_advisor_response(media={"photo_url": "https://x/y.jpg", "videos": [{"url": "v"}], "documents": [{"url": "d"}]})
     extracted = extract_response_fields(example_target, payload)
@@ -358,6 +363,28 @@ def test_check_target_contract_pass(example_target):
 
     result = check_target_contract(example_target, request_fn)
     assert result["status"] == "PASS"
+
+
+def test_check_target_contract_uses_advisor_host_for_probes(example_target):
+    openapi = {
+        "paths": {
+            "/health/live": {"get": {}},
+            "/health/ready": {"get": {}},
+            "/v1/advisor/query": {"post": {}},
+        }
+    }
+    calls = []
+
+    def request_fn(method, url, headers, data):
+        calls.append((url, headers))
+        if url.endswith("/health/ready"):
+            return 200, "ok"
+        return 200, json.dumps(openapi)
+
+    result = check_target_contract(example_target, request_fn)
+
+    assert result["status"] == "PASS"
+    assert all(headers["Host"] == "wwc.best" for _, headers in calls)
 
 
 def test_check_target_health_fail(example_target):

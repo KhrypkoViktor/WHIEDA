@@ -39,6 +39,7 @@ from app.advisor.sql.text import (
     CERT_RE,
     PDF_RE,
     has_pro_marker,
+    media_request_is_product_followup,
 )
 from app.db import tenant_connection
 from app.tenancy import TenantContext
@@ -460,7 +461,11 @@ async def run_structured_query(
 
         product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
 
-        if (has_media_intent(question) or is_materials_request(question) or is_context_followup(question)) and stored.get("last_product_sku"):
+        if (
+            not product
+            and (media_request_is_product_followup(question) or is_context_followup(question))
+            and stored.get("last_product_sku")
+        ):
             remembered = await repo.resolve_product_by_sku(
                 conn, tenant.tenant_id, str(stored["last_product_sku"])
             )
@@ -489,7 +494,7 @@ async def run_structured_query(
             and not stored.get("last_product_sku")
             and (
                 is_context_followup(question)
-                or (has_media_intent(question) and not has_compare_intent(question))
+                or media_request_is_product_followup(question)
             )
         ):
             return await emit_gap_response(
@@ -560,7 +565,7 @@ async def run_structured_query(
             )
             return response
 
-        if product and (has_media_intent(question) or is_materials_request(question)):
+        if product and media_request_is_product_followup(question):
             card = await repo.load_product_card(conn, tenant.tenant_id, product["sku"])
             resources = await repo.load_product_resources(conn, tenant.tenant_id, product["sku"])
             kind = "photo"
@@ -613,7 +618,7 @@ async def run_structured_query(
                 mode = "structured_certificate"
             elif kind == "photo" and not media.get("photo_url"):
                 text = f"{fmt.MISSING_PHOTO_TEXT}: {product['canonical_name']}"
-                mode = "structured_photo"
+                mode = "clarification"
             else:
                 text = sanitize_user_text(
                     f"По {product['canonical_name']} такого материала пока нет. "
@@ -798,7 +803,12 @@ async def _resolve_comparison_response(
             "structured_comparison_layer",
             trace_id,
             product={"sku": left["sku"], "canonical_name": left["canonical_name"]},
-            context={"last_product_sku": left["sku"], "last_product_name": left["canonical_name"]},
+            context={
+                "last_product_sku": left["sku"],
+                "last_product_name": left["canonical_name"],
+                "last_compare_right_sku": right["sku"],
+                "last_compare_right_name": right["canonical_name"],
+            },
         )
         if session:
             await session_ctx.merge_session_context(conn, tenant_id, session, response["context"])

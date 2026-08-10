@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 MISSING_PRICE_TEXT = "Цена для этого товара пока не опубликована"
-MISSING_CERTIFICATE_TEXT = "Сертификат для этого товара пока не прикреплён"
+MISSING_CERTIFICATE_TEXT = "Сертификат для этого товара пока не добавлен"
 MISSING_PHOTO_TEXT = "Фото для этого товара пока не прикреплено"
 
 
