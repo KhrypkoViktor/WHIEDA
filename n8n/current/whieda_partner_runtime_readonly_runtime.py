@@ -202,6 +202,15 @@ def build_v2_parity_report(
     active_runtime = sum(1 for actor in plan.active_runtime_actors if actor.get("active"))
     summary = classify_parity_summary(plan, master_review_rows=master_review_rows, abort_reason=abort_reason)
 
+    runtime_active_ids = {
+        str(actor.get("actor_id") or "")
+        for actor in plan.active_runtime_actors
+        if actor.get("active")
+    }
+    master_ids = set(plan.master_actor_ids)
+    in_sync_master_actors = sorted(master_ids & runtime_active_ids)
+    master_only_needing_upsert = sorted(master_ids - runtime_active_ids)
+
     report = {
         "ok": abort_reason is None,
         "mode": "runtime_readonly_dry_run",
@@ -214,8 +223,9 @@ def build_v2_parity_report(
             "active_runtime_actors": active_runtime,
             "active_referral_profiles": runtime_profile_count,
         },
+        "in_sync_master_actors": in_sync_master_actors,
         "allowlisted_platform_roots": [entry.actor_id for entry in allowlist.platform_root_allowlist],
-        "master_only_needing_upsert": list(plan.master_actor_ids),
+        "master_only_needing_upsert": master_only_needing_upsert,
         "runtime_only_disable_candidates": [
             {
                 "actor_id": item.actor_id,
