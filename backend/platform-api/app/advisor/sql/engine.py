@@ -672,14 +672,8 @@ async def run_structured_query(
 
         if product:
             card = await repo.load_product_card(conn, tenant.tenant_id, product["sku"])
-            text = fmt.format_product_card(card, product)
-            canonical = str(product.get("canonical_name") or "").strip()
-            if canonical and canonical.lower() not in normalize_text(text)[:240]:
-                text = f"{canonical} — {text}" if text else canonical
-            if has_pro_marker(canonical):
-                pro_name = canonical
-                if pro_name and "pro" not in normalize_text(text)[:160]:
-                    text = f"{pro_name} — {text}" if text else pro_name
+            compact = bool(re.search(r"\b(кратко|коротко|short)\b", normalized))
+            text = fmt.format_product_card(card, product, compact=compact)
             media = fmt.build_media_payload(card, [], "photo")
             response = fmt.ok_response(
                 text,
