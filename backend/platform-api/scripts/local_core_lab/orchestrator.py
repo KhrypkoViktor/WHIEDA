@@ -33,6 +33,7 @@ from local_core_lab.constants import (
     NO_BLIND_ZONE_DB_PROOF,
     GAP_OPERATOR_RUNNER,
     CONVERSATION_RELIABILITY_RUNNER,
+    TELEGRAM_EXPERIENCE_RUNNER,
     PLATFORM_API,
     POSTGRES_COMPOSE,
     SEED,
@@ -54,6 +55,7 @@ class OrchestratorConfig:
     no_blind_zone_mode: bool = False
     gap_operator_mode: bool = False
     conversation_reliability_mode: bool = False
+    telegram_experience_mode: bool = False
 
 
 @dataclass
@@ -242,6 +244,7 @@ def run_lab(
         nbz_failed = False
         gap_operator_failed = False
         conv_rel_failed = False
+        telegram_exp_failed = False
         nbz_db_failed = False
 
         step = run_capture_fn(
@@ -515,6 +518,25 @@ def run_lab(
                 print(step.stdout)
                 print(step.stderr, file=sys.stderr)
 
+        if config.telegram_experience_mode:
+            step = run_capture_fn(
+                [config.python, str(TELEGRAM_EXPERIENCE_RUNNER), "--live"],
+                name="telegram_experience_run",
+            )
+            _record_step(state, step)
+            combined = step.stdout + step.stderr
+            parsed = _parse_parity_summary(combined)
+            report.telegram_experience_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+                **parsed,
+            }
+            if not step.ok:
+                telegram_exp_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
         if (
             preflight_failed
             or parity_failed
@@ -523,6 +545,7 @@ def run_lab(
             or nbz_db_failed
             or gap_operator_failed
             or conv_rel_failed
+            or telegram_exp_failed
         ):
             parts = []
             if preflight_failed:
@@ -537,6 +560,8 @@ def run_lab(
                 parts.append("gap_operator")
             if conv_rel_failed:
                 parts.append("conversation_reliability")
+            if telegram_exp_failed:
+                parts.append("telegram_experience")
             if nbz_db_failed:
                 parts.append("no_blind_zone_db_proof")
             report.status = "FAIL"
@@ -552,6 +577,8 @@ def run_lab(
                 report.failure_stage = "gap_operator"
             elif conv_rel_failed:
                 report.failure_stage = "conversation_reliability"
+            elif telegram_exp_failed:
+                report.failure_stage = "telegram_experience"
             else:
                 report.failure_stage = "verify_e2e"
             report.failure_message = f"failed: {', '.join(parts)}"

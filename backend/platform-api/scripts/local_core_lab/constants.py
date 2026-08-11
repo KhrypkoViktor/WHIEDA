@@ -30,6 +30,7 @@ NO_BLIND_ZONE_RUNNER = ROOT / "qa" / "no_blind_zone" / "run_no_blind_zone.py"
 NO_BLIND_ZONE_CORPUS = ROOT / "qa" / "no_blind_zone" / "whieda_no_blind_zone_cases_v1.jsonl"
 GAP_OPERATOR_RUNNER = ROOT / "qa" / "gap_operator" / "run_gap_operator.py"
 CONVERSATION_RELIABILITY_RUNNER = ROOT / "qa" / "conversation_reliability" / "run_conversation_reliability.py"
+TELEGRAM_EXPERIENCE_RUNNER = ROOT / "qa" / "telegram_experience" / "run_telegram_experience.py"
 NO_BLIND_ZONE_DB_PROOF = ROOT / "qa" / "no_blind_zone" / "verify_gap_db_proof.py"
 
 LOCAL_STAGING_PORT = 55432
