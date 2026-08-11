@@ -14,6 +14,11 @@ from app.advisor.sql.basket import build_starter_basket, parse_budget_request, p
 from app.advisor.sql.business_formatters import format_community, format_events, format_promotions
 from app.advisor.sql.canonical import try_canonical_response
 from app.advisor.sql.cart_list import build_cart_list_response, parse_cart_list_request
+from app.advisor.sql.cart_session import (
+    build_cart_remove_response,
+    cart_items_from_products,
+    parse_cart_remove_request,
+)
 from app.advisor.sql.comparison import build_compare_answer
 from app.advisor.sql.coach import build_coach_response, parse_coach_command
 from app.advisor.sql import resolver as product_resolver
@@ -31,6 +36,11 @@ from app.advisor.sql.text import (
     is_unsupported_topic,
     is_pv_definition_question,
     is_product_definition_question,
+    is_calculator_request,
+    is_start_options_request,
+    is_company_intro_request,
+    is_income_question,
+    is_discomfort_boundary,
     normalize_text,
     wants_partner_price,
     wants_retail_price,
@@ -105,6 +115,26 @@ LIMITATIONS_FALLBACK = (
     "согласуйте применение со специалистом и инструкцией."
 )
 
+CALCULATOR_INSTRUCTION = (
+    "Для расчёта напишите одной строкой: Посчитай: активатор, спирулина — посчитаю BYN и PV."
+)
+
+COMPANY_INTRO_FALLBACK = (
+    "WHIEDA — компания с продуктами для здоровья и партнёрской программой. "
+    "Могу рассказать про товары, старт и маркетинг-план."
+)
+
+INCOME_QUESTION_FALLBACK = (
+    "WHIEDA не обещает фиксированный доход — результат зависит от личных продаж и работы с клиентами. "
+    "Могу рассказать про маркетинг-план, стартовые варианты и виды входа."
+)
+
+DISCOMFORT_BOUNDARY_TEXT = (
+    "Понимаю, что тема важная. Я не ставлю диагноз и не подбираю лечение. "
+    "Могу помочь выбрать домашний продукт WHIEDA по задаче или ответить про ограничения и применение из карточки. "
+    "Что ближе: подобрать товар или уточнить ограничения?"
+)
+
 UNKNOWN_PRODUCT_RE = re.compile(
     r"несуществующ|xyzabc|xyzunknown|qwerty|unknown123",
     re.I,
@@ -138,6 +168,84 @@ async def run_structured_query(
             channel=channel,
         )
 
+    if is_calculator_request(question):
+        return fmt.ok_response(CALCULATOR_INSTRUCTION, "structured_business", trace_id, media=fmt.empty_media())
+
+    if is_discomfort_boundary(question):
+        return await emit_gap_response(
+            tenant.tenant_id,
+            session=session,
+            question=question,
+            gap_kind="medical_or_safety_boundary",
+            trace_id=trace_id,
+            channel=channel,
+            text=DISCOMFORT_BOUNDARY_TEXT,
+            answer_mode="clarification",
+            clarifications=["discomfort_boundary"],
+        )
+
+    if is_income_question(question):
+        async with tenant_connection(tenant.tenant_id) as conn:
+            faq = await repo.find_business_faq(conn, tenant.tenant_id, question)
+            if faq:
+                return fmt.ok_response(
+                    str(faq.get("answer_text") or "").strip(),
+                    "structured_business_faq",
+                    trace_id,
+                )
+        return fmt.ok_response(INCOME_QUESTION_FALLBACK, "structured_business", trace_id, media=fmt.empty_media())
+
+    if is_company_intro_request(question):
+        async with tenant_connection(tenant.tenant_id) as conn:
+            faq = await repo.find_business_faq(conn, tenant.tenant_id, question)
+            objection = await repo.find_business_objection(conn, tenant.tenant_id, question)
+            if faq:
+                return fmt.ok_response(
+                    str(faq.get("answer_text") or "").strip(),
+                    "structured_business_faq",
+                    trace_id,
+                )
+            if objection:
+                return fmt.ok_response(
+                    str(objection.get("first_reply") or "").strip(),
+                    "structured_business_objection",
+                    trace_id,
+                )
+        return fmt.ok_response(COMPANY_INTRO_FALLBACK, "structured_business", trace_id, media=fmt.empty_media())
+
+    if is_start_options_request(question):
+        async with tenant_connection(tenant.tenant_id) as conn:
+            stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
+            templates = await repo.load_starter_basket_templates(conn, tenant.tenant_id)
+            if templates:
+                titles = [str(row.get("title") or "").strip() for row in templates if row.get("title")]
+                preview = ", ".join(titles[:3])
+                text = (
+                    "Есть несколько стартовых вариантов входа в WHIEDA"
+                    + (f": {preview}." if preview else ".")
+                    + " Напишите бюджет в BYN или целевой PV — подберу корзину."
+                )
+                response = fmt.ok_response(
+                    text,
+                    "structured_starter_basket",
+                    trace_id,
+                    context={"starter_basket": True, "basket_goal": stored.get("basket_goal") or "balanced"},
+                )
+                await session_ctx.merge_session_context(
+                    conn, tenant.tenant_id, session, response["context"]
+                )
+                return response
+            prompt = await repo.load_clarification_prompt(conn, tenant.tenant_id, "starter_basket_budget")
+            response = fmt.ok_response(
+                prompt or "Соберу стартовую корзину. На какой бюджет в BYN или какой PV ориентируемся?",
+                "clarification",
+                trace_id,
+                clarifications=["starter_basket_budget"],
+                context={"starter_basket": True, "basket_goal": "balanced"},
+            )
+            await session_ctx.merge_session_context(conn, tenant.tenant_id, session, response["context"])
+            return response
+
     coach_cmd = parse_coach_command(question)
     if coach_cmd:
         async with tenant_connection(tenant.tenant_id) as conn:
@@ -157,6 +265,7 @@ async def run_structured_query(
     # returns a product card instead of comparison or cart sum.
     skip_canonical = bool(
         parse_cart_list_request(question)
+        or parse_cart_remove_request(question)
         or has_compare_intent(question)
         or has_media_intent(question)
         or is_materials_request(question)
@@ -200,6 +309,37 @@ async def run_structured_query(
     async with tenant_connection(tenant.tenant_id) as conn:
         stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
 
+        remove_name = parse_cart_remove_request(question)
+        if remove_name is not None:
+            active_cart = list(stored.get("active_cart") or [])
+            if not active_cart:
+                text, _, key = build_cart_remove_response(remove_name, active_cart, resolved_product=None)
+                return fmt.ok_response(
+                    text,
+                    "clarification",
+                    trace_id,
+                    clarifications=[key] if key else None,
+                )
+            resolved_remove = await product_resolver.resolve_product(
+                conn, tenant.tenant_id, remove_name, None, None, repo=repo
+            )
+            text, remaining, key = build_cart_remove_response(
+                remove_name, active_cart, resolved_product=resolved_remove
+            )
+            response = fmt.ok_response(
+                text,
+                "structured_cart" if remaining else "clarification",
+                trace_id,
+                product={"skus": [str(item["sku"]) for item in remaining]} if remaining else None,
+                clarifications=[key] if key else None,
+                context={"active_cart": remaining} if remaining else {"active_cart": []},
+            )
+            if session:
+                await session_ctx.merge_session_context(
+                    conn, tenant.tenant_id, session, response["context"]
+                )
+            return response
+
         cart_names = parse_cart_list_request(question)
         if cart_names:
             resolved: list[dict[str, Any]] = []
@@ -216,13 +356,20 @@ async def run_structured_query(
             text, skus = build_cart_list_response(cart_names, resolved, missing)
             mode = "structured_cart" if resolved else "clarification"
             clarifications = ["cart_item_unknown"] if not resolved else None
-            return fmt.ok_response(
+            cart_ctx = {"active_cart": cart_items_from_products(resolved)} if resolved else {}
+            response = fmt.ok_response(
                 text,
                 mode,
                 trace_id,
                 product={"skus": skus} if skus else None,
                 clarifications=clarifications,
+                context=cart_ctx,
             )
+            if cart_ctx and session:
+                await session_ctx.merge_session_context(
+                    conn, tenant.tenant_id, session, response["context"]
+                )
+            return response
 
         basket_active = has_basket_intent(question) or bool(stored.get("starter_basket"))
         budget_req = parse_budget_request(question, stored) if basket_active else None

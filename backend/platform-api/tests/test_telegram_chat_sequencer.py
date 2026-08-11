@@ -77,9 +77,10 @@ async def test_rapid_capabilities_then_oos_content_and_order():
     t2 = asyncio.create_task(simulate("пивка хочешь", 0.01))
     await asyncio.gather(t1, t2)
 
-    assert [mode for mode, _ in delivered] == ["capabilities", "knowledge_gap"]
+    assert [mode for mode, _ in delivered] == ["capabilities", "unsupported_topic"]
     assert "Могу подсказать" in delivered[0][1]
     assert delivered[1][0] != "capabilities"
+    assert "пивка" not in delivered[1][1].casefold() or "сценар" in delivered[1][1].casefold()
 
 
 @pytest.mark.asyncio
