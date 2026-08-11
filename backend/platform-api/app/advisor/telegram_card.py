@@ -9,7 +9,8 @@ MARKDOWN_STAR_RE = re.compile(r"\*\*")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 CARD_FOOTER = (
-    "Могу подсказать цену/PV, фото, видео, сертификат или сравнение с другим товаром."
+    "Могу подсказать цену/PV, фото, видео, сертификат или сравнение с другим товаром "
+    "— если эти материалы есть в базе."
 )
 
 _SECTION_SPECS: tuple[tuple[str, str, bool], ...] = (
@@ -22,10 +23,21 @@ _SECTION_SPECS: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-def _clean_field(value: Any) -> str:
-    text = MARKDOWN_STAR_RE.sub("", str(value or "")).strip()
+def _sanitize_field(value: Any, *, collapse_spaces: bool = True) -> str:
+    text = MARKDOWN_STAR_RE.sub("", str(value or ""))
     text = HTML_TAG_RE.sub("", text)
-    return re.sub(r"\s+", " ", text).strip()
+    if collapse_spaces:
+        return re.sub(r"\s+", " ", text).strip()
+    lines: list[str] = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"[ \t]+", " ", line.strip())
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _clean_field(value: Any) -> str:
+    return _sanitize_field(value, collapse_spaces=True)
 
 
 def _product_title(product: dict[str, Any], card: dict[str, Any] | None) -> str:
@@ -52,20 +64,21 @@ def _strip_leading_product_name(text: str, title: str) -> str:
 
 
 def _split_bullets(text: str) -> list[str]:
-    value = _clean_field(text)
-    if not value:
+    raw = _sanitize_field(text, collapse_spaces=False)
+    if not raw:
         return []
-    if ";" in value:
-        parts = [_clean_field(part) for part in value.split(";")]
-        parts = [part for part in parts if part]
-        if len(parts) >= 2 and all(len(part) <= 160 for part in parts):
-            return parts
-    if "\n" in value:
-        parts = [_clean_field(part) for part in value.splitlines()]
+    if "\n" in raw:
+        parts = [_clean_field(part) for part in raw.splitlines()]
         parts = [part for part in parts if part]
         if len(parts) >= 2:
             return parts
-    return [value]
+    compact = _clean_field(raw)
+    if ";" in compact:
+        parts = [_clean_field(part) for part in compact.split(";")]
+        parts = [part for part in parts if part]
+        if len(parts) >= 2 and all(len(part) <= 160 for part in parts):
+            return parts
+    return [compact] if compact else []
 
 
 def _first_sentence(text: str) -> str:
@@ -101,21 +114,25 @@ def render_telegram_product_card(
     rendered_sections = 0
 
     for field, heading, as_bullets in _SECTION_SPECS:
-        raw = _clean_field(card.get(field))
-        if not raw:
+        raw_source = str(card.get(field) or "").strip()
+        if not raw_source:
             continue
-        if field == "what_it_is":
-            raw = _strip_leading_product_name(raw, title)
-        if not raw:
-            continue
-        lines.append("")
         if as_bullets:
-            bullets = _split_bullets(raw)
+            bullets = _split_bullets(raw_source)
+            if not bullets:
+                continue
+            lines.append("")
             lines.append(heading)
             for bullet in bullets:
                 lines.append(f"• {bullet}")
-        else:
-            lines.append(f"{heading} {raw}")
+            rendered_sections += 1
+            continue
+
+        raw = _strip_leading_product_name(_clean_field(raw_source), title) if field == "what_it_is" else _clean_field(raw_source)
+        if not raw:
+            continue
+        lines.append("")
+        lines.append(f"{heading} {raw}")
         rendered_sections += 1
 
     if rendered_sections == 0:

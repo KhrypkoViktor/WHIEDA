@@ -94,6 +94,7 @@ def test_rendered_card_from_master_snapshot(slug: str):
         assert _field_reflected(field, source, rendered, title), f"{slug}: field {field} not reflected"
 
     assert "Могу подсказать цену/PV" in rendered
+    assert "если эти материалы есть в базе" in rendered
     assert rendered.count("🔥 Коротко:") <= 1
 
 
@@ -102,6 +103,20 @@ def test_format_product_card_wrapper_matches_renderer(slug: str):
     assert fmt.format_product_card(payload["card"], payload["product"]) == render_telegram_product_card(
         payload["card"], payload["product"]
     )
+
+
+def test_multiline_field_renders_separate_bullets():
+    card = {
+        "canonical_name": "Тестовый товар",
+        "what_it_is": "Короткое описание.",
+        "common_use_cases": "первая строка кейса\nвторая строка кейса\nтретья строка кейса",
+    }
+    product = {"canonical_name": "Тестовый товар", "sku": "TEST-1"}
+    rendered = render_telegram_product_card(card, product)
+    assert rendered.count("• ") >= 3
+    assert "• первая строка кейса" in rendered
+    assert "• вторая строка кейса" in rendered
+    assert "• третья строка кейса" in rendered
 
 
 def test_compact_mode_shortens_without_dropping_title():
