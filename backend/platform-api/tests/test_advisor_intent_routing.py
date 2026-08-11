@@ -116,7 +116,8 @@ async def test_bem_question_returns_product_card_not_faq(whieda_tenant):
 
     assert result["answer_mode"] == "structured_card"
     assert result["product"]["canonical_name"] == "Magic Foherb"
-    assert "PV" not in result["answer_text"]
+    assert "PV — локальный тест." not in result["answer_text"]
+    assert "Локальный тест БЭМ" in result["answer_text"]
 
 
 @pytest.mark.asyncio

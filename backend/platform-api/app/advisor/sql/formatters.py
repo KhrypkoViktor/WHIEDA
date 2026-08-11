@@ -60,18 +60,15 @@ def format_price(
     return ", ".join(parts) if parts else MISSING_PRICE_TEXT
 
 
-def format_product_card(card: dict[str, Any] | None, product: dict[str, Any]) -> str:
-    if card:
-        parts = [
-            str(card.get("what_it_is") or "").strip(),
-            str(card.get("who_asks_about_it") or "").strip(),
-            str(card.get("common_use_cases") or "").strip(),
-            str(card.get("how_to_use_short") or "").strip(),
-        ]
-        text = "\n\n".join(part for part in parts if part)
-        if text:
-            return text
-    return str(product.get("canonical_name") or product.get("sku") or "").strip()
+def format_product_card(
+    card: dict[str, Any] | None,
+    product: dict[str, Any],
+    *,
+    compact: bool = False,
+) -> str:
+    from app.advisor.telegram_card import render_telegram_product_card
+
+    return render_telegram_product_card(card, product, compact=compact)
 
 
 def build_media_payload(

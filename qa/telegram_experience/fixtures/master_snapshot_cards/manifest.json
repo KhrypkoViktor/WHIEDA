@@ -1,0 +1,23 @@
+{
+  "snapshot_dir": "n8n/live-exports/structured-master/20260810T083328Z",
+  "products": {
+    "activator": "M015-00",
+    "activator_pro": "EU-N000031-25",
+    "ba_gua": "M014-00",
+    "bem": "EU-N000021-24",
+    "wentun": "EU-N000024-24",
+    "glasses": "D014",
+    "insoles": "D013",
+    "spirulina": "F036-00"
+  },
+  "files": {
+    "activator": "activator.json",
+    "activator_pro": "activator_pro.json",
+    "ba_gua": "ba_gua.json",
+    "bem": "bem.json",
+    "wentun": "wentun.json",
+    "glasses": "glasses.json",
+    "insoles": "insoles.json",
+    "spirulina": "spirulina.json"
+  }
+}
