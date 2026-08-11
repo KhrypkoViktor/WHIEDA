@@ -9,8 +9,11 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from app.advisor.service import handle_structured_query
 from app.settings import get_settings
 from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
-from app.telegram.modes import is_telegram_deliverable
+from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
+from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.processor import process_core_telegram_update
+from app.telegram.sequencer import get_chat_sequencer
+from app.telegram.update_parser import parse_telegram_message, should_process_telegram_message
 from app.tenancy import get_trace_id, resolve_tenant_from_bot_binding
 
 LEGACY_TELEGRAM_WEBHOOK = "/webhook/advisor-whieda-v0"
@@ -66,7 +69,7 @@ async def _forward_to_legacy_consultant(
             )
 
 
-async def _process_telegram_update(
+async def _process_telegram_update_body(
     binding_id: str,
     update: dict,
     trace_id: str | None,
@@ -78,6 +81,17 @@ async def _process_telegram_update(
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
     if not text or not chat_id:
+        return
+
+    parsed_message = parse_telegram_message(update)
+    if not parsed_message or not should_process_telegram_message(
+        parsed_message, settings.telegram_bot_username
+    ):
+        logger.info("telegram_group_message_ignored", extra={"trace_id": trace_id})
+        return
+
+    admin_result = await try_handle_admin_login(update, trace_id=trace_id)
+    if admin_result is not None:
         return
 
     if settings.core_route_telegram == "legacy":
@@ -125,11 +139,35 @@ async def _process_telegram_update(
             )
         return
 
-    if is_telegram_deliverable(core_response.get("answer_mode")):
+    if should_deliver_telegram_response(core_response):
         await _deliver_core_answer(chat_id, core_response)
         return
 
     await _forward_to_legacy_consultant(update, trace_id)
+
+
+async def _process_telegram_update(
+    binding_id: str,
+    update: dict,
+    trace_id: str | None,
+) -> None:
+    message = (update or {}).get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    if chat_id is None:
+        return
+    update_id = (update or {}).get("update_id")
+    chat_key = str(chat_id)
+    sequencer = get_chat_sequencer()
+
+    async def handler() -> None:
+        await _process_telegram_update_body(binding_id, update, trace_id)
+
+    result = await sequencer.run_ordered(chat_key, update_id, handler)
+    if result.duplicate:
+        logger.info(
+            "telegram_duplicate_update_ignored",
+            extra={"trace_id": trace_id, "update_id": update_id, "chat_id": chat_key},
+        )
 
 
 @router.post("/v1/telegram/{binding_id}/webhook")
