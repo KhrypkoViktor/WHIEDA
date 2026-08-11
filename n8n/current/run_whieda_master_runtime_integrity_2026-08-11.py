@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -19,14 +20,22 @@ from whieda_master_integrity_lib import (  # noqa: E402
     LAYER_ID_FIELDS,
     PROJECT_ID,
     RUNTIME_TABLES,
+    TITLE_LAYER_CONFIG,
+    TITLE_NORMALIZED_LAYERS,
     assert_connection_readonly,
+    build_runtime_alias_sql,
     build_runtime_hash_sql,
+    build_runtime_title_rows_sql,
     compare_master_runtime_v2,
+    content_hash_from_rows,
     detect_tenant_discriminator,
     find_newest_valid_snapshot,
     format_runtime_integrity_markdown,
     load_manifest,
+    normalized_title_content_hash,
     redact_sensitive_text,
+    runtime_alias_keys_from_tokens,
+    runtime_title_map_from_rows,
     validate_snapshot_dir,
 )
 
@@ -99,6 +108,45 @@ def fetch_runtime_layers(conn) -> dict[str, dict[str, Any]]:
                     "reasons": [f"missing_columns:{','.join(sorted(set(missing_fields)))}"],
                     "tenant_discriminator": tenant_column,
                     "row_count": 0,
+                }
+                continue
+
+            if layer == "aliases":
+                query = build_runtime_alias_sql(table, tenant_column=tenant_column, tenant_value=PROJECT_ID)
+                cur.execute(query)
+                count, unique_count, business_tokens = cur.fetchone()
+                business_keys = runtime_alias_keys_from_tokens(business_tokens or [])
+                rows[layer] = {
+                    "row_count": int(count),
+                    "unique_business_row_count": int(unique_count),
+                    "business_keys": business_keys,
+                    "ids": sorted({key[0] for key in business_keys}),
+                    "tenant_discriminator": tenant_column,
+                }
+                continue
+
+            if layer in TITLE_NORMALIZED_LAYERS:
+                id_field, title_field = TITLE_LAYER_CONFIG[layer]
+                query = build_runtime_title_rows_sql(
+                    table,
+                    id_field=id_field,
+                    title_field=title_field,
+                    tenant_column=tenant_column,
+                    tenant_value=PROJECT_ID,
+                )
+                cur.execute(query)
+                title_rows = cur.fetchall()
+                id_field, title_field = TITLE_LAYER_CONFIG[layer]
+                raw_rows = [{id_field: business_id, title_field: display_title} for business_id, display_title in title_rows]
+                title_map = runtime_title_map_from_rows(title_rows, id_field=id_field, title_field=title_field)
+                _, fields = RUNTIME_TABLES[layer]
+                rows[layer] = {
+                    "row_count": len(title_rows),
+                    "content_hash": content_hash_from_rows(raw_rows, fields) if raw_rows else hashlib.sha256(b"").hexdigest(),
+                    "normalized_title_map": title_map,
+                    "normalized_content_hash": normalized_title_content_hash(title_map),
+                    "ids": sorted(title_map),
+                    "tenant_discriminator": tenant_column,
                 }
                 continue
 

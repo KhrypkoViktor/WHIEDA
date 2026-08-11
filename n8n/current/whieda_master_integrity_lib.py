@@ -94,10 +94,70 @@ RUNTIME_TABLES: dict[str, tuple[str, list[str]]] = {
 
 PROJECT_ID = "whieda"
 
+TITLE_NORMALIZED_LAYERS = frozenset({"products", "product_cards", "resources"})
+TITLE_LAYER_CONFIG: dict[str, tuple[str, str]] = {
+    "products": ("sku", "canonical_name"),
+    "product_cards": ("sku", "canonical_name"),
+    "resources": ("resource_id", "title"),
+}
+ALIAS_BUSINESS_KEY_FIELDS = ("alias", "canonical_sku")
+DUPLICATE_EXAMPLES_CAP = 10
+
+DISPLAY_QUOTE_CHARS = re.compile(r'["""\'\'«»]+')
+
 DSN_REDACT = re.compile(
     r"(postgresql(?:\+[\w]+)?://)[^\s@]+@|password[=:\s]\S+|token[=:\s]\S+",
     re.IGNORECASE,
 )
+
+
+def normalize_display_title(text: str) -> str:
+    cleaned = DISPLAY_QUOTE_CHARS.sub("", str(text or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def alias_business_key(row: Mapping[str, str]) -> tuple[str, str]:
+    return (str(row.get("alias", "") or "").strip(), str(row.get("canonical_sku", "") or "").strip())
+
+
+def alias_business_key_token(key: tuple[str, str]) -> str:
+    return f"{key[0]}\x1f{key[1]}"
+
+
+def alias_business_key_from_token(token: str) -> tuple[str, str]:
+    alias, _, sku = str(token).partition("\x1f")
+    return alias, sku
+
+
+def collect_alias_duplicate_stats(rows: list[dict[str, str]]) -> dict[str, Any]:
+    from collections import Counter
+
+    keys = [alias_business_key(row) for row in rows if alias_business_key(row)[0]]
+    counter = Counter(keys)
+    duplicate_keys = sorted(key for key, count in counter.items() if count > 1)
+    duplicate_rows = sum(count - 1 for count in counter.values() if count > 1)
+    examples = [alias_business_key_token(key) for key in duplicate_keys[:DUPLICATE_EXAMPLES_CAP]]
+    return {
+        "duplicate_rows_in_master": duplicate_rows,
+        "duplicate_examples": examples,
+        "duplicate_key_count": len(duplicate_keys),
+    }
+
+
+def normalized_title_map(rows: list[dict[str, str]], *, id_field: str, title_field: str) -> dict[str, str]:
+    mapped: dict[str, str] = {}
+    for row in rows:
+        business_id = str(row.get(id_field, "") or "").strip()
+        if not business_id:
+            continue
+        mapped[business_id] = normalize_display_title(str(row.get(title_field, "") or ""))
+    return mapped
+
+
+def normalized_title_content_hash(title_map: Mapping[str, str]) -> str:
+    parts = [f"{business_id}|{title_map[business_id]}" for business_id in sorted(title_map)]
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 def redact_sensitive_text(text: str) -> str:
@@ -611,11 +671,170 @@ def master_runtime_layer_stats(snapshot_dir: Path, layer: str) -> dict[str, Any]
     if missing:
         raise ValueError(f"{layer}: master TSV missing runtime fields {missing}")
     ids = extract_ids(rows, layer)
-    return {
+    stats: dict[str, Any] = {
         "rows": len(rows),
         "content_hash": content_hash_from_rows(rows, fields),
         "ids": ids,
         "fields": fields,
+    }
+    if layer == "aliases":
+        business_keys = {alias_business_key(row) for row in rows if alias_business_key(row)[0]}
+        duplicate_stats = collect_alias_duplicate_stats(rows)
+        stats.update(
+            {
+                "master_raw_rows": len(rows),
+                "master_unique_rows": len(business_keys),
+                "business_keys": business_keys,
+                **duplicate_stats,
+            }
+        )
+    if layer in TITLE_NORMALIZED_LAYERS:
+        id_field, title_field = TITLE_LAYER_CONFIG[layer]
+        title_map = normalized_title_map(rows, id_field=id_field, title_field=title_field)
+        stats["normalized_title_map"] = title_map
+        stats["normalized_content_hash"] = normalized_title_content_hash(title_map)
+    return stats
+
+
+def _compare_aliases_layer(master: dict[str, Any], runtime: dict[str, Any]) -> dict[str, Any]:
+    master_raw = int(master.get("master_raw_rows", master.get("rows", 0)))
+    master_unique = int(master.get("master_unique_rows", len(master.get("business_keys") or [])))
+    runtime_raw = int(runtime.get("row_count", 0))
+    runtime_unique = int(runtime.get("unique_business_row_count", runtime_raw))
+    master_keys = set(master.get("business_keys") or [])
+    runtime_keys = set(runtime.get("business_keys") or [])
+    removed = cap_id_list(alias_business_key_token(key) for key in master_keys - runtime_keys)
+    added = cap_id_list(alias_business_key_token(key) for key in runtime_keys - master_keys)
+    duplicate_rows = int(master.get("duplicate_rows_in_master", 0))
+    duplicate_examples = list(master.get("duplicate_examples") or [])[:DUPLICATE_EXAMPLES_CAP]
+
+    reasons: list[str] = []
+    if removed["total"]:
+        reasons.append("true_runtime_missing_ids")
+    if added["total"]:
+        reasons.append("true_runtime_extra_ids")
+    if duplicate_rows:
+        reasons.append("master_duplicate_rows")
+
+    if removed["total"]:
+        status = "runtime_stale"
+    elif added["total"]:
+        status = "runtime_extra"
+    elif master_unique == runtime_unique == len(master_keys) == len(runtime_keys) and master_keys == runtime_keys:
+        status = "in_sync"
+        if master_raw != runtime_raw or duplicate_rows:
+            if duplicate_rows and master_raw > master_unique:
+                pass
+            elif master_raw != runtime_raw and not duplicate_rows:
+                reasons.append("raw_row_count_presentation_only")
+    else:
+        status = "runtime_stale"
+        reasons.append("business_key_mismatch")
+
+    if (
+        status == "in_sync"
+        and master.get("content_hash") != runtime.get("content_hash")
+        and not removed["total"]
+        and not added["total"]
+    ):
+        reasons.append("equivalent_after_normalization")
+
+    return {
+        "status": status,
+        "master_rows": master_raw,
+        "runtime_rows": runtime_raw,
+        "master_raw_rows": master_raw,
+        "master_unique_rows": master_unique,
+        "runtime_unique_rows": runtime_unique,
+        "duplicate_rows_in_master": duplicate_rows,
+        "duplicate_examples": duplicate_examples,
+        "master_content_hash": master.get("content_hash"),
+        "runtime_content_hash": runtime.get("content_hash"),
+        "ids_removed": removed["values"],
+        "ids_removed_total": removed["total"],
+        "ids_added": added["values"],
+        "ids_added_total": added["total"],
+        "reasons": reasons,
+        "tenant_discriminator": runtime.get("tenant_discriminator"),
+    }
+
+
+def _compare_title_normalized_layer(layer: str, master: dict[str, Any], runtime: dict[str, Any]) -> dict[str, Any]:
+    id_field, _title_field = TITLE_LAYER_CONFIG[layer]
+    master_map = dict(master.get("normalized_title_map") or {})
+    runtime_map = dict(runtime.get("normalized_title_map") or {})
+    master_rows = int(master.get("rows", 0))
+    runtime_rows = int(runtime.get("row_count", 0))
+    master_ids = set(master_map)
+    runtime_ids = set(runtime_map)
+    removed = cap_id_list(master_ids - runtime_ids)
+    added = cap_id_list(runtime_ids - master_ids)
+    mismatched = sorted(business_id for business_id in master_ids & runtime_ids if master_map[business_id] != runtime_map[business_id])
+    mismatch = cap_id_list(mismatched)
+
+    reasons: list[str] = []
+    status = "in_sync"
+
+    if master_rows > 0 and runtime_rows == 0:
+        return {
+            "status": "runtime_missing",
+            "master_rows": master_rows,
+            "runtime_rows": 0,
+            "ids_removed": removed["values"],
+            "ids_removed_total": removed["total"],
+            "ids_added": added["values"],
+            "ids_added_total": added["total"],
+            "reasons": ["runtime_empty_master_nonempty"],
+            "tenant_discriminator": runtime.get("tenant_discriminator"),
+        }
+
+    if removed["total"]:
+        status = "runtime_stale"
+        reasons.append("true_runtime_missing_ids")
+    elif added["total"]:
+        status = "runtime_extra"
+        reasons.append("true_runtime_extra_ids")
+    elif mismatch["total"]:
+        status = "runtime_stale"
+        reasons.append("true_content_mismatch_after_normalization")
+    elif master.get("content_hash") != runtime.get("content_hash"):
+        reasons.append("equivalent_after_normalization")
+
+    if layer in CRITICAL_FLOORS and master_rows >= CRITICAL_FLOORS[layer] and runtime_rows < CRITICAL_FLOORS[layer]:
+        return {
+            "status": "master_review_required",
+            "master_rows": master_rows,
+            "runtime_rows": runtime_rows,
+            "master_content_hash": master.get("content_hash"),
+            "runtime_content_hash": runtime.get("content_hash"),
+            "normalized_master_hash": master.get("normalized_content_hash"),
+            "normalized_runtime_hash": runtime.get("normalized_content_hash"),
+            "ids_removed": removed["values"],
+            "ids_removed_total": removed["total"],
+            "ids_added": added["values"],
+            "ids_added_total": added["total"],
+            "content_mismatch_ids": mismatch["values"],
+            "content_mismatch_total": mismatch["total"],
+            "reasons": reasons + ["runtime_below_critical_floor"],
+            "tenant_discriminator": runtime.get("tenant_discriminator"),
+        }
+
+    return {
+        "status": status,
+        "master_rows": master_rows,
+        "runtime_rows": runtime_rows,
+        "master_content_hash": master.get("content_hash"),
+        "runtime_content_hash": runtime.get("content_hash"),
+        "normalized_master_hash": master.get("normalized_content_hash"),
+        "normalized_runtime_hash": runtime.get("normalized_content_hash"),
+        "ids_removed": removed["values"],
+        "ids_removed_total": removed["total"],
+        "ids_added": added["values"],
+        "ids_added_total": added["total"],
+        "content_mismatch_ids": mismatch["values"],
+        "content_mismatch_total": mismatch["total"],
+        "reasons": reasons,
+        "tenant_discriminator": runtime.get("tenant_discriminator"),
     }
 
 
@@ -663,6 +882,11 @@ def compare_layer_runtime_v2(
             "runtime_rows": 0,
         }
 
+    if layer == "aliases":
+        return _compare_aliases_layer(master, runtime)
+    if layer in TITLE_NORMALIZED_LAYERS:
+        return _compare_title_normalized_layer(layer, master, runtime)
+
     master_rows = int(master.get("rows", 0))
     runtime_rows = int(runtime.get("row_count", 0))
     master_ids = set(master.get("ids") or [])
@@ -704,10 +928,10 @@ def compare_layer_runtime_v2(
 
     if removed["total"]:
         status = "runtime_stale"
-        reasons.append("master_ids_missing_in_runtime")
+        reasons.append("true_runtime_missing_ids")
     if added["total"]:
         status = "runtime_extra" if status == "in_sync" else "runtime_stale"
-        reasons.append("runtime_ids_missing_in_master")
+        reasons.append("true_runtime_extra_ids")
     if master_rows != runtime_rows and status == "in_sync":
         status = "runtime_stale" if runtime_rows < master_rows else "runtime_extra"
         reasons.append("row_count_mismatch")
@@ -716,9 +940,9 @@ def compare_layer_runtime_v2(
     runtime_hash = runtime.get("content_hash")
     if master_hash and runtime_hash and master_hash != runtime_hash and status == "in_sync":
         status = "runtime_stale"
-        reasons.append("content_hash_mismatch")
+        reasons.append("true_content_mismatch_after_normalization")
 
-    if layer in CRITICAL_FLOORS and runtime_rows < CRITICAL_FLOORS[layer]:
+    if layer in CRITICAL_FLOORS and master_rows >= CRITICAL_FLOORS[layer] and runtime_rows < CRITICAL_FLOORS[layer]:
         return {
             "status": "master_review_required",
             "master_rows": master_rows,
@@ -793,6 +1017,64 @@ SELECT count(*)::bigint AS row_count,
 FROM {table}
 {where};
 """.strip()
+
+
+def build_runtime_alias_sql(
+    table: str,
+    *,
+    tenant_column: str | None,
+    tenant_value: str = PROJECT_ID,
+) -> str:
+    where = ""
+    if tenant_column:
+        where = f"WHERE {tenant_column} = '{tenant_value}'"
+    return f"""
+SELECT count(*)::bigint AS row_count,
+       count(distinct (alias, canonical_sku))::bigint AS unique_business_row_count,
+       coalesce(
+         array_agg(
+           distinct (alias || chr(31) || canonical_sku)
+           ORDER BY alias || chr(31) || canonical_sku
+         ),
+         ARRAY[]::text[]
+       ) AS business_keys
+FROM {table}
+{where};
+""".strip()
+
+
+def build_runtime_title_rows_sql(
+    table: str,
+    *,
+    id_field: str,
+    title_field: str,
+    tenant_column: str | None,
+    tenant_value: str = PROJECT_ID,
+) -> str:
+    where = ""
+    if tenant_column:
+        where = f"WHERE {tenant_column} = '{tenant_value}'"
+    return f"""
+SELECT {id_field}::text AS business_id, {title_field}::text AS display_title
+FROM {table}
+{where}
+ORDER BY {id_field};
+""".strip()
+
+
+def runtime_title_map_from_rows(rows: Iterable[tuple[str, str]], *, id_field: str, title_field: str) -> dict[str, str]:
+    del id_field, title_field
+    mapped: dict[str, str] = {}
+    for business_id, display_title in rows:
+        token = str(business_id or "").strip()
+        if not token:
+            continue
+        mapped[token] = normalize_display_title(str(display_title or ""))
+    return mapped
+
+
+def runtime_alias_keys_from_tokens(tokens: Iterable[str]) -> set[tuple[str, str]]:
+    return {alias_business_key_from_token(token) for token in tokens if str(token).strip()}
 
 
 def compare_master_runtime_v2(

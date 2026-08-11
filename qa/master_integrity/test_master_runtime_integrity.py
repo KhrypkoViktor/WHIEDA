@@ -24,6 +24,7 @@ from fixture_runtime import (  # noqa: E402
 )
 from whieda_master_integrity_lib import (  # noqa: E402
     ID_LIST_CAP,
+    alias_business_key_token,
     cap_id_list,
     compare_layer_runtime_v2,
     compare_master_runtime_v2,
@@ -31,6 +32,8 @@ from whieda_master_integrity_lib import (  # noqa: E402
     find_newest_valid_snapshot,
     format_runtime_integrity_markdown,
     master_runtime_layer_stats,
+    normalize_display_title,
+    normalized_title_content_hash,
     redact_sensitive_text,
     retention_plan_v2,
 )
@@ -175,3 +178,118 @@ def test_retention_plan_preserves_invalid_and_blocking(tmp_path: Path) -> None:
     manual = [entry for entry in plan["entries"] if entry.get("manual_review")]
     assert any(entry["snapshot_id"] == bad.name for entry in manual)
     assert any(entry["snapshot_id"] == good.name for entry in manual)
+
+
+def _alias_keys(count: int) -> set[tuple[str, str]]:
+    return {(f"alias-{index}", f"SKU-{index:03d}") for index in range(1, count + 1)}
+
+
+def test_alias_raw_rows_120_unique_118_runtime_118_not_stale() -> None:
+    dup_key = ("dup-alias", "SKU-001")
+    business_keys = _alias_keys(117) | {dup_key}
+    master = {
+        "rows": 120,
+        "master_raw_rows": 120,
+        "master_unique_rows": 118,
+        "business_keys": business_keys,
+        "duplicate_rows_in_master": 2,
+        "duplicate_examples": [alias_business_key_token(dup_key)],
+        "content_hash": "master-hash",
+    }
+    runtime = {
+        "row_count": 118,
+        "unique_business_row_count": 118,
+        "business_keys": business_keys,
+        "content_hash": "runtime-hash",
+        "tenant_discriminator": "client_id",
+    }
+    report = compare_layer_runtime_v2("aliases", master, runtime)
+    assert report["status"] == "in_sync"
+    assert report["master_raw_rows"] == 120
+    assert report["master_unique_rows"] == 118
+    assert report["runtime_unique_rows"] == 118
+    assert report["duplicate_rows_in_master"] == 2
+    assert "master_duplicate_rows" in report["reasons"]
+
+
+def test_alias_duplicate_examples_are_reported() -> None:
+    dup_key = ("dup-alias", "SKU-002")
+    master = {
+        "rows": 3,
+        "master_raw_rows": 3,
+        "master_unique_rows": 2,
+        "business_keys": {("alias-a", "SKU-001"), dup_key},
+        "duplicate_rows_in_master": 1,
+        "duplicate_examples": [alias_business_key_token(dup_key)],
+        "content_hash": "master-hash",
+    }
+    runtime = {
+        "row_count": 2,
+        "unique_business_row_count": 2,
+        "business_keys": master["business_keys"],
+        "content_hash": "runtime-hash",
+    }
+    report = compare_layer_runtime_v2("aliases", master, runtime)
+    assert report["duplicate_examples"] == [alias_business_key_token(dup_key)]
+
+
+def test_quoted_ba_gua_product_title_is_equivalent() -> None:
+    normalized = normalize_display_title('МИНИСАУНА "БА-ГУА"')
+    assert normalized == normalize_display_title("МИНИСАУНА БА-ГУА")
+    title_map = {"M014-00": normalized}
+    master = {
+        "rows": 1,
+        "content_hash": "raw-master",
+        "normalized_title_map": title_map,
+        "normalized_content_hash": normalized_title_content_hash(title_map),
+    }
+    runtime = {
+        "row_count": 1,
+        "content_hash": "raw-runtime",
+        "normalized_title_map": title_map,
+        "normalized_content_hash": normalized_title_content_hash(title_map),
+        "tenant_discriminator": "client_id",
+    }
+    report = compare_layer_runtime_v2("products", master, runtime)
+    assert report["status"] == "in_sync"
+    assert "equivalent_after_normalization" in report["reasons"]
+
+
+def test_quoted_resource_title_is_equivalent() -> None:
+    title_map = {"res-ba-gua": normalize_display_title('Ба-Гуа "image"')}
+    runtime_map = {"res-ba-gua": normalize_display_title("Ба-Гуа image")}
+    master = {
+        "rows": 1,
+        "content_hash": "raw-master",
+        "normalized_title_map": title_map,
+        "normalized_content_hash": normalized_title_content_hash(title_map),
+    }
+    runtime = {
+        "row_count": 1,
+        "content_hash": "raw-runtime",
+        "normalized_title_map": runtime_map,
+        "normalized_content_hash": normalized_title_content_hash(runtime_map),
+    }
+    report = compare_layer_runtime_v2("resources", master, runtime)
+    assert report["status"] == "in_sync"
+    assert "equivalent_after_normalization" in report["reasons"]
+
+
+def test_true_title_mismatch_after_normalization() -> None:
+    master_map = {"M014-00": "МИНИСАУНА БА-ГУА"}
+    runtime_map = {"M014-00": "МИНИСАУНА ДРУГАЯ"}
+    master = {
+        "rows": 1,
+        "content_hash": "raw-master",
+        "normalized_title_map": master_map,
+        "normalized_content_hash": normalized_title_content_hash(master_map),
+    }
+    runtime = {
+        "row_count": 1,
+        "content_hash": "raw-runtime",
+        "normalized_title_map": runtime_map,
+        "normalized_content_hash": normalized_title_content_hash(runtime_map),
+    }
+    report = compare_layer_runtime_v2("products", master, runtime)
+    assert report["status"] == "runtime_stale"
+    assert "true_content_mismatch_after_normalization" in report["reasons"]
