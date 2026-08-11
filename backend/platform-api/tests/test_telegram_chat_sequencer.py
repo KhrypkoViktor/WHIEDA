@@ -1,0 +1,169 @@
+"""Per-chat Telegram update ordering and idempotency tests."""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.advisor.gap import GAP_TEXTS
+from app.advisor.sql.engine import SERVICE_FALLBACKS
+from app.advisor.sql.text import detect_service_intent, is_unsupported_topic
+from app.telegram.routes import _process_telegram_update
+from app.telegram.sequencer import ChatUpdateSequencer, reset_chat_sequencer_for_tests
+
+
+@pytest.fixture(autouse=True)
+def _fresh_sequencer():
+    reset_chat_sequencer_for_tests()
+    yield
+    reset_chat_sequencer_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_same_chat_messages_keep_reply_order():
+    seq = ChatUpdateSequencer()
+    order: list[str] = []
+
+    async def slow_first():
+        order.append("start_capabilities")
+        await asyncio.sleep(0.05)
+        order.append("end_capabilities")
+        return "capabilities"
+
+    async def fast_second():
+        order.append("start_oos")
+        await asyncio.sleep(0.01)
+        order.append("end_oos")
+        return "unsupported_topic"
+
+    first = asyncio.create_task(seq.run_ordered("chat-1", 1, slow_first))
+    await asyncio.sleep(0.01)
+    second = asyncio.create_task(seq.run_ordered("chat-1", 2, fast_second))
+    await asyncio.gather(first, second)
+    assert order == [
+        "start_capabilities",
+        "end_capabilities",
+        "start_oos",
+        "end_oos",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rapid_capabilities_then_oos_content_and_order():
+    seq = ChatUpdateSequencer()
+    delivered: list[tuple[str, str]] = []
+
+    async def simulate(question: str, delay: float):
+        async def handler():
+            await asyncio.sleep(delay)
+            if detect_service_intent(question) == "capabilities":
+                mode = "capabilities"
+                text = SERVICE_FALLBACKS["capabilities"]
+            elif is_unsupported_topic(question):
+                mode = "unsupported_topic"
+                text = GAP_TEXTS["unsupported_topic"]
+            else:
+                mode = "knowledge_gap"
+                text = GAP_TEXTS["unknown_product"]
+            delivered.append((mode, text))
+            return mode
+
+        return await seq.run_ordered("chat-rapid", None, handler)
+
+    t1 = asyncio.create_task(simulate("что можешь", 0.06))
+    await asyncio.sleep(0.005)
+    t2 = asyncio.create_task(simulate("пивка хочешь", 0.01))
+    await asyncio.gather(t1, t2)
+
+    assert [mode for mode, _ in delivered] == ["capabilities", "knowledge_gap"]
+    assert "Могу подсказать" in delivered[0][1]
+    assert delivered[1][0] != "capabilities"
+
+
+@pytest.mark.asyncio
+async def test_different_chats_process_in_parallel():
+    seq = ChatUpdateSequencer()
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    async def work(chat_key: str):
+        async def handler():
+            started.append(f"start:{chat_key}")
+            await gate.wait()
+            return chat_key
+
+        return await seq.run_ordered(chat_key, None, handler)
+
+    t1 = asyncio.create_task(work("chat-a"))
+    t2 = asyncio.create_task(work("chat-b"))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if len(started) == 2:
+            break
+    gate.set()
+    r1, r2 = await asyncio.gather(t1, t2)
+    assert len(started) == 2
+    assert set(started) == {"start:chat-a", "start:chat-b"}
+    assert r1.value == "chat-a"
+    assert r2.value == "chat-b"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_update_id_is_ignored():
+    seq = ChatUpdateSequencer()
+    calls = 0
+
+    async def handler():
+        nonlocal calls
+        calls += 1
+        return "ok"
+
+    first = await seq.run_ordered("chat-dup", 42, handler)
+    second = await seq.run_ordered("chat-dup", 42, handler)
+    assert first.duplicate is False
+    assert second.duplicate is True
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_failure_releases_chat_for_next_message():
+    seq = ChatUpdateSequencer()
+
+    async def fail():
+        raise RuntimeError("boom")
+
+    async def ok():
+        return "next"
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await seq.run_ordered("chat-fail", 1, fail)
+    result = await seq.run_ordered("chat-fail", 2, ok)
+    assert result.duplicate is False
+    assert result.value == "next"
+
+
+@pytest.mark.asyncio
+async def test_routes_duplicate_update_skips_processor(monkeypatch):
+    monkeypatch.setenv("PLATFORM_CORE_ROUTE_TELEGRAM", "core")
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    calls = 0
+
+    async def fake_body(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+
+    with patch("app.telegram.routes._process_telegram_update_body", side_effect=fake_body):
+        update = {
+            "update_id": 9001,
+            "message": {"text": "что можешь", "chat": {"id": 555}, "from": {"id": 1}},
+        }
+        await asyncio.gather(
+            _process_telegram_update("binding", update, "trace-1"),
+            _process_telegram_update("binding", update, "trace-1"),
+        )
+    assert calls == 1
