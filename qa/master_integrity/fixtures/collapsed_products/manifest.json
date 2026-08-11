@@ -1,0 +1,166 @@
+{
+  "sheet_id": "fixture-sheet",
+  "captured_at": "2026-08-10T10:00:00+00:00",
+  "layers": {
+    "products": {
+      "gid": "1035748906",
+      "file": "products.tsv",
+      "bytes": 115,
+      "rows": 5,
+      "sha256": "03f7e5335f37a3406be849900457598c46ccec26e9b3a25e7f6f4b2b0a68e78e",
+      "header_hash": "c4125009e90cb509cbcb568a03b22f04b11a46021d72492e2f7dd8e741b7c1bf"
+    },
+    "aliases": {
+      "gid": "2001001",
+      "file": "aliases.tsv",
+      "bytes": 1740,
+      "rows": 60,
+      "sha256": "b7888780f9d2ce260dc6d4d2226cf8fa019b8f0d13cc6de10f816af2247452ea",
+      "header_hash": "6263b86f1f0c689b9f9fb236740e70e0552c29894d6777f92dfaf38cfc74b7b6"
+    },
+    "resources": {
+      "gid": "2001005",
+      "file": "resources.tsv",
+      "bytes": 1380,
+      "rows": 25,
+      "sha256": "c68d0df31910585b45866772d20f66c0ab96a0f8eea6182bdf286006ccdc8e55",
+      "header_hash": "17e0c13d507914e170d74fb08ce5a648f7886aa67d5a728e3b29b9de19e0bcf3"
+    },
+    "product_cards": {
+      "gid": "2001006",
+      "file": "product_cards.tsv",
+      "bytes": 181,
+      "rows": 10,
+      "sha256": "76f81b63162572b97019522d23c05f077552ac83d35863d41d18555d9b0275ef",
+      "header_hash": "c4125009e90cb509cbcb568a03b22f04b11a46021d72492e2f7dd8e741b7c1bf"
+    },
+    "product_details": {
+      "gid": "2001008",
+      "file": "product_details.tsv",
+      "bytes": 33,
+      "rows": 0,
+      "sha256": "229c12571381b1177ec8350b4bc76834c813eefd3f4edf805cb054a45fc02fc2",
+      "header_hash": "c66ef9ad6228c4cd2dbeb1e68eda1e9a7f08e76a416edea2e1515435760e0eaf"
+    },
+    "product_comparisons": {
+      "gid": "1415928637",
+      "file": "product_comparisons.tsv",
+      "bytes": 67,
+      "rows": 1,
+      "sha256": "0ab164df4d73e00b266dfd2199eab72f80c95d2e4abf7701364bd64c4cd24abf",
+      "header_hash": "57c0bf03985bc525a105ef4d01da40c38f924738a5a4afd17b22e8ed3e2234cb"
+    },
+    "users_access": {
+      "gid": "161104189",
+      "file": "users_access.tsv",
+      "bytes": 38,
+      "rows": 1,
+      "sha256": "4fd88222290d4085688c2d885eee47969c8640ffcb789e8a1ceead74740f024b",
+      "header_hash": "f5a4a10ce279ce98883819333ba32365b1a37c5ed7e95bd802d4680578b47239"
+    },
+    "structure_owners": {
+      "gid": "86214234",
+      "file": "structure_owners.tsv",
+      "bytes": 34,
+      "rows": 1,
+      "sha256": "af06486309c579bfbc41249c13e3fff8eebfbe6f1e3f1e512d337a57370e22ad",
+      "header_hash": "8903b63746162622113ab2accd5a866c2ef8864bc4c7aebec0d78df585dc7ebe"
+    },
+    "business_objections": {
+      "gid": "43717728",
+      "file": "business_objections.tsv",
+      "bytes": 30,
+      "rows": 1,
+      "sha256": "9daedb719d87d2eb6eb53ecedc754ff41541b5225f259c565d753010eefa89f5",
+      "header_hash": "323799d358eb073fd0ddadb392fd5a3002299637642f00f8158e36039b80d661"
+    },
+    "business_faq": {
+      "gid": "28151102",
+      "file": "business_faq.tsv",
+      "bytes": 18,
+      "rows": 1,
+      "sha256": "e489e5e351ddc9ddaf5beeb67f5f4adac39cd89c90023d9f4d59e9a40629f943",
+      "header_hash": "1457e282db68507bf93e525df9f84c92f7923fd6ae23b5e5dd693a680b585cf0"
+    },
+    "promotions": {
+      "gid": "1621722235",
+      "file": "promotions.tsv",
+      "bytes": 42,
+      "rows": 1,
+      "sha256": "056db22c506ead47c15a45d6eb69ba4f7b4fe3a52b2858a49536f2f0010300ec",
+      "header_hash": "d359e2a46c6156ebb6cf48f94d38c69fab2a68570f858399d8511bcc9f792540"
+    },
+    "recommendation_rules": {
+      "gid": "1468974041",
+      "file": "recommendation_rules.tsv",
+      "bytes": 26,
+      "rows": 1,
+      "sha256": "96257491b3982c33e3b83481ffe7151722a6cc297ca4ce94ce3717494ec9f2e7",
+      "header_hash": "c3adad4f81b34615727672e6c2c72a20599dd4f80d7ee2939db0ee3db0ebb226"
+    },
+    "starter_basket_templates": {
+      "gid": "1974396045",
+      "file": "starter_basket_templates.tsv",
+      "bytes": 28,
+      "rows": 1,
+      "sha256": "002d16143f531dd5803359c03fa6c76e8517ee073c6268f9c88966e25ab5a181",
+      "header_hash": "77d541d21a5b1c8fe4db00a591b106829207e4c06e635a335bb8b41ce083f925"
+    },
+    "events": {
+      "gid": "1444298798",
+      "file": "events.tsv",
+      "bytes": 34,
+      "rows": 1,
+      "sha256": "49fb6565554718eac7b4a922daf773d9dc9216429caf63b875f2940fc2ce8a27",
+      "header_hash": "ac5c483cc8aff9ab8ac1e3504b1b8de5ef4d1f4067b12d69e0f597d8c8ea87c4"
+    },
+    "community_resources": {
+      "gid": "947236678",
+      "file": "community_resources.tsv",
+      "bytes": 40,
+      "rows": 1,
+      "sha256": "cd3a18cc7ea84327a0b1284bba07d63e83e652f0cb04109d37ecfcc87963e859",
+      "header_hash": "1b28d4e41b9c426c724843ae7d6e67786caef946390c3910ba04e2547e0a8895"
+    },
+    "intent_registry": {
+      "gid": "2001020",
+      "file": "intent_registry.tsv",
+      "bytes": 24,
+      "rows": 1,
+      "sha256": "2956a68f9a29f2bca707f635bc51ad4ed89c4cf4907827fb18bea277a9ed0770",
+      "header_hash": "fd11a51b950401fdc857487812e4c3a317f4ad05df1f173a895cdd74c4f06f35"
+    },
+    "clarification_prompts": {
+      "gid": "2001021",
+      "file": "clarification_prompts.tsv",
+      "bytes": 40,
+      "rows": 1,
+      "sha256": "c558a4cef603308bc6b44407762c3e99bb35f992e7972eca099e2ba6be594c98",
+      "header_hash": "bec29c7ddbbbcc8ff4e48e67df2b7e084e4376249718f096eb090932f3de5f4d"
+    },
+    "capability_responses": {
+      "gid": "2001022",
+      "file": "capability_responses.tsv",
+      "bytes": 28,
+      "rows": 1,
+      "sha256": "6b6c66334c6072daab9791857bd8e87e43ab8eed0180771302d5c859fba505ae",
+      "header_hash": "7d6520c8c63561680392875ccccd9a1383118f4829693d9ee9a1c801ddeb5f12"
+    },
+    "canonical_questions": {
+      "gid": "1160261466",
+      "file": "canonical_questions.tsv",
+      "bytes": 28,
+      "rows": 1,
+      "sha256": "0e808f68afda82efcbccbc6f6e28bb1a610ecee37cda279fbfaae6e605d06066",
+      "header_hash": "86ee63ed6eb24d4190da92b857cb65231e9275426ee5a23b50e47ab8a61ee6ae"
+    },
+    "partners_ref": {
+      "gid": "1733124410",
+      "file": "partners_ref.tsv",
+      "bytes": 36,
+      "rows": 1,
+      "sha256": "93b54a5237a8255bbcb290b45d41bb928a1e3c91f17c79492b53e45f89a33fca",
+      "header_hash": "f599f347af0216c9e1a79b92f15b11830f9f2cbc2534d2f1c64a2e307146287f"
+    }
+  }
+}
