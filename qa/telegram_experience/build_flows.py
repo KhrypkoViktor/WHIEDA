@@ -68,6 +68,24 @@ def build_flows() -> list[dict]:
     )
     flows.append(
         _flow(
+            "TG-PRES-CAP-TYPO",
+            "structured_routes",
+            "tg-pres-cap-typo",
+            [_turn(1, "че ты можеь?", "structured_business", ["Могу", "цен"])],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-PRES-CATALOG-ASK",
+            "structured_routes",
+            "tg-pres-catalog-ask",
+            [_turn(1, "какие есть товары?", "structured_business", ["товар"])],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
             "TG-ORDER-CAP-OOS",
             "ordering",
             "tg-order-cap-oos",
@@ -266,6 +284,18 @@ def build_flows() -> list[dict]:
     )
     flows.append(
         _flow(
+            "TG-PRES-ACTIVATOR-CHOICE",
+            "presentation",
+            "tg-pres-activator-choice",
+            [
+                _turn(1, "активатор", "clarification", ["Активатор клеток", "PRO"]),
+                _turn(2, "обычный", "structured_card", ["Активатор клеток"]),
+            ],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
             "TG-ROUTE-HELP",
             "structured_routes",
             "tg-route-help",
@@ -318,6 +348,112 @@ def build_flows() -> list[dict]:
                     expected_gap_kind="unknown_followup",
                 )
             ],
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-GREET-HI",
+            "structured_routes",
+            "tg-svc-greet-hi",
+            [
+                _turn(
+                    1,
+                    "привет",
+                    "structured_business",
+                    ["Здравств"],
+                    must_not_contain=["Traceback", "каталог"],
+                )
+            ],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-GREET-DAY",
+            "structured_routes",
+            "tg-svc-greet-day",
+            [
+                _turn(
+                    1,
+                    "добрый день",
+                    "structured_business",
+                    ["Здравств"],
+                    must_not_contain=["Traceback"],
+                )
+            ],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-CAP-SLANG",
+            "structured_routes",
+            "tg-svc-cap-slang",
+            [_turn(1, "а что моешь", "structured_business", ["Могу"], must_not_contain=["Traceback"])],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-CAP-MOZH",
+            "structured_routes",
+            "tg-svc-cap-mozh",
+            [_turn(1, "можешь?", "structured_business", ["Могу"], must_not_contain=["Traceback"])],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-CATALOG-SHOW",
+            "structured_routes",
+            "tg-svc-catalog-show",
+            [
+                _turn(
+                    1,
+                    "покажи любой товар",
+                    "structured_business",
+                    ["товар"],
+                    must_not_contain=["Traceback", "xyzunknown"],
+                )
+            ],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-OOS-SMALLTALK",
+            "ordering",
+            "tg-svc-oos-smalltalk",
+            [
+                _turn(
+                    1,
+                    "как дела",
+                    "structured_business",
+                    ["на связи"],
+                    must_not_contain=["Могу подсказать цену, PV, карточку"],
+                ),
+                _turn(
+                    2,
+                    "пивка хочешь",
+                    "clarification",
+                    ["сценар"],
+                    expected_gap_kind="unsupported_topic",
+                    must_not_contain=["Могу подсказать цену, PV, карточку"],
+                ),
+            ],
+            priority="P1",
+        )
+    )
+    flows.append(
+        _flow(
+            "TG-SVC-ACTIVATOR-PRO",
+            "presentation",
+            "tg-svc-activator-pro",
+            [
+                _turn(1, "активатор", "clarification", ["Активатор", "PRO"]),
+                _turn(2, "pro", "structured_card", ["PRO", "Активатор"]),
+            ],
+            priority="P1",
         )
     )
     return flows

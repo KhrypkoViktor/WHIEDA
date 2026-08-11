@@ -129,6 +129,72 @@ async def test_duplicate_update_id_is_ignored():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_update_does_not_run_handler_twice_after_success():
+    seq = ChatUpdateSequencer()
+    deliveries: list[str] = []
+
+    async def handler():
+        deliveries.append("sent")
+        return "ok"
+
+    first = await seq.run_ordered("chat-deliver", 77, handler)
+    second = await seq.run_ordered("chat-deliver", 77, handler)
+    assert first.duplicate is False
+    assert second.duplicate is True
+    assert deliveries == ["sent"]
+
+
+@pytest.mark.asyncio
+async def test_failed_update_is_not_remembered_so_retry_allowed():
+    seq = ChatUpdateSequencer()
+    attempts = 0
+
+    async def fail_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient")
+        return "recovered"
+
+    with pytest.raises(RuntimeError, match="transient"):
+        await seq.run_ordered("chat-retry", 88, fail_once)
+    result = await seq.run_ordered("chat-retry", 88, fail_once)
+    assert result.duplicate is False
+    assert result.value == "recovered"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_routes_duplicate_update_skips_delivery_callback(monkeypatch, whieda_tenant):
+    monkeypatch.setenv("CORE_ROUTE_TELEGRAM", "core")
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    deliveries = 0
+
+    async def fake_core(*_args, **_kwargs):
+        nonlocal deliveries
+        deliveries += 1
+        await asyncio.sleep(0.02)
+
+    with patch("app.telegram.routes.resolve_tenant_from_bot_binding", AsyncMock(return_value=whieda_tenant)):
+        with patch("app.telegram.routes.process_core_telegram_update", side_effect=fake_core):
+            update = {
+                "update_id": 9002,
+                "message": {
+                    "text": "что можешь",
+                    "chat": {"id": 556, "type": "private"},
+                    "from": {"id": 1},
+                },
+            }
+            await asyncio.gather(
+                _process_telegram_update("binding", update, "trace-dup-deliver"),
+                _process_telegram_update("binding", update, "trace-dup-deliver"),
+            )
+    assert deliveries == 1
+
+
+@pytest.mark.asyncio
 async def test_failure_releases_chat_for_next_message():
     seq = ChatUpdateSequencer()
 
@@ -147,7 +213,7 @@ async def test_failure_releases_chat_for_next_message():
 
 @pytest.mark.asyncio
 async def test_routes_duplicate_update_skips_processor(monkeypatch):
-    monkeypatch.setenv("PLATFORM_CORE_ROUTE_TELEGRAM", "core")
+    monkeypatch.setenv("CORE_ROUTE_TELEGRAM", "core")
     from app.settings import get_settings
 
     get_settings.cache_clear()
