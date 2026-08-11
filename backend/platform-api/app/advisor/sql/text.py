@@ -5,12 +5,26 @@ from __future__ import annotations
 import re
 
 GREETING_RE = re.compile(
-    r"^(привет|здравств|добрый|hello|hi)\b",
+    r"^(привет|приве|здравств|добрый|hello|hi)\b",
     re.I,
 )
 CAPABILITY_RE = re.compile(
-    r"(что ты умеешь|что умеешь|что можешь|что ты можешь|чем можешь помочь|"
-    r"какие у тебя возможности|помощь|help|capabilities)",
+    r"(что ты умеешь|что умеешь|что можешь|что ты можешь|че\s+ты\s+можешь|чо\s+умеешь|"
+    r"чем можешь помочь|какие у тебя возможности|помощь|help|capabilities)",
+    re.I,
+)
+CALCULATOR_RE = re.compile(r"^калькулятор\.?$", re.I)
+START_OPTIONS_RE = re.compile(
+    r"(какие\s+виды\s+вход|вариант\w*\s+вход|виды\s+вход|как\s+начать\s+работ|стартов\w*\s+вариант)",
+    re.I,
+)
+COMPANY_INTRO_RE = re.compile(r"расскаж\w*\s+о\s+компан", re.I)
+INCOME_QUESTION_RE = re.compile(
+    r"(как\s+заработать|сколько\s+можно\s+заработать|доход\s+партн|заработок\s+партн)",
+    re.I,
+)
+DISCOMFORT_BOUNDARY_RE = re.compile(
+    r"(бол(?:ит|ят)\s+(?:колен|спин|шея|спина|колени|поясниц)|хочу\s+совет)",
     re.I,
 )
 PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", re.I)
@@ -18,7 +32,8 @@ EVENT_RE = re.compile(r"(мероприят|событ|встреч|семина
 COMMUNITY_RE = re.compile(r"(чат|сообществ|групп|канал|telegram)", re.I)
 OUT_OF_SCOPE_RE = re.compile(
     r"(погод|курс\s+валют|курс\s+доллар|доллар.*курс|курс.*доллар|крипт|бирж|инвестир|"
-    r"акци[яи]\s+компан|политик|международн\w*\s+логистик)",
+    r"акци[яи]\s+компан|политик|международн\w*\s+логистик|"
+    r"пив(?:о|а|ку|очк|ка|ко)\b|\bbeer\b|выпить\s+пив)",
     re.I,
 )
 BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|подбери|бюджет.*pv|pv.*бюджет)", re.I)
@@ -191,3 +206,23 @@ def has_basket_intent(question: str) -> bool:
 
 def is_context_followup(question: str) -> bool:
     return bool(FOLLOWUP_RE.match(normalize_text(question)) or DETAILS_RE.search(question))
+
+
+def is_calculator_request(question: str) -> bool:
+    return bool(CALCULATOR_RE.match(normalize_text(question)))
+
+
+def is_start_options_request(question: str) -> bool:
+    return bool(START_OPTIONS_RE.search(question))
+
+
+def is_company_intro_request(question: str) -> bool:
+    return bool(COMPANY_INTRO_RE.search(question))
+
+
+def is_income_question(question: str) -> bool:
+    return bool(INCOME_QUESTION_RE.search(question))
+
+
+def is_discomfort_boundary(question: str) -> bool:
+    return bool(DISCOMFORT_BOUNDARY_RE.search(question))
