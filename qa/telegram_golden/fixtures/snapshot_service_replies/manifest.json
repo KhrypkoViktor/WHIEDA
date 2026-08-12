@@ -1,0 +1,70 @@
+{
+  "version": "2026-08-12",
+  "source": "SERVICE_FALLBACKS + engine.py business fallbacks (read-only copy)",
+  "replies": [
+    {
+      "intent_id": "greeting",
+      "class": "greeting",
+      "source": "SERVICE_FALLBACKS",
+      "text": "Здравствуйте! Я советник WHIEDA.\n\n📦 Товары\n• карточка, цена, фото, видео, сертификат\n• сравнение и подбор под задачу\n\n📈 Бизнес\n• PV, повторка, старт, маркетинг-план\n• акции, встречи и материалы\n\nНапишите название товара или вопрос своими словами.",
+      "must_contain": ["Здравств", "WHIEDA", "Товары"],
+      "must_not_contain": ["Dify", "не знаю", "нет в базе"]
+    },
+    {
+      "intent_id": "capabilities",
+      "class": "capabilities",
+      "source": "SERVICE_FALLBACKS",
+      "text": "Я могу помочь с WHIEDA:\n\n📦 Товары\n• рассказать о товаре простыми словами\n• показать фото, видео, сертификат\n• сравнить товары\n\n💳 Цены и подбор\n• дать цену, PV, первичную и повторную покупку\n• посчитать корзину\n• подсказать выгодный старт и акции\n\n📈 Бизнес\n• объяснить PV, повторку, Step и старт\n• подсказать встречу или мероприятие\n\nДля расчёта напишите: Посчитай: Активатор клеток, БЭМ, Ба-Гуа",
+      "must_contain": ["WHIEDA", "PV", "Посчитай"],
+      "must_not_contain": ["Dify", "Traceback"]
+    },
+    {
+      "intent_id": "help",
+      "class": "capabilities",
+      "source": "SERVICE_FALLBACKS",
+      "text": "Выберите, с чем помочь:\n\n📦 Товар: название, цена, фото, видео, сравнение\n🧮 Калькулятор: «Посчитай: Активатор, БЭМ»\n📈 Бизнес: PV, повторка, старт, маркетинг-план\n🏢 Компания: кто мы, продукты, события\n🧭 Подбор: опишите задачу или интересующую зону",
+      "must_contain": ["Товар", "Компания", "Подбор"],
+      "must_not_contain": ["Dify"]
+    },
+    {
+      "intent_id": "smalltalk_status",
+      "class": "greeting",
+      "source": "SERVICE_FALLBACKS",
+      "text": "Спасибо, я на связи. Задайте вопрос по товару или бизнесу WHIEDA.",
+      "must_contain": ["на связи"],
+      "must_not_contain": ["Dify"]
+    },
+    {
+      "intent_id": "company_intro_fallback",
+      "class": "company",
+      "source": "COMPANY_INTRO_FALLBACK",
+      "text": "WHIEDA — компания с продуктами для здоровья и партнёрской программой. Могу рассказать про товары, старт и маркетинг-план.",
+      "must_contain": ["WHIEDA", "партнёр"],
+      "must_not_contain": ["Dify"]
+    },
+    {
+      "intent_id": "calculator_instruction",
+      "class": "basket",
+      "source": "CALCULATOR_INSTRUCTION",
+      "text": "Для расчёта напишите одной строкой: Посчитай: активатор, спирулина — посчитаю BYN и PV.",
+      "must_contain": ["Посчитай", "PV"],
+      "must_not_contain": ["Dify"]
+    },
+    {
+      "intent_id": "discomfort_boundary",
+      "class": "safe_boundary",
+      "source": "DISCOMFORT_BOUNDARY_TEXT",
+      "text": "Понимаю, что тема важная. Я не ставлю диагноз и не подбираю лечение. Могу помочь выбрать домашний продукт WHIEDA по задаче или ответить про ограничения и применение из карточки. Что ближе: подобрать товар или уточнить ограничения?",
+      "must_contain": ["не ставлю диагноз", "не подбираю лечение"],
+      "must_not_contain": ["схема лечения", "Dify"]
+    },
+    {
+      "intent_id": "mlm_objection_fallback",
+      "class": "business",
+      "source": "MLM_OBJECTION_FALLBACK",
+      "text": "WHIEDA — это компания с продуктами и партнёрской программой. Доход партнёра зависит от личных продаж и работы с клиентами, а не только от приглашений.",
+      "must_contain": ["WHIEDA", "личных продаж"],
+      "must_not_contain": ["пирамида", "Dify"]
+    }
+  ]
+}
