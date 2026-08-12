@@ -1,0 +1,142 @@
+{
+  "version": "2026-08-12-v1.1",
+  "snapshot_source": "n8n/live-exports/structured-master/20260810T083328Z",
+  "cards": [
+    {
+      "slug": "activator",
+      "sku": "M015-00",
+      "canonical_name": "Активатор клеток",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "activator.json"
+    },
+    {
+      "slug": "activator_pro",
+      "sku": "EU-N000031-25",
+      "canonical_name": "Активатор клеток PRO",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "activator_pro.json"
+    },
+    {
+      "slug": "ba_gua",
+      "sku": "M014-00",
+      "canonical_name": "Ба-Гуа",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "ba_gua.json"
+    },
+    {
+      "slug": "bem",
+      "sku": "EU-N000021-24",
+      "canonical_name": "Magic Foherb",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "bem.json"
+    },
+    {
+      "slug": "wentun",
+      "sku": "EU-N000024-24",
+      "canonical_name": "Вэнтун",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "wentun.json"
+    },
+    {
+      "slug": "glasses",
+      "sku": "D014",
+      "canonical_name": "Очки",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "glasses.json"
+    },
+    {
+      "slug": "insoles",
+      "sku": "D013",
+      "canonical_name": "Стельки",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "insoles.json"
+    },
+    {
+      "slug": "spirulina",
+      "sku": "F036-00",
+      "canonical_name": "Спирулина",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "spirulina.json"
+    },
+    {
+      "slug": "soy_peptide",
+      "sku": "F038-00",
+      "canonical_name": "Низкомолекулярный соевый пептид",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "soy_peptide.json"
+    },
+    {
+      "slug": "foher_elixir",
+      "sku": "F001-02",
+      "canonical_name": "Эликсир Фохоу",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "foher_elixir.json"
+    },
+    {
+      "slug": "treasures_elixir",
+      "sku": "F002-02",
+      "canonical_name": "Эликсир 3 Драгоценности",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "treasures_elixir.json"
+    },
+    {
+      "slug": "sancin_elixir",
+      "sku": "F003-02",
+      "canonical_name": "Эликсир Саньцин",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:",
+        "⚠️ Ограничения:"
+      ],
+      "file": "sancin_elixir.json"
+    },
+    {
+      "slug": "tsinfeng_paste",
+      "sku": "F071-00",
+      "canonical_name": "Паста Цинфэн",
+      "golden_markers": [
+        "🔥 Коротко:",
+        "👥 Для кого:"
+      ],
+      "file": "tsinfeng_paste.json"
+    }
+  ]
+}
