@@ -1,0 +1,277 @@
+{
+  "audit_id": "WHIEDA_TELEGRAM_LIVE_PATH_AUDIT_2026-08-14",
+  "generated_at": "2026-08-14T10:07:12+00:00",
+  "audit_session": "drovo-audit-20260814T100712Z",
+  "production_changes_made": false,
+  "commands_run": [
+    {
+      "name": "docker_ps",
+      "exit_code": 0,
+      "note": "core-api-1 Up 20h (image core-api), n8n-n8n-1 Up 2d"
+    },
+    {
+      "name": "core_env_routes",
+      "exit_code": 0,
+      "note": "CORE_ROUTE_* all core; PLATFORM_TELEGRAM_* present (values redacted)"
+    },
+    {
+      "name": "core_health_live",
+      "exit_code": 0,
+      "stdout": "200"
+    },
+    {
+      "name": "core_health_ready",
+      "exit_code": 0,
+      "stdout": "200"
+    },
+    {
+      "name": "core_openapi_local_no_host",
+      "exit_code": 0,
+      "stdout": "404 tenant_not_found"
+    },
+    {
+      "name": "core_openapi_with_host_wwc.best",
+      "exit_code": 0,
+      "stdout": "200 openapi 3.1.0 whieda-platform-api 0.1.0"
+    },
+    {
+      "name": "n8n_health_local",
+      "exit_code": 0,
+      "stdout": "200"
+    },
+    {
+      "name": "n8n_public_health",
+      "exit_code": 0,
+      "stdout": "200"
+    },
+    {
+      "name": "structured_sync_health_2026-08-10.py",
+      "exit_code": 0
+    },
+    {
+      "name": "whieda_telegram_webhook_readonly_status pattern",
+      "exit_code": 0
+    },
+    {
+      "name": "n8n REST workflows + executions (read-only)",
+      "exit_code": 0
+    },
+    {
+      "name": "n8n-postgres workflow_entity advisor rows",
+      "exit_code": 0
+    },
+    {
+      "name": "HTTP probe core_public advisor (9-turn session)",
+      "exit_code": 0
+    },
+    {
+      "name": "HTTP probe legacy_n8n whieda-advisor-api-v1 (9-turn session)",
+      "exit_code": 0
+    },
+    {
+      "name": "alias SQL via WHIEDA_RUNTIME_READONLY_DSN",
+      "exit_code": 0
+    }
+  ],
+  "route_truth": [
+    {
+      "hop": 1,
+      "step": "Telegram Bot API webhook",
+      "host": "api.telegram.org → sysarchn8n.duckdns.org",
+      "service": "@WHIEDA_Advisor_bot",
+      "endpoint": "https://sysarchn8n.duckdns.org/whieda-platform/v1/telegram/whieda-advisor-bot/webhook",
+      "state": "active",
+      "route_mode": "core_direct",
+      "version": "bot_id=8159293641",
+      "evidence": "getWebhookInfo (token read server-side only)",
+      "confidence": "confirmed"
+    },
+    {
+      "hop": 2,
+      "step": "nginx → Core API",
+      "host": "185.252.232.93 (whieda-n8n)",
+      "service": "docker-nginx-1 → core-api-1:8080",
+      "endpoint": "/whieda-platform/v1/telegram/{binding}/webhook",
+      "state": "active",
+      "route_mode": "CORE_ROUTE_TELEGRAM=core",
+      "version": "core-api image, container created 2026-08-13T14:36:03Z",
+      "evidence": "docker ps + printenv CORE_ROUTE_TELEGRAM",
+      "confidence": "confirmed"
+    },
+    {
+      "hop": 3,
+      "step": "Core advisor engine",
+      "host": "185.252.232.93",
+      "service": "core-api-1",
+      "endpoint": "POST /v1/advisor/query (internal)",
+      "state": "active",
+      "route_mode": "CORE_ROUTE_ADVISOR=core",
+      "version": "openapi info.version=0.1.0; git commit on server not available",
+      "evidence": "curl localhost:8080 health + public advisor probes",
+      "confidence": "confirmed"
+    },
+    {
+      "hop": 4,
+      "step": "PostgreSQL structured runtime",
+      "host": "Supabase pooler (read-only DSN)",
+      "service": "advisor_structured_* tables",
+      "endpoint": "runtime cache",
+      "state": "active",
+      "route_mode": "structured SQL",
+      "version": "last sync 2026-08-14T10:00:17Z",
+      "evidence": "structured_sync_health + row counts",
+      "confidence": "confirmed"
+    },
+    {
+      "hop": 5,
+      "step": "Telegram outbound delivery",
+      "host": "185.252.232.93",
+      "service": "core-api-1 → api.telegram.org",
+      "endpoint": "Bot API sendMessage/sendPhoto",
+      "state": "active",
+      "route_mode": "core_direct",
+      "version": null,
+      "evidence": "ingress is Core; delivery handled by Core telegram module",
+      "confidence": "confirmed"
+    },
+    {
+      "hop": "alt",
+      "step": "Legacy n8n Phase 1 (NOT Telegram ingress)",
+      "host": "185.252.232.93",
+      "service": "n8n-n8n-1",
+      "endpoint": "workflow id=advisor-whieda-phase1; webhook whieda-advisor-api-v1",
+      "state": "active in n8n DB but disconnected from Telegram webhook",
+      "route_mode": "legacy",
+      "version": "updated via n8n REST",
+      "evidence": "workflow_entity active=true; Telegram webhook URL does not match n8n /webhook/advisor-whieda-v0",
+      "confidence": "confirmed"
+    }
+  ],
+  "runtime_parity": {
+    "env_routes": {
+      "CORE_ROUTE_PUBLIC_REF": "core",
+      "CORE_ROUTE_LEADS": "core",
+      "CORE_ROUTE_ADVISOR": "core",
+      "CORE_ROUTE_TELEGRAM": "core",
+      "CORE_ROUTE_DEEP": "off"
+    },
+    "container_routes": {
+      "CORE_ROUTE_PUBLIC_REF": "core",
+      "CORE_ROUTE_LEADS": "core",
+      "CORE_ROUTE_ADVISOR": "core",
+      "CORE_ROUTE_TELEGRAM": "core",
+      "CORE_ROUTE_DEEP": "off"
+    },
+    "env_matches_container": true,
+    "telegram_webhook": {
+      "bot_username": "WHIEDA_Advisor_bot",
+      "webhook_url": "https://sysarchn8n.duckdns.org/whieda-platform/v1/telegram/whieda-advisor-bot/webhook",
+      "pending_update_count": 0,
+      "last_error_message": null,
+      "allowed_updates": ["message", "callback_query"]
+    },
+    "core_health": {
+      "live": 200,
+      "ready": 200
+    },
+    "core_deploy_identity": {
+      "image": "core-api",
+      "container_created": "2026-08-13T14:36:03.56819022Z",
+      "git_commit_on_server": "unknown",
+      "openapi_version": "0.1.0"
+    },
+    "structured_sync": {
+      "status": "healthy",
+      "last_success_at": "2026-08-14T10:00:17.250049+00:00",
+      "age_minutes_at_audit": 8.2,
+      "last_failure_at": "2026-08-10T12:23:58.673457+00:00",
+      "last_failure_summary": "Syntax error at line 3 near \"$\"",
+      "row_counts": {
+        "rows_products": 40,
+        "rows_aliases": 118,
+        "rows_product_cards": 23,
+        "rows_resources": 239
+      }
+    },
+    "master_snapshot_reference": {
+      "snapshot_id": "20260810T083328Z",
+      "master_products": 40,
+      "master_aliases": 118,
+      "master_cards": 23,
+      "master_resources_accepted": 176,
+      "parity_note": "products/aliases/cards match master seed counts; resources table holds 239 rows (includes inactive — master compiler accepted 176 active)"
+    },
+    "alias_checks": [
+      {"alias": "активатор", "canonical_sku": "M015-00", "present": true},
+      {"alias": "активатор pro", "canonical_sku": "EU-N000031-25", "present": true},
+      {"alias": "активатор про", "canonical_sku": "EU-N000031-25", "present": true},
+      {"alias": "активаор", "canonical_sku": "M015-00", "present": true},
+      {"alias": "ативатор", "canonical_sku": "M015-00", "present": true}
+    ],
+    "n8n_workflows_observed": [
+      {"id": "advisor-whieda-phase1", "name": "Advisor — WHIEDA Phase 1 + Owner report P3", "active": true, "telegram_ingress": false},
+      {"id": "9roEvXNsDpnwqjzH", "name": "WHIEDA Structured Sync Cron", "active": true},
+      {"id": "30n7wJR5BgNoSlb7", "name": "Advisor 1.0", "active": true},
+      {"id": "wwc-public-advisor-p2", "name": "WWC Public Advisor P2.2", "active": false}
+    ],
+    "duplicate_delivery_risk": {
+      "confirmed_duplication": false,
+      "inferred_risk": "advisor-whieda-phase1 remains active and shows recent executions (~every 5 min), but Telegram webhook points exclusively to Core. Risk is operational confusion and accidental rollback, not confirmed dual reply on current ingress.",
+      "confidence": "inferred"
+    }
+  },
+  "probes": {
+    "session_id": "drovo-audit-20260814T100712Z",
+    "core_public_endpoint": "https://sysarchn8n.duckdns.org/whieda-platform/v1/advisor/query",
+    "legacy_n8n_endpoint": "https://sysarchn8n.duckdns.org/webhook/whieda-advisor-api-v1",
+    "core": [
+      {"question": "хай", "status": 200, "latency_ms": 2248, "answer_mode": "structured_business", "product_sku": null, "text_preview": "Привет! Я советник WHIEDA. Могу быстро показать товар с фото, ценой и видео…"},
+      {"question": "че ты можеь?", "status": 200, "latency_ms": 2393, "answer_mode": "structured_business", "product_sku": null, "text_preview": "Я могу помочь с WHIEDA: 📦 Товары • рассказать о товаре…"},
+      {"question": "какие есть товары?", "status": 200, "latency_ms": 2188, "answer_mode": "structured_business", "product_sku": null, "text_preview": "В каталоге WHIEDA есть приборы, товары для дома…"},
+      {"question": "активаор", "status": 200, "latency_ms": 2569, "answer_mode": "structured_card", "product_sku": "M015-00", "product_name": "Активатор клеток", "has_photo": true},
+      {"question": "активатор", "status": 200, "latency_ms": 2758, "answer_mode": "clarification", "product_sku": null, "text_preview": "Вы про Активатор клеток или Активатор клеток PRO?…"},
+      {"question": "активатор pro", "status": 200, "latency_ms": 2733, "answer_mode": "structured_card", "product_sku": "EU-N000031-25", "product_name": "Активатор клеток PRO (комплект)", "has_photo": true},
+      {"question": "сравни активатор и pro", "status": 200, "latency_ms": 2531, "answer_mode": "structured_comparison_layer", "product_sku": "M015-00", "text_preview": "<b>Активатор клеток или Активатор клеток PRO?</b>…"},
+      {"question": "фото pro", "status": 200, "latency_ms": 2468, "answer_mode": "structured_photo", "product_sku": "EU-N000031-25", "has_photo": true},
+      {"question": "сколько стоит?", "status": 200, "latency_ms": 2462, "answer_mode": "structured_price", "product_sku": "EU-N000031-25", "text_preview": "Активатор клеток PRO (комплект): Розничная цена: 2275 BYN…"}
+    ],
+    "legacy_n8n": [
+      {"question": "all 9 audit phrases", "status": 200, "latency_ms_avg": 2159, "answer_mode": null, "body_len": 0, "note": "HTTP 200 with empty JSON body — async ACK-only webhook, not comparable synchronous advisor surface"}
+    ]
+  },
+  "unknowns": [
+    "Exact git commit baked into core-api image (APP_VERSION/GIT_COMMIT unset; server tree has no git metadata)",
+    "Whether recent advisor-whieda-phase1 executions are Telegram-related or an internal schedule/sub-workflow",
+    "Owner visual confirmation that Telegram renders Core replies (keyboard, photo order, callback buttons) — HTTP probes cannot prove Telegram UI"
+  ],
+  "likely_root_causes_ranked": [
+    {
+      "rank": 1,
+      "title": "Perception / documentation drift, not wrong live ingress",
+      "detail": "Live Telegram already routes Core-direct with all CORE_ROUTE_*=core. Public advisor HTTP probes match expected Golden behavior (greeting, typo alias, clarification, comparison, photo, price in one session).",
+      "confidence": "confirmed",
+      "evidence": "webhook URL + 9/9 core probes OK"
+    },
+    {
+      "rank": 2,
+      "title": "Telegram transport layer ≠ HTTP advisor response",
+      "detail": "Users may still see 'old' UX if Telegram delivery (reply keyboard, inline catalog callbacks, photo-first ordering, HTML emphasis) differs from answer_text returned by /v1/advisor/query. Local Golden lab tests HTTP; live complaint may be Telegram-specific.",
+      "confidence": "inferred",
+      "evidence": "WHIEDA_LIVE_STATUS open UX items; audit did not send real Telegram messages"
+    },
+    {
+      "rank": 3,
+      "title": "Stale ops constants suggest legacy when it is not live",
+      "detail": "whieda_core_route_ops.PRODUCTION_ROUTES still documents CORE_ROUTE_TELEGRAM=legacy and CORE_ROUTE_ADVISOR=shadow, contradicting live .env/container (all core). Operators running assert_production_routing may draw wrong conclusions.",
+      "confidence": "confirmed",
+      "evidence": "read_routes vs PRODUCTION_ROUTES constant"
+    },
+    {
+      "rank": 4,
+      "title": "Legacy n8n path still active as parallel ops surface",
+      "detail": "advisor-whieda-phase1 active=true; whieda-advisor-api-v1 returns empty 200. Not user ingress today, but enables accidental rollback or confusion during incidents.",
+      "confidence": "confirmed",
+      "evidence": "n8n workflow_entity + empty legacy probe body"
+    }
+  ]
+}
