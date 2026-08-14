@@ -93,7 +93,7 @@ def _remote_existing_paths(client: paramiko.SSHClient) -> list[str]:
     quoted = " ".join(paths)
     output = _exec(
         client,
-        f"cd {REMOTE_API} && for path in {quoted}; do test -f \"$path\" && printf '%s\\n' \"$path\"; done",
+        f"cd {REMOTE_API} && for path in {quoted}; do test -f \"$path\" && printf '%s\\n' \"$path\"; done; true",
     )
     return [line.strip() for line in output.splitlines() if line.strip()]
 
