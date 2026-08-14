@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from typing import Any
 
 import httpx
@@ -12,8 +13,8 @@ from app.telegram.delivery import deliver_structured_advisor_response, send_tele
 from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.processor import process_core_telegram_update
-from app.telegram.sequencer import get_chat_sequencer
-from app.telegram.update_parser import parse_telegram_message, should_process_telegram_message
+from app.telegram.sequencer import build_message_fingerprint, get_chat_sequencer
+from app.telegram.update_parser import parse_telegram_callback, parse_telegram_message, should_process_telegram_message
 from app.tenancy import get_trace_id, resolve_tenant_from_bot_binding
 
 LEGACY_TELEGRAM_WEBHOOK = "/webhook/advisor-whieda-v0"
@@ -76,6 +77,21 @@ async def _process_telegram_update_body(
 ) -> None:
     settings = get_settings()
     tenant = await resolve_tenant_from_bot_binding(binding_id)
+    callback = parse_telegram_callback(update)
+    if callback:
+        if callback.chat_type != "private":
+            logger.info("telegram_group_callback_ignored", extra={"trace_id": trace_id})
+            return
+        if settings.core_route_telegram == "legacy":
+            return
+        if settings.core_route_telegram == "core":
+            try:
+                await process_core_telegram_update(tenant, update, trace_id or "")
+            except Exception:
+                logger.exception("telegram_core_callback_failed")
+            return
+        return
+
     message = (update or {}).get("message") or {}
     text = str(message.get("text") or "").strip()
     chat = message.get("chat") or {}
@@ -152,17 +168,43 @@ async def _process_telegram_update(
     trace_id: str | None,
 ) -> None:
     message = (update or {}).get("message") or {}
-    chat_id = (message.get("chat") or {}).get("id")
+    callback = (update or {}).get("callback_query") or {}
+    chat_id = (message.get("chat") or {}).get("id") or ((callback.get("message") or {}).get("chat") or {}).get("id")
     if chat_id is None:
         return
     update_id = (update or {}).get("update_id")
+    message_id = message.get("message_id")
+    text = str(message.get("text") or "")
+    callback_data = str(callback.get("data") or "")
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else None
+    callback_hash = (
+        hashlib.sha256(callback_data.encode("utf-8")).hexdigest()[:12] if callback_data else None
+    )
+    message_fingerprint = build_message_fingerprint(text=text, callback_data=callback_data)
     chat_key = str(chat_id)
     sequencer = get_chat_sequencer()
+
+    logger.info(
+        "telegram_update_received",
+        extra={
+            "trace_id": trace_id,
+            "update_id": update_id,
+            "message_id": message_id,
+            "chat_id": chat_key,
+            "text_hash": text_hash,
+            "callback_hash": callback_hash,
+        },
+    )
 
     async def handler() -> None:
         await _process_telegram_update_body(binding_id, update, trace_id)
 
-    result = await sequencer.run_ordered(chat_key, update_id, handler)
+    result = await sequencer.run_ordered(
+        chat_key,
+        update_id,
+        handler,
+        message_fingerprint=message_fingerprint,
+    )
     if result.duplicate:
         logger.info(
             "telegram_duplicate_update_ignored",

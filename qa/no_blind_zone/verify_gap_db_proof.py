@@ -90,7 +90,9 @@ def main() -> int:
 
     nonce = secrets.token_hex(6)
     # ASCII makes this wire-level proof independent from the Windows console codepage.
-    question = f"nbzproof{nonce}"
+    # The explicit ``unknown123`` marker enters the persisted unknown-product
+    # path while keeping this wire-level proof independent from Windows codepages.
+    question = f"unknown123-nbzproof{nonce}"
     session = f"nbz-db-proof-{nonce}"
 
     first = _post(args.base_url, question, session)

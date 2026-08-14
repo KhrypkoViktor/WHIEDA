@@ -11,6 +11,7 @@ from app.advisor.gap import GAP_TEXTS
 from app.advisor.sql.engine import (
     CALCULATOR_INSTRUCTION,
     DISCOMFORT_BOUNDARY_TEXT,
+    PRODUCT_SELECTION_FALLBACK,
     INCOME_QUESTION_FALLBACK,
     run_structured_query,
 )
@@ -52,7 +53,15 @@ async def test_typo_greeting_prive(whieda_tenant):
     assert "Здравств" in result["answer_text"]
 
 
-@pytest.mark.parametrize("question", ["че ты можешь?", "чо умеешь?"])
+@pytest.mark.parametrize(
+    "question",
+    [
+        "че ты можешь?",
+        "че ты можеь?",
+        "что можешь",
+        "можешь?",
+    ],
+)
 @pytest.mark.asyncio
 async def test_slang_capabilities_menu(whieda_tenant, question):
     with patch("app.advisor.sql.engine.tenant_connection", _fake_conn):
@@ -65,6 +74,40 @@ async def test_slang_capabilities_menu(whieda_tenant, question):
             )
     assert result["answer_mode"] == "structured_business"
     assert "Меню возможностей" in result["answer_text"]
+
+
+@pytest.mark.asyncio
+async def test_activator_clarification_accepts_base_choice_followup(whieda_tenant):
+    stored = {
+        "pending_product_clarification": "activator_variant",
+        "pending_base_sku": "M015-00",
+        "pending_pro_sku": "EU-N000031-25",
+    }
+    base_product = {
+        "sku": "M015-00",
+        "canonical_name": "Активатор клеток",
+        "retail_price_byn": 1750,
+        "partner_price_byn": 1050,
+        "partner_w": 300,
+    }
+    base_card = {"primary_image_url": "https://example.test/activator.jpg", "what_it_is": "Тестовый активатор"}
+
+    with patch("app.advisor.sql.engine.tenant_connection", _fake_conn):
+        with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value=stored)):
+            with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.resolve_product_by_sku", AsyncMock(return_value=base_product)):
+                        with patch("app.advisor.sql.engine.repo.load_product_card", AsyncMock(return_value=base_card)):
+                            with patch("app.advisor.sql.engine.session_ctx.merge_session_context", AsyncMock()) as merge:
+                                result = await run_structured_query(
+                                    whieda_tenant,
+                                    {"question": "обычный", "session": "tg-act-choice", "surface": "telegram"},
+                                    "tg-2b",
+                                )
+    assert result["answer_mode"] == "structured_card"
+    assert result["product"]["sku"] == "M015-00"
+    assert "Активатор клеток" in result["answer_text"]
+    merge.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -85,7 +128,7 @@ async def test_beer_request_is_out_of_scope_not_capabilities(whieda_tenant):
                 "tg-3",
             )
     assert result["gap_kind"] == "unsupported_topic"
-    assert "Могу подсказать по товару" in result["answer_text"]
+    assert "Выберите направление" in result["answer_text"]
 
 
 @pytest.mark.asyncio
@@ -164,8 +207,20 @@ async def test_discomfort_boundary_not_catalogue_miss(whieda_tenant, question):
                 "tg-8",
             )
     assert result["gap_kind"] == "medical_or_safety_boundary"
-    assert "не ставлю диагноз" in result["answer_text"].casefold()
+    assert "выберите направление" in result["answer_text"].casefold()
     assert "каталог" not in result["answer_text"].casefold()
+
+
+@pytest.mark.asyncio
+async def test_product_selection_is_a_safe_goal_prompt_not_catalogue_miss(whieda_tenant):
+    result = await run_structured_query(
+        whieda_tenant,
+        {"question": "подобрать товар", "session": "tg-select", "surface": "telegram"},
+        "tg-select",
+    )
+    assert result["answer_mode"] == "clarification"
+    assert result["answer_text"] == PRODUCT_SELECTION_FALLBACK
+    assert "выберите направление" in result["answer_text"].casefold()
 
 
 @pytest.mark.asyncio

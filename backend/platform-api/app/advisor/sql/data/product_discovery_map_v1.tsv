@@ -1,0 +1,48 @@
+phrase	normalized_phrase	discovery_group	candidate_rank	sku	canonical_name	confidence	status	evidence	source_snapshot_id	notes
+эликсир	эликсир	elixir	1	F001-02	Эликсир Фохоу	medium	generic_category	products.tsv Эликсир Фохоу	20260811T172219Z	3-color elixir family
+эликсир	эликсир	elixir	2	F003-02	Эликсир Саньцин	medium	generic_category	products.tsv Эликсир Саньцин	20260811T172219Z	3-color elixir family
+эликсир	эликсир	elixir	3	F002-02	Эликсир 3 Драгоценности	medium	generic_category	products.tsv Эликсир 3 Драгоценности	20260811T172219Z	3-color elixir family
+красный эликсир	красный эликсир	elixir	1	F001-02	Эликсир Фохоу	high	ready_for_core_review	aliases.tsv alias='красный эликсир' -> F001-02; priority=98; match_type=alias; answer_scope=price+description	20260811T172219Z	Release 3.3: цветовой алиас
+зелёный эликсир	зеленый эликсир	elixir	1	F003-02	Эликсир Саньцин	high	ready_for_core_review	aliases.tsv alias='зелёный эликсир' -> F003-02; priority=98; match_type=alias; answer_scope=price+description	20260811T172219Z	Release 3.3: цветовой алиас
+синий эликсир	синий эликсир	elixir	1	F002-02	Эликсир 3 Драгоценности	high	ready_for_core_review	aliases.tsv alias='синий эликсир' -> F002-02; priority=98; match_type=alias; answer_scope=price+description	20260811T172219Z	Release 3.3: цветовой алиас
+активатор	активатор	activator	1	M015-00	Активатор клеток	high	generic_category	aliases.tsv alias='активатор' -> M015-00	20260811T172219Z	intentional ambiguity base+PRO; show_choices — never silent auto-open rank1
+активатор	активатор	activator	2	EU-N000031-25	Активатор клеток PRO (комплект)	medium	generic_category	aliases.tsv alias='активатор pro' -> EU-N000031-25	20260811T172219Z	PRO variant in same choice menu
+активатор про	активатор про	activator	1	EU-N000031-25	Активатор клеток PRO (комплект)	high	ready_for_core_review	aliases.tsv alias='активатор про' -> EU-N000031-25; priority=95; match_type=alias; answer_scope=price+description	20260811T172219Z	Русская транслитерация PRO
+pro	pro	activator	1	EU-N000031-25	Активатор клеток PRO (комплект)	medium	needs_owner_review	aliases.tsv alias='активатор pro' -> EU-N000031-25	20260811T172219Z	short token; may need disambiguation
+бэм	бэм	bem_magic	1	EU-N000021-24	Набор Массажёра Magic Foherb 3.0 (TUV)	high	ready_for_core_review	aliases.tsv alias='бэм' -> EU-N000021-24; priority=95; match_type=alias; answer_scope=price+description	20260811T172219Z	Биоэнергомассажер сокращенно
+magic	magic	bem_magic	1	EU-N000021-24	Набор Массажёра Magic Foherb 3.0 (TUV)	medium	needs_owner_review	aliases.tsv alias='magic foherb' -> EU-N000021-24	20260811T172219Z	bare token; show_choices per HLR — not direct-safe
+массажер	массажер	bem_magic	1	EU-N000021-24	Набор Массажёра Magic Foherb 3.0 (TUV)	medium	needs_owner_review	aliases.tsv alias='массажer magic' -> EU-N000021-24	20260811T172219Z	generic massager word
+паста	паста	pasta	1	F071-00	Паста Цинфэн	medium	ready_for_core_review	aliases.tsv паста/цинфэн family	20260811T172219Z	oral care paste vs tooth paste ambiguity
+паста	паста	pasta	2	EU-N000030-25	Зубная паста с экстрактом полыни (new)*6	medium	ready_for_core_review	aliases.tsv зубная паста	20260811T172219Z	tooth paste SKU in products.tsv
+зубная паста	зубная паста	pasta	1	EU-N000030-25	Зубная паста с экстрактом полыни (new)*6	high	ready_for_core_review	aliases.tsv alias='зубная паста' -> EU-N000030-25; priority=95; match_type=alias; answer_scope=price+description	20260811T172219Z	Общий запрос по зубной пасте
+паста с полынью	паста с полынью	pasta	1	EU-N000030-25	Зубная паста с экстрактом полыни (new)*6	medium	ready_for_core_review	aliases.tsv alias='паста с полынью' -> EU-N000030-25; priority=90; match_type=alias; answer_scope=price+description	20260811T172219Z	Короткое название по составу
+цинфэн	цинфэн	pasta	1	F071-00	Паста Цинфэн	high	ready_for_core_review	aliases.tsv alias='цинфэн' -> F071-00; priority=100; match_type=alias; answer_scope=price+description	20260811T172219Z	Основной запрос
+стельки	стельки	accessories	1	D013	Стельки с анионами	medium	ready_for_core_review	aliases.tsv alias='стельки' -> D013; priority=80; match_type=alias; answer_scope=price+description	20260811T172219Z	Короткий запрос
+очки	очки	accessories	1	D014	Высокотехнологичные компьютерные очки	medium	ready_for_core_review	aliases.tsv alias='очки' -> D014; priority=80; match_type=alias; answer_scope=price+description	20260811T172219Z	Короткий запрос
+пояс	пояс	accessories	1	T003	Магнитный пояс	low	needs_owner_review	aliases.tsv alias='пояс' -> T003; priority=10; match_type=weak; answer_scope=clarify_only	20260811T172219Z	Release 3.3: одиночное слово требует уточнения
+наколенники	наколенники	accessories	1	T001	Наколенники	high	ready_for_core_review	products.tsv canonical_name Наколенники	20260811T172219Z	single SKU in snapshot
+шейная накладка	шейная накладка	accessories	1	T002-00	Шейная накладка	high	ready_for_core_review	products.tsv canonical_name Шейная накладка	20260811T172219Z	single SKU in snapshot
+косметика	косметика	cosmetics	1	C065-00	Подарочный набор косметики Fundesee	medium	generic_category	products.tsv Fundesee gift/set cosmetics	20260811T172219Z	broad category
+косметика	косметика	cosmetics	2	C033-00	Омолаживающая маска с лифтинг эффектом	medium	generic_category	products.tsv маска Fundesee	20260811T172219Z	broad category
+косметика	косметика	cosmetics	3	C002-00	Увлажняющий гель	medium	generic_category	products.tsv увлажняющий гель	20260811T172219Z	broad category
+маска	маска	cosmetics	1	C033-00	Омолаживающая маска с лифтинг эффектом	high	ready_for_core_review	products.tsv single маска SKU	20260811T172219Z	only one mask SKU in snapshot
+гель	гель	cosmetics	1	D011-00	Гель очищающий Foherb	high	ready_for_core_review	aliases.tsv alias='очищающий гель foherb' -> D011-00	20260811T172219Z	Foherb hygiene gel
+гель	гель	cosmetics	2	C002-00	Увлажняющий гель	medium	ready_for_core_review	products.tsv Увлажняющий гель	20260811T172219Z	Fundesee cosmetic gel
+шампунь	шампунь	cosmetics	1	EU-N000032-25	Набор растительного красящего шампуня 	high	ready_for_core_review	products.tsv красящий шампунь	20260811T172219Z	single shampoo SKU
+крем	крем	cosmetics	1			low	needs_owner_review	products.tsv: no dedicated крем SKU in snapshot	20260811T172219Z	Category placeholder until owner maps a cream SKU
+капсулы	капсулы	supplements	1	F028-00	Капсулы линчжи ФОХОУ	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
+капсулы	капсулы	supplements	2	F024-00	Капсулы Сюэчинфу	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
+капсулы	капсулы	supplements	3	F007-00	Капсулы Железо, Кальций, Цинк, Селен	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
+чай	чай	supplements	1	F031-00	Чай Лювэй	high	ready_for_core_review	aliases.tsv alias='чай лювэй' -> F031-00	20260811T172219Z
+кофе	кофе	supplements	1	F034-00	Кофейный напиток с кордицепсом и коллагеном	high	ready_for_core_review	aliases.tsv alias='кофе с кордицепсом' -> F034-00	20260811T172219Z
+бад	бад	supplements	1			low	generic_category	products.tsv multiple supplement SKUs; no single БАД alias	20260811T172219Z	Open category — show capsule/supplement family, not one random SKU
+сауна	сауна	lifestyle	1	M014-00	"МИНИСАУНА ""БА-ГУА"""	medium	ready_for_core_review	aliases.tsv alias='сауна' -> M014-00; priority=88; match_type=alias; answer_scope=price+description	20260811T172219Z	Короткий живой запрос по минисауне
+сон	сон	lifestyle	1	EU-N000014-24	Система для здорового сна 4 в 1	high	ready_for_core_review	products.tsv Система для здорового сна 4 в 1	20260811T172219Z	sleep kit
+прибор для дома	прибор для дома	lifestyle	1	M015-00	Активатор клеток	medium	generic_category	products.tsv home devices	20260811T172219Z	device family
+прибор для дома	прибор для дома	lifestyle	2	M014-00	"МИНИСАУНА ""БА-ГУА"""	medium	generic_category	products.tsv home devices	20260811T172219Z	device family
+прибор для дома	прибор для дома	lifestyle	3	EU-N000024-24	Набор прибора Вэнтун 1.0	medium	generic_category	products.tsv home devices	20260811T172219Z	device family
+подарок	подарок	lifestyle	1	C065-00	Подарочный набор косметики Fundesee	medium	generic_category	products.tsv подарочный набор Fundesee	20260811T172219Z	task_selection on first turn; SKU buttons only after direction chosen
+подарок	подарок	lifestyle	2	EU-N000036-26	Подарочный набор косметики Fundesee*2	medium	generic_category	products.tsv подарочный набор x2	20260811T172219Z	task_selection on first turn; never auto-open gift SKU
+красный	красный	color_guard	1			low	do_not_resolve	aliases.tsv weak/clarify_only for 'красный'; must not auto-open product	20260811T172219Z	Single colour token — require user clarification, not random product
+зелёный	зеленый	color_guard	1			low	do_not_resolve	aliases.tsv weak/clarify_only for 'зелёный'; must not auto-open product	20260811T172219Z	Single colour token — require user clarification, not random product
+синий	синий	color_guard	1			low	do_not_resolve	aliases.tsv weak/clarify_only for 'синий'; must not auto-open product	20260811T172219Z	Single colour token — require user clarification, not random product

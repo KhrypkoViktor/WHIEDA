@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import re
 
+from app.telegram.navigation import is_catalog_list_request
+
 GREETING_RE = re.compile(
-    r"^(привет|приве|здравств|добрый|hello|hi)\b",
+    r"^(привет|приве|здравств|здарова|здорово|здров|здрась(?:те|te)|хай|ха[йе]|добрый|hello|hi)\b",
     re.I,
 )
 CAPABILITY_RE = re.compile(
-    r"(что ты умеешь|что умеешь|что можешь|что ты можешь|че\s+ты\s+можешь|чо\s+умеешь|"
-    r"чем можешь помочь|какие у тебя возможности|помощь|help|capabilities)",
+    r"(что ты умеешь|что умеешь|что можешь|что ты можешь|че\s+ты\s+може(?:шь|ь)|"
+    r"чо\s+умеешь|чо\s+може(?:шь|ь)|что\s+мо(?:жешь|ешь|еь)|а что мо(?:жешь|ешь|еь)|може(?:шь|ь)\??|"
+    r"чем можешь помочь|какие у тебя возможности|помощь|help|capabilities|"
+    r"какие есть товары|какие товары|любой товар|какой есть товар|какой товар есть|что есть из товаров)",
     re.I,
 )
 CALCULATOR_RE = re.compile(r"^калькулятор\.?$", re.I)
@@ -18,13 +22,28 @@ START_OPTIONS_RE = re.compile(
     r"(какие\s+виды\s+вход|вариант\w*\s+вход|виды\s+вход|как\s+начать\s+работ|стартов\w*\s+вариант)",
     re.I,
 )
-COMPANY_INTRO_RE = re.compile(r"расскаж\w*\s+о\s+компан", re.I)
+COMPANY_INTRO_RE = re.compile(
+    r"(расскаж\w*\s+о\s+компан|что\s+за\s+компан|кто\s+вы\b|что\s+вы\b|"
+    r"кто\s+так(?:ая|ое)\s+whieda|о\s+компани)",
+    re.I,
+)
+MARKETING_PLAN_RE = re.compile(r"маркетинг[ -]?план", re.I)
+STEP_TOPIC_RE = re.compile(r"\b(?:step|степ)(?:\s+бонус)?\b", re.I)
 INCOME_QUESTION_RE = re.compile(
     r"(как\s+заработать|сколько\s+можно\s+заработать|доход\s+партн|заработок\s+партн)",
     re.I,
 )
 DISCOMFORT_BOUNDARY_RE = re.compile(
     r"(бол(?:ит|ят)\s+(?:колен|спин|шея|спина|колени|поясниц)|хочу\s+совет)",
+    re.I,
+)
+# These are not product-selection questions.  Keep this deliberately narrow: the
+# advisor must not turn an acute human or animal case into a product dialogue.
+HIGH_RISK_MEDICAL_BOUNDARY_RE = re.compile(
+    r"(гнойн\w*\s+ангин|гемангиом|врожд[её]н\w*|\b\d+\s+месяц\w*|"
+    r"гипертони\w*.*(?:скак|пульсир)|пульсир\w*.*(?:давлен|голов)|"
+    r"кот\s+умира|почки\s+отказ|сожг\w*\s+внутр|лимфоуз|"
+    r"от[её]к.*(?:глаз|щек|виск)|(?:глаз|щек|виск).*от[её]к)",
     re.I,
 )
 PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", re.I)
@@ -36,10 +55,26 @@ OUT_OF_SCOPE_RE = re.compile(
     r"пив(?:о|а|ку|очк|ка|ко)\b|\bbeer\b|выпить\s+пив)",
     re.I,
 )
-BASKET_RE = re.compile(r"(корзин|стартов|набор|подбор|подбери|бюджет.*pv|pv.*бюджет)", re.I)
+BASKET_RE = re.compile(
+    r"(корзин|стартов|набор\s+(?:для\s+старта|старт|корзин)|подбор|подбери|бюджет.*pv|pv.*бюджет)",
+    re.I,
+)
+PRODUCT_SELECTION_RE = re.compile(
+    r"(?:^|\b)(?:подбор|подобрать(?:\s+товар)?|подбери(?:\s+товар)?|"
+    r"помоги\s+выбрать|не\s+знаю\s+что\s+выбрать|что\s+подарить|подарок|набор|"
+    r"для\s+(?:дома|семьи|салона|офиса|поездки)|нужен\s+прибор|"
+    r"что\s+(?:для|взять|выбрать|купить)|(?:плохо\s+сплю|мерзну\s+зимой)|"
+    r"(?:ноги|глаза)\s+устают|для\s+(?:волос|кожи|пищеварения|энергии)|"
+    r"с\s+чего\s+начать|новичок|собери\s+рутину|восстановлен)",
+    re.I,
+)
 DETAILS_RE = re.compile(r"(подробн|детал|состав|противопоказ|как принимать|как использовать)", re.I)
 FOLLOWUP_RE = re.compile(
-    r"^(?:дай\s+)?(?:а\s+)?(цена|сколько|фото|видео|подробнее|ещё|еще|материалы?|карточк\w*)\??$",
+    r"^(?:дай\s+)?(?:а\s+)?(цена|сколько|фото|видео|подробнее|материалы?|карточк\w*)\??$",
+    re.I,
+)
+MENU_REPROMPT_RE = re.compile(
+    r"^(ещ[её]|что\s+ещ[её]|дальше|что\s+дальше|ну\s+и\??|ну\??|ок\??|ладно\??|понятно\??)$",
     re.I,
 )
 PRODUCT_NOISE_RE = re.compile(
@@ -64,7 +99,7 @@ PRO_MARKER_RE = re.compile(r"(?:^|\s)pro(?:\s|$)", re.I)
 
 def has_pro_marker(value: str) -> bool:
     return bool(PRO_MARKER_RE.search(str(value or "")))
-SMALLTALK_STATUS_RE = re.compile(r"^(как дела|как ты|как жизнь)\??$", re.I)
+SMALLTALK_STATUS_RE = re.compile(r"^(как дела|как ты|как жизнь|ты живой)\??$", re.I)
 PV_DEFINITION_RE = re.compile(
     r"что\s+(?:такое|это|значит)\s+(?:pv|балл|баллы|баллов?)\b",
     re.I,
@@ -83,7 +118,7 @@ PHOTO_RE = re.compile(r"(фото|фотк|фотограф|картин|изо�
 VIDEO_RE = re.compile(r"(видео|ютуб|youtube|обзор)", re.I)
 CERT_RE = re.compile(r"(сертифик|декларац|сгр|патент|халяль)", re.I)
 PDF_RE = re.compile(r"\bpdf\b", re.I)
-COMPARE_RE = re.compile(r"(сравни|сравнение|чем отличается|или лучше)", re.I)
+COMPARE_RE = re.compile(r"(сравни|сравнение|чем отличается|или лучше|\S+\s+или\s+\S+)", re.I)
 COLOR_ELIXIR_SHORTHAND_RE = re.compile(
     r"(?:красн|зел[её]н|син).*эликсир|эликсир.*(?:красн|зел[eё]н|син)",
     re.I,
@@ -101,6 +136,10 @@ def detect_service_intent(question: str) -> str | None:
     normalized = normalize_text(question)
     if not normalized:
         return None
+    if is_catalog_list_request(question):
+        return None
+    if normalized in {"можешь", "можешь?", "а можешь", "а можешь?"}:
+        return "capabilities"
     if GREETING_RE.search(normalized):
         return "greeting"
     if SMALLTALK_STATUS_RE.match(normalized):
@@ -220,9 +259,35 @@ def is_company_intro_request(question: str) -> bool:
     return bool(COMPANY_INTRO_RE.search(question))
 
 
+def is_marketing_plan_request(question: str) -> bool:
+    return bool(MARKETING_PLAN_RE.search(question))
+
+
+def is_step_topic_request(question: str) -> bool:
+    return bool(STEP_TOPIC_RE.search(question))
+
+
 def is_income_question(question: str) -> bool:
     return bool(INCOME_QUESTION_RE.search(question))
 
 
 def is_discomfort_boundary(question: str) -> bool:
     return bool(DISCOMFORT_BOUNDARY_RE.search(question))
+
+
+def is_high_risk_medical_boundary(question: str) -> bool:
+    """Recognise acute cases that must never enter a product-answer branch."""
+    return bool(HIGH_RISK_MEDICAL_BOUNDARY_RE.search(question))
+
+
+def is_product_selection_request(question: str) -> bool:
+    normalized = normalize_text(question)
+    # A concrete basket with a budget/PV has its own calculator path.  Do not
+    # reduce it to a generic direction menu.
+    if "корзин" in normalized and ("pv" in normalized or re.search(r"\d", normalized)):
+        return False
+    return bool(PRODUCT_SELECTION_RE.search(normalized))
+
+
+def is_menu_reprompt(question: str) -> bool:
+    return bool(MENU_REPROMPT_RE.match(normalize_text(question)))

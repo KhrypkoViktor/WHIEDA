@@ -93,7 +93,7 @@ def weak_color_or_belt_clarification(question: str) -> dict[str, Any] | None:
             "sku": sku,
             "canonical_name": canonical_name,
             "clarification_key": f"product_ambiguity_color_{stem}",
-            "fallback": f"Вы про {label}? Нужна цена, описание или применение?",
+            "fallback": f"Уточню: вы про {label}? Нужна цена, описание или применение?",
         }
     return None
 

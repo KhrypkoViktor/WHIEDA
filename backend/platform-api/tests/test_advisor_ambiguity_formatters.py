@@ -82,3 +82,5 @@ def test_format_events_includes_address():
     text = format_events([row])
     assert "Встреча WHIEDA" in text
     assert "Кальварийская, 4" in text
+    assert "Вторник, 15 июня, 17:00" in text
+    assert "Tuesday" not in text

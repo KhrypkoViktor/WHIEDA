@@ -60,7 +60,7 @@ def test_sanitize_user_text_replaces_prohibited_seed():
     bad = "Пока нет подтверждённого ответа в базе WHIEDA. Передам вопрос команде."
     cleaned = sanitize_user_text(bad, fallback_kind="unknown_product")
     assert "передам" not in cleaned.lower()
-    assert "каталог" in cleaned.lower()
+    assert "выберите направление" in cleaned.lower()
 
 
 def test_gap_deduplication_expires_after_short_window():
@@ -179,6 +179,29 @@ async def test_unknown_product_no_prohibited_fragments():
 
 
 @pytest.mark.asyncio
+async def test_unknown_product_like_phrase_uses_catalogue_gap():
+    conn = AsyncMock()
+
+    with patch("app.advisor.sql.engine.tenant_connection", _fake_tenant_connection(conn)):
+        with patch("app.advisor.sql.engine.repo.find_canonical_question", AsyncMock(return_value=None)):
+            with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value={})):
+                with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=None)):
+                        with patch("app.advisor.sql.engine._resolve_product", AsyncMock(return_value=None)):
+                            with patch("app.advisor.sql.engine.try_ambiguity_clarification", AsyncMock(return_value=None)):
+                                with patch("app.advisor.gap.record_advisor_gap", AsyncMock(return_value={})):
+                                    result = await run_structured_query(
+                                        WHIEDA,
+                                        {"question": "magic unknown product test999", "session": "nbz-unknown"},
+                                        "trace-nbz-unknown",
+                                    )
+
+    assert result["answer_mode"] == "knowledge_gap"
+    assert result["gap_kind"] == "unknown_product"
+    assert "каталог" in result["answer_text"].casefold()
+
+
+@pytest.mark.asyncio
 async def test_typo_resolves_without_gap():
     conn = AsyncMock()
 
@@ -289,6 +312,29 @@ async def test_safety_medical_boundary():
 
     assert result["gap_kind"] == "medical_or_safety_boundary"
     assert "лечен" not in result["answer_text"].lower() or "не замен" in result["answer_text"].lower()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Кто-нибудь лечил гнойную ангину активатором?",
+        "Девочка 7 месяцев, врождённая гемангиома. Можно лазером?",
+        "Кот умирает, почки отказывают. Что дать?",
+        "Сожгла внутри, отёк идёт к глазу и щеке. Как остановить?",
+    ],
+)
+@pytest.mark.asyncio
+async def test_high_risk_cases_never_enter_product_dialogue(question):
+    with patch("app.advisor.gap.record_advisor_gap", AsyncMock(return_value={})):
+        result = await run_structured_query(
+            WHIEDA,
+            {"question": question, "session": "nbz-urgent", "surface": "telegram"},
+            "trace-nbz-urgent",
+        )
+
+    assert result["answer_mode"] == "clarification"
+    assert result["gap_kind"] == "medical_or_safety_boundary"
+    assert "очная оценка" in result["answer_text"].casefold()
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,7 @@ def test_typo_map_resolves_spirulina():
     from app.advisor.sql.resolver import QUERY_TYPO_MAP
 
     assert QUERY_TYPO_MAP.get("фузялина") == "спирулина"
+    assert QUERY_TYPO_MAP.get("активаор") == "активатор клеток"
 
 
 def test_pick_best_product_allows_pro_when_asked():

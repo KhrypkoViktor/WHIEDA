@@ -19,8 +19,10 @@ async def _fake_conn(_tenant_id: str):
 
 INTENT_CASES: list[tuple[str, str | None]] = [
     ("привет", "greeting"),
-    ("здарова", None),
-    ("здрасьте", None),
+    ("здарова", "greeting"),
+    ("здрасьте", "greeting"),
+    ("здрасьte", "greeting"),
+    ("хай", "greeting"),
     ("добрый день", "greeting"),
     ("что можешь", "capabilities"),
     ("че ты можеь", "capabilities"),
@@ -28,12 +30,13 @@ INTENT_CASES: list[tuple[str, str | None]] = [
     ("можешь?", "capabilities"),
     ("помощь", "help"),
     ("что умеешь", "capabilities"),
-    ("какие есть товары", "capabilities"),
+    ("какие есть товары", None),
     ("какой товар есть", None),
-    ("любой товар", "capabilities"),
-    ("покажи любой товар", "capabilities"),
+    ("любой товар", None),
+    # Telegram navigation opens the catalog before advisor free-text routing.
+    ("покажи любой товар", None),
     ("пивка хочешь", None),
-    ("ты живой", None),
+    ("ты живой", "smalltalk_status"),
     ("как дела", "smalltalk_status"),
 ]
 
@@ -47,6 +50,10 @@ def test_service_intent_detection_matrix(phrase: str, expected_intent: str | Non
     "phrase,must_contain,must_not_contain",
     [
         ("привет", ["Здравств"], ["Traceback"]),
+        ("здарова", ["Здравств"], ["Traceback"]),
+        ("здрасьте", ["Здравств"], ["Traceback"]),
+        ("здрасьte", ["Здравств"], ["Traceback"]),
+        ("хай", ["Здравств"], ["Traceback"]),
         ("добрый день", ["Здравств"], ["Traceback"]),
         ("что можешь", ["Могу"], ["Traceback"]),
         ("че ты можеь", ["Могу"], ["Traceback"]),
@@ -54,9 +61,7 @@ def test_service_intent_detection_matrix(phrase: str, expected_intent: str | Non
         ("можешь?", ["Могу"], ["Traceback"]),
         ("помощь", ["товар"], ["Traceback"]),
         ("что умеешь", ["Могу"], ["Traceback"]),
-        ("какие есть товары", ["товар"], ["Traceback"]),
-        ("любой товар", ["товар"], ["Traceback"]),
-        ("покажи любой товар", ["товар"], ["Traceback"]),
+        ("ты живой", ["на связи"], ["Traceback"]),
         ("как дела", ["на связи"], ["Traceback"]),
     ],
 )
@@ -107,7 +112,7 @@ async def test_casual_oos_beer_not_capabilities(whieda_tenant, phrase: str) -> N
                 "tg-oos",
             )
     assert result["gap_kind"] == "unsupported_topic"
-    assert "Могу подсказать" in result["answer_text"]
+    assert "Выберите направление" in result["answer_text"]
     assert SERVICE_FALLBACKS["capabilities"].casefold() not in result["answer_text"].casefold()
 
 

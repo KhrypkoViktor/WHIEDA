@@ -9,6 +9,7 @@ for a durable upgrade path.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, TypeVar
@@ -19,6 +20,7 @@ DEFAULT_IDLE_TTL_SEC = 3600.0
 DEFAULT_MAX_CHAT_ENTRIES = 512
 DEFAULT_UPDATE_ID_TTL_SEC = 24 * 3600.0
 DEFAULT_MAX_UPDATE_IDS = 5000
+DEFAULT_MESSAGE_FINGERPRINT_TTL_SEC = 12.0
 
 
 @dataclass(frozen=True)
@@ -35,14 +37,17 @@ class ChatUpdateSequencer:
         max_chat_entries: int = DEFAULT_MAX_CHAT_ENTRIES,
         update_id_ttl_sec: float = DEFAULT_UPDATE_ID_TTL_SEC,
         max_update_ids: int = DEFAULT_MAX_UPDATE_IDS,
+        message_fingerprint_ttl_sec: float = DEFAULT_MESSAGE_FINGERPRINT_TTL_SEC,
     ) -> None:
         self._idle_ttl_sec = idle_ttl_sec
         self._max_chat_entries = max_chat_entries
         self._update_id_ttl_sec = update_id_ttl_sec
         self._max_update_ids = max_update_ids
+        self._message_fingerprint_ttl_sec = message_fingerprint_ttl_sec
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._last_access: dict[str, float] = {}
         self._processed_updates: dict[int, float] = {}
+        self._recent_message_fingerprints: dict[tuple[str, str], float] = {}
         self._meta_lock = asyncio.Lock()
 
     async def run_ordered(
@@ -50,12 +55,18 @@ class ChatUpdateSequencer:
         chat_key: str,
         update_id: int | None,
         handler: Callable[[], Awaitable[T]],
+        *,
+        message_fingerprint: str | None = None,
     ) -> SequencerResult:
+        if message_fingerprint and await self._is_duplicate_fingerprint(chat_key, message_fingerprint):
+            return SequencerResult(duplicate=True, value=None)
         if update_id is not None and await self._is_duplicate(update_id):
             return SequencerResult(duplicate=True, value=None)
 
         lock = await self._chat_lock(chat_key)
         async with lock:
+            if message_fingerprint and await self._is_duplicate_fingerprint(chat_key, message_fingerprint):
+                return SequencerResult(duplicate=True, value=None)
             if update_id is not None and await self._is_duplicate(update_id):
                 return SequencerResult(duplicate=True, value=None)
             try:
@@ -65,6 +76,8 @@ class ChatUpdateSequencer:
             else:
                 if update_id is not None:
                     await self._remember_update(update_id)
+                if message_fingerprint:
+                    await self._remember_fingerprint(chat_key, message_fingerprint)
                 return SequencerResult(duplicate=False, value=value)
             finally:
                 await self._touch_chat(chat_key)
@@ -93,6 +106,18 @@ class ChatUpdateSequencer:
             now = time.monotonic()
             self._processed_updates[update_id] = now
             self._cleanup_updates_locked(now)
+
+    async def _is_duplicate_fingerprint(self, chat_key: str, fingerprint: str) -> bool:
+        async with self._meta_lock:
+            now = time.monotonic()
+            self._cleanup_fingerprints_locked(now)
+            return (chat_key, fingerprint) in self._recent_message_fingerprints
+
+    async def _remember_fingerprint(self, chat_key: str, fingerprint: str) -> None:
+        async with self._meta_lock:
+            now = time.monotonic()
+            self._recent_message_fingerprints[(chat_key, fingerprint)] = now
+            self._cleanup_fingerprints_locked(now)
 
     def _cleanup_idle_locked(self) -> None:
         now = time.monotonic()
@@ -123,6 +148,22 @@ class ChatUpdateSequencer:
         overflow = len(self._processed_updates) - self._max_update_ids
         for uid in sorted(self._processed_updates, key=self._processed_updates.get)[:overflow]:
             self._processed_updates.pop(uid, None)
+
+    def _cleanup_fingerprints_locked(self, now: float) -> None:
+        expired = [
+            key
+            for key, seen in self._recent_message_fingerprints.items()
+            if now - seen > self._message_fingerprint_ttl_sec
+        ]
+        for key in expired:
+            self._recent_message_fingerprints.pop(key, None)
+
+
+def build_message_fingerprint(*, text: str = "", callback_data: str = "") -> str | None:
+    raw = str(callback_data or "").strip() or str(text or "").strip().lower()
+    if not raw:
+        return None
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
 _sequencer: ChatUpdateSequencer | None = None

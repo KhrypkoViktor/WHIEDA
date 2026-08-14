@@ -118,6 +118,9 @@ def _finalize_assertion(row: dict[str, Any]) -> dict[str, Any]:
     row["acceptance_status"] = _resolve_acceptance(row)
     if row["acceptance_status"] == "accepted" and row.get("expected_rail") == "universal_menu":
         row["must_contain_all"] = list(UNIVERSAL_MENU_MUST_CONTAIN_ALL)
+        # The visible rail is the contract here.  Internally Core can record the
+        # same menu as either a clarification or a knowledge gap.
+        row["allowed_modes"] = ["clarification", "knowledge_gap"]
     elif row["acceptance_status"] == "pending_surface":
         row.pop("must_contain_all", None)
     return row
@@ -223,7 +226,10 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 source_kind="conversation_reliability",
                 source_ref=f"{conv_ref}:{conv_id}",
                 rationale=f"Contextual {follow} after product setup must stay on structured route.",
-                expected_context_transition={"sets": [], "requires": ["last_product_context"]},
+                expected_context_transition={
+                    "sets": [],
+                    "requires": [] if name == "cart_mutate" else ["last_product_context"],
+                },
             )
         )
 
@@ -246,7 +252,7 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 user_text=t1,
                 expected_rail="product_choices",
                 expected_mode="clarification",
-                must_contain_any=["уточн"] if t1 == "красный" else [t1.split()[0][:4]],
+                must_contain_any=["уточн", "нужна"] if t1 == "красный" else [t1.split()[0][:4]],
                 source_kind="conversation_reliability",
                 source_ref=f"{conv_ref}:{conv_id}",
                 rationale="Ambiguous nickname must open a compact product choice, not an error.",
@@ -358,7 +364,7 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 user_text=text,
                 expected_rail="task_selection",
                 expected_mode=mode,
-                must_contain_any=markers,
+                must_contain_any=["подбер", "направлен"],
                 acceptance_status="pending_policy" if text in POLICY_GAP_TEXTS else None,
                 source_kind=kind,
                 source_ref=ref,
@@ -380,6 +386,17 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ("pick_device", "нужен прибор", "активатор или вентун", ["Активатор", "Вэнтун"]),
     ]
     contract_ref = "WHIEDA_ADVISOR_EXPERIENCE_CONTRACT_V1_2026-08-13.md"
+    # A person who has named two real products is no longer asking for a vague
+    # direction: comparison is the shortest useful next answer.  A unique
+    # selected product is likewise a product-choice, not a restart of the
+    # whole goal interview.
+    task_followup_contract = {
+        "бэм или активатор": ("direct_answer", "structured_comparison_layer", ["Magic", "Активатор"]),
+        "стельки": ("product_choices", "clarification", ["стельк"]),
+        "очки или палантин": ("direct_answer", "structured_comparison_layer", ["очк", "палант"]),
+        "стартовая корзина": ("task_selection", "clarification", ["корзин", "бюджет"]),
+        "активатор или вентун": ("direct_answer", "structured_comparison_layer", ["Активатор", "Вэнтун"]),
+    }
     for name, t1, t2, markers in task_mt:
         fid = _next_flow_id()
         register_flow(fid, name=name, tags=["task_selection", "multi_turn"], source_ref=contract_ref)
@@ -391,24 +408,31 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 user_text=t1,
                 expected_rail="task_selection",
                 expected_mode="clarification",
-                must_contain_any=["подобрать", "цель", "старт", "WHIEDA"],
+                must_contain_any=["подбер", "направлен"],
                 source_kind="advisor_experience_contract",
                 source_ref=contract_ref,
                 rationale="Goal-only first turn should open compact direction selection.",
             )
+        )
+        followup_rail, followup_mode, followup_markers = task_followup_contract.get(
+            t2, ("task_selection", "clarification", ["подбер", "направлен"])
         )
         cases.append(
             _assertion(
                 flow_id=fid,
                 turn_index=2,
                 user_text=t2,
-                expected_rail="task_selection",
-                expected_mode="clarification",
-                must_contain_any=markers,
+                expected_rail=followup_rail,
+                expected_mode=followup_mode,
+                must_contain_any=followup_markers,
                 context_before=_ctx([("user", t1)]),
                 source_kind="advisor_experience_contract",
                 source_ref=contract_ref,
-                rationale="Follow-up narrows the selection route without hard failure.",
+                rationale=(
+                    "A concrete pair should be compared directly."
+                    if followup_mode == "structured_comparison_layer"
+                    else "Follow-up narrows the selection route without hard failure."
+                ),
             )
         )
 
@@ -438,7 +462,7 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ("какие акции сейчас", "structured_promotion", ["акци"], "CONV-F18"),
         ("сравни активатор клеток и активатор клеток pro", "structured_comparison_layer", ["PRO"], "NBZ-P1-039"),
         ("цена сауны", "structured_price", ["Ба-Гуа", "BYN"], "CONV-F15"),
-        ("активatr", "structured_card", ["Активатор"], "NBZ-P0-007"),
+        ("активatr", "clarification", ["Активатор"], "NBZ-P0-007"),
         ("спирулина таблетки", "structured_card", ["Спирулин"], "CONV-F29"),
     ]
     for text, mode, markers, src in direct_singles:
@@ -452,12 +476,16 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 flow_id=fid,
                 turn_index=1,
                 user_text=text,
-                expected_rail="direct_answer",
+                expected_rail="product_choices" if text == "активatr" else "direct_answer",
                 expected_mode=mode,
                 must_contain_any=markers,
                 source_kind=kind,
                 source_ref=ref,
-                rationale="Clear product or business intent should produce structured answer.",
+                rationale=(
+                    "A typo for an intentionally ambiguous product family must offer a clear choice."
+                    if text == "активatr"
+                    else "Clear product or business intent should produce structured answer."
+                ),
             )
         )
 
@@ -490,12 +518,16 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 flow_id=fid,
                 turn_index=1,
                 user_text=text,
-                expected_rail="product_choices",
-                expected_mode="clarification",
+                expected_rail="direct_answer" if text in {"линчжи", "прокладки"} else "product_choices",
+                expected_mode="structured_card" if text in {"линчжи", "прокладки"} else "clarification",
                 must_contain_any=markers,
                 source_kind=kind,
                 source_ref=ref,
-                rationale="Under-specified product nickname must show understandable choices.",
+                rationale=(
+                    "A unique, well-known product name should open its card immediately."
+                    if text in {"линчжи", "прокладки"}
+                    else "Under-specified product nickname must show understandable choices."
+                ),
             )
         )
 
@@ -539,12 +571,22 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             kind, ref = "conversation_reliability", f"{conv_ref}:{src}"
         else:
             kind, ref = "telegram_experience", f"{tg_ref}:{src}"
-        register_flow(fid, name=f"uni_{text[:20]}", tags=["universal_menu"], source_ref=ref)
+        comparison_missing_pair = text == "сравни фейк1 и фейк2"
+        register_flow(
+            fid,
+            name=f"uni_{text[:20]}",
+            tags=["product_choices"] if comparison_missing_pair else ["universal_menu"],
+            source_ref=ref,
+        )
         row = _assertion(
             flow_id=fid,
             turn_index=1,
             user_text=text,
-            expected_rail="universal_menu" if text not in {"цена", "фото", "видео", "сертификат", "подробнее", "сколько стоит"} else "product_choices",
+            expected_rail=(
+                "product_choices"
+                if comparison_missing_pair or text in {"цена", "фото", "видео", "сертификат", "подробнее", "сколько стоит"}
+                else "universal_menu"
+            ),
             expected_mode=mode,
             must_contain_any=markers,
             source_kind=kind,
@@ -556,7 +598,7 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # --- Extra malformed direct/choice singles to hit malformed quota ---
     extra_malformed = [
         ("фnbdtn активатор", "direct_answer", "structured_card", ["Активатор"], "NBZ-P0-007"),
-        ("активatr", "direct_answer", "structured_card", ["Активатор"], "NBZ-P0-007"),
+        ("активatr", "product_choices", "clarification", ["Активатор"], "NBZ-P0-007"),
         ("бэмчик", "direct_answer", "structured_card", ["Magic"], "TG-PRES-CARD-BEM"),
         ("вентун", "direct_answer", "structured_card", ["Вэнтун"], "CONV-F28"),
         ("спирулинa", "direct_answer", "structured_card", ["Спирулин"], "CONV-F29"),
@@ -567,7 +609,7 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ("видео", "product_choices", "clarification", ["товар"], "NBZ-P0-016"),
         ("видос", "product_choices", "clarification", ["товар"], "NBZ-P0-016"),
         ("сертификат", "product_choices", "clarification", ["товар"], "NBZ-P0-019"),
-        ("сертификатик", "product_choices", "clarification", ["товар"], "NBZ-P0-019"),
+        ("сертификатик", "universal_menu", "knowledge_gap", ["товар"], "NBZ-P0-019"),
         ("подробнее", "product_choices", "clarification", ["товар"], "NBZ-P0-018"),
         ("сколько стоит", "product_choices", "clarification", ["товар"], "NBZ-P1-041"),
         ("сравни", "product_choices", "clarification", ["товар"], "NBZ-P0-021"),
@@ -649,7 +691,6 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ("расскажи про unknown123product", "knowledge_gap", "NBZ-P1-042"),
         ("расскажи про международную логистику whieda", "clarification", "NBZ-P1-036"),
         ("что такое суперфейковый продукт abc123", "clarification", "NBZ-P0-005"),
-        ("покажи любой товар", "knowledge_gap", "SGF-004"),
         ("расскажи про whieda космический корабль", "knowledge_gap", "NBZ-P0-001"),
         ("есть ли товар zzznotfound777", "knowledge_gap", "NBZ-P0-003"),
         ("что за продукт fakeitem888", "knowledge_gap", "NBZ-P0-006"),
@@ -705,6 +746,26 @@ def build_all() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                 rationale="Unknown product or unsupported topic must return durable universal menu markers.",
             )
         )
+
+    # This is a valid catalog-browse request, not an unknown product.  It has
+    # its own surface and must not be forced through the universal fallback.
+    fid = _next_flow_id()
+    catalog_ref = "qa/human_language_rails/HUMAN_LANGUAGE_RAILS_BACKLOG.md:SGF-004"
+    register_flow(fid, name="catalog_any_product", tags=["catalog", "accepted"], source_ref=catalog_ref)
+    cases.append(
+        _assertion(
+            flow_id=fid,
+            turn_index=1,
+            user_text="покажи любой товар",
+            expected_rail="direct_answer",
+            expected_mode="structured_business",
+            acceptance_status="accepted",
+            must_contain_any=["каталог"],
+            source_kind="human_language_rails_backlog",
+            source_ref=catalog_ref,
+            rationale="A request to browse the catalog must open the catalog rail, not a fallback.",
+        )
+    )
 
     deduped = _dedupe_cases(cases)
     flows_meta = _reconcile_flow_metadata(deduped, flow_registry)

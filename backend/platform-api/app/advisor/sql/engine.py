@@ -22,6 +22,7 @@ from app.advisor.sql.cart_session import (
 from app.advisor.sql.comparison import build_compare_answer
 from app.advisor.sql.coach import build_coach_response, parse_coach_command
 from app.advisor.sql import resolver as product_resolver
+from app.advisor.sql.product_discovery import build_discovery_choice_response
 from app.advisor.sql.text import (
     detect_service_intent,
     has_basket_intent,
@@ -39,9 +40,16 @@ from app.advisor.sql.text import (
     is_calculator_request,
     is_start_options_request,
     is_company_intro_request,
+    is_marketing_plan_request,
+    is_step_topic_request,
     is_income_question,
     is_discomfort_boundary,
+    is_high_risk_medical_boundary,
+    is_product_selection_request,
+    is_menu_reprompt,
+    is_catalog_list_request,
     normalize_text,
+    product_query_text,
     wants_partner_price,
     wants_retail_price,
     DETAILS_RE,
@@ -68,17 +76,38 @@ LIMITATION_RE = re.compile(r"(ограничен|противопоказ|кар
 
 SERVICE_FALLBACKS = {
     "greeting": (
-        "Здравствуйте! Я помогу с ценами, карточками товаров, фото, сравнениями "
-        "и базовой информацией WHIEDA."
+        "Здравствуйте! Я советник WHIEDA.\n\n"
+        "📦 Товары\n"
+        "• карточка, цена, фото, видео, сертификат\n"
+        "• сравнение и подбор под задачу\n\n"
+        "📈 Бизнес\n"
+        "• PV, повторка, старт, маркетинг-план\n"
+        "• акции, встречи и материалы\n\n"
+        "Напишите название товара или вопрос своими словами."
     ),
     "smalltalk_status": "Спасибо, я на связи. Задайте вопрос по товару или бизнесу WHIEDA.",
     "capabilities": (
-        "Могу подсказать цену, PV, карточку товара, фото, видео, сертификаты и сравнение. "
-        "Назовите товар или укажите артикул."
+        "Я могу помочь с WHIEDA:\n\n"
+        "📦 Товары\n"
+        "• рассказать о товаре простыми словами\n"
+        "• показать фото, видео, сертификат\n"
+        "• сравнить товары\n\n"
+        "💳 Цены и подбор\n"
+        "• дать цену, PV, первичную и повторную покупку\n"
+        "• посчитать корзину\n"
+        "• подсказать выгодный старт и акции\n\n"
+        "📈 Бизнес\n"
+        "• объяснить PV, повторку, Step и старт\n"
+        "• подсказать встречу или мероприятие\n\n"
+        "Для расчёта напишите: Посчитай: Активатор клеток, БЭМ, Ба-Гуа"
     ),
     "help": (
-        "Напишите название товара, цену, «фото …», «сравни … и …» или вопрос про PV, "
-        "доставку и оформление."
+        "Выберите, с чем помочь:\n\n"
+        "📦 Товар: название, цена, фото, видео, сравнение\n"
+        "🧮 Калькулятор: «Посчитай: Активатор, БЭМ»\n"
+        "📈 Бизнес: PV, повторка, старт, маркетинг-план\n"
+        "🏢 Компания: кто мы, продукты, события\n"
+        "🧭 Подбор: опишите задачу или интересующую зону"
     ),
 }
 
@@ -119,6 +148,12 @@ CALCULATOR_INSTRUCTION = (
     "Для расчёта напишите одной строкой: Посчитай: активатор, спирулина — посчитаю BYN и PV."
 )
 
+CATALOG_BROWSE_FALLBACK = (
+    "В каталоге WHIEDA есть приборы, товары для дома, уход и нутрицевтические продукты. "
+    "В Telegram нажмите «📦 Товары», чтобы открыть список с кнопками. "
+    "Или напишите, что интересует: приборы, уход, сон, эликсиры или конкретный товар."
+)
+
 COMPANY_INTRO_FALLBACK = (
     "WHIEDA — компания с продуктами для здоровья и партнёрской программой. "
     "Могу рассказать про товары, старт и маркетинг-план."
@@ -130,15 +165,42 @@ INCOME_QUESTION_FALLBACK = (
 )
 
 DISCOMFORT_BOUNDARY_TEXT = (
-    "Понимаю, что тема важная. Я не ставлю диагноз и не подбираю лечение. "
-    "Могу помочь выбрать домашний продукт WHIEDA по задаче или ответить про ограничения и применение из карточки. "
-    "Что ближе: подобрать товар или уточнить ограничения?"
+    "Помогу подобрать WHIEDA под вашу задачу. Выберите направление: "
+    "домашний прибор, сон и восстановление, уход, энергия или старт. "
+    "Напишите, для кого и какая цель важнее — предложу подходящие варианты."
+)
+PRODUCT_SELECTION_FALLBACK = (
+    "Помогу подобрать товар или набор WHIEDA под вашу задачу. Выберите направление:\n\n"
+    "• прибор для дома или кабинета;\n"
+    "• сон и восстановление;\n"
+    "• уход и подарок;\n"
+    "• энергия и повседневная поддержка;\n"
+    "• старт или бюджет.\n\n"
+    "Напишите, для кого и какая цель важнее — предложу 2–3 подходящих варианта."
+)
+URGENT_SAFETY_BOUNDARY_TEXT = (
+    "По описанию может быть острое состояние. Я не могу подсказывать лечение, "
+    "дозировки или продолжение процедур. Нужна очная оценка врача; для животного — ветеринара. "
+    "До консультации не используйте прибор или продукт для этой ситуации."
 )
 
+ACTIVATOR_VARIANT_PROMPT = "Вы про Активатор клеток или Активатор клеток PRO?"
+ACTIVATOR_VARIANT_HINT = (
+    "Если нужен базовый прибор, напишите «обычный». Если усиленная версия, напишите «PRO»."
+)
+AFFIRMATIVE_RE = re.compile(r"^(да|ага|угу|yes|ok|ок)\b", re.I)
+
 UNKNOWN_PRODUCT_RE = re.compile(
-    r"несуществующ|xyzabc|xyzunknown|qwerty|unknown123",
+    r"несуществующ|not[_ -]?in[_ -]?catalog|xyzabc|xyzunknown|qwerty|unknown(?:123)?|test\d{2,}",
     re.I,
 )
+EXPLICIT_PRODUCT_REQUEST_RE = re.compile(
+    r"(?:товар|цена|стоим|фото|видео|сертифик|pdf|сравни|что такое|расскажи|"
+    r"покажи|дай|купить|добавь в корзин|артикул)",
+    re.I,
+)
+ACTIVATOR_BASE_CHOICE_RE = re.compile(r"\b(обычн|базов|стандарт)\w*\b", re.I)
+ACTIVATOR_PRO_CHOICE_RE = re.compile(r"\b(pro|про)\b", re.I)
 
 
 async def run_structured_query(
@@ -158,6 +220,39 @@ async def run_structured_query(
     if service_intent:
         return await _service_intent_response(tenant.tenant_id, service_intent, trace_id)
 
+    if is_catalog_list_request(question):
+        return fmt.ok_response(
+            CATALOG_BROWSE_FALLBACK,
+            "structured_business",
+            trace_id,
+            media=fmt.empty_media(),
+        )
+
+    # An explicitly nonexistent SKU/name must not be silently reduced to the
+    # nearest real product just because it contains a familiar word.
+    if UNKNOWN_PRODUCT_RE.search(question):
+        return await emit_gap_response(
+            tenant.tenant_id,
+            session=session,
+            question=question,
+            gap_kind="unknown_product",
+            trace_id=trace_id,
+            channel=channel,
+        )
+
+    if is_high_risk_medical_boundary(question):
+        return await emit_gap_response(
+            tenant.tenant_id,
+            session=session,
+            question=question,
+            gap_kind="medical_or_safety_boundary",
+            trace_id=trace_id,
+            channel=channel,
+            text=URGENT_SAFETY_BOUNDARY_TEXT,
+            answer_mode="clarification",
+            clarifications=["urgent_medical_boundary"],
+        )
+
     if is_unsupported_topic(question):
         return await emit_gap_response(
             tenant.tenant_id,
@@ -170,6 +265,15 @@ async def run_structured_query(
 
     if is_calculator_request(question):
         return fmt.ok_response(CALCULATOR_INSTRUCTION, "structured_business", trace_id, media=fmt.empty_media())
+
+    if is_product_selection_request(question):
+        return fmt.ok_response(
+            PRODUCT_SELECTION_FALLBACK,
+            "clarification",
+            trace_id,
+            media=fmt.empty_media(),
+            clarifications=["task_selection"],
+        )
 
     if is_discomfort_boundary(question):
         return await emit_gap_response(
@@ -213,6 +317,32 @@ async def run_structured_query(
                 )
         return fmt.ok_response(COMPANY_INTRO_FALLBACK, "structured_business", trace_id, media=fmt.empty_media())
 
+    if is_marketing_plan_request(question) or is_step_topic_request(question):
+        lookup_question = re.sub(r"\bstep\b", "степ", question, flags=re.I)
+        async with tenant_connection(tenant.tenant_id) as conn:
+            faq = await repo.find_business_faq(conn, tenant.tenant_id, lookup_question)
+        if faq:
+            return fmt.ok_response(
+                str(faq.get("answer_text") or "").strip(),
+                "structured_business_faq",
+                trace_id,
+            )
+        if is_marketing_plan_request(question):
+            return fmt.ok_response(
+                "Маркетинг-план WHIEDA описывает объём PV, повторные покупки, статусы и условия бонусов. "
+                "Напишите, что именно разобрать: PV, повторку, бинар, Step или вариант старта.",
+                "structured_business_faq",
+                trace_id,
+                media=fmt.empty_media(),
+            )
+        return fmt.ok_response(
+            "Step связан с условиями действующего маркетинг-плана и не является гарантированной выплатой. "
+            "Могу объяснить условия, повторные покупки или статусную механику.",
+            "structured_business_faq",
+            trace_id,
+            media=fmt.empty_media(),
+        )
+
     if is_start_options_request(question):
         async with tenant_connection(tenant.tenant_id) as conn:
             stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
@@ -237,7 +367,7 @@ async def run_structured_query(
                 return response
             prompt = await repo.load_clarification_prompt(conn, tenant.tenant_id, "starter_basket_budget")
             response = fmt.ok_response(
-                prompt or "Соберу стартовую корзину. На какой бюджет в BYN или какой PV ориентируемся?",
+                prompt or "Подберу стартовую корзину. На какой бюджет в BYN или какой PV ориентируемся?",
                 "clarification",
                 trace_id,
                 clarifications=["starter_basket_budget"],
@@ -275,6 +405,8 @@ async def run_structured_query(
         or LIMITATION_RE.search(question)
         or (DETAILS_RE.search(question) and not sku)
         or normalize_text(question) in {"паста", "активатор", "ативатор", "пептид", "пептиды"}
+        or ACTIVATOR_BASE_CHOICE_RE.search(normalized)
+        or ACTIVATOR_PRO_CHOICE_RE.search(normalized)
     )
 
     if not skip_canonical:
@@ -308,6 +440,29 @@ async def run_structured_query(
 
     async with tenant_connection(tenant.tenant_id) as conn:
         stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
+
+        if is_menu_reprompt(question):
+            pending_clarification = str(stored.get("pending_product_clarification") or "")
+            if pending_clarification == "activator_variant":
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="ambiguous_product",
+                    trace_id=trace_id,
+                    channel=channel,
+                    text=f"{ACTIVATOR_VARIANT_PROMPT}\n{ACTIVATOR_VARIANT_HINT}",
+                    answer_mode="clarification",
+                    clarifications=["product_ambiguity_activator"],
+                )
+            return await emit_gap_response(
+                tenant.tenant_id,
+                session=session,
+                question=question,
+                gap_kind="unrouted_message",
+                trace_id=trace_id,
+                channel=channel,
+            )
 
         remove_name = parse_cart_remove_request(question)
         if remove_name is not None:
@@ -400,7 +555,7 @@ async def run_structured_query(
                     conn, tenant.tenant_id, "starter_basket_budget"
                 )
                 response = fmt.ok_response(
-                    prompt or "Соберу стартовую корзину. На какой бюджет в BYN или какой PV ориентируемся?",
+                    prompt or "Подберу стартовую корзину. На какой бюджет в BYN или какой PV ориентируемся?",
                     "clarification",
                     trace_id,
                     clarifications=["starter_basket_budget"],
@@ -525,11 +680,16 @@ async def run_structured_query(
                 )
 
         faq_fallback = _business_faq_fallback(question)
-        if faq_fallback:
+        if faq_fallback and not has_price_intent(question):
             return fmt.ok_response(faq_fallback, "structured_business_faq", trace_id)
 
         faq = await repo.find_business_faq(conn, tenant.tenant_id, question)
-        if faq and not (has_price_intent(question) and not is_pv_definition_question(question)):
+        # A matching business FAQ explains the rule, but a named product plus
+        # «повторка/цена» asks for the current price.  Do not let the FAQ keep
+        # its value after the price guard has rejected it.
+        if faq and has_price_intent(question) and not is_pv_definition_question(question):
+            faq = None
+        elif faq:
             if is_product_definition_question(question):
                 product_for_def = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
                 if product_for_def:
@@ -560,18 +720,21 @@ async def run_structured_query(
                             conn, tenant.tenant_id, base["sku"], anchor["sku"]
                         )
                         if comparison:
+                            comparison_context = {
+                                "last_product_sku": anchor["sku"],
+                                "last_product_name": anchor["canonical_name"],
+                                "last_compare_right_sku": base["sku"],
+                                "last_compare_right_name": base["canonical_name"],
+                            }
                             response = fmt.ok_response(
                                 str(comparison.get("answer_text") or "").strip(),
                                 "structured_comparison_layer",
                                 trace_id,
                                 product={
-                                    "sku": base["sku"],
-                                    "canonical_name": base["canonical_name"],
+                                    "sku": anchor["sku"],
+                                    "canonical_name": anchor["canonical_name"],
                                 },
-                                context={
-                                    "last_product_sku": base["sku"],
-                                    "last_product_name": base["canonical_name"],
-                                },
+                                context=comparison_context,
                             )
                             await session_ctx.merge_session_context(
                                 conn, tenant.tenant_id, session, response["context"]
@@ -580,7 +743,22 @@ async def run_structured_query(
                         left_card = await repo.load_product_card(conn, tenant.tenant_id, base["sku"])
                         right_card = await repo.load_product_card(conn, tenant.tenant_id, anchor["sku"])
                         text = build_compare_answer(base, left_card, anchor, right_card, country=country)
-                        return fmt.ok_response(text, "structured_comparison", trace_id)
+                        response = fmt.ok_response(
+                            text,
+                            "structured_comparison_layer",
+                            trace_id,
+                            product={"sku": anchor["sku"], "canonical_name": anchor["canonical_name"]},
+                            context={
+                                "last_product_sku": anchor["sku"],
+                                "last_product_name": anchor["canonical_name"],
+                                "last_compare_right_sku": base["sku"],
+                                "last_compare_right_name": base["canonical_name"],
+                            },
+                        )
+                        await session_ctx.merge_session_context(
+                            conn, tenant.tenant_id, session, response["context"]
+                        )
+                        return response
             comparison_response = await _resolve_comparison_response(
                 conn, tenant.tenant_id, question, country, trace_id, session=session
             )
@@ -606,7 +784,66 @@ async def run_structured_query(
                 clarifications=["compare_pair_unknown"],
             )
 
-        product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+        pending_clarification = str(stored.get("pending_product_clarification") or "")
+        product = None
+        pending_context_patch: dict[str, Any] | None = None
+
+        # Strong exact aliases continue through the normal resolver. Generic
+        # discovery phrases are deliberately intercepted before alias scoring
+        # can silently choose a random first product.
+        discovery_phrase = product_query_text(question)
+        if discovery_phrase not in {"активатор", "паста", "красный", "зелёный", "зеленый", "синий", "пояс"}:
+            discovery = await build_discovery_choice_response(
+                conn,
+                tenant.tenant_id,
+                discovery_phrase,
+                repo=repo,
+                trace_id=trace_id,
+                fmt=fmt,
+            )
+            if discovery:
+                if session and discovery.get("context"):
+                    await session_ctx.merge_session_context(
+                        conn, tenant.tenant_id, session, discovery["context"]
+                    )
+                return discovery
+
+        if pending_clarification == "activator_variant":
+            pending_base_sku = str(stored.get("pending_base_sku") or "M015-00")
+            pending_pro_sku = str(stored.get("pending_pro_sku") or "EU-N000031-25")
+            pending_sku = None
+            if ACTIVATOR_BASE_CHOICE_RE.search(normalized):
+                pending_sku = pending_base_sku
+            elif ACTIVATOR_PRO_CHOICE_RE.search(normalized):
+                pending_sku = pending_pro_sku
+            elif AFFIRMATIVE_RE.search(normalized):
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="ambiguous_product",
+                    trace_id=trace_id,
+                    channel=channel,
+                    text=f"{ACTIVATOR_VARIANT_PROMPT}\n{ACTIVATOR_VARIANT_HINT}",
+                    answer_mode="clarification",
+                    clarifications=["product_ambiguity_activator"],
+                )
+            if pending_sku:
+                product = await repo.resolve_product_by_sku(conn, tenant.tenant_id, pending_sku)
+                if product:
+                    pending_context_patch = {
+                        "pending_product_clarification": None,
+                        "pending_base_sku": None,
+                        "pending_pro_sku": None,
+                        "last_product_sku": product["sku"],
+                        "last_product_name": product["canonical_name"],
+                    }
+                    await session_ctx.merge_session_context(
+                        conn, tenant.tenant_id, session, pending_context_patch
+                    )
+
+        if not product:
+            product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
 
         if (
             not product
@@ -624,7 +861,15 @@ async def run_structured_query(
         )
         if ambiguity:
             text, mode, keys = ambiguity
-            return await emit_gap_response(
+            ambiguity_context: dict[str, Any] | None = None
+            if "product_ambiguity_activator" in (keys or []):
+                ambiguity_context = {
+                    "pending_product_clarification": "activator_variant",
+                    "pending_base_sku": "M015-00",
+                    "pending_pro_sku": "EU-N000031-25",
+                }
+                text = f"{ACTIVATOR_VARIANT_PROMPT}\n{ACTIVATOR_VARIANT_HINT}"
+            response = await emit_gap_response(
                 tenant.tenant_id,
                 session=session,
                 question=question,
@@ -634,7 +879,13 @@ async def run_structured_query(
                 text=text,
                 answer_mode=mode,
                 clarifications=keys,
+                context=ambiguity_context,
             )
+            if ambiguity_context:
+                await session_ctx.merge_session_context(
+                    conn, tenant.tenant_id, session, ambiguity_context
+                )
+            return response
 
         if (
             not product
@@ -674,13 +925,6 @@ async def run_structured_query(
                     trace_id=trace_id,
                     channel=channel,
                 )
-            prompt = await repo.load_clarification_prompt(
-                conn, tenant.tenant_id, "price_product_unknown"
-            )
-            price_text = sanitize_user_text(
-                prompt or "Уточните, пожалуйста, название товара или артикул — тогда назову цену.",
-                fallback_kind="unknown_followup",
-            )
             return await emit_gap_response(
                 tenant.tenant_id,
                 session=session,
@@ -688,8 +932,6 @@ async def run_structured_query(
                 gap_kind="unknown_followup",
                 trace_id=trace_id,
                 channel=channel,
-                text=price_text,
-                answer_mode="clarification",
                 clarifications=["product_name_or_sku"],
             )
 
@@ -809,6 +1051,24 @@ async def run_structured_query(
             card = await repo.load_product_card(conn, tenant.tenant_id, product["sku"])
             contra = str((card or {}).get("contraindications_short") or "").strip()
             limitation_text = contra or LIMITATIONS_FALLBACK
+            if re.search(r"кардиостимулятор|стент", question, re.I):
+                return await emit_gap_response(
+                    tenant.tenant_id,
+                    session=session,
+                    question=question,
+                    gap_kind="medical_or_safety_boundary",
+                    trace_id=trace_id,
+                    channel=channel,
+                    text=(
+                        f"{product['canonical_name']}. Ограничения: {limitation_text} "
+                        "При наличии кардиостимулятора или стентов вопрос применения "
+                        "нужно согласовать с лечащим врачом и инструкцией к прибору."
+                    ),
+                    answer_mode="clarification",
+                    product={"sku": product["sku"], "canonical_name": product["canonical_name"]},
+                    context={"last_product_sku": product["sku"], "last_product_name": product["canonical_name"]},
+                    clarifications=["medical_device_limitation"],
+                )
             return fmt.ok_response(
                 f"{product['canonical_name']}. Ограничения: {limitation_text}",
                 "structured_product_detail",
@@ -845,27 +1105,12 @@ async def run_structured_query(
                 channel=channel,
             )
 
-        if normalized and len(normalized) >= 4:
-            prompt = await repo.load_clarification_prompt(
-                conn, tenant.tenant_id, "product_ambiguity_general"
-            )
-            if prompt:
-                return await emit_gap_response(
-                    tenant.tenant_id,
-                    session=session,
-                    question=question,
-                    gap_kind="unknown_product",
-                    trace_id=trace_id,
-                    channel=channel,
-                    text=sanitize_user_text(prompt, fallback_kind="unknown_product"),
-                    answer_mode="clarification",
-                )
-
+    gap_kind = "unknown_product" if EXPLICIT_PRODUCT_REQUEST_RE.search(question) else "unrouted_message"
     return await emit_gap_response(
         tenant.tenant_id,
         session=session,
         question=question,
-        gap_kind="unknown_product",
+        gap_kind=gap_kind,
         trace_id=trace_id,
         channel=channel,
     )
@@ -904,7 +1149,10 @@ async def _service_intent_response(tenant_id: str, intent_id: str, trace_id: str
             text = await repo.load_capability_response(conn, tenant_id, candidate)
             if text:
                 break
-    return fmt.ok_response(text or fallback, "structured_business", trace_id, media=fmt.empty_media())
+    answer = str(text or fallback).strip()
+    if "whieda" not in answer.casefold():
+        answer = f"WHIEDA\n\n{answer}"
+    return fmt.ok_response(answer, "structured_business", trace_id, media=fmt.empty_media())
 
 
 async def _resolve_product(
@@ -960,7 +1208,7 @@ async def _resolve_comparison_response(
     text = build_compare_answer(left, left_card, right, right_card, country=country)
     response = fmt.ok_response(
         text,
-        "structured_comparison",
+        "structured_comparison_layer",
         trace_id,
         product={
             "left_sku": left["sku"],

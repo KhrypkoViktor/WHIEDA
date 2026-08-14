@@ -13,6 +13,12 @@ QUERY_TYPO_MAP = {
     "спирулинаа": "спирулина",
     "активаторр": "активатор клеток",
     "ативатор": "активатор клеток",
+    "активаор": "активатор клеток",
+    "активatr": "активатор клеток",
+    "актив": "активатор",
+    "спирулинa": "спирулина",
+    "поис": "пояс",
+    "пасту": "паста",
     "ленжи": "линчжи",
     "леньчжи": "линчжи",
     "линьчжи": "линчжи",
@@ -186,14 +192,14 @@ async def resolve_product(
     if not lookup:
         return None
 
-    if has_pro_marker(question) and "активатор" in normalize_text(question):
-        pro_row = await repo.resolve_activator_pro_product(conn, tenant_id)
-        if pro_row:
-            return pro_row
+    if normalize_text(lookup) in {"pro", "про"}:
+        return await repo.resolve_activator_pro_product(conn, tenant_id)
 
     if has_pro_marker(question):
-        pro_candidates = await repo.fetch_alias_candidates(conn, tenant_id, "активатор клеток pro")
-        pro_best = pick_best_product("активатор клеток pro", pro_candidates, allow_pro=True)
+        # Aliases are authoritative: a shortest-name lookup lets old local
+        # fixtures shadow the current master SKU after a rename.
+        pro_candidates = await repo.fetch_alias_candidates(conn, tenant_id, lookup)
+        pro_best = pick_best_product(lookup, pro_candidates, allow_pro=True)
         if pro_best and has_pro_marker(str(pro_best.get("canonical_name") or "")):
             return pro_best
 
