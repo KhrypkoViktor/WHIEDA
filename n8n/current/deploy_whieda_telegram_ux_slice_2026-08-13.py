@@ -88,6 +88,23 @@ def _remote_paths() -> list[str]:
     ]
 
 
+def _remote_existing_paths(client: paramiko.SSHClient) -> list[str]:
+    paths = _remote_paths()
+    quoted = " ".join(paths)
+    output = _exec(
+        client,
+        f"cd {REMOTE_API} && for path in {quoted}; do test -f \"$path\" && printf '%s\\n' \"$path\"; done",
+    )
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _rollback(client: paramiko.SSHClient, backup: str, new_paths: list[str]) -> None:
+    if new_paths:
+        _exec(client, f"cd {REMOTE_API} && rm -f {' '.join(new_paths)}")
+    _exec(client, f"tar -xzf {backup} -C {REMOTE_API}")
+    _exec(client, f"cd {COMPOSE_DIR} && docker compose build api worker && docker compose up -d api worker", timeout=1200)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Upload, rebuild, and health-check production Core.")
@@ -109,22 +126,39 @@ def main() -> int:
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(cfg["host"], username=cfg["user"], password=cfg["password"], look_for_keys=False, allow_agent=False, timeout=30)
     try:
-        backup_paths = " ".join(_remote_paths())
-        _exec(client, f"mkdir -p {REMOTE}/backups && tar -czf {backup} -C {REMOTE_API} {backup_paths}")
+        existing_paths = _remote_existing_paths(client)
+        new_paths = [path for path in _remote_paths() if path not in existing_paths]
+        if existing_paths:
+            _exec(
+                client,
+                f"mkdir -p {REMOTE}/backups && tar -czf {backup} -C {REMOTE_API} {' '.join(existing_paths)}",
+            )
+        else:
+            _exec(client, f"mkdir -p {REMOTE}/backups && tar -czf {backup} --files-from /dev/null")
         sftp = client.open_sftp()
         try:
             with sftp.file(f"{REMOTE}/telegram-ux-slice.tar.gz", "wb") as target:
                 target.write(payload)
         finally:
             sftp.close()
-        _exec(client, f"tar -xzf {REMOTE}/telegram-ux-slice.tar.gz -C {REMOTE_API}")
-        _exec(client, f"cd {COMPOSE_DIR} && docker compose build api worker && docker compose up -d api worker", timeout=1200)
-        time.sleep(6)
-        if not _health(client):
-            _exec(client, f"tar -xzf {backup} -C {REMOTE_API}")
+        uploaded = False
+        try:
+            _exec(client, f"tar -xzf {REMOTE}/telegram-ux-slice.tar.gz -C {REMOTE_API}")
+            uploaded = True
             _exec(client, f"cd {COMPOSE_DIR} && docker compose build api worker && docker compose up -d api worker", timeout=1200)
-            raise RuntimeError("health check failed; Telegram UX slice was restored from backup")
-        print(json.dumps({"action": "deployed", **plan, "health_ready": 200}, ensure_ascii=False))
+            time.sleep(6)
+            if not _health(client):
+                raise RuntimeError("health check failed")
+        except Exception:
+            if uploaded:
+                _rollback(client, backup, new_paths)
+            raise
+        print(
+            json.dumps(
+                {"action": "deployed", **plan, "health_ready": 200, "new_remote_files": new_paths},
+                ensure_ascii=False,
+            )
+        )
         return 0
     finally:
         client.close()
