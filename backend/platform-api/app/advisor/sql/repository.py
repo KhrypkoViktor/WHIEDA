@@ -83,15 +83,18 @@ async def resolve_activator_pro_product(conn, tenant_id: str) -> dict[str, Any] 
     return await fetch_one(
         conn,
         """
-        select sku, canonical_name, retail_price_byn, retail_price_rub,
-               partner_price_byn, partner_w
-        from advisor_structured_products
-        where client_id = %s
-          and lower(canonical_name) like %s
-        order by length(canonical_name) asc
+        select p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub,
+               p.partner_price_byn, p.partner_w
+        from advisor_structured_aliases a
+        join advisor_structured_products p
+          on p.client_id = a.client_id and p.sku = a.canonical_sku
+        where a.client_id = %s
+          and a.active is true
+          and lower(a.alias) in ('активатор pro', 'активатор про')
+        order by a.priority desc, length(a.alias) desc
         limit 1
         """,
-        (client_id(tenant_id), "%активатор%pro%"),
+        (client_id(tenant_id),),
     )
 
 
@@ -345,6 +348,62 @@ async def resolve_product_by_sku(conn, tenant_id: str, sku: str) -> dict[str, An
         limit 1
         """,
         (client_id(tenant_id), sku),
+    )
+
+
+async def count_catalog_products(conn, tenant_id: str) -> int:
+    row = await fetch_one(
+        conn,
+        """
+        select count(*)::int as total
+        from advisor_structured_products
+        where client_id = %s
+        """,
+        (client_id(tenant_id),),
+    )
+    if not row:
+        return 0
+    return int(row.get("total") or 0)
+
+
+async def list_catalog_products(
+    conn,
+    tenant_id: str,
+    page: int,
+    page_size: int = 8,
+) -> list[dict[str, Any]]:
+    safe_page = max(1, int(page))
+    safe_size = max(1, min(8, int(page_size)))
+    offset = (safe_page - 1) * safe_size
+    return await fetch_all(
+        conn,
+        """
+        select sku, canonical_name
+        from advisor_structured_products
+        where client_id = %s
+        order by canonical_name asc, sku asc
+        limit %s offset %s
+        """,
+        (client_id(tenant_id), safe_size, offset),
+    )
+
+
+async def resolve_catalog_product_by_sku(conn, tenant_id: str, sku: str) -> dict[str, Any] | None:
+    try:
+        safe_sku = str(sku or "").strip()
+    except (TypeError, ValueError):
+        return None
+    if not safe_sku:
+        return None
+    return await fetch_one(
+        conn,
+        """
+        select sku, canonical_name
+        from advisor_structured_products
+        where client_id = %s and sku = %s
+        limit 1
+        """,
+        (client_id(tenant_id), safe_sku),
     )
 
 

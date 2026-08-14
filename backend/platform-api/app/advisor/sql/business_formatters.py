@@ -7,6 +7,31 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+RUSSIAN_WEEKDAYS = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+RUSSIAN_MONTHS = (
+    "",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
+
 
 def _tz(name: str | None) -> ZoneInfo:
     try:
@@ -79,8 +104,7 @@ def next_event_timestamp(row: dict[str, Any], *, now_ms: int | None = None) -> i
 def format_event_when(row: dict[str, Any], timestamp_ms: int) -> str:
     tz = _tz(str(row.get("timezone") or "Europe/Minsk"))
     dt = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).astimezone(tz)
-    when = dt.strftime("%A, %d %B, %H:%M")
-    return when[:1].upper() + when[1:]
+    return f"{RUSSIAN_WEEKDAYS[dt.weekday()].capitalize()}, {dt.day} {RUSSIAN_MONTHS[dt.month]}, {dt:%H:%M}"
 
 
 def format_events(rows: list[dict[str, Any]]) -> str:

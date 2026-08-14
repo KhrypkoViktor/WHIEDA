@@ -28,6 +28,19 @@ async def test_engine_greeting_uses_capability_db(whieda_tenant):
 
 
 @pytest.mark.asyncio
+async def test_catalog_phrase_returns_catalog_guidance_not_unknown_product(whieda_tenant):
+    result = await run_structured_query(
+        whieda_tenant,
+        {"question": "какой товар есть"},
+        "catalog-guidance",
+    )
+
+    assert result["answer_mode"] == "structured_business"
+    assert "📦 Товары" in result["answer_text"]
+    assert "Не нашёл" not in result["answer_text"]
+
+
+@pytest.mark.asyncio
 async def test_engine_price_without_product_returns_clarification(whieda_tenant):
     @asynccontextmanager
     async def fake_tenant_connection(_tenant_id: str):
@@ -55,6 +68,47 @@ async def test_engine_price_without_product_returns_clarification(whieda_tenant)
 
     assert result["answer_mode"] == "clarification"
     assert result["answer_text"] == "Какой товар?"
+
+
+@pytest.mark.asyncio
+async def test_product_repeat_price_beats_business_faq(whieda_tenant):
+    """A product name plus """"""повторка"""""" asks for its partner price, not FAQ theory."""
+
+    @asynccontextmanager
+    async def fake_tenant_connection(_tenant_id: str):
+        yield object()
+
+    product = {
+        "sku": "M015-00",
+        "canonical_name": "Активатор клеток",
+        "retail_price_byn": 1750,
+        "partner_price_byn": 1050,
+        "partner_w": 300,
+        "pv": 500,
+    }
+    faq = {"answer_text": "Повторная покупка - теория, но не цена товара."}
+    with patch("app.advisor.sql.engine.tenant_connection", fake_tenant_connection):
+        with patch("app.advisor.sql.engine.repo.find_canonical_question", AsyncMock(return_value=None)):
+            with patch("app.advisor.sql.engine.session_ctx.load_session_context", AsyncMock(return_value={})):
+                with patch("app.advisor.sql.engine.repo.find_business_objection", AsyncMock(return_value=None)):
+                    with patch("app.advisor.sql.engine.repo.find_business_faq", AsyncMock(return_value=faq)):
+                        with patch("app.advisor.sql.engine._resolve_product", AsyncMock(return_value=product)):
+                            with patch(
+                                "app.advisor.sql.engine.try_ambiguity_clarification",
+                                AsyncMock(return_value=None),
+                            ):
+                                with patch(
+                                    "app.advisor.sql.engine.session_ctx.merge_session_context",
+                                    AsyncMock(),
+                                ):
+                                    result = await run_structured_query(
+                                        whieda_tenant,
+                                        {"question": "повторка активатора клеток", "session": "repeat-price"},
+                                        "repeat-price-trace",
+                                    )
+
+    assert result["answer_mode"] == "structured_price"
+    assert "Для парт" in result["answer_text"]
 
 
 @pytest.mark.asyncio
@@ -122,7 +176,7 @@ async def test_compare_skips_canonical_product_card(whieda_tenant):
                                             "t-compare",
                                         )
 
-    assert result["answer_mode"] == "structured_comparison"
+    assert result["answer_mode"] == "structured_comparison_layer"
     assert "По цене" in result["answer_text"]
 
 

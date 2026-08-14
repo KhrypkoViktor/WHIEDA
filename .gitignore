@@ -68,3 +68,6 @@ qa/parity/reports/*
 !qa/parity/reports/.gitkeep
 qa/parity/baselines/*
 !qa/parity/baselines/.gitkeep
+
+# Local pre-release recovery patches
+.work-snapshots/

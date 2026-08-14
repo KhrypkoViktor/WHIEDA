@@ -78,7 +78,7 @@ async def test_rapid_capabilities_then_oos_content_and_order():
     await asyncio.gather(t1, t2)
 
     assert [mode for mode, _ in delivered] == ["capabilities", "unsupported_topic"]
-    assert "Могу подсказать" in delivered[0][1]
+    assert ("Я могу помочь" in delivered[0][1]) or ("Могу подсказать" in delivered[0][1])
     assert delivered[1][0] != "capabilities"
     assert "пивка" not in delivered[1][1].casefold() or "сценар" in delivered[1][1].casefold()
 

@@ -1,0 +1,17 @@
+{
+  "snapshot_id": "20260811T172219Z",
+  "layer_hashes": {
+    "products": "1f71422a956f63350063223513fec1a0b3a65eb8773bb58bebecb1c6b658da83",
+    "aliases": "3a58c76240c362e203bbb18eade7d486f14b5a02cd8120b6af5e17da2444e5a0",
+    "product_cards": "db30e469fa85cf8ed522b582a65d916747fe25c9b2577f666469181a68c66dfb",
+    "resources": "d9f0ac626da3414db4e9593819e7345efa3019a811ca6a6442cbfbf48e4c82e6"
+  },
+  "phrase_count": 35,
+  "row_count": 47,
+  "status_counts": {
+    "generic_category": 17,
+    "ready_for_core_review": 22,
+    "needs_owner_review": 5,
+    "do_not_resolve": 3
+  }
+}

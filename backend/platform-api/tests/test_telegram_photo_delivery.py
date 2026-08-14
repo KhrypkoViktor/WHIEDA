@@ -6,9 +6,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.telegram.delivery import deliver_structured_advisor_response, extract_photo_url, send_telegram_photo
-from app.telegram.modes import TELEGRAM_DELIVERABLE_MODES, is_telegram_deliverable
-from app.telegram.processor import deliver_advisor_response, handle_advisor_query
+from app.telegram.delivery import deliver_structured_advisor_response, extract_photo_url
+from app.telegram.modes import (
+    TELEGRAM_INTERNAL_MODES,
+    TELEGRAM_STRUCTURED_MODES,
+    should_deliver_telegram_response,
+)
+from app.telegram.processor import handle_advisor_query
 
 
 def test_extract_photo_url_from_structured_media():
@@ -16,14 +20,18 @@ def test_extract_photo_url_from_structured_media():
     assert extract_photo_url({}) is None
 
 
-def test_product_detail_mode_is_deliverable():
-    assert is_telegram_deliverable("structured_product_detail")
-    assert is_telegram_deliverable("structured_comparison_layer")
-    assert not is_telegram_deliverable("fallback")
-    assert not is_telegram_deliverable(None)
+def test_knowledge_gap_is_delivered_when_text_present():
+    assert should_deliver_telegram_response(
+        {"answer_text": "Пока не могу ответить точно.", "answer_mode": "knowledge_gap"}
+    )
 
 
-def test_all_engine_modes_in_deliverable_set():
+def test_fallback_with_text_is_not_delivered():
+    assert not should_deliver_telegram_response({"answer_text": "x", "answer_mode": "fallback"})
+    assert "fallback" in TELEGRAM_INTERNAL_MODES
+
+
+def test_all_engine_structured_modes_listed():
     engine_modes = {
         "structured_price",
         "structured_card",
@@ -43,8 +51,8 @@ def test_all_engine_modes_in_deliverable_set():
         "structured_cart",
         "clarification",
     }
-    missing = engine_modes - TELEGRAM_DELIVERABLE_MODES
-    assert not missing, f"missing from TELEGRAM_DELIVERABLE_MODES: {missing}"
+    missing = engine_modes - TELEGRAM_STRUCTURED_MODES
+    assert not missing, f"missing from TELEGRAM_STRUCTURED_MODES: {missing}"
 
 
 @pytest.mark.asyncio
@@ -61,8 +69,7 @@ async def test_photo_then_text_separate_messages():
             bot_token="tok",
         )
     photo.assert_awaited_once()
-    call_kwargs = photo.await_args.kwargs
-    assert "caption" not in call_kwargs
+    assert "caption" not in photo.await_args.kwargs
     text.assert_awaited_once()
     assert text.await_args.kwargs["text"] == "Подробное описание товара"
     assert result["photo_sent"] is True
@@ -109,6 +116,37 @@ async def test_product_detail_triggers_delivery():
 
 
 @pytest.mark.asyncio
+async def test_advisor_delivery_keeps_persistent_main_menu():
+    tenant = type("T", (), {"tenant_id": "whieda"})()
+    msg = type("M", (), {"chat_id": 99, "text": "активатор", "user_id": 1})()
+    core = {"answer_text": "Карточка", "answer_mode": "structured_card", "media": {}}
+    with patch("app.telegram.processor.handle_structured_query", AsyncMock(return_value=core)), patch(
+        "app.telegram.processor.deliver_advisor_response", AsyncMock()
+    ) as deliver:
+        await handle_advisor_query(tenant, msg, "trace-menu")
+
+    assert deliver.await_args.kwargs["reply_markup"]["is_persistent"] is True
+    assert len(deliver.await_args.kwargs["reply_markup"]["keyboard"]) == 6
+
+
+@pytest.mark.asyncio
+async def test_knowledge_gap_triggers_delivery():
+    tenant = type("T", (), {"tenant_id": "whieda"})()
+    msg = type("M", (), {"chat_id": 99, "text": "что такое квантовый чай?", "user_id": 1})()
+    core = {
+        "answer_text": "Пока не могу ответить на этот вопрос.",
+        "answer_mode": "knowledge_gap",
+        "media": {"photo_url": None, "videos": [], "documents": []},
+    }
+    with patch("app.telegram.processor.handle_structured_query", AsyncMock(return_value=core)), patch(
+        "app.telegram.processor.deliver_advisor_response", AsyncMock()
+    ) as deliver:
+        out = await handle_advisor_query(tenant, msg, "trace-2")
+    deliver.assert_awaited_once()
+    assert out["answer_mode"] == "knowledge_gap"
+
+
+@pytest.mark.asyncio
 async def test_fallback_mode_skips_delivery():
     tenant = type("T", (), {"tenant_id": "whieda"})()
     msg = type("M", (), {"chat_id": 99, "text": "?", "user_id": 1})()
@@ -116,5 +154,5 @@ async def test_fallback_mode_skips_delivery():
         "app.telegram.processor.handle_structured_query",
         AsyncMock(return_value={"answer_text": "x", "answer_mode": "fallback"}),
     ), patch("app.telegram.processor.deliver_advisor_response", AsyncMock()) as deliver:
-        await handle_advisor_query(tenant, msg, "trace-2")
+        await handle_advisor_query(tenant, msg, "trace-3")
     deliver.assert_not_awaited()
