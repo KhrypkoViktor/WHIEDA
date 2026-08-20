@@ -14,7 +14,9 @@ from staging_proof_lib import APPLY_ORDER, SQL_DIR
 SCRIPTS_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPTS_DIR.parents[1]
 BINDING_CONTEXT_SQL = "platform_bot_binding_context_v1.sql"
+INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"
 BINDING_CONTEXT_PATH = SQL_DIR / BINDING_CONTEXT_SQL
+EXPECTED_APPLY_COUNT = 14
 BACKFILL_PLAN = SCRIPTS_DIR / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 # Pinned in Gate B1 manifest. A dirty tree that rewrites the file must fail.
@@ -227,10 +229,12 @@ def build_offline_plan() -> ReleaseReport:
     missing = [item["name"] for item in files if not item["exists"]]
     if missing:
         failed.append(f"missing SQL files: {missing}")
-    if len(APPLY_ORDER) != 13:
-        failed.append(f"APPLY_ORDER length {len(APPLY_ORDER)} != 13")
-    if APPLY_ORDER[-1] != BINDING_CONTEXT_SQL:
-        failed.append("binding context SQL is not last in APPLY_ORDER")
+    if len(APPLY_ORDER) != EXPECTED_APPLY_COUNT:
+        failed.append(f"APPLY_ORDER length {len(APPLY_ORDER)} != {EXPECTED_APPLY_COUNT}")
+    if APPLY_ORDER[-1] != INBOX_SQL:
+        failed.append("durable inbox SQL is not last in APPLY_ORDER")
+    if APPLY_ORDER[-2] != BINDING_CONTEXT_SQL:
+        failed.append("binding context SQL must immediately precede durable inbox SQL")
     if BACKFILL_PLAN.name in APPLY_ORDER:
         failed.append("backfill plan must not be in APPLY_ORDER")
     would = [item["name"] for item in files if item["exists"]]

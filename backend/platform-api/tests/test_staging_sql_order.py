@@ -33,17 +33,22 @@ def test_core_rls_does_not_touch_legacy_leads_tables():
 
 def test_bot_binding_context_sql_is_in_apply_order_once():
     name = "platform_bot_binding_context_v1.sql"
+    inbox = "platform_telegram_durable_inbox_v1.sql"
     assert (SQL_DIR / name).is_file()
+    assert (SQL_DIR / inbox).is_file()
     listed = apply_script_files()
     assert listed.count(name) == 1
+    assert listed.count(inbox) == 1
     assert EXPECTED_ORDER.count(name) == 1
     assert listed.index("platform_whieda_telegram_binding_v1.sql") < listed.index(name)
+    assert listed.index(name) < listed.index(inbox)
 
 
 def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
+    assert len(listed) == 14
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():

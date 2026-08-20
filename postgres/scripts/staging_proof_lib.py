@@ -48,6 +48,7 @@ APPLY_ORDER = [
     "platform_retention_export_v1.sql",
     "platform_whieda_telegram_binding_v1.sql",
     "platform_bot_binding_context_v1.sql",
+    "platform_telegram_durable_inbox_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -57,6 +58,13 @@ RLS_PROOF_TABLES = (
     "website_lead_watchers",
     "referral_agreements",
 )
+
+INBOX_RLS_PROOF_TABLES = (
+    "telegram_update_inbox",
+    "telegram_delivery_outbox",
+)
+
+INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"
 
 LEADS_SCHEMA_FILES = (
     SQL_DIR / "whieda_website_leads_p0_v1.sql",

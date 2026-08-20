@@ -27,6 +27,7 @@ from staging_proof_lib import (  # noqa: E402
     LOCAL_STAGING_SUPERPASSWORD,
     LOCAL_STAGING_SUPERUSER,
     RLS_PROOF_TABLES,
+    INBOX_RLS_PROOF_TABLES,
     SEED,
     SQL_DIR,
     validate_proof_db_name,
@@ -179,6 +180,7 @@ CREATE ROLE {API_PROOF_ROLE} WITH LOGIN PASSWORD '{API_PROOF_PASSWORD}'
 GRANT CONNECT ON DATABASE "{db}" TO {API_PROOF_ROLE};
 GRANT USAGE ON SCHEMA public TO {API_PROOF_ROLE};
 GRANT EXECUTE ON FUNCTION platform_set_tenant_context(text) TO {API_PROOF_ROLE};
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {API_PROOF_ROLE};
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {API_PROOF_ROLE};
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {API_PROOF_ROLE};
 """,
@@ -216,6 +218,25 @@ INSERT INTO referral_agreements (tenant_id, ref_code, owner_id, status)
 VALUES
   ('whieda', 'ladnaya', 'ladnaya', 'draft'),
   ('test-acme', 'acme-ref', 'acme-owner', 'draft');
+
+INSERT INTO telegram_update_inbox (
+  binding_id, tenant_id, telegram_update_id, payload, state
+) VALUES
+  (
+    'whieda-advisor-bot',
+    'whieda',
+    91001,
+    '{"update_id": 91001, "message": {"text": "ping", "chat": {"id": 1, "type": "private"}}}'::jsonb,
+    'pending'
+  ),
+  (
+    'test-acme-bot-binding',
+    'test-acme',
+    91001,
+    '{"update_id": 91001, "message": {"text": "ping", "chat": {"id": 2, "type": "private"}}}'::jsonb,
+    'pending'
+  )
+ON CONFLICT (binding_id, telegram_update_id) DO NOTHING;
 """,
         user=LOCAL_STAGING_SUPERUSER,
         password=LOCAL_STAGING_SUPERPASSWORD,
@@ -276,6 +297,15 @@ def run_rls_checks(db: str) -> None:
             raise AssertionError(f"{table}: whieda context must not see test-acme rows (got {foreign})")
         checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
 
+    for table in INBOX_RLS_PROOF_TABLES:
+        own = api_count(db, "whieda", table, "tenant_id = 'whieda'")
+        foreign = api_count(db, "whieda", table, "tenant_id = 'test-acme'")
+        if own < 1 and table == "telegram_update_inbox":
+            raise AssertionError(f"{table}: whieda context must see whieda rows (got {own})")
+        if foreign != 0:
+            raise AssertionError(f"{table}: whieda context must not see test-acme rows (got {foreign})")
+        checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
+
     api_expect_fail(
         db,
         """
@@ -289,6 +319,19 @@ INSERT INTO website_leads (
     )
     checks.append("website_leads: cross-tenant INSERT rejected")
 
+    api_expect_fail(
+        db,
+        """
+SELECT platform_set_tenant_context('whieda');
+INSERT INTO telegram_update_inbox (
+  binding_id, tenant_id, telegram_update_id, payload
+) VALUES (
+  'test-acme-bot-binding', 'test-acme', 91099, '{"update_id": 91099}'::jsonb
+);
+""",
+    )
+    checks.append("telegram_update_inbox: cross-tenant INSERT rejected")
+
     role_flags = psql_scalar(
         db,
         f"SELECT rolsuper::text || '|' || rolbypassrls::text FROM pg_roles WHERE rolname='{API_PROOF_ROLE}';",
@@ -298,6 +341,155 @@ INSERT INTO website_leads (
     if role_flags != "false|false":
         raise AssertionError(f"{API_PROOF_ROLE} must not be superuser/bypassrls (got {role_flags})")
     checks.append(f"{API_PROOF_ROLE}: superuser=false bypassrls=false")
+
+    for line in checks:
+        print(f"  PASS {line}")
+
+
+def run_inbox_durable_checks(db: str) -> None:
+    print("=== Durable Telegram inbox uniqueness and lease ===")
+    checks: list[str] = []
+    super_kw = {
+        "user": LOCAL_STAGING_SUPERUSER,
+        "password": LOCAL_STAGING_SUPERPASSWORD,
+    }
+
+    tables = psql_scalar(
+        db,
+        """
+SELECT (to_regclass('public.telegram_update_inbox') IS NOT NULL)
+   AND (to_regclass('public.telegram_delivery_outbox') IS NOT NULL);
+""",
+        **super_kw,
+    )
+    if tables != "t":
+        raise AssertionError(f"inbox/outbox tables missing: {tables}")
+    checks.append("inbox and outbox tables exist")
+
+    first = psql_scalar(
+        db,
+        """
+SELECT inserted
+FROM telegram_inbox_enqueue(
+  'whieda-advisor-bot',
+  'whieda',
+  92001,
+  '{"update_id": 92001}'::jsonb
+);
+""",
+        **super_kw,
+    )
+    second = psql_scalar(
+        db,
+        """
+SELECT inserted
+FROM telegram_inbox_enqueue(
+  'whieda-advisor-bot',
+  'whieda',
+  92001,
+  '{"update_id": 92001}'::jsonb
+);
+""",
+        **super_kw,
+    )
+    same_binding = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_update_inbox
+WHERE binding_id = 'whieda-advisor-bot' AND telegram_update_id = 92001;
+""",
+        **super_kw,
+    )
+    if first != "t" or second != "f" or same_binding != "1":
+        raise AssertionError(
+            f"same binding+update must insert once (first={first} second={second} count={same_binding})"
+        )
+    checks.append("same binding+update_id is unique")
+
+    psql_exec(
+        db,
+        """
+SELECT telegram_inbox_enqueue(
+  'test-acme-bot-binding',
+  'test-acme',
+  92001,
+  '{"update_id": 92001}'::jsonb
+);
+""",
+        **super_kw,
+    )
+    isolated = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_update_inbox
+WHERE telegram_update_id = 92001
+  AND binding_id IN ('whieda-advisor-bot', 'test-acme-bot-binding');
+""",
+        **super_kw,
+    )
+    if isolated != "2":
+        raise AssertionError(f"same update_id in two bindings must be two rows (got {isolated})")
+    checks.append("WHIEDA vs other binding isolate the same update_id")
+
+    claimed = psql_scalar(
+        db,
+        """
+SELECT lease_owner
+FROM telegram_inbox_claim_by_id(
+  (SELECT inbox_id FROM telegram_update_inbox
+   WHERE binding_id = 'whieda-advisor-bot' AND telegram_update_id = 92001),
+  'owner-a',
+  30
+);
+""",
+        **super_kw,
+    )
+    if claimed != "owner-a":
+        raise AssertionError(f"first claim must own the row (got {claimed!r})")
+    second_claim = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_inbox_claim_by_id(
+  (SELECT inbox_id FROM telegram_update_inbox
+   WHERE binding_id = 'whieda-advisor-bot' AND telegram_update_id = 92001),
+  'owner-b',
+  30
+);
+""",
+        **super_kw,
+    )
+    if second_claim != "0":
+        raise AssertionError("active lease must not be stolen")
+    checks.append("parallel claim keeps a single owner")
+
+    psql_exec(
+        db,
+        """
+UPDATE telegram_update_inbox
+SET lease_until = now() - interval '1 second'
+WHERE binding_id = 'whieda-advisor-bot' AND telegram_update_id = 92001;
+""",
+        **super_kw,
+    )
+    retry_owner = psql_scalar(
+        db,
+        """
+SELECT lease_owner
+FROM telegram_inbox_claim_by_id(
+  (SELECT inbox_id FROM telegram_update_inbox
+   WHERE binding_id = 'whieda-advisor-bot' AND telegram_update_id = 92001),
+  'owner-b',
+  30
+);
+""",
+        **super_kw,
+    )
+    if retry_owner != "owner-b":
+        raise AssertionError(f"expired lease must be reclaimable (got {retry_owner!r})")
+    checks.append("expired lease is retryable from DB state")
 
     for line in checks:
         print(f"  PASS {line}")
@@ -508,11 +700,13 @@ def main() -> int:
         create_api_role(db)
         seed_rls_fixtures(db)
         run_rls_checks(db)
+        run_inbox_durable_checks(db)
 
         print("\n=== LOCAL STAGING PROOF: PASS ===")
         print(f"  SQL files x2: {len(APPLY_ORDER)}")
         print("  journey seed: skipped (stale vs onboarding schema)")
         print(f"  RLS tables: {', '.join(RLS_PROOF_TABLES)}")
+        print(f"  Inbox RLS tables: {', '.join(INBOX_RLS_PROOF_TABLES)}")
         print(f"  Role: {API_PROOF_ROLE} (NOBYPASSRLS)")
         exit_code = 0
     except subprocess.CalledProcessError as exc:
