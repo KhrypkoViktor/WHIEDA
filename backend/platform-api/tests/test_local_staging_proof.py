@@ -17,10 +17,12 @@ from staging_proof_lib import (
     ALLOWED_VERIFY_DB,
     APPLY_ORDER,
     APPLY_PS1,
+    BACKFILL_PLAN,
     FORBIDDEN_HOST_FRAGMENTS,
     LOCAL_STAGING_HOST,
     LOCAL_STAGING_PORT,
     RLS_PROOF_TABLES,
+    apply_script_files,
     legacy_rls_covers_lead_tables,
     tenant_scoped_lead_tables,
     validate_proof_db_name,
@@ -78,9 +80,28 @@ def test_proof_port_is_docker_only():
 
 
 def test_sql_order_matches_apply_ps1():
-    text = APPLY_PS1.read_text(encoding="utf-8")
-    positions = [text.index(name) for name in APPLY_ORDER]
-    assert positions == sorted(positions)
+    assert apply_script_files() == APPLY_ORDER
+
+
+def test_binding_context_is_last_apply_file_once():
+    assert APPLY_ORDER.count("platform_bot_binding_context_v1.sql") == 1
+    assert APPLY_ORDER[-1] == "platform_bot_binding_context_v1.sql"
+    assert APPLY_ORDER[-2] == "platform_whieda_telegram_binding_v1.sql"
+    listed = apply_script_files()
+    assert listed.count("platform_bot_binding_context_v1.sql") == 1
+    assert BACKFILL_PLAN.is_file()
+    assert BACKFILL_PLAN.name not in listed
+    assert BACKFILL_PLAN.name not in APPLY_PS1.read_text(encoding="utf-8")
+    apply_text = APPLY_PS1.read_text(encoding="utf-8")
+    assert "skip staging_seed_whieda_journey_v1.sql" in apply_text
+    assert "-f `$Seed" not in apply_text and '-f $Seed' not in apply_text
+
+
+def test_apply_order_sql_does_not_seed_nsp_maxim():
+    sql_dir = ROOT / "postgres" / "sql"
+    for name in APPLY_ORDER:
+        text = (sql_dir / name).read_text(encoding="utf-8").lower()
+        assert "nsp-maxim" not in text
 
 
 def test_legacy_rls_covers_all_tenant_lead_tables():

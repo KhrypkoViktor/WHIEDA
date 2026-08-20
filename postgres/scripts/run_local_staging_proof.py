@@ -60,6 +60,7 @@ def run(
         check=check,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env or os.environ.copy(),
         cwd=str(cwd) if cwd else None,
         input=input_text,
@@ -140,8 +141,10 @@ def apply_all_migrations(db: str, *, pass_label: str) -> None:
         print(f"  -> {name}")
         psql_file(db, path, user=LOCAL_STAGING_SUPERUSER, password=LOCAL_STAGING_SUPERPASSWORD)
     if SEED.is_file():
-        print("  -> staging_seed_whieda_journey_v1.sql")
-        psql_file(db, SEED, user=LOCAL_STAGING_SUPERUSER, password=LOCAL_STAGING_SUPERPASSWORD)
+        print(
+            "  skip staging_seed_whieda_journey_v1.sql "
+            "(stale vs platform_onboarding_v1.sql; Gate B1 does not invent replacement seed)"
+        )
 
 
 def create_api_role(db: str) -> None:
@@ -300,6 +303,155 @@ INSERT INTO website_leads (
         print(f"  PASS {line}")
 
 
+def run_binding_isolation_checks(db: str) -> None:
+    print("=== Telegram binding isolation after apply ===")
+    checks: list[str] = []
+    super_kw = {
+        "user": LOCAL_STAGING_SUPERUSER,
+        "password": LOCAL_STAGING_SUPERPASSWORD,
+    }
+
+    table = psql_scalar(
+        db,
+        "SELECT to_regclass('public.tenant_bot_bindings') IS NOT NULL;",
+        **super_kw,
+    )
+    if table != "t":
+        raise AssertionError("tenant_bot_bindings was not created")
+    checks.append("tenant_bot_bindings exists")
+
+    columns = psql_scalar(
+        db,
+        """
+SELECT string_agg(column_name, ',' ORDER BY column_name)
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'tenant_bot_bindings';
+""",
+        **super_kw,
+    )
+    for required in (
+        "binding_id",
+        "tenant_id",
+        "webhook_secret_ref",
+        "bot_token_ref",
+        "bot_username",
+        "processing_mode",
+        "status",
+    ):
+        if required not in columns.split(","):
+            raise AssertionError(f"tenant_bot_bindings missing column {required}: {columns}")
+    checks.append("binding context columns present")
+
+    nsp_tenants = psql_scalar(
+        db,
+        "SELECT count(*)::text FROM tenants WHERE tenant_id = 'nsp-maxim';",
+        **super_kw,
+    )
+    if nsp_tenants != "0":
+        raise AssertionError(f"Core apply must not create nsp-maxim tenant (got {nsp_tenants})")
+    nsp_bindings = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM tenant_bot_bindings
+WHERE tenant_id = 'nsp-maxim'
+   OR binding_id LIKE 'nsp%';
+""",
+        **super_kw,
+    )
+    if nsp_bindings != "0":
+        raise AssertionError(f"Core apply must not create NSP bindings (got {nsp_bindings})")
+    checks.append("nsp-maxim absent after Core apply")
+
+    unknown = psql_scalar(
+        db,
+        "SELECT count(*)::text FROM tenant_bot_bindings WHERE binding_id = 'unknown-binding-does-not-exist';",
+        **super_kw,
+    )
+    if unknown != "0":
+        raise AssertionError("unknown binding_id resolved to a row")
+    checks.append("unknown binding_id has no row")
+
+    whieda_bot = psql_scalar(
+        db,
+        """
+SELECT tenant_id || '|' || status || '|' || coalesce(bot_username, '')
+FROM tenant_bot_bindings
+WHERE binding_id = 'whieda-advisor-bot';
+""",
+        **super_kw,
+    )
+    if not whieda_bot.startswith("whieda|active|"):
+        raise AssertionError(f"WHIEDA advisor binding drifted: {whieda_bot!r}")
+    checks.append("whieda-advisor-bot stays on whieda")
+
+    # Local fixture only: prove a disabled NSP binding cannot attach to WHIEDA.
+    psql_exec(
+        db,
+        """
+INSERT INTO tenants (tenant_id, display_name, status, default_locale)
+VALUES ('nsp-maxim', 'NSP Maxim', 'draft', 'ru')
+ON CONFLICT (tenant_id) DO UPDATE
+SET status = 'draft', updated_at = now();
+
+INSERT INTO tenant_bot_bindings (
+  binding_id, tenant_id, webhook_secret_ref, bot_token_ref, bot_username, processing_mode, status
+) VALUES (
+  'nsp-maxim-disabled-proof',
+  'nsp-maxim',
+  'env:NSP_TELEGRAM_WEBHOOK_SECRET',
+  'env:NSP_TELEGRAM_BOT_TOKEN',
+  'NSP_Leader_bot',
+  'core',
+  'disabled'
+)
+ON CONFLICT (binding_id) DO UPDATE
+SET tenant_id = EXCLUDED.tenant_id,
+    status = 'disabled',
+    processing_mode = 'core';
+""",
+        **super_kw,
+    )
+    nsp_row = psql_scalar(
+        db,
+        """
+SELECT tenant_id || '|' || status
+FROM tenant_bot_bindings
+WHERE binding_id = 'nsp-maxim-disabled-proof';
+""",
+        **super_kw,
+    )
+    if nsp_row != "nsp-maxim|disabled":
+        raise AssertionError(f"disabled NSP binding must stay on nsp-maxim: {nsp_row!r}")
+    hijack = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM tenant_bot_bindings
+WHERE binding_id = 'nsp-maxim-disabled-proof' AND tenant_id = 'whieda';
+""",
+        **super_kw,
+    )
+    if hijack != "0":
+        raise AssertionError("disabled NSP binding attached to WHIEDA tenant")
+    fallback = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM tenant_bot_bindings
+WHERE tenant_id = 'whieda'
+  AND binding_id IN ('unknown-binding-does-not-exist', 'nsp-maxim-disabled-proof');
+""",
+        **super_kw,
+    )
+    if fallback != "0":
+        raise AssertionError("unknown/disabled NSP identity fell into WHIEDA tenant")
+    checks.append("disabled nsp-maxim binding does not fall into WHIEDA")
+
+    for line in checks:
+        print(f"  PASS {line}")
+
+
 def drop_db(db: str) -> None:
     psql_exec(
         "postgres",
@@ -351,12 +503,15 @@ def main() -> int:
         apply_all_migrations(db, pass_label="pass 1/2")
         apply_all_migrations(db, pass_label="pass 2/2 (idempotent)")
 
+        run_binding_isolation_checks(db)
+
         create_api_role(db)
         seed_rls_fixtures(db)
         run_rls_checks(db)
 
         print("\n=== LOCAL STAGING PROOF: PASS ===")
-        print(f"  SQL files x2: {len(APPLY_ORDER)} (+ seed)")
+        print(f"  SQL files x2: {len(APPLY_ORDER)}")
+        print("  journey seed: skipped (stale vs onboarding schema)")
         print(f"  RLS tables: {', '.join(RLS_PROOF_TABLES)}")
         print(f"  Role: {API_PROOF_ROLE} (NOBYPASSRLS)")
         exit_code = 0
