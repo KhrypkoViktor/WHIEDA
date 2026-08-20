@@ -12,8 +12,9 @@ $Root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $SqlDir = Join-Path $Root "postgres\sql"
 
 # Order: registry/RLS helpers, existing leads schema + RLS, session/journey
-# stack, WHIEDA telegram binding row, then binding-context columns/backfill
-# of WHIEDA rows. Binding-context file is listed once. Do not apply production.
+# stack, WHIEDA telegram binding row, binding-context columns/backfill of
+# WHIEDA rows, then durable Telegram inbox/outbox. Each file listed once.
+# Do not apply production.
 $Files = @(
     "platform_tenant_registry_v1.sql",
     "platform_tenant_rls_v1.sql",
@@ -27,7 +28,8 @@ $Files = @(
     "platform_pilot_telemetry_v1.sql",
     "platform_retention_export_v1.sql",
     "platform_whieda_telegram_binding_v1.sql",
-    "platform_bot_binding_context_v1.sql"
+    "platform_bot_binding_context_v1.sql",
+    "platform_telegram_durable_inbox_v1.sql"
 )
 
 if ($CreateDb) {

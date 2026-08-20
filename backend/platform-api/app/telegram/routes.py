@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.advisor.service import handle_structured_query
 from app.settings import get_settings
@@ -20,8 +20,10 @@ from app.telegram.bindings import (
 from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
 from app.telegram.log_safe import chat_ref
 from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
+from app.telegram.inbox import compact_telegram_payload, get_inbox_store
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.sequencer import build_message_fingerprint, get_chat_sequencer
+from app.telegram.worker import dispatch_inbox_work
 from app.telegram.update_parser import (
     parse_telegram_callback,
     parse_telegram_message,
@@ -253,5 +255,27 @@ async def telegram_webhook(
     )
     update = await request.json()
     trace_id = get_trace_id(request)
-    background_tasks.add_task(_process_telegram_update, binding, update, trace_id)
+    payload = compact_telegram_payload(update if isinstance(update, dict) else None)
+    if payload is None:
+        return {"ok": True}
+    try:
+        enqueued = await get_inbox_store().enqueue(
+            binding_id=binding.binding_id,
+            tenant_id=binding.tenant.tenant_id,
+            telegram_update_id=int(payload["update_id"]),
+            payload=payload,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "telegram_inbox_unavailable"},
+        ) from exc
+    background_tasks.add_task(
+        dispatch_inbox_work,
+        preferred_inbox_id=enqueued.inbox_id,
+        webhook_binding=binding,
+        trace_id=trace_id,
+    )
     return {"ok": True}

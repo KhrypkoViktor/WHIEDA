@@ -1,15 +1,42 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import html
 import logging
 import re
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
 from app.telegram.log_safe import chat_ref
 
 logger = logging.getLogger(__name__)
+
+_allowed_bot_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "telegram_allowed_bot_token",
+    default=None,
+)
+
+
+class TelegramDeliveryError(RuntimeError):
+    """Raised on the durable-inbox worker path when Telegram send fails."""
+
+
+@contextlib.contextmanager
+def outbound_binding_guard(bot_token: str) -> Iterator[None]:
+    token = _allowed_bot_token.set(bot_token)
+    try:
+        yield
+    finally:
+        _allowed_bot_token.reset(token)
+
+
+def _assert_outbound_token(bot_token: str) -> None:
+    allowed = _allowed_bot_token.get()
+    if allowed is not None and allowed != bot_token:
+        raise RuntimeError("foreign_bot_token_forbidden")
+
 
 _ALLOWED_HTML_TAGS = ("b", "strong", "i", "em")
 
@@ -37,6 +64,7 @@ async def send_telegram_text(
 ) -> dict[str, Any]:
     if not text.strip():
         return {"ok": False, "skipped": True}
+    _assert_outbound_token(bot_token)
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload: dict[str, Any] = {
         "chat_id": chat_id,
@@ -54,7 +82,10 @@ async def send_telegram_text(
             "telegram_send_failed",
             extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
         )
-        return {"ok": False, "status_code": response.status_code, "detail": data}
+        result = {"ok": False, "status_code": response.status_code, "detail": data}
+        if _allowed_bot_token.get() is not None:
+            raise TelegramDeliveryError(f"telegram_send_failed:{response.status_code}")
+        return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
@@ -68,6 +99,7 @@ async def send_telegram_photo(
     """Send photo without caption — text is always a separate message."""
     if not photo_url.strip():
         return {"ok": False, "skipped": True}
+    _assert_outbound_token(bot_token)
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     payload: dict[str, Any] = {
         "chat_id": chat_id,
@@ -96,6 +128,7 @@ async def answer_callback_query(
     """Acknowledge callback_query without logging user-visible callback text."""
     if not callback_query_id or not bot_token:
         return {"ok": False, "skipped": True}
+    _assert_outbound_token(bot_token)
     url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
     payload: dict[str, Any] = {"callback_query_id": callback_query_id}
     if text and text.strip():

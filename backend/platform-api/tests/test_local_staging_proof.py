@@ -85,10 +85,12 @@ def test_sql_order_matches_apply_ps1():
 
 def test_binding_context_is_last_apply_file_once():
     assert APPLY_ORDER.count("platform_bot_binding_context_v1.sql") == 1
-    assert APPLY_ORDER[-1] == "platform_bot_binding_context_v1.sql"
-    assert APPLY_ORDER[-2] == "platform_whieda_telegram_binding_v1.sql"
+    assert APPLY_ORDER[-1] == "platform_telegram_durable_inbox_v1.sql"
+    assert APPLY_ORDER[-2] == "platform_bot_binding_context_v1.sql"
+    assert APPLY_ORDER[-3] == "platform_whieda_telegram_binding_v1.sql"
     listed = apply_script_files()
     assert listed.count("platform_bot_binding_context_v1.sql") == 1
+    assert listed.count("platform_telegram_durable_inbox_v1.sql") == 1
     assert BACKFILL_PLAN.is_file()
     assert BACKFILL_PLAN.name not in listed
     assert BACKFILL_PLAN.name not in APPLY_PS1.read_text(encoding="utf-8")

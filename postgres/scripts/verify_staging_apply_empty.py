@@ -33,6 +33,8 @@ REQUIRED_TABLES = [
     "user_memory_facts",
     "pilot_daily_metrics",
     "data_retention_registry",
+    "telegram_update_inbox",
+    "telegram_delivery_outbox",
 ]
 
 
