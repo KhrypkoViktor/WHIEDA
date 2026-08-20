@@ -10,6 +10,7 @@ SQL_DIR = ROOT / "postgres" / "sql"
 COMPOSE_FILE = ROOT / "postgres" / "docker-compose.local-staging.yml"
 SEED = ROOT / "postgres" / "scripts" / "staging_seed_whieda_journey_v1.sql"
 APPLY_PS1 = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
+BACKFILL_PLAN = ROOT / "postgres" / "scripts" / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 LOCAL_STAGING_HOST = "127.0.0.1"
 LOCAL_STAGING_PORT = 55432
@@ -46,6 +47,7 @@ APPLY_ORDER = [
     "platform_pilot_telemetry_v1.sql",
     "platform_retention_export_v1.sql",
     "platform_whieda_telegram_binding_v1.sql",
+    "platform_bot_binding_context_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -62,6 +64,13 @@ LEADS_SCHEMA_FILES = (
 )
 
 RLS_LEGACY_FILE = SQL_DIR / "platform_tenant_rls_legacy_leads_v1.sql"
+
+
+def apply_script_files(text: str | None = None) -> list[str]:
+    source = APPLY_PS1.read_text(encoding="utf-8") if text is None else text
+    start = source.index("$Files = @(")
+    end = source.index(")", start)
+    return re.findall(r'"([^"\n]+\.sql)"', source[start:end])
 
 
 def validate_proof_db_name(db: str) -> None:

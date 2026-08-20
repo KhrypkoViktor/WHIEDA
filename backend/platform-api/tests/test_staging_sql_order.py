@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SQL_DIR = ROOT / "postgres" / "sql"
 APPLY_SCRIPT = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
 RLS_CORE = SQL_DIR / "platform_tenant_rls_v1.sql"
+sys.path.insert(0, str(ROOT / "postgres" / "scripts"))
 
-EXPECTED_ORDER = [
-    "platform_tenant_registry_v1.sql",
-    "platform_tenant_rls_v1.sql",
-    "whieda_website_leads_p0_v1.sql",
-    "wwc_leads_p01_runtime_migration.sql",
-    "platform_tenant_rls_legacy_leads_v1.sql",
-    "platform_api_session_context_v1.sql",
-    "platform_identity_journey_v1.sql",
-    "platform_onboarding_v1.sql",
-    "platform_user_memory_v1.sql",
-    "platform_pilot_telemetry_v1.sql",
-    "platform_retention_export_v1.sql",
-    "platform_whieda_telegram_binding_v1.sql",
-]
+from staging_proof_lib import APPLY_ORDER, apply_script_files
+
+EXPECTED_ORDER = list(APPLY_ORDER)
 
 
 def test_all_sql_files_exist():
@@ -31,9 +22,7 @@ def test_all_sql_files_exist():
 
 
 def test_apply_script_lists_full_order():
-    text = APPLY_SCRIPT.read_text(encoding="utf-8")
-    positions = [text.index(name) for name in EXPECTED_ORDER]
-    assert positions == sorted(positions), "apply_staging_platform_all.ps1 order wrong"
+    assert apply_script_files() == EXPECTED_ORDER
 
 
 def test_core_rls_does_not_touch_legacy_leads_tables():
@@ -42,9 +31,23 @@ def test_core_rls_does_not_touch_legacy_leads_tables():
     assert "referral_profiles" not in text
 
 
-def test_bot_binding_context_sql_exists_outside_apply_order():
+def test_bot_binding_context_sql_is_in_apply_order_once():
     name = "platform_bot_binding_context_v1.sql"
     assert (SQL_DIR / name).is_file()
-    apply_text = APPLY_SCRIPT.read_text(encoding="utf-8")
-    assert name not in apply_text
-    assert name not in EXPECTED_ORDER
+    listed = apply_script_files()
+    assert listed.count(name) == 1
+    assert EXPECTED_ORDER.count(name) == 1
+    assert listed.index("platform_whieda_telegram_binding_v1.sql") < listed.index(name)
+
+
+def test_apply_script_lists_each_expected_file_once():
+    listed = apply_script_files()
+    assert listed == EXPECTED_ORDER
+    assert len(listed) == len(set(listed))
+
+
+def test_core_apply_sql_does_not_seed_nsp_maxim():
+    for name in EXPECTED_ORDER:
+        text = (SQL_DIR / name).read_text(encoding="utf-8").lower()
+        assert "nsp-maxim" not in text
+        assert "nsp_maxim" not in text

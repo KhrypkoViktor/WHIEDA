@@ -11,17 +11,23 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $SqlDir = Join-Path $Root "postgres\sql"
 
-# Order matters: tenancy + RLS helpers before tenant-scoped tables; binding after registry.
+# Order: registry/RLS helpers, existing leads schema + RLS, session/journey
+# stack, WHIEDA telegram binding row, then binding-context columns/backfill
+# of WHIEDA rows. Binding-context file is listed once. Do not apply production.
 $Files = @(
     "platform_tenant_registry_v1.sql",
     "platform_tenant_rls_v1.sql",
+    "whieda_website_leads_p0_v1.sql",
+    "wwc_leads_p01_runtime_migration.sql",
+    "platform_tenant_rls_legacy_leads_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
     "platform_user_memory_v1.sql",
     "platform_pilot_telemetry_v1.sql",
     "platform_retention_export_v1.sql",
-    "platform_whieda_telegram_binding_v1.sql"
+    "platform_whieda_telegram_binding_v1.sql",
+    "platform_bot_binding_context_v1.sql"
 )
 
 if ($CreateDb) {
@@ -47,9 +53,7 @@ foreach ($f in $Files) {
 
 $Seed = Join-Path $Root "postgres\scripts\staging_seed_whieda_journey_v1.sql"
 if (Test-Path $Seed) {
-    Write-Host "  -> staging_seed_whieda_journey_v1.sql"
-    & psql -h $DbHost -p $Port -U $User -d $Db -f $Seed
-    if ($LASTEXITCODE -ne 0) { throw "psql failed on staging seed" }
+    Write-Host "  skip staging_seed_whieda_journey_v1.sql (stale vs onboarding schema; not in APPLY_ORDER)"
 }
 
 Write-Host "OK: staging platform SQL applied."
