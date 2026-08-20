@@ -7,6 +7,8 @@ from typing import Any
 
 import httpx
 
+from app.telegram.log_safe import chat_ref
+
 logger = logging.getLogger(__name__)
 
 _ALLOWED_HTML_TAGS = ("b", "strong", "i", "em")
@@ -50,7 +52,7 @@ async def send_telegram_text(
     if response.status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_send_failed",
-            extra={"status": response.status_code, "chat_id": chat_id},
+            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
         )
         return {"ok": False, "status_code": response.status_code, "detail": data}
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
@@ -77,7 +79,7 @@ async def send_telegram_photo(
     if response.status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_photo_failed",
-            extra={"status": response.status_code, "chat_id": chat_id},
+            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
         )
         return {"ok": False, "status_code": response.status_code, "detail": data}
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
@@ -143,7 +145,9 @@ async def deliver_structured_advisor_response(
         )
         result["photo_sent"] = bool(photo_result.get("ok"))
         if not result["photo_sent"]:
-            logger.warning("telegram_photo_fallback_to_text", extra={"chat_id": str(chat_id)})
+            logger.warning(
+                "telegram_photo_fallback_to_text", extra={"chat_id": chat_ref(chat_id)}
+            )
 
     if text:
         text_result = await send_telegram_text(

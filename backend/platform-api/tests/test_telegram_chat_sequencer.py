@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,6 +13,22 @@ from app.advisor.sql.engine import SERVICE_FALLBACKS
 from app.advisor.sql.text import detect_service_intent, is_unsupported_topic
 from app.telegram.routes import _process_telegram_update
 from app.telegram.sequencer import ChatUpdateSequencer, reset_chat_sequencer_for_tests
+from app.telegram.bindings import BotBindingContext
+
+
+@pytest.fixture
+def whieda_bot_binding(whieda_tenant):
+    return BotBindingContext(
+        binding_id="whieda-test-binding",
+        tenant=whieda_tenant,
+        bot_token_ref="env:TEST_WHIEDA_BOT_TOKEN",
+        webhook_secret_ref="env:TEST_WHIEDA_WEBHOOK_SECRET",
+        bot_username="WHIEDA_Advisor_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="whieda-test-token",
+        webhook_secret="whieda-test-secret",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -165,11 +182,7 @@ async def test_failed_update_is_not_remembered_so_retry_allowed():
 
 
 @pytest.mark.asyncio
-async def test_routes_duplicate_update_skips_delivery_callback(monkeypatch, whieda_tenant):
-    monkeypatch.setenv("CORE_ROUTE_TELEGRAM", "core")
-    from app.settings import get_settings
-
-    get_settings.cache_clear()
+async def test_routes_duplicate_update_skips_delivery_callback(whieda_bot_binding):
     deliveries = 0
 
     async def fake_core(*_args, **_kwargs):
@@ -177,21 +190,54 @@ async def test_routes_duplicate_update_skips_delivery_callback(monkeypatch, whie
         deliveries += 1
         await asyncio.sleep(0.02)
 
-    with patch("app.telegram.routes.resolve_tenant_from_bot_binding", AsyncMock(return_value=whieda_tenant)):
-        with patch("app.telegram.routes.process_core_telegram_update", side_effect=fake_core):
-            update = {
-                "update_id": 9002,
-                "message": {
-                    "text": "что можешь",
-                    "chat": {"id": 556, "type": "private"},
-                    "from": {"id": 1},
-                },
-            }
-            await asyncio.gather(
-                _process_telegram_update("binding", update, "trace-dup-deliver"),
-                _process_telegram_update("binding", update, "trace-dup-deliver"),
-            )
+    with patch("app.telegram.routes.process_core_telegram_update", side_effect=fake_core):
+        update = {
+            "update_id": 9002,
+            "message": {
+                "text": "что можешь",
+                "chat": {"id": 556, "type": "private"},
+                "from": {"id": 1},
+            },
+        }
+        await asyncio.gather(
+            _process_telegram_update(whieda_bot_binding, update, "trace-dup-deliver"),
+            _process_telegram_update(whieda_bot_binding, update, "trace-dup-deliver"),
+        )
     assert deliveries == 1
+
+
+@pytest.mark.asyncio
+async def test_same_update_and_chat_ids_do_not_collide_across_bindings(
+    whieda_bot_binding,
+):
+    deliveries: list[str] = []
+
+    async def fake_core(_tenant, _update, _trace, *, binding):
+        deliveries.append(binding.binding_id)
+
+    nsp_binding = replace(
+        whieda_bot_binding,
+        binding_id="nsp-binding",
+        bot_token_ref="env:NSP_BOT_TOKEN",
+        webhook_secret_ref="env:NSP_WEBHOOK_SECRET",
+        bot_username="NSP_Leader_bot",
+        bot_token="nsp-token",
+        webhook_secret="nsp-secret",
+    )
+    update = {
+        "update_id": 9002,
+        "message": {
+            "text": "что можешь",
+            "chat": {"id": 556, "type": "private"},
+            "from": {"id": 1},
+        },
+    }
+
+    with patch("app.telegram.routes.process_core_telegram_update", side_effect=fake_core):
+        await _process_telegram_update(whieda_bot_binding, update, "trace-whieda")
+        await _process_telegram_update(nsp_binding, update, "trace-nsp")
+
+    assert deliveries == ["whieda-test-binding", "nsp-binding"]
 
 
 @pytest.mark.asyncio
@@ -212,11 +258,7 @@ async def test_failure_releases_chat_for_next_message():
 
 
 @pytest.mark.asyncio
-async def test_routes_duplicate_update_skips_processor(monkeypatch):
-    monkeypatch.setenv("CORE_ROUTE_TELEGRAM", "core")
-    from app.settings import get_settings
-
-    get_settings.cache_clear()
+async def test_routes_duplicate_update_skips_processor(whieda_bot_binding):
     calls = 0
 
     async def fake_body(*_args, **_kwargs):
@@ -230,7 +272,7 @@ async def test_routes_duplicate_update_skips_processor(monkeypatch):
             "message": {"text": "что можешь", "chat": {"id": 555}, "from": {"id": 1}},
         }
         await asyncio.gather(
-            _process_telegram_update("binding", update, "trace-1"),
-            _process_telegram_update("binding", update, "trace-1"),
+            _process_telegram_update(whieda_bot_binding, update, "trace-1"),
+            _process_telegram_update(whieda_bot_binding, update, "trace-1"),
         )
     assert calls == 1
