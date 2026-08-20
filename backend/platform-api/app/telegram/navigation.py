@@ -197,9 +197,14 @@ def parse_callback_data(data: str) -> ParsedCallback | None:
     return None
 
 
-def main_menu_reply_keyboard() -> dict[str, Any]:
+def main_menu_reply_keyboard(*, include_calculator: bool = True) -> dict[str, Any]:
+    labels = tuple(
+        label
+        for label in MENU_LABELS
+        if include_calculator or label != LABEL_CALCULATOR
+    )
     return {
-        "keyboard": [[{"text": label}] for label in MENU_LABELS],
+        "keyboard": [[{"text": label}] for label in labels],
         "resize_keyboard": True,
         "is_persistent": True,
     }

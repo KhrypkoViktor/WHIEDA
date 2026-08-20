@@ -40,3 +40,11 @@ def test_core_rls_does_not_touch_legacy_leads_tables():
     text = RLS_CORE.read_text(encoding="utf-8").lower()
     assert "website_leads" not in text
     assert "referral_profiles" not in text
+
+
+def test_bot_binding_context_sql_exists_outside_apply_order():
+    name = "platform_bot_binding_context_v1.sql"
+    assert (SQL_DIR / name).is_file()
+    apply_text = APPLY_SCRIPT.read_text(encoding="utf-8")
+    assert name not in apply_text
+    assert name not in EXPECTED_ORDER

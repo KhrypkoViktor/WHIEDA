@@ -8,8 +8,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.bindings import BotBindingContext, binding_context_scope
 from app.telegram.processor import (
-    handle_onboarding,
     handle_start_token,
     process_core_telegram_update,
 )
@@ -19,6 +19,21 @@ from app.telegram.update_parser import (
     parse_telegram_message,
     should_process_telegram_message,
 )
+
+
+@pytest.fixture
+def whieda_bot_binding(whieda_tenant):
+    return BotBindingContext(
+        binding_id="whieda-test-binding",
+        tenant=whieda_tenant,
+        bot_token_ref="env:TEST_WHIEDA_BOT_TOKEN",
+        webhook_secret_ref="env:TEST_WHIEDA_WEBHOOK_SECRET",
+        bot_username="WHIEDA_Advisor_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="whieda-test-token",
+        webhook_secret="whieda-test-secret",
+    )
 
 
 def test_parse_start_token():
@@ -63,12 +78,29 @@ def test_group_message_requires_bot_mention_or_reply():
     assert should_process_telegram_message(parse_telegram_message(reply), "WHIEDA_Advisor_bot")
 
 
-@pytest.mark.asyncio
-async def test_group_message_is_ignored_before_advisor(whieda_tenant, monkeypatch):
-    monkeypatch.setenv("PLATFORM_TELEGRAM_BOT_USERNAME", "WHIEDA_Advisor_bot")
-    from app.settings import get_settings
+def test_nsp_group_mention_does_not_accept_whieda_username():
+    base = {
+        "message": {
+            "text": "@WHIEDA_Advisor_bot что такое активатор",
+            "chat": {"id": -100, "type": "supergroup"},
+            "from": {"id": 200},
+        }
+    }
+    nsp = {
+        "message": {
+            "text": "@NSP_Leader_bot что такое активатор",
+            "chat": {"id": -100, "type": "supergroup"},
+            "from": {"id": 200},
+        }
+    }
+    assert not should_process_telegram_message(
+        parse_telegram_message(base), "NSP_Leader_bot"
+    )
+    assert should_process_telegram_message(parse_telegram_message(nsp), "NSP_Leader_bot")
 
-    get_settings.cache_clear()
+
+@pytest.mark.asyncio
+async def test_group_message_is_ignored_before_advisor(whieda_tenant, whieda_bot_binding):
     update = {
         "message": {
             "text": "обычная реплика в группе",
@@ -77,14 +109,15 @@ async def test_group_message_is_ignored_before_advisor(whieda_tenant, monkeypatc
         }
     }
     with patch("app.telegram.processor.handle_advisor_query", AsyncMock()) as advisor:
-        result = await process_core_telegram_update(whieda_tenant, update, "group-ignore")
+        result = await process_core_telegram_update(
+            whieda_tenant, update, "group-ignore", binding=whieda_bot_binding
+        )
     assert result["route"] == "ignored_group_message"
     advisor.assert_not_called()
-    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
-async def test_process_core_routes_start_token(whieda_tenant):
+async def test_process_core_routes_start_token(whieda_tenant, whieda_bot_binding):
     update = {
         "message": {
             "text": "/start opaque-token",
@@ -93,12 +126,14 @@ async def test_process_core_routes_start_token(whieda_tenant):
         }
     }
     with patch("app.telegram.processor.handle_start_token", AsyncMock(return_value={"ok": True, "route": "start_token"})):
-        result = await process_core_telegram_update(whieda_tenant, update, "t1")
+        result = await process_core_telegram_update(
+            whieda_tenant, update, "t1", binding=whieda_bot_binding
+        )
     assert result["route"] == "start_token"
 
 
 @pytest.mark.asyncio
-async def test_process_core_routes_onboarding_before_advisor(whieda_tenant):
+async def test_process_core_routes_onboarding_before_advisor(whieda_tenant, whieda_bot_binding):
     update = {
         "message": {
             "text": "мой план",
@@ -108,13 +143,15 @@ async def test_process_core_routes_onboarding_before_advisor(whieda_tenant):
     }
     with patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value={"ok": True, "route": "onboarding"})):
         with patch("app.telegram.processor.handle_advisor_query", AsyncMock()) as advisor:
-            result = await process_core_telegram_update(whieda_tenant, update, "t2")
+            result = await process_core_telegram_update(
+                whieda_tenant, update, "t2", binding=whieda_bot_binding
+            )
     assert result["route"] == "onboarding"
     advisor.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_handle_start_token_welcomes(whieda_tenant):
+async def test_handle_start_token_welcomes(whieda_tenant, whieda_bot_binding):
     from app.identity.service import LinkTokenExchangeResult
     from app.telegram.update_parser import parse_telegram_message
 
@@ -131,14 +168,15 @@ async def test_handle_start_token_welcomes(whieda_tenant):
     )
     with patch("app.telegram.processor.exchange_telegram_link_token", AsyncMock(return_value=fake)):
         with patch("app.telegram.processor.deliver_text", AsyncMock()) as deliver:
-            result = await handle_start_token(whieda_tenant, msg, "tok", "trace")
+            with binding_context_scope(whieda_bot_binding):
+                result = await handle_start_token(whieda_tenant, msg, "tok", "trace")
     assert result["route"] == "start_token"
     deliver.assert_awaited_once()
     assert "Mentor" in deliver.await_args.args[1]
 
 
 @pytest.mark.asyncio
-async def test_admin_login_start_calls_confirm_not_start_token(whieda_tenant):
+async def test_admin_login_start_calls_confirm_not_start_token(whieda_tenant, whieda_bot_binding):
     update = {
         "update_id": 555001,
         "message": {
@@ -151,7 +189,9 @@ async def test_admin_login_start_calls_confirm_not_start_token(whieda_tenant):
     with patch("app.telegram.admin_login.confirm_login_from_telegram", confirm):
         with patch("app.telegram.admin_login.deliver_text", AsyncMock()) as deliver:
             with patch("app.telegram.processor.handle_start_token", AsyncMock()) as start_token:
-                result = await process_core_telegram_update(whieda_tenant, update, "t-admin")
+                result = await process_core_telegram_update(
+                    whieda_tenant, update, "t-admin", binding=whieda_bot_binding
+                )
     assert result["route"] == "admin_login"
     assert result["update_id"] == 555001
     confirm.assert_awaited_once_with(
@@ -163,7 +203,7 @@ async def test_admin_login_start_calls_confirm_not_start_token(whieda_tenant):
 
 
 @pytest.mark.asyncio
-async def test_admin_login_unknown_user_neutral_refusal():
+async def test_admin_login_unknown_user_neutral_refusal(whieda_bot_binding):
     update = {
         "update_id": 555002,
         "message": {
@@ -179,7 +219,8 @@ async def test_admin_login_unknown_user_neutral_refusal():
         ),
     ):
         with patch("app.telegram.admin_login.deliver_text", AsyncMock()) as deliver:
-            result = await try_handle_admin_login(update, trace_id="t-refuse")
+            with binding_context_scope(whieda_bot_binding):
+                result = await try_handle_admin_login(update, trace_id="t-refuse")
     assert result["ok"] is False
     assert result["status"] == "admin_not_allowed"
     message = deliver.await_args.args[1]
@@ -188,26 +229,23 @@ async def test_admin_login_unknown_user_neutral_refusal():
 
 
 @pytest.mark.asyncio
-async def test_legacy_route_intercepts_admin_login_before_forward(whieda_tenant, monkeypatch):
-    monkeypatch.setenv("CORE_ROUTE_TELEGRAM", "legacy")
-    from app.settings import get_settings
+async def test_legacy_route_intercepts_admin_login_before_forward(whieda_bot_binding):
+    from dataclasses import replace
 
-    get_settings.cache_clear()
     update = {
         "update_id": 555003,
         "message": {
             "text": "/start admin_login_legacy",
-            "chat": {"id": 102},
+            "chat": {"id": 102, "type": "private"},
             "from": {"id": 201},
         },
     }
+    binding = replace(whieda_bot_binding, processing_mode="legacy")
     with patch(
         "app.telegram.routes.try_handle_admin_login",
         AsyncMock(return_value={"ok": True, "route": "admin_login"}),
     ) as admin_login:
         with patch("app.telegram.routes._forward_to_legacy_consultant", AsyncMock()) as legacy:
-            with patch("app.telegram.routes.resolve_tenant_from_bot_binding", AsyncMock(return_value=whieda_tenant)):
-                await _process_telegram_update("whieda-bot", update, "trace-legacy")
+            await _process_telegram_update(binding, update, "trace-legacy")
     admin_login.assert_awaited_once()
     legacy.assert_not_called()
-    get_settings.cache_clear()

@@ -9,7 +9,7 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.advisor.sql import repository as repo
 from app.db import tenant_connection
-from app.settings import get_settings
+from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import (
     answer_callback_query,
     deliver_structured_advisor_response,
@@ -38,41 +38,44 @@ SAFE_MENU_TEXT = (
 )
 
 
+def _include_calculator(tenant: TenantContext) -> bool:
+    return tenant.tenant_id == "whieda"
+
+
 async def _deliver_navigation_text(
     chat_id: int | str,
     text: str,
+    tenant: TenantContext,
     *,
     inline_markup: dict | None = None,
     include_main_menu: bool = True,
 ) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token or not text.strip():
+    if not text.strip():
         return
+    token = current_bot_binding().bot_token
+    include_calculator = _include_calculator(tenant)
     reply_markup = inline_markup
     if include_main_menu and inline_markup is None:
-        reply_markup = main_menu_reply_keyboard()
+        reply_markup = main_menu_reply_keyboard(include_calculator=include_calculator)
     await send_telegram_text(
         chat_id=str(chat_id),
         text=text.strip(),
-        bot_token=settings.telegram_bot_token,
+        bot_token=token,
         reply_markup=reply_markup,
     )
     if include_main_menu and inline_markup is not None:
         await send_telegram_text(
             chat_id=str(chat_id),
             text="Разделы меню:",
-            bot_token=settings.telegram_bot_token,
-            reply_markup=main_menu_reply_keyboard(),
+            bot_token=token,
+            reply_markup=main_menu_reply_keyboard(include_calculator=include_calculator),
         )
 
 
 async def _ack_callback(callback_query_id: str) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token:
-        return
     await answer_callback_query(
         callback_query_id=callback_query_id,
-        bot_token=settings.telegram_bot_token,
+        bot_token=current_bot_binding().bot_token,
     )
 
 
@@ -90,14 +93,14 @@ async def _run_advisor_question(
         "language": "ru",
     }
     core_response = await handle_structured_query(tenant, body, trace_id)
-    settings = get_settings()
-    if settings.telegram_bot_token:
-        await deliver_structured_advisor_response(
-            chat_id,
-            core_response,
-            bot_token=settings.telegram_bot_token,
-            reply_markup=main_menu_reply_keyboard(),
-        )
+    await deliver_structured_advisor_response(
+        chat_id,
+        core_response,
+        bot_token=current_bot_binding().bot_token,
+        reply_markup=main_menu_reply_keyboard(
+            include_calculator=_include_calculator(tenant)
+        ),
+    )
     return core_response
 
 
@@ -114,13 +117,15 @@ async def render_catalog_page(
         if total == 0:
             return (
                 "Каталог пока пуст. Напишите название товара или артикул.",
-                main_menu_reply_keyboard(),
+                main_menu_reply_keyboard(include_calculator=_include_calculator(tenant)),
             )
         total_pages = max(1, math.ceil(total / safe_size))
         if safe_page > total_pages:
             safe_page = total_pages
         products = await repo.list_catalog_products(conn, tenant.tenant_id, safe_page, safe_size)
-    lines = [f"Каталог WHIEDA — страница {safe_page} из {total_pages}", ""]
+    catalog_name = str(tenant.display_name or "").strip()
+    heading = f"Каталог {catalog_name}" if catalog_name else "Каталог"
+    lines = [f"{heading} — страница {safe_page} из {total_pages}", ""]
     for index, product in enumerate(products, start=1):
         name = str(product.get("canonical_name") or product.get("sku") or "").strip()
         lines.append(f"{index}. {name}")
@@ -142,7 +147,9 @@ async def handle_catalog_products(
     trace_id: str = "",
 ) -> dict[str, Any]:
     text, inline_markup = await render_catalog_page(tenant, page=page)
-    await _deliver_navigation_text(chat_id, text, inline_markup=inline_markup, include_main_menu=True)
+    await _deliver_navigation_text(
+        chat_id, text, tenant, inline_markup=inline_markup, include_main_menu=True
+    )
     return {"ok": True, "route": "catalog_products", "page": page, "trace_id": trace_id}
 
 
@@ -163,6 +170,7 @@ async def handle_catalog_sku(
     await _deliver_navigation_text(
         chat_id,
         text,
+        tenant,
         inline_markup=product_actions_inline_keyboard(sku),
         include_main_menu=True,
     )
@@ -188,7 +196,7 @@ async def handle_product_action(
             f"Для сравнения напишите, например:\n"
             f"сравни {name} и [второй товар]"
         )
-        await _deliver_navigation_text(chat_id, text, include_main_menu=True)
+        await _deliver_navigation_text(chat_id, text, tenant, include_main_menu=True)
         return {"ok": True, "route": "product_compare_hint", "sku": sku, "trace_id": trace_id}
     question = product_action_question(action, name)
     if not question:
@@ -211,7 +219,7 @@ async def handle_safe_menu_fallback(
     *,
     trace_id: str = "",
 ) -> dict[str, Any]:
-    await _deliver_navigation_text(chat_id, SAFE_MENU_TEXT, include_main_menu=True)
+    await _deliver_navigation_text(chat_id, SAFE_MENU_TEXT, tenant, include_main_menu=True)
     return {"ok": True, "route": "navigation_fallback", "trace_id": trace_id}
 
 
@@ -221,18 +229,28 @@ async def handle_main_menu(
     *,
     trace_id: str = "",
 ) -> dict[str, Any]:
-    _ = tenant
-    lines = [
-        "Главное меню WHIEDA:",
-        "",
-        "📦 Товары — каталог",
-        "🧮 Калькулятор — расчёт корзины",
-        "📈 Бизнес — вход и маркетинг",
-        "🏢 О компании",
-        "🧭 Подбор — стартовый набор",
-        "📅 Встречи — события",
-    ]
-    await _deliver_navigation_text(chat_id, "\n".join(lines), include_main_menu=True)
+    if tenant.tenant_id == "whieda":
+        lines = [
+            "Главное меню WHIEDA:",
+            "",
+            "📦 Товары — каталог",
+            "🧮 Калькулятор — расчёт корзины",
+            "📈 Бизнес — вход и маркетинг",
+            "🏢 О компании",
+            "🧭 Подбор — стартовый набор",
+            "📅 Встречи — события",
+        ]
+    else:
+        lines = [
+            "Главное меню:",
+            "",
+            "📦 Товары — каталог",
+            "📈 Бизнес — вход и маркетинг",
+            "🏢 О компании",
+            "🧭 Подбор — стартовый набор",
+            "📅 Встречи — события",
+        ]
+    await _deliver_navigation_text(chat_id, "\n".join(lines), tenant, include_main_menu=True)
     return {"ok": True, "route": "main_menu", "trace_id": trace_id}
 
 
@@ -270,6 +288,9 @@ async def handle_navigation_text(
     intent = resolve_menu_text_intent(msg.text)
     if not intent:
         return None
+    if intent == "nav_calculator" and tenant.tenant_id != "whieda":
+        await handle_safe_menu_fallback(tenant, msg.chat_id, trace_id=trace_id)
+        return {"ok": True, "route": "calculator_hidden", "trace_id": trace_id}
     if intent == "nav_products":
         return await handle_catalog_products(tenant, msg.chat_id, page=1, trace_id=trace_id)
     advisor_question = menu_intent_to_advisor_question(intent)
