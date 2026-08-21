@@ -50,6 +50,7 @@ APPLY_ORDER = [
     "platform_bot_binding_context_v1.sql",
     "platform_telegram_durable_inbox_v1.sql",
     "platform_tenant_advisor_data_plane_v1.sql",
+    "platform_tenant_release_package_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -67,6 +68,13 @@ INBOX_RLS_PROOF_TABLES = (
 
 ADVISOR_PROFILE_RLS_TABLES = (
     "tenant_advisor_profile",
+)
+
+RELEASE_PACKAGE_RLS_TABLES = (
+    "tenant_release_run",
+    "tenant_release_staging_product",
+    "tenant_release_candidate",
+    "tenant_release_candidate_product",
 )
 
 INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"

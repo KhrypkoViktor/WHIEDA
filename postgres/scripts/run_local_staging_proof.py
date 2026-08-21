@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,8 @@ from staging_proof_lib import (  # noqa: E402
     RLS_PROOF_TABLES,
     INBOX_RLS_PROOF_TABLES,
     ADVISOR_PROFILE_RLS_TABLES,
+    RELEASE_PACKAGE_RLS_TABLES,
+    ROOT,
     SEED,
     SQL_DIR,
     validate_proof_db_name,
@@ -238,6 +241,64 @@ INSERT INTO telegram_update_inbox (
     'pending'
   )
 ON CONFLICT (binding_id, telegram_update_id) DO NOTHING;
+
+INSERT INTO tenant_release_run (
+  run_id, package_id, package_version, tenant_id, package_sha256, release_status
+) VALUES
+  (
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'proof-whieda-package',
+    '1.0.0',
+    'whieda',
+    '11' || repeat('a', 62),
+    'candidate'
+  ),
+  (
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'proof-acme-package',
+    '1.0.0',
+    'test-acme',
+    '22' || repeat('b', 62),
+    'candidate'
+  )
+ON CONFLICT (package_id, package_sha256) DO NOTHING;
+
+INSERT INTO tenant_release_staging_product (
+  run_id, tenant_id, sku, canonical_name, review_status, media_state
+) VALUES
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'whieda', 'WH-PROOF', 'WHIEDA Proof', 'approved', 'present'),
+  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'test-acme', 'AC-PROOF', 'Acme Proof', 'approved', 'present')
+ON CONFLICT (run_id, sku) DO NOTHING;
+
+INSERT INTO tenant_release_candidate (
+  candidate_id, run_id, package_id, package_version, tenant_id, package_sha256, status
+) VALUES
+  (
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+    'proof-whieda-package',
+    '1.0.0',
+    'whieda',
+    '11' || repeat('a', 62),
+    'current'
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-ddddddddddd2',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'proof-acme-package',
+    '1.0.0',
+    'test-acme',
+    '22' || repeat('b', 62),
+    'current'
+  )
+ON CONFLICT (candidate_id) DO NOTHING;
+
+INSERT INTO tenant_release_candidate_product (
+  candidate_id, tenant_id, sku, canonical_name, media_state, card_present
+) VALUES
+  ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'whieda', 'WH-PROOF', 'WHIEDA Proof', 'present', true),
+  ('dddddddd-dddd-4ddd-8ddd-ddddddddddd2', 'test-acme', 'AC-PROOF', 'Acme Proof', 'present', true)
+ON CONFLICT (candidate_id, sku) DO NOTHING;
 """,
         user=LOCAL_STAGING_SUPERUSER,
         password=LOCAL_STAGING_SUPERPASSWORD,
@@ -316,6 +377,15 @@ def run_rls_checks(db: str) -> None:
             raise AssertionError(f"{table}: whieda context must not see test-acme profile (got {foreign})")
         checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
 
+    for table in RELEASE_PACKAGE_RLS_TABLES:
+        own = api_count(db, "whieda", table, "tenant_id = 'whieda'")
+        foreign = api_count(db, "whieda", table, "tenant_id = 'test-acme'")
+        if own < 1:
+            raise AssertionError(f"{table}: whieda context must see own release rows (got {own})")
+        if foreign != 0:
+            raise AssertionError(f"{table}: whieda context must not see test-acme release rows (got {foreign})")
+        checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
+
     api_expect_fail(
         db,
         """
@@ -369,13 +439,15 @@ def run_inbox_durable_checks(db: str) -> None:
         """
 SELECT (to_regclass('public.telegram_update_inbox') IS NOT NULL)
    AND (to_regclass('public.telegram_delivery_outbox') IS NOT NULL)
-   AND (to_regclass('public.tenant_advisor_profile') IS NOT NULL);
+   AND (to_regclass('public.tenant_advisor_profile') IS NOT NULL)
+   AND (to_regclass('public.tenant_release_run') IS NOT NULL)
+   AND (to_regclass('public.tenant_release_candidate') IS NOT NULL);
 """,
         **super_kw,
     )
     if tables != "t":
-        raise AssertionError(f"inbox/outbox/data-plane tables missing: {tables}")
-    checks.append("inbox, outbox, and tenant_advisor_profile tables exist")
+        raise AssertionError(f"inbox/outbox/data-plane/release tables missing: {tables}")
+    checks.append("inbox, outbox, tenant_advisor_profile, and tenant_release tables exist")
 
     first = psql_scalar(
         db,
@@ -655,6 +727,52 @@ WHERE tenant_id = 'whieda'
         print(f"  PASS {line}")
 
 
+def run_release_package_offline_validate() -> None:
+    print("=== Tenant release package offline validate ===")
+    cli = ROOT / "backend" / "platform-api" / "scripts" / "run_tenant_release_package.py"
+    package = ROOT / "qa" / "tenant_release_package" / "examples" / "tenant-alpha"
+    proc = subprocess.run(
+        [sys.executable, str(cli), "--validate", "--package", str(package)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(f"tenant-alpha validate failed: {proc.stdout}\n{proc.stderr}")
+    payload = json.loads(proc.stdout)
+    if not payload.get("ok"):
+        raise AssertionError(f"tenant-alpha validate not ok: {payload}")
+    mixed = subprocess.run(
+        [
+            sys.executable,
+            str(cli),
+            "--validate",
+            "--package",
+            str(ROOT / "qa" / "tenant_release_package" / "fixtures" / "mixed-tenant"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    mixed_payload = json.loads(mixed.stdout)
+    if mixed.returncode == 0 or mixed_payload.get("ok"):
+        raise AssertionError("mixed-tenant package must fail validate")
+    publish = subprocess.run(
+        [sys.executable, str(cli), "--publish"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if publish.returncode == 0:
+        raise AssertionError("--publish must refuse")
+    print("  PASS tenant-alpha validate")
+    print("  PASS mixed-tenant aborted")
+    print("  PASS --publish refused")
+
+
 def drop_db(db: str) -> None:
     psql_exec(
         "postgres",
@@ -705,6 +823,7 @@ def main() -> int:
 
         apply_all_migrations(db, pass_label="pass 1/2")
         apply_all_migrations(db, pass_label="pass 2/2 (idempotent)")
+        run_release_package_offline_validate()
 
         run_binding_isolation_checks(db)
 
@@ -718,6 +837,7 @@ def main() -> int:
         print("  journey seed: skipped (stale vs onboarding schema)")
         print(f"  RLS tables: {', '.join(RLS_PROOF_TABLES)}")
         print(f"  Inbox RLS tables: {', '.join(INBOX_RLS_PROOF_TABLES)}")
+        print(f"  Release package RLS tables: {', '.join(RELEASE_PACKAGE_RLS_TABLES)}")
         print(f"  Role: {API_PROOF_ROLE} (NOBYPASSRLS)")
         exit_code = 0
     except subprocess.CalledProcessError as exc:

@@ -45,13 +45,16 @@ def test_bot_binding_context_sql_is_in_apply_order_once():
     data_plane = "platform_tenant_advisor_data_plane_v1.sql"
     assert listed.count(data_plane) == 1
     assert listed.index(inbox) < listed.index(data_plane)
+    release_pkg = "platform_tenant_release_package_v1.sql"
+    assert listed.count(release_pkg) == 1
+    assert listed.index(data_plane) < listed.index(release_pkg)
 
 
 def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
-    assert len(listed) == 15
+    assert len(listed) == 16
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():

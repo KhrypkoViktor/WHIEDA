@@ -1,0 +1,12 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "alias": "дубль",
+    "canonical_sku": "A-010"
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "alias": "дубль",
+    "canonical_sku": "A-011"
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "alias": "спиралина",
+    "canonical_sku": "A-001"
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "alias": "чай альфа",
+    "canonical_sku": "A-002"
+  }
+]

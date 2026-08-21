@@ -30,7 +30,8 @@ $Files = @(
     "platform_whieda_telegram_binding_v1.sql",
     "platform_bot_binding_context_v1.sql",
     "platform_telegram_durable_inbox_v1.sql",
-    "platform_tenant_advisor_data_plane_v1.sql"
+    "platform_tenant_advisor_data_plane_v1.sql",
+    "platform_tenant_release_package_v1.sql"
 )
 
 if ($CreateDb) {

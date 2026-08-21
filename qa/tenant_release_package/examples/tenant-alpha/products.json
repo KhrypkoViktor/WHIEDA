@@ -1,0 +1,59 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-001",
+    "canonical_name": "Alpha Spirulina",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-001"
+    },
+    "retail_price_byn": 41,
+    "partner_price_byn": 28.7,
+    "partner_w": 8
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-002",
+    "canonical_name": "Alpha Tea",
+    "review_status": "approved",
+    "price_missing": true,
+    "media_state": "missing",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-002"
+    }
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-003",
+    "canonical_name": "Alpha Serum",
+    "review_status": "review_required",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-003"
+    },
+    "retail_price_byn": 90,
+    "partner_price_byn": 63.0,
+    "partner_w": 8
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-004",
+    "canonical_name": "Alpha Blocked",
+    "review_status": "blocked",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-004"
+    },
+    "retail_price_byn": 12,
+    "partner_price_byn": 8.4,
+    "partner_w": 8
+  }
+]

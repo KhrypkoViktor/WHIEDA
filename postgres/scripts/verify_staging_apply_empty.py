@@ -36,6 +36,8 @@ REQUIRED_TABLES = [
     "telegram_update_inbox",
     "telegram_delivery_outbox",
     "tenant_advisor_profile",
+    "tenant_release_run",
+    "tenant_release_candidate",
 ]
 
 
