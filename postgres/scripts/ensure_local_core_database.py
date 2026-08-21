@@ -17,7 +17,6 @@ from staging_proof_lib import (  # noqa: E402
     DOCKER_CONTAINER,
     LOCAL_STAGING_SUPERPASSWORD,
     LOCAL_STAGING_SUPERUSER,
-    SEED,
     SQL_DIR,
 )
 
@@ -30,7 +29,14 @@ LOCAL_ADVISOR_SEED = _SCRIPT_DIR / "staging_seed_whieda_advisor_local_v1.sql"
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> None:
-    subprocess.run(cmd, check=True, capture_output=True, text=True, input=input_text)
+    subprocess.run(
+        cmd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        input=input_text,
+    )
 
 
 def _psql_cmd(db: str, user: str, password: str, *extra: str) -> list[str]:
@@ -99,8 +105,7 @@ def _schema_initialized() -> bool:
 def _apply_schema() -> None:
     for name in APPLY_ORDER:
         _psql_file(LOCAL_CORE_DB, SQL_DIR / name)
-    if SEED.is_file():
-        _psql_file(LOCAL_CORE_DB, SEED)
+    # Same skip as run_local_staging_proof: journey seed is stale vs onboarding.
 
 
 def _ensure_api_role() -> None:
