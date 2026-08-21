@@ -698,8 +698,10 @@ async def run_structured_query(
                 )
             return fmt.ok_response(pv_definition_text(tenant), "structured_business_faq", trace_id)
 
-        if (is_context_followup(question) or DETAILS_RE.search(question)) and not stored.get(
-            "last_product_sku"
+        if (
+            (is_context_followup(question) or DETAILS_RE.search(question))
+            and not stored.get("last_product_sku")
+            and not has_price_intent(question)
         ):
             details_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
             if not details_product:
@@ -827,17 +829,25 @@ async def run_structured_query(
 
         # Strong exact aliases continue through the normal resolver. Generic
         # discovery phrases are deliberately intercepted before alias scoring
-        # can silently choose a random first product.
+        # can silently choose a random first product. Explicit product tokens
+        # (SKU, slug, PRO) resolve first so discovery cannot steal them or
+        # require a live DB cursor in the unit path.
         discovery_phrase = product_query_text(question)
-        if is_home_tenant(tenant.tenant_id) and discovery_phrase not in {
-            "активатор",
-            "паста",
-            "красный",
-            "зелёный",
-            "зеленый",
-            "синий",
-            "пояс",
-        }:
+        explicit_product = bool(sku or slug or has_pro_marker(question))
+        if (
+            not explicit_product
+            and is_home_tenant(tenant.tenant_id)
+            and discovery_phrase
+            not in {
+                "активатор",
+                "паста",
+                "красный",
+                "зелёный",
+                "зеленый",
+                "синий",
+                "пояс",
+            }
+        ):
             discovery = await build_discovery_choice_response(
                 conn,
                 tenant.tenant_id,
@@ -964,23 +974,15 @@ async def run_structured_query(
             )
 
         if not product and has_price_intent(question):
-            if _should_use_knowledge_gap(question, normalized):
-                return await emit_gap_response(
-                    tenant.tenant_id,
-                    session=session,
-                    question=question,
-                    gap_kind="unknown_product",
-                    trace_id=trace_id,
-                    channel=channel,
-                )
-            return await emit_gap_response(
-                tenant.tenant_id,
-                session=session,
-                question=question,
-                gap_kind="unknown_followup",
-                trace_id=trace_id,
-                channel=channel,
+            prompt = await repo.load_clarification_prompt(
+                conn, tenant.tenant_id, "price_product_unknown"
+            )
+            return fmt.ok_response(
+                prompt or "О каком товаре хотите узнать цену?",
+                "clarification",
+                trace_id,
                 clarifications=["product_name_or_sku"],
+                media=fmt.empty_media(),
             )
 
         if product and has_price_intent(question):
