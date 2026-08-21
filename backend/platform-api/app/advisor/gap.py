@@ -336,10 +336,12 @@ async def emit_gap_response(
     context: dict[str, Any] | None = None,
     detected_product: str | None = None,
 ) -> dict[str, Any]:
+    from app.advisor.voice import gap_text_for
+
     response = build_gap_response(
         gap_kind,
         trace_id,
-        text=text,
+        text=text or gap_text_for(tenant_id, gap_kind),
         answer_mode=answer_mode,
         product=product,
         clarifications=clarifications,

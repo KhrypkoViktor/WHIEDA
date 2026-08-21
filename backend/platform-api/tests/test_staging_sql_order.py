@@ -42,13 +42,16 @@ def test_bot_binding_context_sql_is_in_apply_order_once():
     assert EXPECTED_ORDER.count(name) == 1
     assert listed.index("platform_whieda_telegram_binding_v1.sql") < listed.index(name)
     assert listed.index(name) < listed.index(inbox)
+    data_plane = "platform_tenant_advisor_data_plane_v1.sql"
+    assert listed.count(data_plane) == 1
+    assert listed.index(inbox) < listed.index(data_plane)
 
 
 def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
-    assert len(listed) == 14
+    assert len(listed) == 15
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():
