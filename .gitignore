@@ -16,6 +16,8 @@ n8n/workflow-backups/
 *.log
 WHIEDA_ACCESS_MAP_PRIVATE_*.md
 reports/
+!backend/platform-api/app/reports/
+!backend/platform-api/app/reports/**
 n8n/current/backups/
 **/.env
 **/.env.*
