@@ -12,6 +12,11 @@ from urllib.parse import urlparse
 from app.settings import get_settings
 
 SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+LOCAL_MEDIA_RE = re.compile(
+    r"^media/([A-Za-z0-9][A-Za-z0-9._-]{0,79})/"
+    r"([A-Za-z0-9][A-Za-z0-9._-]{0,79})/"
+    r"([A-Za-z0-9][A-Za-z0-9._-]{0,79})$"
+)
 HTTP_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 FORBIDDEN_HOST_FRAGMENTS = (
     "localhost",
@@ -90,14 +95,35 @@ def published_media_url(
     return url
 
 
-def _filename_from_media(media: dict[str, Any]) -> str | None:
+def filename_from_local_ref(raw: str | None, *, tenant_id: str, sku: str) -> str | None:
+    """Accept a bare filename or media/{tenant}/{sku}/{file}. Never an http(s) URL."""
+    text = str(raw or "").strip().replace("\\", "/")
+    if not text or "?" in text or "#" in text:
+        return None
+    if "://" in text or text.lower().startswith(("http:", "https:")):
+        return None
+    if is_safe_path_segment(text):
+        return text
+    match = LOCAL_MEDIA_RE.fullmatch(text)
+    if not match:
+        return None
+    ref_tenant, ref_sku, filename = match.groups()
+    if ref_tenant != tenant_id or ref_sku != sku:
+        return None
+    if not is_safe_path_segment(filename):
+        return None
+    return filename
+
+
+def _filename_from_media(media: dict[str, Any], *, tenant_id: str, sku: str) -> str | None:
     for key in ("filename", "file"):
         raw = str(media.get(key) or "").strip()
         if raw:
             return raw
-    path = str(media.get("relative_path") or "").strip().replace("\\", "/")
-    if path and "/" not in path and is_safe_path_segment(path):
-        return path
+    for key in ("relative_path", "url", "photo_url"):
+        parsed = filename_from_local_ref(media.get(key), tenant_id=tenant_id, sku=sku)
+        if parsed:
+            return parsed
     return None
 
 
@@ -122,8 +148,10 @@ def resolve_delivery_photo_url(
     if claimed_tenant and claimed_tenant != tenant_id:
         return None
     sku = _sku_from_response(core_response, media)
-    filename = _filename_from_media(media)
-    if not sku or not filename:
+    if not sku:
+        return None
+    filename = _filename_from_media(media, tenant_id=tenant_id, sku=sku)
+    if not filename:
         return None
     return published_media_url(
         tenant_id=tenant_id,

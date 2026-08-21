@@ -140,6 +140,63 @@ def test_cross_tenant_media_claim_is_rejected(monkeypatch):
     assert url is None
 
 
+def test_package_relative_media_json_url_becomes_our_https(monkeypatch):
+    _settings(monkeypatch)
+    nsp = resolve_delivery_photo_url(
+        {
+            "answer_text": "Локло",
+            "product": {"sku": "1346"},
+            "media": {
+                "tenant_id": "nsp-maxim",
+                "sku": "1346",
+                "resource_type": "image",
+                "url": "media/nsp-maxim/1346/1.png.webp",
+                "title": "Локло",
+            },
+        },
+        tenant_id="nsp-maxim",
+    )
+    whieda = resolve_delivery_photo_url(
+        {
+            "answer_text": "same sku",
+            "product": {"sku": "1346"},
+            "media": {"url": "media/whieda/1346/1.png.webp", "sku": "1346"},
+        },
+        tenant_id="whieda",
+    )
+    assert nsp == f"{MEDIA_BASE}/nsp-maxim/1346/1.png.webp"
+    assert whieda == f"{MEDIA_BASE}/whieda/1346/1.png.webp"
+    assert nsp != whieda
+
+
+def test_package_relative_path_does_not_cross_tenant(monkeypatch):
+    _settings(monkeypatch)
+    assert (
+        resolve_delivery_photo_url(
+            {
+                "product": {"sku": "1346"},
+                "media": {"url": "media/nsp-maxim/1346/1.png.webp"},
+            },
+            tenant_id="whieda",
+        )
+        is None
+    )
+
+
+def test_https_package_url_without_filename_is_rejected(monkeypatch):
+    _settings(monkeypatch)
+    assert (
+        resolve_delivery_photo_url(
+            {
+                "product": {"sku": "1346"},
+                "media": {"url": "https://drive.google.com/file/d/abc/view", "photo_url": "https://wwc.best/x.jpg"},
+            },
+            tenant_id="nsp-maxim",
+        )
+        is None
+    )
+
+
 @pytest.mark.asyncio
 async def test_nsp_photo_first_uses_nsp_token(monkeypatch, nsp_tenant):
     _settings(monkeypatch)
@@ -160,6 +217,64 @@ async def test_nsp_photo_first_uses_nsp_token(monkeypatch, nsp_tenant):
     assert text.await_args.kwargs["bot_token"] == "nsp-token"
     assert result["photo_sent"] is True
     assert result["text_sent"] is True
+
+
+@pytest.mark.asyncio
+async def test_nsp_media_json_relative_url_is_photo_first(monkeypatch):
+    _settings(monkeypatch)
+    with patch("app.telegram.delivery.send_telegram_photo", AsyncMock(return_value={"ok": True})) as photo, patch(
+        "app.telegram.delivery.send_telegram_text", AsyncMock(return_value={"ok": True})
+    ) as text:
+        result = await deliver_structured_advisor_response(
+            17,
+            {
+                "answer_text": "Отправляю фото: Локло",
+                "answer_mode": "structured_photo",
+                "product": {"sku": "1346"},
+                "media": {
+                    "url": "media/nsp-maxim/1346/1.png.webp",
+                    "sku": "1346",
+                    "photo_url": "media/nsp-maxim/1346/1.png.webp",
+                },
+            },
+            bot_token="nsp-token",
+            tenant_id="nsp-maxim",
+        )
+    photo.assert_awaited_once()
+    assert photo.await_args.kwargs["photo_url"] == f"{MEDIA_BASE}/nsp-maxim/1346/1.png.webp"
+    assert photo.await_args.kwargs["bot_token"] == "nsp-token"
+    assert "caption" not in photo.await_args.kwargs
+    text.assert_awaited_once()
+    assert result["photo_sent"] is True
+
+
+@pytest.mark.asyncio
+async def test_nsp_media_json_relative_url_is_photo_first(monkeypatch):
+    _settings(monkeypatch)
+    with patch("app.telegram.delivery.send_telegram_photo", AsyncMock(return_value={"ok": True})) as photo, patch(
+        "app.telegram.delivery.send_telegram_text", AsyncMock(return_value={"ok": True})
+    ) as text:
+        result = await deliver_structured_advisor_response(
+            17,
+            {
+                "answer_text": "Отправляю фото: Локло",
+                "answer_mode": "structured_photo",
+                "product": {"sku": "1346"},
+                "media": {
+                    "url": "media/nsp-maxim/1346/1.png.webp",
+                    "sku": "1346",
+                    "photo_url": "media/nsp-maxim/1346/1.png.webp",
+                },
+            },
+            bot_token="nsp-token",
+            tenant_id="nsp-maxim",
+        )
+    photo.assert_awaited_once()
+    assert photo.await_args.kwargs["photo_url"] == f"{MEDIA_BASE}/nsp-maxim/1346/1.png.webp"
+    assert photo.await_args.kwargs["bot_token"] == "nsp-token"
+    assert "caption" not in photo.await_args.kwargs
+    text.assert_awaited_once()
+    assert result["photo_sent"] is True
 
 
 @pytest.mark.asyncio
