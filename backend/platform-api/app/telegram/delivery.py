@@ -10,6 +10,7 @@ from typing import Any, Iterator
 import httpx
 
 from app.telegram.log_safe import chat_ref
+from app.telegram.tenant_media import resolve_delivery_photo_url, sanitize_delivery_text
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,7 @@ async def answer_callback_query(
 
 
 def extract_photo_url(media: Any) -> str | None:
+    """Read a raw photo_url from media. Delivery does not publish this value."""
     if not isinstance(media, dict):
         return None
     photo = media.get("photo_url")
@@ -160,15 +162,22 @@ async def deliver_structured_advisor_response(
     core_response: dict[str, Any],
     *,
     bot_token: str,
+    tenant_id: str | None = None,
+    binding_status: str = "active",
     reply_markup: dict | None = None,
 ) -> dict[str, Any]:
     """
     Photo-first rule: sendPhoto without caption, then sendMessage with full text.
+    Photo URL is constructed from the current binding tenant only.
     If sendPhoto fails, still send text (never silence the user).
     """
-    text = str(core_response.get("answer_text") or "").strip()
-    photo_url = extract_photo_url(core_response.get("media"))
-    result: dict[str, Any] = {"photo_sent": False, "text_sent": False}
+    if binding_status != "active" or not tenant_id:
+        return {"photo_sent": False, "text_sent": False, "skipped": True}
+
+    raw_text = str(core_response.get("answer_text") or "")
+    photo_url = resolve_delivery_photo_url(core_response, tenant_id=tenant_id)
+    text = sanitize_delivery_text(raw_text, allowed_url=photo_url)
+    result: dict[str, Any] = {"photo_sent": False, "text_sent": False, "photo_url": photo_url}
 
     if photo_url:
         photo_result = await send_telegram_photo(

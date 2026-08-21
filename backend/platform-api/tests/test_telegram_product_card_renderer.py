@@ -130,7 +130,11 @@ def test_compact_mode_shortens_without_dropping_title():
 
 
 @pytest.mark.asyncio
-async def test_photo_first_delivery_uses_renderer_text_without_caption():
+async def test_photo_first_delivery_uses_renderer_text_without_caption(monkeypatch):
+    monkeypatch.setattr(
+        "app.telegram.tenant_media.get_settings",
+        lambda: type("S", (), {"platform_tenant_media_base_url": "https://media.test.example/media"})(),
+    )
     payload = json.loads((FIXTURES_DIR / "activator.json").read_text(encoding="utf-8"))
     answer_text = fmt.format_product_card(payload["card"], payload["product"])
 
@@ -141,9 +145,11 @@ async def test_photo_first_delivery_uses_renderer_text_without_caption():
             1,
             {
                 "answer_text": answer_text,
-                "media": {"photo_url": payload["card"]["primary_image_url"], "videos": [], "documents": []},
+                "product": {"sku": payload["product"]["sku"]},
+                "media": {"filename": "main.webp", "sku": payload["product"]["sku"]},
             },
             bot_token="tok",
+            tenant_id="whieda",
         )
     photo.assert_awaited_once()
     assert "caption" not in photo.await_args.kwargs

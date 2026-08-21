@@ -98,6 +98,8 @@ async def _run_advisor_question(
         chat_id,
         core_response,
         bot_token=current_bot_binding().bot_token,
+        tenant_id=tenant.tenant_id,
+        binding_status=current_bot_binding().status,
         reply_markup=main_menu_reply_keyboard(
             include_calculator=_include_calculator(tenant)
         ),

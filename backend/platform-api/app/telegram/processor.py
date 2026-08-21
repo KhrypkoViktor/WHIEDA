@@ -59,6 +59,8 @@ async def deliver_advisor_response(
         chat_id,
         core_response,
         bot_token=binding.bot_token,
+        tenant_id=binding.tenant.tenant_id,
+        binding_status=binding.status,
         reply_markup=reply_markup,
     )
 
