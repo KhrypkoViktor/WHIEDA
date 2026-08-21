@@ -429,7 +429,7 @@ async def load_active_promotions(conn, tenant_id: str, country: str = "BY") -> l
                priority, ends_at, source_url
         from advisor_promotions
         where client_id = %s
-          and lower(coalesce(tenant_id, 'by')) = 'by'
+          and (tenant_id is null or tenant_id = %s)
           and status = 'active'
           and starts_at <= now()
           and ends_at >= now()
@@ -437,7 +437,7 @@ async def load_active_promotions(conn, tenant_id: str, country: str = "BY") -> l
         order by priority desc nulls last
         limit 10
         """,
-        (client_id(tenant_id), country.upper()),
+        (client_id(tenant_id), tenant_id, country.upper()),
     )
 
 
@@ -450,12 +450,12 @@ async def load_upcoming_events(conn, tenant_id: str, country: str = "BY") -> lis
                online_url, status, contact, timezone, recurrence_rule
         from advisor_whieda_events
         where client_id = %s
-          and lower(coalesce(tenant_id, 'by')) = 'by'
+          and (tenant_id is null or tenant_id = %s)
           and lower(status) in ('active', 'confirmed', 'published')
         order by starts_at asc
         limit 20
         """,
-        (client_id(tenant_id),),
+        (client_id(tenant_id), tenant_id),
     )
 
 
@@ -467,12 +467,12 @@ async def load_community_resources(conn, tenant_id: str, country: str = "BY") ->
         select resource_id, title, description, url, platform, category, priority
         from advisor_whieda_community_resources
         where client_id = %s
-          and lower(coalesce(tenant_id, 'by')) = 'by'
+          and (tenant_id is null or tenant_id = %s)
           and lower(status) in ('active', 'confirmed', 'published')
         order by priority desc nulls last
         limit 5
         """,
-        (client_id(tenant_id),),
+        (client_id(tenant_id), tenant_id),
     )
 
 

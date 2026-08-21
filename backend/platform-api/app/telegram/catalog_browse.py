@@ -9,7 +9,7 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.advisor.sql import repository as repo
 from app.db import tenant_connection
-from app.telegram.bindings import current_bot_binding
+from app.telegram.bindings import current_bot_binding, tenant_from_binding
 from app.telegram.delivery import (
     answer_callback_query,
     deliver_structured_advisor_response,
@@ -85,6 +85,7 @@ async def _run_advisor_question(
     question: str,
     trace_id: str,
 ) -> dict[str, Any]:
+    tenant = tenant_from_binding(tenant)
     body: dict[str, Any] = {
         "session": f"telegram:{chat_id}",
         "question": question,
@@ -285,6 +286,7 @@ async def handle_navigation_text(
     msg: TelegramMessage,
     trace_id: str,
 ) -> dict[str, Any] | None:
+    tenant = tenant_from_binding(tenant)
     intent = resolve_menu_text_intent(msg.text)
     if not intent:
         return None
@@ -311,6 +313,7 @@ async def handle_callback_query(
     callback: TelegramCallbackQuery,
     trace_id: str,
 ) -> dict[str, Any]:
+    tenant = tenant_from_binding(tenant)
     await _ack_callback(callback.callback_query_id)
     parsed = parse_callback_data(callback.data)
     if not parsed:

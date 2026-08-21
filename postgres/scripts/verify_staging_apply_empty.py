@@ -35,6 +35,7 @@ REQUIRED_TABLES = [
     "data_retention_registry",
     "telegram_update_inbox",
     "telegram_delivery_outbox",
+    "tenant_advisor_profile",
 ]
 
 

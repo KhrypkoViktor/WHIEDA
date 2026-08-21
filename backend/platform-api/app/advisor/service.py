@@ -15,6 +15,8 @@ async def handle_structured_query(
     body: dict[str, Any],
     trace_id: str,
 ) -> dict[str, Any]:
+    body = dict(body)
+    body.pop("tenant", None)
     question = str(body.get("question") or "").strip()
     session = str(body.get("session") or body.get("session_id") or "").strip()
     if not question or not session:

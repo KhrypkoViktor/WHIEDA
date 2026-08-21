@@ -144,7 +144,7 @@ async def try_ambiguity_clarification(
             ["product_ambiguity_activator"],
         )
 
-    if is_soy_peptide_like(question) and (
+    if is_soy_peptide_like(question) and tenant_id == "whieda" and (
         not best_product
         or str(best_product.get("sku") or "") == "F038-00"
         and normalized in {"пептид", "пептиды", "соевые пептиды"}

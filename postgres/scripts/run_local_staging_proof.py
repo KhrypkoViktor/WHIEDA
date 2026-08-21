@@ -28,6 +28,7 @@ from staging_proof_lib import (  # noqa: E402
     LOCAL_STAGING_SUPERUSER,
     RLS_PROOF_TABLES,
     INBOX_RLS_PROOF_TABLES,
+    ADVISOR_PROFILE_RLS_TABLES,
     SEED,
     SQL_DIR,
     validate_proof_db_name,
@@ -306,6 +307,15 @@ def run_rls_checks(db: str) -> None:
             raise AssertionError(f"{table}: whieda context must not see test-acme rows (got {foreign})")
         checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
 
+    for table in ADVISOR_PROFILE_RLS_TABLES:
+        own = api_count(db, "whieda", table, "tenant_id = 'whieda'")
+        foreign = api_count(db, "whieda", table, "tenant_id = 'test-acme'")
+        if own < 1:
+            raise AssertionError(f"{table}: whieda context must see own profile (got {own})")
+        if foreign != 0:
+            raise AssertionError(f"{table}: whieda context must not see test-acme profile (got {foreign})")
+        checks.append(f"{table}: whieda visible={own}, cross-tenant={foreign}")
+
     api_expect_fail(
         db,
         """
@@ -358,13 +368,14 @@ def run_inbox_durable_checks(db: str) -> None:
         db,
         """
 SELECT (to_regclass('public.telegram_update_inbox') IS NOT NULL)
-   AND (to_regclass('public.telegram_delivery_outbox') IS NOT NULL);
+   AND (to_regclass('public.telegram_delivery_outbox') IS NOT NULL)
+   AND (to_regclass('public.tenant_advisor_profile') IS NOT NULL);
 """,
         **super_kw,
     )
     if tables != "t":
-        raise AssertionError(f"inbox/outbox tables missing: {tables}")
-    checks.append("inbox and outbox tables exist")
+        raise AssertionError(f"inbox/outbox/data-plane tables missing: {tables}")
+    checks.append("inbox, outbox, and tenant_advisor_profile tables exist")
 
     first = psql_scalar(
         db,

@@ -49,6 +49,7 @@ APPLY_ORDER = [
     "platform_whieda_telegram_binding_v1.sql",
     "platform_bot_binding_context_v1.sql",
     "platform_telegram_durable_inbox_v1.sql",
+    "platform_tenant_advisor_data_plane_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -62,6 +63,10 @@ RLS_PROOF_TABLES = (
 INBOX_RLS_PROOF_TABLES = (
     "telegram_update_inbox",
     "telegram_delivery_outbox",
+)
+
+ADVISOR_PROFILE_RLS_TABLES = (
+    "tenant_advisor_profile",
 )
 
 INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"

@@ -14,6 +14,7 @@ from app.telegram.bindings import (
     BotBindingContext,
     binding_context_scope,
     current_bot_binding,
+    tenant_from_binding,
 )
 from app.telegram.catalog_browse import handle_callback_query, handle_navigation_text
 from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
@@ -113,6 +114,7 @@ async def handle_advisor_query(
     msg: TelegramMessage,
     trace_id: str,
 ) -> dict[str, Any]:
+    tenant = tenant_from_binding(tenant)
     body: dict[str, Any] = {
         "session": f"telegram:{msg.chat_id}",
         "question": msg.text,
