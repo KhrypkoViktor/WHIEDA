@@ -15,6 +15,26 @@ from app.telegram.modes import (
 from app.telegram.processor import handle_advisor_query
 
 
+MEDIA_BASE = "https://media.test.example/media"
+WHIEDA_PHOTO = f"{MEDIA_BASE}/whieda/LOCAL-ACT/main.webp"
+
+
+def _media_base(monkeypatch, base: str | None = MEDIA_BASE):
+    monkeypatch.setattr(
+        "app.telegram.tenant_media.get_settings",
+        lambda: type("S", (), {"platform_tenant_media_base_url": base})(),
+    )
+
+
+def _whieda_photo_response(text: str) -> dict:
+    return {
+        "answer_text": text,
+        "answer_mode": "structured_photo",
+        "product": {"sku": "LOCAL-ACT"},
+        "media": {"filename": "main.webp", "sku": "LOCAL-ACT"},
+    }
+
+
 def test_extract_photo_url_from_structured_media():
     assert extract_photo_url({"photo_url": "https://cdn.example/p.jpg", "videos": []}) == "https://cdn.example/p.jpg"
     assert extract_photo_url({}) is None
@@ -56,19 +76,20 @@ def test_all_engine_structured_modes_listed():
 
 
 @pytest.mark.asyncio
-async def test_photo_then_text_separate_messages():
+async def test_photo_then_text_separate_messages(monkeypatch):
+    _media_base(monkeypatch)
     with patch("app.telegram.delivery.send_telegram_photo", AsyncMock(return_value={"ok": True})) as photo, patch(
         "app.telegram.delivery.send_telegram_text", AsyncMock(return_value={"ok": True})
     ) as text:
         result = await deliver_structured_advisor_response(
             123,
-            {
-                "answer_text": "Подробное описание товара",
-                "media": {"photo_url": "https://cdn/p.jpg", "videos": [], "documents": []},
-            },
+            _whieda_photo_response("Подробное описание товара"),
             bot_token="tok",
+            tenant_id="whieda",
         )
     photo.assert_awaited_once()
+    assert photo.await_args.kwargs["photo_url"] == WHIEDA_PHOTO
+    assert photo.await_args.kwargs["bot_token"] == "tok"
     assert "caption" not in photo.await_args.kwargs
     text.assert_awaited_once()
     assert text.await_args.kwargs["text"] == "Подробное описание товара"
@@ -77,7 +98,8 @@ async def test_photo_then_text_separate_messages():
 
 
 @pytest.mark.asyncio
-async def test_photo_failure_still_sends_text():
+async def test_photo_failure_still_sends_text(monkeypatch):
+    _media_base(monkeypatch)
     with patch(
         "app.telegram.delivery.send_telegram_photo",
         AsyncMock(return_value={"ok": False, "status_code": 400}),
@@ -86,11 +108,9 @@ async def test_photo_failure_still_sends_text():
     ) as text:
         result = await deliver_structured_advisor_response(
             456,
-            {
-                "answer_text": "Текст после ошибки фото",
-                "media": {"photo_url": "https://cdn/bad.jpg", "videos": [], "documents": []},
-            },
+            _whieda_photo_response("Текст после ошибки фото"),
             bot_token="tok",
+            tenant_id="whieda",
         )
     photo.assert_awaited_once()
     text.assert_awaited_once()

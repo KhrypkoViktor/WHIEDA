@@ -66,6 +66,11 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",
         description="Public @username for deep links (no @ prefix). Staging/dev only until cutover.",
     )
+    platform_tenant_media_base_url: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_TENANT_MEDIA_BASE_URL",
+        description="HTTPS origin+prefix for tenant media, e.g. https://media.example/media",
+    )
 
     core_route_public_ref: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_PUBLIC_REF")
     core_route_leads: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_LEADS")

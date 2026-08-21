@@ -128,6 +128,7 @@ def build_media_payload(
     resource_kind: str,
 ) -> dict[str, Any]:
     photo_url = None
+    payload_filename = None
     videos: list[dict[str, Any]] = []
     documents: list[dict[str, Any]] = []
 
@@ -139,6 +140,13 @@ def build_media_payload(
                 rtype = str(row.get("resource_type") or "").lower()
                 if rtype in {"image", "photo", "picture", "img"} and row.get("url"):
                     photo_url = row["url"]
+                    break
+        for row in resources:
+            rtype = str(row.get("resource_type") or "").lower()
+            if rtype in {"image", "photo", "picture", "img"}:
+                filename = str(row.get("filename") or row.get("file") or "").strip()
+                if filename:
+                    payload_filename = filename
                     break
     elif resource_kind == "video":
         for row in resources:
@@ -152,7 +160,10 @@ def build_media_payload(
             if rtype in {"certificate", "pdf", "document"} or topic == "certificates":
                 documents.append({"url": row["url"], "title": row.get("title")})
 
-    return {"photo_url": photo_url, "videos": videos, "documents": documents}
+    payload = {"photo_url": photo_url, "videos": videos, "documents": documents}
+    if payload_filename:
+        payload["filename"] = payload_filename
+    return payload
 
 
 def ok_response(

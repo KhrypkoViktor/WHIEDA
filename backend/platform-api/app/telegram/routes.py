@@ -43,6 +43,8 @@ async def _deliver_core_answer(chat_id: str, core_response: dict) -> None:
         chat_id=str(chat_id),
         core_response=core_response,
         bot_token=binding.bot_token,
+        tenant_id=binding.tenant.tenant_id,
+        binding_status=binding.status,
     )
 
 

@@ -378,13 +378,22 @@ async def test_product_card_action_uses_existing_delivery(tenant, whieda_bot_bin
 
 
 @pytest.mark.asyncio
-async def test_photo_first_not_broken_in_delivery():
+async def test_photo_first_not_broken_in_delivery(monkeypatch):
+    monkeypatch.setattr(
+        "app.telegram.tenant_media.get_settings",
+        lambda: type("S", (), {"platform_tenant_media_base_url": "https://media.test.example/media"})(),
+    )
     with patch("app.telegram.delivery.send_telegram_photo", AsyncMock(return_value={"ok": True})) as photo:
         with patch("app.telegram.delivery.send_telegram_text", AsyncMock(return_value={"ok": True})) as text:
             result = await deliver_structured_advisor_response(
                 1,
-                {"answer_text": "body", "media": {"photo_url": "https://img/x.jpg"}},
+                {
+                    "answer_text": "body",
+                    "product": {"sku": "LOCAL-ACT"},
+                    "media": {"filename": "main.webp", "sku": "LOCAL-ACT"},
+                },
                 bot_token="token",
+                tenant_id="whieda",
             )
     photo.assert_awaited_once()
     text.assert_awaited_once()
