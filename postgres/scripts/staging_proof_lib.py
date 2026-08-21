@@ -51,6 +51,7 @@ APPLY_ORDER = [
     "platform_telegram_durable_inbox_v1.sql",
     "platform_tenant_advisor_data_plane_v1.sql",
     "platform_tenant_release_package_v1.sql",
+    "platform_tenant_release_price_plane_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -75,6 +76,7 @@ RELEASE_PACKAGE_RLS_TABLES = (
     "tenant_release_staging_product",
     "tenant_release_candidate",
     "tenant_release_candidate_product",
+    "tenant_release_candidate_price",
 )
 
 INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"

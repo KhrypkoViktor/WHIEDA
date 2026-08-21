@@ -38,6 +38,7 @@ REQUIRED_TABLES = [
     "tenant_advisor_profile",
     "tenant_release_run",
     "tenant_release_candidate",
+    "tenant_release_candidate_price",
 ]
 
 

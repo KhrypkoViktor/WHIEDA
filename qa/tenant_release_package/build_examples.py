@@ -66,6 +66,26 @@ def _faq(tenant: str, sku: str, name: str) -> dict:
     }
 
 
+def _usd_product(tenant: str, sku: str, name: str, *, amount: str, source: str, status: str = "approved"):
+    return {
+        "tenant_id": tenant,
+        "sku": sku,
+        "canonical_name": name,
+        "review_status": status,
+        "price_missing": False,
+        "media_state": "present",
+        "source": {"kind": "synthetic-fixture", "ref": f"fixture:{tenant}:{sku}"},
+        "prices": [
+            {
+                "kind": "retail",
+                "amount": amount,
+                "currency": "USD",
+                "source": source,
+            }
+        ],
+    }
+
+
 def write_package(rel: str, tenant: str, package_id: str, products, aliases, cards, media, faqs, *, extra_manifest=None):
     directory = PKG / rel
     directory.mkdir(parents=True, exist_ok=True)
@@ -163,6 +183,26 @@ def main() -> None:
         [_card(alpha, "A-010", "Alpha One"), _card(alpha, "A-011", "Alpha Two")],
         [_media(alpha, "A-010"), _media(alpha, "A-011")],
         [],
+    )
+
+    gamma = "tenant-gamma"
+    write_package(
+        "examples/tenant-gamma",
+        gamma,
+        "tenant-gamma-usd-catalog",
+        [
+            _usd_product(
+                gamma,
+                "G-001",
+                "Gamma Capsule",
+                amount="37.13",
+                source="catalogue_2026",
+            )
+        ],
+        [_alias(gamma, "капсула гамма", "G-001")],
+        [_card(gamma, "G-001", "Gamma Capsule")],
+        [_media(gamma, "G-001")],
+        [_faq(gamma, "G-001", "Gamma Capsule")],
     )
 
     hashed = write_package(

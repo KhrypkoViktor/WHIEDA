@@ -299,6 +299,31 @@ INSERT INTO tenant_release_candidate_product (
   ('cccccccc-cccc-4ccc-8ccc-ccccccccccc1', 'whieda', 'WH-PROOF', 'WHIEDA Proof', 'present', true),
   ('dddddddd-dddd-4ddd-8ddd-ddddddddddd2', 'test-acme', 'AC-PROOF', 'Acme Proof', 'present', true)
 ON CONFLICT (candidate_id, sku) DO NOTHING;
+
+INSERT INTO tenant_release_candidate_price (
+  candidate_id, tenant_id, sku, kind, amount, currency, source, amount_sha256
+) VALUES
+  (
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+    'whieda',
+    'WH-PROOF',
+    'retail',
+    41,
+    'BYN',
+    'proof-whieda',
+    repeat('c', 64)
+  ),
+  (
+    'dddddddd-dddd-4ddd-8ddd-ddddddddddd2',
+    'test-acme',
+    'AC-PROOF',
+    'retail',
+    37.13,
+    'USD',
+    'proof-acme',
+    repeat('d', 64)
+  )
+ON CONFLICT (candidate_id, sku, kind, currency) DO NOTHING;
 """,
         user=LOCAL_STAGING_SUPERUSER,
         password=LOCAL_STAGING_SUPERPASSWORD,
@@ -441,7 +466,8 @@ SELECT (to_regclass('public.telegram_update_inbox') IS NOT NULL)
    AND (to_regclass('public.telegram_delivery_outbox') IS NOT NULL)
    AND (to_regclass('public.tenant_advisor_profile') IS NOT NULL)
    AND (to_regclass('public.tenant_release_run') IS NOT NULL)
-   AND (to_regclass('public.tenant_release_candidate') IS NOT NULL);
+   AND (to_regclass('public.tenant_release_candidate') IS NOT NULL)
+   AND (to_regclass('public.tenant_release_candidate_price') IS NOT NULL);
 """,
         **super_kw,
     )

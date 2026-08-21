@@ -75,8 +75,8 @@ class PostgresStagingStore:
                         insert into tenant_release_staging_product (
                           run_id, tenant_id, sku, canonical_name, review_status,
                           retail_price_byn, partner_price_byn, partner_w, price_missing,
-                          media_state, payload
-                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                          media_state, payload, retail_prices
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
                         on conflict (run_id, sku) do nothing
                         """,
                         (
@@ -91,6 +91,7 @@ class PostgresStagingStore:
                             bool(product.get("price_missing")),
                             product.get("media_state"),
                             json.dumps(product, ensure_ascii=False),
+                            json.dumps(product.get("retail_prices") or product.get("prices") or [], ensure_ascii=False),
                         ),
                     )
         return {"run_id": actual_id, **{k: payload[k] for k in ("package_id", "package_version", "tenant_id", "package_sha256") if k in payload}}
@@ -163,8 +164,8 @@ class PostgresStagingStore:
                         insert into tenant_release_candidate_product (
                           candidate_id, tenant_id, sku, canonical_name, review_status,
                           retail_price_byn, partner_price_byn, partner_w, price_missing,
-                          media_state, card_present, source
-                        ) values (%s, %s, %s, %s, 'approved', %s, %s, %s, %s, %s, %s, %s::jsonb)
+                          media_state, card_present, source, retail_prices
+                        ) values (%s, %s, %s, %s, 'approved', %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
                         """,
                         (
                             candidate_id,
@@ -178,8 +179,30 @@ class PostgresStagingStore:
                             product.get("media_state") or "missing",
                             bool(product.get("card_present")),
                             json.dumps(product.get("source") or {}, ensure_ascii=False),
+                            json.dumps(product.get("retail_prices") or [], ensure_ascii=False),
                         ),
                     )
+                    for price in product.get("retail_prices") or []:
+                        conn.execute(
+                            """
+                            insert into tenant_release_candidate_price (
+                              candidate_id, tenant_id, sku, kind, amount, currency,
+                              source, source_version, amount_sha256
+                            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            on conflict (candidate_id, sku, kind, currency) do nothing
+                            """,
+                            (
+                                candidate_id,
+                                payload["tenant_id"],
+                                product["sku"],
+                                price.get("kind"),
+                                price.get("amount"),
+                                price.get("currency"),
+                                price.get("source"),
+                                price.get("source_version"),
+                                price.get("sha256"),
+                            ),
+                        )
         return {
             "candidate_id": candidate_id,
             "status": "current",
