@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from tenant_release.package import LoadedPackage, ValidateReport, load_package, validate_package
+from tenant_release.prices import (
+    has_confirmed_retail,
+    legacy_byn_amount,
+    normalize_product_prices,
+)
 
 RUNTIME_TABLE_FRAGMENTS = (
     "advisor_structured_",
@@ -236,15 +241,18 @@ def _eligible_products(loaded: LoadedPackage, report: ValidateReport) -> tuple[l
             )
             continue
         card = cards.get(sku) or {}
+        price_entries, _price_errors = normalize_product_prices(product)
+        confirmed = has_confirmed_retail(price_entries)
         selected.append(
             {
                 "tenant_id": str(loaded.manifest.get("tenant_id") or ""),
                 "sku": sku,
                 "canonical_name": product.get("canonical_name"),
-                "retail_price_byn": product.get("retail_price_byn"),
+                "retail_price_byn": legacy_byn_amount(price_entries),
                 "partner_price_byn": product.get("partner_price_byn"),
                 "partner_w": product.get("partner_w"),
-                "price_missing": bool(product.get("price_missing")),
+                "price_missing": not confirmed,
+                "retail_prices": price_entries,
                 "media_state": product.get("media_state")
                 or ("present" if media.get(sku) else "missing"),
                 "card_present": bool(card),
@@ -282,7 +290,16 @@ def stage_package(package_dir, store: StagingStore | None = None) -> StageResult
             duplicates=0,
             validate=json.loads(report.to_json()),
         )
-    products = [row for row in loaded.layers["products"]]
+    products = []
+    for row in loaded.layers["products"]:
+        entries, _errors = normalize_product_prices(row)
+        products.append(
+            {
+                **row,
+                "retail_prices": entries,
+                "price_missing": not has_confirmed_retail(entries),
+            }
+        )
     inserted = store.insert_run(
         {
             "package_id": report.package_id,

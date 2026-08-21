@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from tenant_release.prices import has_confirmed_retail, normalize_product_prices
+
 SCHEMA_VERSION = "tenant-release-package.v1"
 LAYER_NAMES = ("products", "aliases", "cards", "media", "faq")
 REVIEW_STATUSES = frozenset({"approved", "review_required", "blocked", "candidate"})
@@ -240,6 +242,9 @@ def validate_package(package_dir: Path) -> ValidateReport:
         sku_seen[sku] = sku_seen.get(sku, 0) + 1
         if sku_seen[sku] == 2:
             errors.append(_issue("duplicate_sku", f"duplicate sku {sku}", sku=sku, layer="products"))
+        _price_entries, price_errors = normalize_product_prices(product)
+        if price_errors:
+            errors.extend(price_errors)
 
     alias_to_skus: dict[str, set[str]] = {}
     for alias_row in aliases:
@@ -285,11 +290,11 @@ def validate_package(package_dir: Path) -> ValidateReport:
         if status in {"review_required", "blocked", "candidate"}:
             continue
         card = cards_by_sku.get(sku)
-        price_missing = bool(product.get("price_missing"))
-        has_price = any(
-            product.get(key) not in (None, "", 0, 0.0)
-            for key in ("retail_price_byn", "partner_price_byn", "retail_price_rub")
-        )
+        price_entries, _price_errors = normalize_product_prices(product)
+        confirmed_retail = has_confirmed_retail(price_entries)
+        price_missing = (not confirmed_retail) or bool(product.get("price_missing"))
+        if confirmed_retail:
+            price_missing = False
         media_state = str(product.get("media_state") or "").strip() or (
             "present" if media_by_sku.get(sku) else "missing"
         )
@@ -304,11 +309,9 @@ def validate_package(package_dir: Path) -> ValidateReport:
         if not source_ok:
             gaps.append(_issue("source_missing", "product source missing", sku=sku))
             continue
-        if not has_price and not price_missing:
+        if not confirmed_retail and not bool(product.get("price_missing")):
             gaps.append(_issue("price_gap", "price missing without price_missing", sku=sku))
             continue
-        if has_price and price_missing:
-            warnings.append(_issue("price_flag_conflict", "price present with price_missing", sku=sku))
         if media_state == "missing":
             gaps.append(_issue("media_missing", "media_state=missing", sku=sku))
         # media gap is honest and still eligible if other required fields exist

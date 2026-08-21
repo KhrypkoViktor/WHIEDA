@@ -66,6 +66,18 @@
     }
   },
   "$defs": {
+    "priceEntry": {
+      "type": "object",
+      "required": ["kind", "amount", "currency", "source"],
+      "properties": {
+        "kind": { "enum": ["retail", "partner"] },
+        "amount": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "source": { "type": "string", "minLength": 1 },
+        "source_version": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
     "fileRef": {
       "type": "object",
       "required": ["path", "sha256"],

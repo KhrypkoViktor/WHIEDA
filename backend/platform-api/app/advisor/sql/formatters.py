@@ -22,6 +22,31 @@ def _positive_amount(value: Any) -> bool:
         return False
 
 
+COUNTRY_CURRENCY = {"BY": "BYN", "RU": "RUB"}
+
+
+def pick_display_retail(entries: list[dict[str, Any]], country: str) -> dict[str, Any] | None:
+    retail = [item for item in entries if item.get("kind") == "retail"]
+    if not retail:
+        return None
+    prefer = COUNTRY_CURRENCY.get(country)
+    if prefer:
+        for item in retail:
+            if item.get("currency") == prefer:
+                return item
+    return retail[0]
+
+
+def format_retail_as_is(entry: dict[str, Any] | None) -> str:
+    if not entry:
+        return ""
+    amount = entry.get("amount")
+    currency = entry.get("currency")
+    if not amount or not currency:
+        return ""
+    return f"{amount} {currency}"
+
+
 def format_price(
     product: dict[str, Any],
     country: str,
@@ -29,6 +54,32 @@ def format_price(
     partner_only: bool = False,
     retail_only: bool = False,
 ) -> str:
+    retail_prices = product.get("retail_prices")
+    if isinstance(retail_prices, list) and retail_prices:
+        display = pick_display_retail(retail_prices, country)
+        if partner_only and not retail_only:
+            partner = product.get("partner_price_byn")
+            w = product.get("partner_w") or partner
+            parts: list[str] = []
+            if _positive_amount(partner):
+                parts.append(f"Для партнёра: {partner} BYN")
+            if _positive_amount(w):
+                parts.append(f"PV {w}")
+            return ", ".join(parts) if parts else MISSING_PRICE_TEXT
+        as_is = format_retail_as_is(display)
+        if not as_is:
+            return MISSING_PRICE_TEXT
+        if retail_only and not partner_only:
+            return f"Розничная цена: {as_is}"
+        parts = [f"Розничная цена: {as_is}"]
+        partner = product.get("partner_price_byn")
+        w = product.get("partner_w") or partner
+        if _positive_amount(partner):
+            parts.append(f"Для партнёра: {partner} BYN")
+        if _positive_amount(w):
+            parts.append(f"PV {w}")
+        return ", ".join(parts)
+
     if country == "BY":
         byn = product.get("retail_price_byn")
         partner = product.get("partner_price_byn")
