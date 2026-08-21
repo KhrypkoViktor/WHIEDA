@@ -1,0 +1,32 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-001",
+    "canonical_name": "Alpha Spirulina",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-001"
+    },
+    "retail_price_byn": 41,
+    "partner_price_byn": 28.7,
+    "partner_w": 8
+  },
+  {
+    "tenant_id": "tenant-beta",
+    "sku": "B-HACK",
+    "canonical_name": "Leaked Beta",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-beta:B-HACK"
+    },
+    "retail_price_byn": 1,
+    "partner_price_byn": 0.7,
+    "partner_w": 8
+  }
+]

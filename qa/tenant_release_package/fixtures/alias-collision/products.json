@@ -1,0 +1,32 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-010",
+    "canonical_name": "Alpha One",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-010"
+    },
+    "retail_price_byn": 10,
+    "partner_price_byn": 7.0,
+    "partner_w": 8
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-011",
+    "canonical_name": "Alpha Two",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-alpha:A-011"
+    },
+    "retail_price_byn": 11,
+    "partner_price_byn": 7.7,
+    "partner_w": 8
+  }
+]

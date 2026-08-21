@@ -1,0 +1,17 @@
+[
+  {
+    "tenant_id": "tenant-beta",
+    "sku": "B-001",
+    "canonical_name": "Beta Spirulina",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-beta:B-001"
+    },
+    "retail_price_byn": 77,
+    "partner_price_byn": 53.9,
+    "partner_w": 8
+  }
+]

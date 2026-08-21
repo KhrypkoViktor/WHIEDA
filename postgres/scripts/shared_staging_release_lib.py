@@ -16,8 +16,9 @@ ROOT = SCRIPTS_DIR.parents[1]
 BINDING_CONTEXT_SQL = "platform_bot_binding_context_v1.sql"
 INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"
 DATA_PLANE_SQL = "platform_tenant_advisor_data_plane_v1.sql"
+RELEASE_PACKAGE_SQL = "platform_tenant_release_package_v1.sql"
 BINDING_CONTEXT_PATH = SQL_DIR / BINDING_CONTEXT_SQL
-EXPECTED_APPLY_COUNT = 15
+EXPECTED_APPLY_COUNT = 16
 BACKFILL_PLAN = SCRIPTS_DIR / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 # Pinned in Gate B1 manifest. A dirty tree that rewrites the file must fail.
@@ -232,12 +233,12 @@ def build_offline_plan() -> ReleaseReport:
         failed.append(f"missing SQL files: {missing}")
     if len(APPLY_ORDER) != EXPECTED_APPLY_COUNT:
         failed.append(f"APPLY_ORDER length {len(APPLY_ORDER)} != {EXPECTED_APPLY_COUNT}")
-    if APPLY_ORDER[-1] != DATA_PLANE_SQL:
-        failed.append("tenant advisor data-plane SQL is not last in APPLY_ORDER")
-    if APPLY_ORDER[-2] != INBOX_SQL:
+    if APPLY_ORDER[-1] != RELEASE_PACKAGE_SQL:
+        failed.append("tenant release package SQL is not last in APPLY_ORDER")
+    if APPLY_ORDER[-2] != DATA_PLANE_SQL:
+        failed.append("tenant advisor data-plane SQL must immediately precede release package SQL")
+    if APPLY_ORDER[-3] != INBOX_SQL:
         failed.append("durable inbox SQL must immediately precede data-plane SQL")
-    if APPLY_ORDER[-3] != BINDING_CONTEXT_SQL:
-        failed.append("binding context SQL must immediately precede durable inbox SQL")
     if BACKFILL_PLAN.name in APPLY_ORDER:
         failed.append("backfill plan must not be in APPLY_ORDER")
     would = [item["name"] for item in files if item["exists"]]

@@ -1,0 +1,16 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-010",
+    "resource_type": "image",
+    "url": "https://cdn.example.test/tenant-alpha/A-010.jpg",
+    "title": "photo A-010"
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-011",
+    "resource_type": "image",
+    "url": "https://cdn.example.test/tenant-alpha/A-011.jpg",
+    "title": "photo A-011"
+  }
+]

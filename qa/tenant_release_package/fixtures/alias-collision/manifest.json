@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-alpha-alias-collision",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-alpha",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "Tenant Alpha",
+    "advisor_signature": "советник tenant-alpha"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "2b661344fe314aeb6023dbd62acdcbc528a33489b877e999929191cb141fce0e"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "5ffbc314aef8618ee0e253e31443ea7364875a473b53b607668695f7d63a5c25"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "760cee6f257ec2e74538c1ac64ab3cc5abd6310d3d0e7d76d0c8b2c2734e04b1"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "7b1464adac6f94ee79bf9e1886df1aaea5cc0e48d43939331a185f261affdc92"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_release_package/fixtures/alias-collision"
+  }
+}

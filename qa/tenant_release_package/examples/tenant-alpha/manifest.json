@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-alpha-catalog",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-alpha",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "Tenant Alpha",
+    "advisor_signature": "советник tenant-alpha"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "5ef004edc1944c355bd3732a65087c5a3827833b7aef1d24b7f9bea8e5611c79"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "dd114f8a0cec5c2af16134dba08ec459e1cfa6127d544d112da010b2bc154032"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "fbb56dbfb02826899cbef733e4a25d64c2181ed4ad3940e439a22965e6441420"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "89c7f2d836f4308bcdd263896efcca7833775e51e1bf7cbbb7ff4eb1672084b5"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "f0c61cafca9fe41287943da8063ab2ff9907499a67f14bfd534e0d5d79b213ac"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_release_package/examples/tenant-alpha"
+  }
+}
