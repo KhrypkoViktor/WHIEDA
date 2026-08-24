@@ -1,0 +1,8 @@
+[
+  {
+    "tenant_id": "tenant-north",
+    "sku": "SHARE-01",
+    "canonical_name": "North Capsule",
+    "what_it_is": "Card for North Capsule"
+  }
+]

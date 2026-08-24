@@ -1,0 +1,10 @@
+{
+  "tenant_id": "tenant-south",
+  "candidates": [
+    {
+      "tenant_id": "tenant-south",
+      "sku": "SHARE-01",
+      "review_status": "approved"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "tenant_id": "tenant-north",
+    "sku": "SHARE-01",
+    "resource_type": "image",
+    "url": "media/tenant-north/SHARE-01/main.webp",
+    "filename": "main.webp",
+    "title": "North Capsule"
+  }
+]
