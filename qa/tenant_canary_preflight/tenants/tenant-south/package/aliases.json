@@ -1,0 +1,7 @@
+[
+  {
+    "tenant_id": "tenant-south",
+    "alias": "shared capsule",
+    "canonical_sku": "SHARE-01"
+  }
+]

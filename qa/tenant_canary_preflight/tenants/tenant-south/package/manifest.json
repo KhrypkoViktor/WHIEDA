@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-south-canary",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-south",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "tenant-south",
+    "advisor_signature": "советник tenant-south"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "0487610972209476385ec51797242054b08bbd70195db18bec6a504d74d05128"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "106e2bd64d9477ee600670a25ee85abdb12446ddbae9dd4ba1f3a476c8f00e07"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "42539b39568b707e3fc41540545525338a5f8388883ef08085cec09c0aa7f786"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "a47186203b7925c743d08ec04767a80f47de0a59d8f23004d213c914f73d1106"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "945b9715eba9e2025afd35fa723972732b5ee073cfa1f70115628ac45465f6ec"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_canary_preflight/tenant-south"
+  }
+}

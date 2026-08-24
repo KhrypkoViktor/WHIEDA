@@ -1,0 +1,14 @@
+{
+  "tenant_id": "tenant-north",
+  "tenant_status": "active",
+  "bindings": [
+    {
+      "binding_id": "north-advisor-bot",
+      "tenant_id": "tenant-north",
+      "status": "active",
+      "bot_username": "north_canary_bot",
+      "bot_id": "91001",
+      "processing_mode": "core"
+    }
+  ]
+}
