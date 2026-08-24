@@ -318,6 +318,11 @@ class PostgresInboxStore:
         telegram_update_id: int,
         payload: dict[str, Any],
     ) -> EnqueueResult:
+        from app.db_feature_readiness import SchemaFeatureUnavailable, get_feature_status
+
+        status = await get_feature_status("telegram_durable_inbox")
+        if not status.ready:
+            raise SchemaFeatureUnavailable(status)
         row = await _fetch_one(
             """
             select inbox_id::text as inbox_id, inserted
