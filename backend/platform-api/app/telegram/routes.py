@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.advisor.service import handle_structured_query
+from app.db_feature_readiness import SchemaFeatureUnavailable, log_feature_unavailable
 from app.settings import get_settings
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.bindings import (
@@ -267,6 +268,14 @@ async def telegram_webhook(
             telegram_update_id=int(payload["update_id"]),
             payload=payload,
         )
+    except SchemaFeatureUnavailable as exc:
+        log_feature_unavailable(exc.status)
+        if exc.status.state == "degraded":
+            return {"ok": True}
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "telegram_inbox_unavailable"},
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:

@@ -7,7 +7,13 @@ import logging
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.db_feature_readiness import (
+    ONBOARDING_UNAVAILABLE_TEXT,
+    get_feature_status,
+    log_feature_unavailable,
+)
 from app.identity.service import exchange_telegram_link_token
+from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.bindings import (
@@ -97,6 +103,13 @@ async def handle_onboarding(
     *,
     first_ref: str | None = None,
 ) -> dict[str, Any] | None:
+    if not parse_onboarding_command(msg.text):
+        return None
+    status = await get_feature_status("onboarding")
+    if not status.ready:
+        log_feature_unavailable(status)
+        await deliver_text(msg.chat_id, ONBOARDING_UNAVAILABLE_TEXT)
+        return {"ok": True, "route": "onboarding_unavailable", "feature": "onboarding"}
     result = await handle_onboarding_text(
         tenant.tenant_id,
         telegram_user_id=msg.user_id,
