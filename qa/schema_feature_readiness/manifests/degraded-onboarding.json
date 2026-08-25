@@ -5,6 +5,7 @@
     "onboarding_progress",
     "onboarding_reminders",
     "mentor_escalations",
-    "telegram_update_inbox"
+    "telegram_update_inbox",
+    "telegram_delivery_outbox"
   ]
 }

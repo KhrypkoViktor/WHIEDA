@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "mode": "offline-snapshot",
+  "counts": {
+    "pending": 0,
+    "leased": 0,
+    "sent": 0,
+    "retryable_failed": 0,
+    "unknown_delivery": 0,
+    "dead": 1
+  },
+  "oldest_pending": null,
+  "unknown_delivery": [],
+  "dead": [
+    {
+      "delivery_id": "44444444-4444-4444-8444-444444444444",
+      "binding_id": "south-advisor-bot",
+      "telegram_update_id": 9103,
+      "sequence_no": 1,
+      "kind": "text",
+      "status": "dead",
+      "attempt_count": 8,
+      "last_error_code": "telegram_send_failed:403",
+      "payload": {
+        "chat_ref": "chat:27badc983df1",
+        "text_len": 16
+      },
+      "created_at": "2026-08-25T09:02:00+00:00"
+    }
+  ],
+  "row_count": 1
+}

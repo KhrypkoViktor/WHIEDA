@@ -27,6 +27,15 @@
       ],
       "missing_tables": [],
       "migration": "platform_telegram_durable_inbox_v1.sql"
+    },
+    {
+      "feature": "telegram_durable_outbox",
+      "state": "ready",
+      "tables": [
+        "telegram_delivery_outbox"
+      ],
+      "missing_tables": [],
+      "migration": "platform_telegram_durable_outbox_v1.sql"
     }
   ]
 }

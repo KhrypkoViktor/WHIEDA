@@ -604,6 +604,136 @@ FROM telegram_inbox_claim_by_id(
         print(f"  PASS {line}")
 
 
+def run_outbox_delivery_checks(db: str) -> None:
+    print("=== Durable Telegram outbox plan, order, unknown ===")
+    checks: list[str] = []
+    super_kw = {
+        "user": LOCAL_STAGING_SUPERUSER,
+        "password": LOCAL_STAGING_SUPERPASSWORD,
+    }
+
+    columns = psql_scalar(
+        db,
+        """
+SELECT (to_regclass('public.telegram_delivery_outbox') IS NOT NULL)
+   AND EXISTS (
+     SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='telegram_delivery_outbox'
+       AND column_name='sequence_no'
+   )
+   AND EXISTS (
+     SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='telegram_delivery_outbox'
+       AND column_name='payload_json'
+   )
+   AND EXISTS (
+     SELECT 1 FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='telegram_delivery_outbox'
+       AND column_name='status'
+   );
+""",
+        **super_kw,
+    )
+    if columns != "t":
+        raise AssertionError(f"durable outbox columns missing: {columns}")
+    checks.append("telegram_delivery_outbox has Gate K columns")
+
+    psql_exec(
+        db,
+        """
+SELECT telegram_inbox_enqueue(
+  'whieda-advisor-bot',
+  'whieda',
+  92101,
+  '{"update_id": 92101}'::jsonb
+);
+SELECT telegram_outbox_enqueue_items(
+  (SELECT inbox_id FROM telegram_update_inbox
+    WHERE binding_id='whieda-advisor-bot' AND telegram_update_id=92101),
+  'whieda-advisor-bot',
+  'whieda',
+  92101,
+  '[
+     {"kind":"photo","payload":{"chat_id":"1","photo_url":"https://media.example.org/p.webp"}},
+     {"kind":"text","payload":{"chat_id":"1","text":"hi"}}
+   ]'::jsonb
+);
+SELECT telegram_outbox_enqueue_items(
+  (SELECT inbox_id FROM telegram_update_inbox
+    WHERE binding_id='whieda-advisor-bot' AND telegram_update_id=92101),
+  'whieda-advisor-bot',
+  'whieda',
+  92101,
+  '[
+     {"kind":"photo","payload":{"chat_id":"1","photo_url":"https://media.example.org/p.webp"}},
+     {"kind":"text","payload":{"chat_id":"1","text":"hi"}}
+   ]'::jsonb
+);
+""",
+        **super_kw,
+    )
+    plan_count = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_delivery_outbox
+WHERE binding_id='whieda-advisor-bot' AND telegram_update_id=92101;
+""",
+        **super_kw,
+    )
+    if plan_count != "2":
+        raise AssertionError(f"duplicate plan must stay at 2 rows (got {plan_count})")
+    checks.append("duplicate enqueue does not duplicate photo/text plan")
+
+    first_kind = psql_scalar(
+        db,
+        """
+SELECT kind
+FROM telegram_outbox_claim_next('owner-outbox', 30, 'whieda-advisor-bot');
+""",
+        **super_kw,
+    )
+    if first_kind != "photo":
+        raise AssertionError(f"first claim must be photo (got {first_kind!r})")
+    second_kind = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_outbox_claim_next('owner-outbox-2', 30, 'whieda-advisor-bot');
+""",
+        **super_kw,
+    )
+    if second_kind != "0":
+        raise AssertionError("text must wait while photo is leased")
+    checks.append("photo-first ordering blocks later sequence")
+
+    psql_exec(
+        db,
+        """
+SELECT telegram_outbox_mark_unknown(
+  (SELECT outbox_id FROM telegram_delivery_outbox
+    WHERE binding_id='whieda-advisor-bot' AND telegram_update_id=92101 AND sequence_no=1),
+  'telegram_send_ambiguous'
+);
+""",
+        **super_kw,
+    )
+    blocked = psql_scalar(
+        db,
+        """
+SELECT count(*)::text
+FROM telegram_outbox_claim_next('owner-outbox-3', 30, 'whieda-advisor-bot');
+""",
+        **super_kw,
+    )
+    if blocked != "0":
+        raise AssertionError("unknown_delivery must not auto-send the next sequence")
+    checks.append("unknown_delivery does not resend later sequence")
+
+    for line in checks:
+        print(f"  PASS {line}")
+
+
 def run_binding_isolation_checks(db: str) -> None:
     print("=== Telegram binding isolation after apply ===")
     checks: list[str] = []
@@ -857,6 +987,7 @@ def main() -> int:
         seed_rls_fixtures(db)
         run_rls_checks(db)
         run_inbox_durable_checks(db)
+        run_outbox_delivery_checks(db)
 
         print("\n=== LOCAL STAGING PROOF: PASS ===")
         print(f"  SQL files x2: {len(APPLY_ORDER)}")

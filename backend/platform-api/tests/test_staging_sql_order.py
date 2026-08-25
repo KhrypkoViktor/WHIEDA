@@ -51,13 +51,16 @@ def test_bot_binding_context_sql_is_in_apply_order_once():
     assert listed.index(data_plane) < listed.index(release_pkg)
     assert listed.count(price_plane) == 1
     assert listed.index(release_pkg) < listed.index(price_plane)
+    outbox = "platform_telegram_durable_outbox_v1.sql"
+    assert listed.count(outbox) == 1
+    assert listed.index(price_plane) < listed.index(outbox)
 
 
 def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
-    assert len(listed) == 17
+    assert len(listed) == 18
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():
