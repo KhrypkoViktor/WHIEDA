@@ -41,6 +41,7 @@ APPLY_ORDER = [
     "wwc_leads_p01_runtime_migration.sql",
     "platform_tenant_rls_legacy_leads_v1.sql",
     "platform_api_session_context_v1.sql",
+    "platform_advisor_structured_base_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
     "platform_user_memory_v1.sql",

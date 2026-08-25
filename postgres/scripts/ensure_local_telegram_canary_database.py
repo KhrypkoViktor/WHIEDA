@@ -24,7 +24,6 @@ from staging_proof_lib import (  # noqa: E402
 CANARY_DB = "whieda_platform_telegram_canary"
 LOCAL_CORE_API_ROLE = "whieda_platform_api_local"
 LOCAL_CORE_API_PASSWORD = "local_core_api_only"
-LOCAL_ADVISOR_SCHEMA = SQL_DIR / "platform_advisor_structured_local_v1.sql"
 OVERLAY = _SCRIPT_DIR / "local_telegram_canary_overlay_v1.sql"
 
 
@@ -134,7 +133,6 @@ def main() -> int:
 
     _recreate_database()
     _apply_schema_twice()
-    _psql_file(CANARY_DB, LOCAL_ADVISOR_SCHEMA)
     _psql_file(CANARY_DB, OVERLAY)
     _ensure_api_role()
     print(

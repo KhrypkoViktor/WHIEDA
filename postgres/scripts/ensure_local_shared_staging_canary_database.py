@@ -22,7 +22,6 @@ from staging_proof_lib import (  # noqa: E402
 )
 
 CANARY_DB = "whieda_platform_shared_staging_local"
-LOCAL_ADVISOR_SCHEMA = SQL_DIR / "platform_advisor_structured_local_v1.sql"
 OCCUPANT = _SCRIPT_DIR / "local_shared_staging_occupant_v1.sql"
 
 
@@ -101,7 +100,6 @@ def main() -> int:
 
     recreate_database()
     apply_schema_twice()
-    _psql_file(CANARY_DB, LOCAL_ADVISOR_SCHEMA)
     _psql_file(CANARY_DB, OCCUPANT)
     print(
         f"OK: {CANARY_DB} ready ({len(APPLY_ORDER)} SQL files x2 + occupant marker; "

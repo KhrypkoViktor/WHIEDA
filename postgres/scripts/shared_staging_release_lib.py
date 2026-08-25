@@ -20,7 +20,7 @@ RELEASE_PACKAGE_SQL = "platform_tenant_release_package_v1.sql"
 PRICE_PLANE_SQL = "platform_tenant_release_price_plane_v1.sql"
 OUTBOX_SQL = "platform_telegram_durable_outbox_v1.sql"
 BINDING_CONTEXT_PATH = SQL_DIR / BINDING_CONTEXT_SQL
-EXPECTED_APPLY_COUNT = 18
+EXPECTED_APPLY_COUNT = 19
 BACKFILL_PLAN = SCRIPTS_DIR / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 # Pinned in Gate B1 manifest. A dirty tree that rewrites the file must fail.
@@ -63,6 +63,7 @@ MIGRATION_MARKERS: tuple[tuple[str, str], ...] = (
     ("wwc_leads_p01_runtime_migration.sql", "to_regclass('public.referral_profiles')"),
     ("platform_tenant_rls_legacy_leads_v1.sql", "to_regclass('public.website_leads')"),
     ("platform_api_session_context_v1.sql", "to_regclass('public.platform_session_context')"),
+    ("platform_advisor_structured_base_v1.sql", "to_regclass('public.advisor_structured_products')"),
     ("platform_identity_journey_v1.sql", "to_regclass('public.visitor_sessions')"),
     ("platform_onboarding_v1.sql", "to_regclass('public.onboarding_programs')"),
     ("platform_user_memory_v1.sql", "to_regclass('public.user_memory_facts')"),
