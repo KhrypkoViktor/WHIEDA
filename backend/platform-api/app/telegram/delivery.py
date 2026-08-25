@@ -10,6 +10,7 @@ from typing import Any, Iterator
 
 import httpx
 
+from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url
 from app.telegram.log_safe import chat_ref
 from app.telegram.tenant_media import resolve_delivery_photo_url, sanitize_delivery_text
 
@@ -93,6 +94,13 @@ def _assert_outbound_token(bot_token: str) -> None:
         raise RuntimeError("foreign_bot_token_forbidden")
 
 
+def _bot_api_url(bot_token: str, method: str) -> str:
+    try:
+        return telegram_bot_api_url(bot_token, method)
+    except TelegramApiBaseError as exc:
+        raise TelegramDeliveryError(str(exc)) from exc
+
+
 _ALLOWED_HTML_TAGS = ("b", "strong", "i", "em")
 
 
@@ -129,7 +137,7 @@ async def send_telegram_text(
     if queued is not None:
         return queued
     _assert_outbound_token(bot_token)
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    url = _bot_api_url(bot_token, "sendMessage")
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": format_telegram_html(text)[:4096],
@@ -168,7 +176,7 @@ async def send_telegram_photo(
     if queued is not None:
         return queued
     _assert_outbound_token(bot_token)
-    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    url = _bot_api_url(bot_token, "sendPhoto")
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "photo": photo_url.strip()[:2048],
@@ -212,7 +220,7 @@ async def answer_callback_query(
     if not callback_query_id or not bot_token:
         return {"ok": False, "skipped": True}
     _assert_outbound_token(bot_token)
-    url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
+    url = _bot_api_url(bot_token, "answerCallbackQuery")
     payload: dict[str, Any] = {"callback_query_id": callback_query_id}
     if text and text.strip():
         payload["text"] = text.strip()[:200]

@@ -45,7 +45,8 @@ FEATURE_REQUIREMENTS: dict[str, dict[str, Any]] = {
     },
 }
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+_HERE = Path(__file__).resolve()
+REPO_ROOT = _HERE.parents[3] if len(_HERE.parents) > 3 else _HERE.parents[-1]
 SQL_DIR = REPO_ROOT / "postgres" / "sql"
 
 ProbeFn = Callable[[Sequence[str]], Awaitable[tuple[str, ...] | None]]
@@ -279,8 +280,17 @@ async def get_feature_status(feature: str) -> FeatureStatus:
                 missing_tables=(),
                 migration=str(spec["migration"]),
             )
-    _cache[feature] = (now + CACHE_TTL_SECONDS, status)
+    _cache[feature] = (now + _cache_ttl_seconds(), status)
     return status
+
+
+def _cache_ttl_seconds() -> float:
+    try:
+        from app.settings import get_settings
+
+        return max(0.0, float(get_settings().feature_readiness_cache_ttl_sec))
+    except Exception:
+        return CACHE_TTL_SECONDS
 
 
 def migration_paths() -> dict[str, Path]:

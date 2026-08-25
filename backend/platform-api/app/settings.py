@@ -71,6 +71,20 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_TENANT_MEDIA_BASE_URL",
         description="HTTPS origin+prefix for tenant media, e.g. https://media.example/media",
     )
+    telegram_api_base_url: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_TELEGRAM_API_BASE_URL",
+        description="Local-only Bot API origin for lab capture. Unset uses api.telegram.org.",
+    )
+    telegram_outbox_worker: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_TELEGRAM_OUTBOX_WORKER",
+        description="Drain durable outbox in-process. Local canary only.",
+    )
+    feature_readiness_cache_ttl_sec: float = Field(
+        default=30.0,
+        validation_alias="PLATFORM_FEATURE_READINESS_CACHE_TTL_SEC",
+    )
 
     core_route_public_ref: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_PUBLIC_REF")
     core_route_leads: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_LEADS")

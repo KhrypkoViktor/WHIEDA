@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any, Awaitable, Callable
@@ -207,3 +208,66 @@ async def _send_delivery_item(binding: BotBindingContext, item: DeliveryOutboxRe
             )
     if not result.get("ok") and not result.get("skipped"):
         raise TelegramDeliveryError("telegram_delivery_rejected")
+
+
+async def drain_due_outbox(
+    *,
+    store: InboxStore | None = None,
+    owner: str | None = None,
+    limit: int = 32,
+) -> int:
+    """Claim due outbox rows across bindings. Used by the in-process worker loop."""
+    inbox_store = store or get_inbox_store()
+    claim_owner = owner or worker_owner()
+    sent = 0
+    for _ in range(max(limit, 1)):
+        item = await inbox_store.claim_delivery(claim_owner, binding_id=None)
+        if item is None:
+            break
+        try:
+            binding = await resolve_bot_binding_context(item.binding_id)
+        except Exception as exc:
+            await inbox_store.mark_delivery_retryable(item.outbox_id, safe_error_summary(exc))
+            continue
+        if binding is None or binding.tenant.tenant_id != item.tenant_id:
+            await inbox_store.mark_delivery_unknown(item.outbox_id, "binding_unavailable")
+            continue
+        try:
+            await _send_delivery_item(binding, item)
+            await inbox_store.mark_delivery_sent(item.outbox_id)
+            sent += 1
+        except TelegramDeliveryUnknown as exc:
+            await inbox_store.mark_delivery_unknown(item.outbox_id, safe_error_summary(exc))
+            logger.warning(
+                "telegram_outbox_unknown_delivery",
+                extra={"binding_id": item.binding_id, "sequence_no": item.sequence_no},
+            )
+        except TelegramDeliveryError as exc:
+            status = await inbox_store.mark_delivery_retryable(
+                item.outbox_id, safe_error_summary(exc)
+            )
+            logger.warning(
+                "telegram_outbox_retryable",
+                extra={"binding_id": item.binding_id, "status": status, "sequence_no": item.sequence_no},
+            )
+        except Exception as exc:
+            status = await inbox_store.mark_delivery_retryable(
+                item.outbox_id, safe_error_summary(exc)
+            )
+            logger.exception(
+                "telegram_outbox_retryable",
+                extra={"binding_id": item.binding_id, "status": status},
+            )
+    return sent
+
+
+async def run_outbox_worker_loop() -> None:
+    while True:
+        try:
+            drained = await drain_due_outbox()
+            await asyncio.sleep(0.25 if drained else 0.5)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("telegram_outbox_worker_loop")
+            await asyncio.sleep(1.0)

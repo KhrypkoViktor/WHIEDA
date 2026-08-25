@@ -11,6 +11,16 @@ def client_id(tenant_id: str) -> str:
     return tenant_id
 
 
+_PRODUCT_COLUMNS = (
+    "sku, canonical_name, retail_price_byn, retail_price_rub, "
+    "partner_price_byn, partner_w, retail_prices"
+)
+_PRODUCT_COLUMNS_P = (
+    "p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub, "
+    "p.partner_price_byn, p.partner_w, p.retail_prices"
+)
+
+
 async def load_capability_response(
     conn,
     tenant_id: str,
@@ -63,9 +73,8 @@ async def resolve_product_by_exact_alias(
 ) -> dict[str, Any] | None:
     return await fetch_one(
         conn,
-        """
-        select p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub,
-               p.partner_price_byn, p.partner_w
+        f"""
+        select {_PRODUCT_COLUMNS_P}
         from advisor_structured_aliases a
         join advisor_structured_products p
           on p.client_id = a.client_id and p.sku = a.canonical_sku
@@ -82,9 +91,8 @@ async def resolve_product_by_exact_alias(
 async def resolve_activator_pro_product(conn, tenant_id: str) -> dict[str, Any] | None:
     return await fetch_one(
         conn,
-        """
-        select p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub,
-               p.partner_price_byn, p.partner_w
+        f"""
+        select {_PRODUCT_COLUMNS_P}
         from advisor_structured_aliases a
         join advisor_structured_products p
           on p.client_id = a.client_id and p.sku = a.canonical_sku
@@ -103,9 +111,8 @@ async def fetch_alias_candidates(conn, tenant_id: str, question: str) -> list[di
     compact = normalized.replace(" ", "")
     return await fetch_all(
         conn,
-        """
-        select p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub,
-               p.partner_price_byn, p.partner_w, a.alias, a.priority, a.match_type
+        f"""
+        select {_PRODUCT_COLUMNS_P}, a.alias, a.priority, a.match_type
         from advisor_structured_aliases a
         join advisor_structured_products p
           on p.client_id = a.client_id and p.sku = a.canonical_sku
@@ -132,9 +139,8 @@ async def resolve_product_by_partial_alias(
     normalized = question.lower().strip()
     rows = await fetch_all(
         conn,
-        """
-        select p.sku, p.canonical_name, p.retail_price_byn, p.retail_price_rub,
-               p.partner_price_byn, p.partner_w, a.alias, a.priority
+        f"""
+        select {_PRODUCT_COLUMNS_P}, a.alias, a.priority
         from advisor_structured_aliases a
         join advisor_structured_products p
           on p.client_id = a.client_id and p.sku = a.canonical_sku
@@ -250,8 +256,8 @@ async def find_business_faq(conn, tenant_id: str, question: str) -> dict[str, An
 async def load_recommendation_catalog(conn, tenant_id: str) -> list[dict[str, Any]]:
     return await fetch_all(
         conn,
-        """
-        select p.sku, p.canonical_name, p.retail_price_byn, p.partner_price_byn,
+        f"""
+        select {_PRODUCT_COLUMNS_P},
                p.partner_w as partner_points,
                r.business_priority, r.universality_score, r.demo_score, r.gift_score,
                r.popularity_score, r.resale_score, r.personal_use_score, r.reason_short
@@ -340,9 +346,8 @@ async def find_product_comparison(
 async def resolve_product_by_sku(conn, tenant_id: str, sku: str) -> dict[str, Any] | None:
     return await fetch_one(
         conn,
-        """
-        select sku, canonical_name, retail_price_byn, retail_price_rub,
-               partner_price_byn, partner_w
+        f"""
+        select {_PRODUCT_COLUMNS}
         from advisor_structured_products
         where client_id = %s and sku = %s
         limit 1
@@ -410,9 +415,8 @@ async def resolve_catalog_product_by_sku(conn, tenant_id: str, sku: str) -> dict
 async def resolve_product_by_slug(conn, tenant_id: str, slug: str) -> dict[str, Any] | None:
     return await fetch_one(
         conn,
-        """
-        select sku, canonical_name, retail_price_byn, retail_price_rub,
-               partner_price_byn, partner_w
+        f"""
+        select {_PRODUCT_COLUMNS}
         from advisor_structured_products
         where client_id = %s and lower(canonical_name) like %s
         limit 1

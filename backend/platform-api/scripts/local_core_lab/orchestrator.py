@@ -56,6 +56,7 @@ class OrchestratorConfig:
     gap_operator_mode: bool = False
     conversation_reliability_mode: bool = False
     telegram_experience_mode: bool = False
+    tenant_telegram_canary: bool = False
 
 
 @dataclass
@@ -217,6 +218,15 @@ def run_lab(
     run_capture_fn: Callable[..., StepResult] = run_capture,
     wait_health_fn: Callable[[int], dict[str, Any]] = wait_api_health,
 ) -> tuple[int, OrchestratorState]:
+    if config.tenant_telegram_canary:
+        from local_core_lab.telegram_canary_lab import run_telegram_canary_lab
+
+        return run_telegram_canary_lab(
+            config,
+            run_capture_fn=run_capture_fn,
+            wait_health_fn=wait_health_fn,
+        )
+
     state = OrchestratorState()
     report = state.report
     report.sql_files = list(APPLY_ORDER)
