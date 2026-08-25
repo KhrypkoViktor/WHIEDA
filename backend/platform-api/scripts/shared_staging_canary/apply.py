@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,7 +25,8 @@ UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('whieda.shared_staging.tenant_c
 
 
 def _backup_dir() -> Path:
-    root = Path(__file__).resolve().parents[2] / "reports" / "shared_staging_canary"
+    configured = str(os.environ.get("WHIEDA_SHARED_STAGING_REPORT_DIR") or "").strip()
+    root = Path(configured) if configured else Path(__file__).resolve().parents[2] / "reports" / "shared_staging_canary"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = root / stamp
     path.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,7 @@ CLI = SCRIPTS / "run_shared_staging_tenant_canary.py"
 sys.path.insert(0, str(SCRIPTS))
 
 from shared_staging_canary.catalog import MemoryCatalog, import_tenant_catalog  # noqa: E402
+from shared_staging_canary.apply import _backup_dir  # noqa: E402
 from shared_staging_canary.preflight import run_preflight  # noqa: E402
 from shared_staging_canary.rollback import render_rollback_plan  # noqa: E402
 from shared_staging_canary.target import (  # noqa: E402
@@ -311,6 +312,14 @@ def test_disabled_canary_binding_is_ready_for_catalog_only_stage(tmp_path: Path)
     )
     assert report["ok"] is True
     assert report["state"] == "catalog_only_ready"
+
+
+def test_apply_backup_dir_can_be_mounted_outside_readonly_source(tmp_path: Path, monkeypatch):
+    root = tmp_path / "reports"
+    monkeypatch.setenv("WHIEDA_SHARED_STAGING_REPORT_DIR", str(root))
+    created = _backup_dir()
+    assert created.parent == root
+    assert created.is_dir()
 
 
 def test_rollback_plan_is_markdown_and_does_not_need_db():
