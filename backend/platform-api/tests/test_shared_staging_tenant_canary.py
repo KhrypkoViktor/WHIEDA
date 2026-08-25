@@ -16,6 +16,7 @@ CLI = SCRIPTS / "run_shared_staging_tenant_canary.py"
 sys.path.insert(0, str(SCRIPTS))
 
 from shared_staging_canary.catalog import MemoryCatalog, import_tenant_catalog  # noqa: E402
+from shared_staging_canary.preflight import run_preflight  # noqa: E402
 from shared_staging_canary.rollback import render_rollback_plan  # noqa: E402
 from shared_staging_canary.target import (  # noqa: E402
     TargetGuardError,
@@ -279,6 +280,37 @@ def test_disabled_binding_is_written_and_webhook_is_not():
     row = catalog.binding("lab-bot")
     assert row["status"] == "disabled"
     assert catalog.webhooks_set == []
+
+
+def test_disabled_canary_binding_is_ready_for_catalog_only_stage(tmp_path: Path):
+    """Gate M must not demand activation before it imports a disabled canary."""
+    fixture = ROOT / "qa" / "tenant_canary_preflight" / "tenants" / "tenant-north"
+    binding = json.loads((fixture / "binding.json").read_text(encoding="utf-8"))
+    binding["bindings"][0]["status"] = "disabled"
+    binding_path = tmp_path / "binding.json"
+    binding_path.write_text(json.dumps(binding), encoding="utf-8")
+    target = validate_canary_target(
+        STAGING_DSN,
+        expected_db="whieda_platform_staging",
+        runtime_readonly_dsn=RUNTIME_DSN,
+    )
+    report = run_preflight(
+        target=target,
+        dsn=STAGING_DSN,
+        package=fixture / "package",
+        tenant_id="tenant-north",
+        media_base_url="https://media.example.org/media",
+        media_manifest=fixture / "media-manifest.tsv",
+        binding_snapshot=binding_path,
+        runtime_snapshot=fixture / "runtime.json",
+        connect=lambda _dsn, read_only: {
+            "current_database": "whieda_platform_staging",
+            "current_user": "whieda_platform_staging",
+            "is_superuser": False,
+        },
+    )
+    assert report["ok"] is True
+    assert report["state"] == "catalog_only_ready"
 
 
 def test_rollback_plan_is_markdown_and_does_not_need_db():

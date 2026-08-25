@@ -24,6 +24,21 @@ from tenant_canary.preflight import evaluate_preflight
 from tenant_release.package import load_package, sha256_file
 
 
+def _disabled_canary_binding_ok(snapshot_path: Path, *, tenant_id: str) -> bool:
+    """Gate M stages one disabled binding; activation belongs to a later release."""
+    try:
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    rows = payload.get("bindings") if isinstance(payload, dict) else None
+    matching = [
+        row
+        for row in (rows or [])
+        if isinstance(row, dict) and str(row.get("tenant_id") or "").strip() == tenant_id
+    ]
+    return len(matching) == 1 and str(matching[0].get("status") or "").strip().lower() == "disabled"
+
+
 def _state(*, gate_i_ok: bool, media_host_verified: bool, blocked: list[str]) -> str:
     if blocked:
         return "blocked"
@@ -76,8 +91,13 @@ def run_preflight(
             media_base_url=media_base or "https://media.example.org/media",
             mode="plan",
         )
-        if not gate_i.ok:
-            blocked.extend(f"{item.category}:{item.code}" for item in gate_i.findings)
+        allowed_disabled_binding_gap = _disabled_canary_binding_ok(
+            snapshots["binding_snapshot"], tenant_id=tenant
+        )
+        for item in gate_i.findings:
+            if allowed_disabled_binding_gap and item.category == "binding" and item.code == "active_binding_missing":
+                continue
+            blocked.append(f"{item.category}:{item.code}")
     else:
         blocked.append(str(snapshots.get("message") or "snapshots missing"))
 
@@ -124,7 +144,14 @@ def run_preflight(
         "true",
         "yes",
     }
-    gate_i_ok = bool(gate_i and gate_i.ok)
+    gate_i_ok = bool(gate_i) and not any(
+        not (
+            _disabled_canary_binding_ok(snapshots["binding_snapshot"], tenant_id=tenant)
+            and item.category == "binding"
+            and item.code == "active_binding_missing"
+        )
+        for item in (gate_i.findings if gate_i else [])
+    )
     state = _state(gate_i_ok=gate_i_ok, media_host_verified=media_host_verified, blocked=blocked)
     return {
         "ok": state in {"ready_to_apply", "catalog_only_ready"},
