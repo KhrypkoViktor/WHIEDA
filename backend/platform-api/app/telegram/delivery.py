@@ -5,6 +5,7 @@ import contextvars
 import html
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Iterator
 
 import httpx
@@ -24,6 +25,10 @@ class TelegramDeliveryError(RuntimeError):
     """Raised on the durable-inbox worker path when Telegram send fails."""
 
 
+class TelegramDeliveryUnknown(TelegramDeliveryError):
+    """Request outcome is ambiguous; do not automatically resend."""
+
+
 @contextlib.contextmanager
 def outbound_binding_guard(bot_token: str) -> Iterator[None]:
     token = _allowed_bot_token.set(bot_token)
@@ -31,6 +36,55 @@ def outbound_binding_guard(bot_token: str) -> Iterator[None]:
         yield
     finally:
         _allowed_bot_token.reset(token)
+
+
+@dataclass(frozen=True)
+class DeliveryDraft:
+    kind: str
+    payload: dict[str, Any]
+
+
+_delivery_plan: contextvars.ContextVar[list[DeliveryDraft] | None] = contextvars.ContextVar(
+    "telegram_delivery_plan",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def capture_delivery_plan() -> Iterator[list[DeliveryDraft]]:
+    items: list[DeliveryDraft] = []
+    token = _delivery_plan.set(items)
+    try:
+        yield items
+    finally:
+        _delivery_plan.reset(token)
+
+
+def current_delivery_plan() -> list[DeliveryDraft] | None:
+    return _delivery_plan.get()
+
+
+def _queue_delivery(kind: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    plan = _delivery_plan.get()
+    if plan is None:
+        return None
+    plan.append(DeliveryDraft(kind=kind, payload=dict(payload)))
+    return {"ok": True, "queued": True}
+
+
+def compact_delivery_payload(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    chat_id = str(payload.get("chat_id") or "").strip()
+    if kind == "photo":
+        compact: dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo_url": str(payload.get("photo_url") or "").strip()[:2048],
+        }
+        return compact
+    compact = {"chat_id": chat_id, "text": str(payload.get("text") or "").strip()[:4096]}
+    markup = payload.get("reply_markup")
+    if isinstance(markup, dict) and markup:
+        compact["reply_markup"] = markup
+    return compact
 
 
 def _assert_outbound_token(bot_token: str) -> None:
@@ -65,6 +119,15 @@ async def send_telegram_text(
 ) -> dict[str, Any]:
     if not text.strip():
         return {"ok": False, "skipped": True}
+    queued = _queue_delivery(
+        "text",
+        compact_delivery_payload(
+            "text",
+            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
+        ),
+    )
+    if queued is not None:
+        return queued
     _assert_outbound_token(bot_token)
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload: dict[str, Any] = {
@@ -75,17 +138,15 @@ async def send_telegram_text(
     }
     if isinstance(reply_markup, dict) and reply_markup:
         payload["reply_markup"] = reply_markup
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.post(url, json=payload)
-    data = response.json() if response.text else {}
-    if response.status_code >= 400 or not data.get("ok"):
+    data, status_code = await _post_telegram(url, payload, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_send_failed",
-            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+            extra={"status": status_code, "chat_id": chat_ref(chat_id)},
         )
-        result = {"ok": False, "status_code": response.status_code, "detail": data}
+        result = {"ok": False, "status_code": status_code, "detail": data}
         if _allowed_bot_token.get() is not None:
-            raise TelegramDeliveryError(f"telegram_send_failed:{response.status_code}")
+            raise TelegramDeliveryError(f"telegram_send_failed:{status_code}")
         return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
@@ -100,22 +161,43 @@ async def send_telegram_photo(
     """Send photo without caption — text is always a separate message."""
     if not photo_url.strip():
         return {"ok": False, "skipped": True}
+    queued = _queue_delivery(
+        "photo",
+        compact_delivery_payload("photo", {"chat_id": chat_id, "photo_url": photo_url}),
+    )
+    if queued is not None:
+        return queued
     _assert_outbound_token(bot_token)
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "photo": photo_url.strip()[:2048],
     }
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.post(url, json=payload)
-    data = response.json() if response.text else {}
-    if response.status_code >= 400 or not data.get("ok"):
+    data, status_code = await _post_telegram(url, payload, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_photo_failed",
-            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+            extra={"status": status_code, "chat_id": chat_ref(chat_id)},
         )
-        return {"ok": False, "status_code": response.status_code, "detail": data}
+        result = {"ok": False, "status_code": status_code, "detail": data}
+        if _allowed_bot_token.get() is not None:
+            raise TelegramDeliveryError(f"telegram_photo_failed:{status_code}")
+        return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
+async def _post_telegram(
+    url: str,
+    payload: dict[str, Any],
+    timeout_sec: float,
+) -> tuple[dict[str, Any], int]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.post(url, json=payload)
+        data = response.json() if response.text else {}
+        return data if isinstance(data, dict) else {}, response.status_code
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        raise TelegramDeliveryUnknown("telegram_send_ambiguous") from exc
 
 
 async def answer_callback_query(

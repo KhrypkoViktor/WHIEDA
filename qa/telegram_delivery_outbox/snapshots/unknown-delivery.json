@@ -1,0 +1,27 @@
+{
+  "rows": [
+    {
+      "outbox_id": "22222222-2222-4222-8222-222222222222",
+      "binding_id": "north-advisor-bot",
+      "telegram_update_id": 9102,
+      "sequence_no": 1,
+      "kind": "photo",
+      "status": "unknown_delivery",
+      "attempt_count": 1,
+      "last_error_code": "telegram_send_ambiguous",
+      "payload": {"chat_id": "100", "photo_url": "https://media.example.org/media/tenant-north/SHARE-01/1.webp"},
+      "created_at": "2026-08-25T09:01:00+00:00"
+    },
+    {
+      "outbox_id": "33333333-3333-4333-8333-333333333333",
+      "binding_id": "north-advisor-bot",
+      "telegram_update_id": 9102,
+      "sequence_no": 2,
+      "kind": "text",
+      "status": "pending",
+      "attempt_count": 0,
+      "payload": {"chat_id": "100", "text": "Кратко о товаре."},
+      "created_at": "2026-08-25T09:01:00+00:00"
+    }
+  ]
+}

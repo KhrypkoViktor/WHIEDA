@@ -32,6 +32,17 @@ FEATURE_REQUIREMENTS: dict[str, dict[str, Any]] = {
         "tables": ["telegram_update_inbox"],
         "migration": "platform_telegram_durable_inbox_v1.sql",
     },
+    "telegram_durable_outbox": {
+        "tables": ["telegram_delivery_outbox"],
+        "columns": [
+            "telegram_update_id",
+            "sequence_no",
+            "kind",
+            "payload_json",
+            "status",
+        ],
+        "migration": "platform_telegram_durable_outbox_v1.sql",
+    },
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -201,6 +212,28 @@ async def probe_missing_tables(tables: Sequence[str]) -> tuple[str, ...] | None:
         return None
 
 
+async def probe_missing_columns(table: str, columns: Sequence[str]) -> tuple[str, ...] | None:
+    try:
+        from app.db import fetch_all, get_pool
+        from app.settings import get_settings
+
+        pool = get_pool()
+        async with pool.connection(timeout=get_settings().database_timeout_sec) as conn:
+            rows = await fetch_all(
+                conn,
+                """
+                select column_name
+                from information_schema.columns
+                where table_schema = 'public' and table_name = %s
+                """,
+                (table,),
+            )
+        present = {str(row.get("column_name") or "") for row in rows}
+        return tuple(name for name in columns if name not in present)
+    except Exception:
+        return None
+
+
 async def get_feature_status(feature: str) -> FeatureStatus:
     spec = FEATURE_REQUIREMENTS[feature]
     now = _clock()
@@ -215,20 +248,37 @@ async def get_feature_status(feature: str) -> FeatureStatus:
             missing_tables=(),
             migration=str(spec["migration"]),
         )
-    elif missing:
-        status = FeatureStatus(
-            feature=feature,
-            state="degraded",
-            missing_tables=missing,
-            migration=str(spec["migration"]),
-        )
     else:
-        status = FeatureStatus(
-            feature=feature,
-            state="ready",
-            missing_tables=(),
-            migration=str(spec["migration"]),
-        )
+        if not missing and _probe_override is None:
+            required_columns = spec.get("columns") or []
+            table_name = spec["tables"][0] if spec["tables"] else ""
+            if required_columns and table_name:
+                missing_columns = await probe_missing_columns(table_name, required_columns)
+                if missing_columns is None:
+                    missing = None
+                else:
+                    missing = tuple(f"{table_name}.{name}" for name in missing_columns)
+        if missing is None:
+            status = FeatureStatus(
+                feature=feature,
+                state="unknown",
+                missing_tables=(),
+                migration=str(spec["migration"]),
+            )
+        elif missing:
+            status = FeatureStatus(
+                feature=feature,
+                state="degraded",
+                missing_tables=tuple(missing),
+                migration=str(spec["migration"]),
+            )
+        else:
+            status = FeatureStatus(
+                feature=feature,
+                state="ready",
+                missing_tables=(),
+                migration=str(spec["migration"]),
+            )
     _cache[feature] = (now + CACHE_TTL_SECONDS, status)
     return status
 

@@ -1,0 +1,15 @@
+{
+  "rows": [
+    {
+      "outbox_id": "11111111-1111-4111-8111-111111111111",
+      "binding_id": "north-advisor-bot",
+      "telegram_update_id": 9101,
+      "sequence_no": 1,
+      "kind": "text",
+      "status": "sent",
+      "attempt_count": 1,
+      "payload": {"chat_id": "100", "text": "Цена SHARE-01 — 10 USD."},
+      "created_at": "2026-08-25T09:00:00+00:00"
+    }
+  ]
+}

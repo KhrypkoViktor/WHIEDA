@@ -52,6 +52,7 @@ APPLY_ORDER = [
     "platform_tenant_advisor_data_plane_v1.sql",
     "platform_tenant_release_package_v1.sql",
     "platform_tenant_release_price_plane_v1.sql",
+    "platform_telegram_durable_outbox_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -80,6 +81,7 @@ RELEASE_PACKAGE_RLS_TABLES = (
 )
 
 INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"
+OUTBOX_SQL = "platform_telegram_durable_outbox_v1.sql"
 
 LEADS_SCHEMA_FILES = (
     SQL_DIR / "whieda_website_leads_p0_v1.sql",

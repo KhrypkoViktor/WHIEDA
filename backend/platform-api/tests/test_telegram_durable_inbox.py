@@ -212,9 +212,7 @@ async def test_processed_update_does_not_send_again(inbox_store, whieda_binding)
     )
     assert sends == ["whieda-token"]
     assert inbox_store.inbox[enqueued.inbox_id].state == "processed"
-    outbox = list(inbox_store.outbox.values())
-    assert len(outbox) == 1
-    assert outbox[0].state == "sent"
+    assert inbox_store.snapshot_deliveries() == []
 
 
 @pytest.mark.asyncio
@@ -249,12 +247,13 @@ async def test_telegram_delivery_error_retries_without_foreign_token(
     assert row.retry_count == 1
     assert tokens == ["nsp-token"]
     assert "whieda-token" not in tokens
-    outbox = list(inbox_store.outbox.values())
-    assert outbox[0].state == "pending"
+    assert inbox_store.snapshot_deliveries() == []
 
 
 @pytest.mark.asyncio
-async def test_foreign_token_is_rejected_on_worker_path(inbox_store, nsp_binding):
+async def test_worker_send_uses_binding_token_not_handler_token(
+    inbox_store, nsp_binding, monkeypatch
+):
     enqueued = await inbox_store.enqueue(
         binding_id=nsp_binding.binding_id,
         tenant_id=nsp_binding.tenant.tenant_id,
@@ -262,10 +261,16 @@ async def test_foreign_token_is_rejected_on_worker_path(inbox_store, nsp_binding
         payload=compact_telegram_payload(_update(8007)),
     )
     claimed = await inbox_store.claim_by_id(enqueued.inbox_id, "worker-e")
+    posts: list[str] = []
+
+    async def fake_post(url, payload, timeout_sec):
+        posts.append(url)
+        return {"ok": True, "result": {"message_id": 1}}, 200
 
     async def process_update(_binding, _update_body, _trace):
         await send_telegram_text(chat_id="100", text="hi", bot_token="whieda-token")
 
+    monkeypatch.setattr("app.telegram.delivery._post_telegram", fake_post)
     await handle_claimed_inbox(
         claimed,
         webhook_binding=nsp_binding,
@@ -274,8 +279,13 @@ async def test_foreign_token_is_rejected_on_worker_path(inbox_store, nsp_binding
         process_update=process_update,
     )
     row = inbox_store.inbox[enqueued.inbox_id]
-    assert row.state == "pending"
-    assert "foreign_bot_token_forbidden" in (row.last_error or "")
+    assert row.state == "processed"
+    assert row.last_error is None
+    assert posts and "nsp-token" in posts[0]
+    assert all("whieda-token" not in url for url in posts)
+    deliveries = inbox_store.snapshot_deliveries()
+    assert len(deliveries) == 1
+    assert deliveries[0].status == "sent"
 
 
 @pytest.mark.asyncio
