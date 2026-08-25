@@ -15,7 +15,11 @@ SCRIPTS = ROOT / "backend" / "platform-api" / "scripts"
 CLI = SCRIPTS / "run_shared_staging_tenant_canary.py"
 sys.path.insert(0, str(SCRIPTS))
 
-from shared_staging_canary.catalog import MemoryCatalog, import_tenant_catalog  # noqa: E402
+from shared_staging_canary.catalog import (  # noqa: E402
+    MemoryCatalog,
+    import_tenant_catalog,
+    render_import_sql,
+)
 from shared_staging_canary.apply import _backup_dir  # noqa: E402
 from shared_staging_canary.preflight import run_preflight  # noqa: E402
 from shared_staging_canary.rollback import render_rollback_plan  # noqa: E402
@@ -231,6 +235,15 @@ def test_review_required_sku_is_not_imported(tmp_path: Path):
     assert "LAB-RR" not in catalog.product_skus("tenant-lab")
     assert catalog.product_skus("occupant") == ["KEEP-01"]
     assert catalog.canonical_name("occupant", "KEEP-01") == "Occupant Only"
+
+
+def test_import_sql_does_not_invent_card_sections(tmp_path: Path):
+    package_dir = _package(tmp_path)
+    sql, result = render_import_sql(package_dir, tenant_id="tenant-lab")
+    assert result.ok is True
+    assert sql is not None
+    assert "'canary'" not in sql
+    assert "'as directed'" not in sql
 
 
 def test_import_transaction_rolls_back_on_error(tmp_path: Path):

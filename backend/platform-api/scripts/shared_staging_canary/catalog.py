@@ -316,6 +316,9 @@ def render_import_sql(package_dir: Path, *, tenant_id: str) -> tuple[str | None,
             continue
         name = row.get("canonical_name") or (products.get(sku) or {}).get("canonical_name") or sku
         what = row.get("what_it_is") or ""
+        audience = row.get("who_asks_about_it")
+        use_cases = row.get("common_use_cases")
+        how_to_use = row.get("how_to_use_short")
         image = row.get("primary_image_url") or ""
         if not image:
             for media in loaded.layers.get("media") or []:
@@ -327,9 +330,12 @@ def render_import_sql(package_dir: Path, *, tenant_id: str) -> tuple[str | None,
             "(client_id, sku, canonical_name, what_it_is, who_asks_about_it, common_use_cases, "
             "how_to_use_short, primary_image_url) values ("
             f"{_sql_lit(tenant_id)}, {_sql_lit(sku)}, {_sql_lit(name)}, {_sql_lit(what)}, "
-            f"'canary', 'canary', 'as directed', {_sql_lit(image)}) "
+            f"{_sql_lit(audience)}, {_sql_lit(use_cases)}, {_sql_lit(how_to_use)}, {_sql_lit(image)}) "
             "on conflict (client_id, sku) do update set "
             "canonical_name = excluded.canonical_name, what_it_is = excluded.what_it_is, "
+            "who_asks_about_it = excluded.who_asks_about_it, "
+            "common_use_cases = excluded.common_use_cases, "
+            "how_to_use_short = excluded.how_to_use_short, "
             "primary_image_url = excluded.primary_image_url;"
         )
     for row in loaded.layers.get("media") or []:

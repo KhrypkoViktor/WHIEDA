@@ -88,9 +88,12 @@ def run_apply(
         encoding="utf-8",
     )
 
+    current_step = "connect"
     try:
         with psycopg.connect(dsn, connect_timeout=15) as conn:
+            current_step = "advisory_lock"
             conn.execute(LOCK_SQL)
+            current_step = "pre_import_snapshot"
             snapshot = conn.execute(
                 """
                 select current_database() as db,
@@ -112,17 +115,22 @@ def run_apply(
                 encoding="utf-8",
             )
             for name in APPLY_ORDER:
+                current_step = f"migration:{name}"
                 conn.execute((SQL_DIR / name).read_text(encoding="utf-8"))
+            current_step = "tenant_package_import"
             conn.execute(sql)
+            current_step = "commit_import"
             conn.commit()
+            current_step = "advisory_unlock"
             conn.execute(UNLOCK_SQL)
+            current_step = "commit_unlock"
             conn.commit()
     except Exception as exc:
         return {
             "ok": False,
             "mode": "apply",
             "state": "blocked",
-            "message": f"{type(exc).__name__}: migration/import stopped; see rollback plan",
+            "message": f"{type(exc).__name__} during {current_step}: migration/import stopped; see rollback plan",
             "backup_dir": str(backup),
             "target": preflight.get("target"),
             "preflight": preflight,
