@@ -1,0 +1,27 @@
+# Local Platform Core API for tenant Telegram canary E2E.
+# Usage (from backend/platform-api):
+#   docker compose -f docker-compose.local-telegram-canary.yml up -d --build
+
+services:
+  platform-api:
+    build: .
+    container_name: whieda-local-core-api
+    restart: "no"
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env.local.example
+    environment:
+      PLATFORM_DATABASE_URL: postgresql://whieda_platform_api_local:local_core_api_only@host.docker.internal:55432/whieda_platform_telegram_canary
+      PLATFORM_TELEGRAM_API_BASE_URL: http://host.docker.internal:18081
+      PLATFORM_TENANT_MEDIA_BASE_URL: https://media.example.org/media
+      PLATFORM_TELEGRAM_OUTBOX_WORKER: "true"
+      PLATFORM_FEATURE_READINESS_CACHE_TTL_SEC: "0"
+      CORE_ROUTE_TELEGRAM: core
+      CORE_ROUTE_ADVISOR: core
+      NORTH_CANARY_BOT_TOKEN: north-token-local
+      NORTH_CANARY_WEBHOOK_SECRET: north-secret-local
+      SOUTH_CANARY_BOT_TOKEN: south-token-local
+      SOUTH_CANARY_WEBHOOK_SECRET: south-secret-local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
