@@ -103,6 +103,27 @@ insert into advisor_structured_resources (
 ('whieda','L-ACT-PDF','LOCAL-ACT','Активатор клеток','document','PDF Активатор','https://example.invalid/local/activator-doc.pdf',5,true)
 on conflict (client_id,resource_id) do update set url=excluded.url, title=excluded.title, active=true;
 
+-- === owner-approved solution bundles ===
+insert into advisor_structured_solution_bundles (
+  client_id,bundle_id,bundle_name,aliases,sku_groups,component_names,desired_outcome,positioning,active,priority
+) values
+('whieda','bundle_energy_immunity','Батарейка на 100% и Железный Иммунитет',
+ 'энергия;усталость;туман в голове;батарейка;железный иммунитет',
+ 'F001-02|F002-02;F038-00','Эликсир;Соевый пептид',
+ 'Поддержка энергии и повседневного ресурса.','Два продукта для повседневного набора.',true,100),
+('whieda','bundle_vessels_belly','Лёгкий живот и чистые сосуды',
+ 'сосуды;живот;вздутие;кишечник;лёгкий живот',
+ 'F003-02;F001-02','Эликсиры',
+ 'Набор для повседневного внимания к пищеварению.','Вариант под задачу, не схема лечения.',true,90),
+('whieda','bundle_shape_recovery','Стройность и восстановление',
+ 'стройность;рельеф;восстановление;похудение;сладкое;аппетит;вес;протеин;пептид;кофе',
+ 'F038-00;F001-02','Соевый пептид;Эликсир',
+ 'Набор для режима и восстановления.','Вариант под задачу, не обещание результата.',true,80)
+on conflict (client_id,bundle_id) do update set
+  bundle_name=excluded.bundle_name, aliases=excluded.aliases, sku_groups=excluded.sku_groups,
+  component_names=excluded.component_names, desired_outcome=excluded.desired_outcome,
+  positioning=excluded.positioning, active=excluded.active, priority=excluded.priority;
+
 -- === comparisons ===
 insert into advisor_structured_product_comparisons (
   client_id,comparison_id,title,answer_text,left_sku,right_sku,priority,active

@@ -60,7 +60,7 @@ def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
-    assert len(listed) == 19
+    assert len(listed) == 20
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():
