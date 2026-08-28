@@ -13,7 +13,7 @@ from app.tenancy import TenantContext
 ENERGY_BUNDLE = {
     "bundle_id": "bundle_energy_immunity",
     "bundle_name": "Батарейка на 100% и Железный Иммунитет",
-    "aliases": "энергия; усталость; туман в голове; батарейка",
+    "aliases": "энергия; усталость; туман в голове; батарейка; нет сил; сел ресурс",
     "sku_groups": "F001-02|F002-02;F028-00",
     "active": True,
 }
@@ -30,6 +30,21 @@ def test_bundle_match_accepts_normal_russian_endings():
     assert match_solution_bundle("мало энергии", [ENERGY_BUNDLE]) == ENERGY_BUNDLE
     assert match_solution_bundle("тяжесть и вздутие после еды", [VESSELS_BUNDLE]) == VESSELS_BUNDLE
     assert match_solution_bundle("подбор", [ENERGY_BUNDLE]) is None
+
+
+@pytest.mark.parametrize("question", ("нет сил", "сел ресурс", "хочу батарею на 100"))
+def test_bundle_match_accepts_approved_natural_phrases(question):
+    assert match_solution_bundle(question, [ENERGY_BUNDLE]) == ENERGY_BUNDLE
+
+
+@pytest.mark.parametrize(
+    "question",
+    ("батарейка", "нет сил", "сел ресурс", "хочу батарею на 100", "вес", "восстановление"),
+)
+def test_topic_gate_keeps_all_approved_bundle_aliases(question):
+    from app.advisor.sql.solution_bundles import may_match_solution_bundle
+
+    assert may_match_solution_bundle(question)
 
 
 def test_bundle_sku_groups_preserve_alternatives():

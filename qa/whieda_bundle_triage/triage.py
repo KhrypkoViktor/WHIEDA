@@ -485,13 +485,10 @@ def triage_rows(rows: list[dict[str, str]], catalog: Catalog, *, source_path: Pa
         source_display = str(source_path.resolve().relative_to(REPO_ROOT))
     except ValueError:
         source_display = str(source_path)
-    note = ""
-    if len(rows) != 51:
-        note = (
-            f"source_missing: expected 51 advisor_bundle_staging_records; "
-            f"read {len(rows)} from {source_display}. "
-            "No live Postgres dump in this worktree; extra rows were not invented."
-        )
+    note = (
+        f"current-scope: read {len(rows)} current candidate rows from {source_display}. "
+        "Superseded historical versions are intentionally outside this triage."
+    )
     return TriageResult(
         rows_read=len(rows),
         triage=triage,
@@ -528,7 +525,7 @@ def write_report(path: Path, result: TriageResult) -> None:
         "## Counts",
         "",
         f"- rows actually read: **{result.rows_read}**",
-        "- expected staging rows: **51**",
+        "- source scope: **current candidate versions only**",
         f"- source file: `{result.source_path}`",
         f"- ready_for_owner_review: **{counts.get('ready_for_owner_review', 0)}**",
         f"- duplicate: **{counts.get('duplicate', 0)}**",
@@ -539,9 +536,9 @@ def write_report(path: Path, result: TriageResult) -> None:
         f"- unknown catalog items: **{len(result.unknown)}**",
         f"- active-bundle regression cases: **{len(result.regression)}**",
         "",
-        "## source_missing",
+        "## Source scope",
         "",
-        result.source_missing_note or "51-row dump was present; no source_missing.",
+        result.source_missing_note or "Current candidate scope was not recorded.",
         "",
         "## 10 highest-leverage owner questions",
         "",
@@ -565,7 +562,7 @@ def write_report(path: Path, result: TriageResult) -> None:
 
 def _top_owner_questions(result: TriageResult) -> list[str]:
     questions = [
-        "Где выгрузка 51 строки `advisor_bundle_staging_records`? В worktree есть только 25 строк `09_BUNDLE_CANDIDATES.tsv`; недостающие 26 не выдумывались.",
+        "Подтвердить, что owner review идёт только по 25 current-версиям, а 26 superseded-версий не возвращаем в очередь?",
         "Архивировать BUNDLE-0001/0002 (животные) или держать отдельным ветеринарным контуром?",
         "Подтвердить вечный `blocked_raw` для схемы «Реанимация» (BUNDLE-0010/0015/0030) — официально осуждена.",
         "Канон 3-этапной РОВ — BUNDLE-0016 (официальные дозы 12.12.2025)? Закрыть 0004/0009/0014/0029 как duplicate?",

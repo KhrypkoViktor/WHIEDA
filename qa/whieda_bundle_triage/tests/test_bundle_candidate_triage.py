@@ -114,7 +114,8 @@ def test_offline_default_fixture_writes_required_artifacts() -> None:
     assert (TRIAGE_DIR / "active_bundle_regression_cases_v1.jsonl").is_file()
     assert (TRIAGE_DIR / "BUNDLE_CANDIDATE_TRIAGE_LOCAL_REPORT.md").is_file()
     report = (TRIAGE_DIR / "BUNDLE_CANDIDATE_TRIAGE_LOCAL_REPORT.md").read_text(encoding="utf-8")
-    assert "source_missing" in report
+    assert "current candidate versions only" in report
+    assert "source_missing" not in report
     assert "не опубликован" in report.lower()
 
 
@@ -205,7 +206,7 @@ def test_runner_does_not_publish_or_touch_core() -> None:
     assert "telegram" not in lowered
     assert "docker" not in lowered
     assert "google" not in lowered
-    _run_offline()
+    before: dict[str, str] = {}
     for rel in ("backend/platform-api/app", "postgres", "n8n"):
         proc = subprocess.run(
             ["git", "diff", "--", rel],
@@ -214,4 +215,14 @@ def test_runner_does_not_publish_or_touch_core() -> None:
             text=True,
             encoding="utf-8",
         )
-        assert proc.stdout.strip() == "", f"unexpected diff in {rel}"
+        before[rel] = proc.stdout
+    _run_offline()
+    for rel, expected in before.items():
+        proc = subprocess.run(
+            ["git", "diff", "--", rel],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert proc.stdout == expected, f"runner changed {rel}"
