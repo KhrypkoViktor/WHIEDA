@@ -36,6 +36,7 @@ class E2EReport:
     container_logs: dict[str, str] = field(default_factory=dict)
     report_paths: dict[str, str] = field(default_factory=dict)
     telegram_canary: dict[str, Any] = field(default_factory=dict)
+    solution_bundle_run: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -159,6 +160,12 @@ def render_markdown(report: E2EReport) -> str:
                 f"inbox={case.get('inbox_actual', 'n/a')} "
                 f"outbox={case.get('outbox_actual', 'n/a')}"
             )
+
+    if report.solution_bundle_run:
+        lines.extend(["", "## Solution bundles", ""])
+        lines.append(f"- status: `{report.solution_bundle_run.get('status', 'NOT_RUN')}`")
+        if report.solution_bundle_run.get("summary"):
+            lines.append(f"- summary: {report.solution_bundle_run['summary']}")
 
     lines.extend(["", "## Cleanup", ""])
     lines.append(f"- status: `{report.cleanup_status}`")

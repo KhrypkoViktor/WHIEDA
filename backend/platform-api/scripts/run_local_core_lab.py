@@ -57,6 +57,11 @@ def main() -> int:
         action="store_true",
         help="Run Telegram experience HTTP corpus (requires --e2e)",
     )
+    parser.add_argument(
+        "--solution-bundles",
+        action="store_true",
+        help="Run the approved WHIEDA solution-bundle HTTP corpus (requires --e2e)",
+    )
     parser.add_argument("--health-timeout", type=int, default=120)
     parser.add_argument(
         "--tenant-telegram-canary",
@@ -89,6 +94,8 @@ def main() -> int:
         parser.error("--conversation-reliability requires --e2e")
     if args.telegram_experience and not args.e2e:
         parser.error("--telegram-experience requires --e2e")
+    if args.solution_bundles and not args.e2e:
+        parser.error("--solution-bundles requires --e2e")
 
     config = OrchestratorConfig(
         skip_build=args.skip_build,
@@ -100,6 +107,7 @@ def main() -> int:
         gap_operator_mode=args.gap_operator,
         conversation_reliability_mode=args.conversation_reliability,
         telegram_experience_mode=args.telegram_experience,
+        solution_bundles_mode=args.solution_bundles,
         tenant_telegram_canary=args.tenant_telegram_canary,
     )
     code, state = run_lab(config)

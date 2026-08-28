@@ -34,6 +34,7 @@ from local_core_lab.constants import (
     GAP_OPERATOR_RUNNER,
     CONVERSATION_RELIABILITY_RUNNER,
     TELEGRAM_EXPERIENCE_RUNNER,
+    SOLUTION_BUNDLES_RUNNER,
     PLATFORM_API,
     POSTGRES_COMPOSE,
     SEED,
@@ -56,6 +57,7 @@ class OrchestratorConfig:
     gap_operator_mode: bool = False
     conversation_reliability_mode: bool = False
     telegram_experience_mode: bool = False
+    solution_bundles_mode: bool = False
     tenant_telegram_canary: bool = False
 
 
@@ -255,6 +257,7 @@ def run_lab(
         gap_operator_failed = False
         conv_rel_failed = False
         telegram_exp_failed = False
+        solution_bundles_failed = False
         nbz_db_failed = False
 
         step = run_capture_fn(
@@ -547,6 +550,27 @@ def run_lab(
                 print(step.stdout)
                 print(step.stderr, file=sys.stderr)
 
+        if config.solution_bundles_mode:
+            step = run_capture_fn(
+                [config.python, str(SOLUTION_BUNDLES_RUNNER), "--live", "--base-url", API_BASE],
+                name="solution_bundles_run",
+            )
+            _record_step(state, step)
+            summary = next(
+                (line.strip() for line in (step.stdout + step.stderr).splitlines() if line.startswith("Solution bundles:")),
+                None,
+            )
+            report.solution_bundle_run = {
+                "status": "PASS" if step.ok else "FAIL",
+                "summary": summary,
+                "stdout_tail": step.stdout[-4000:],
+                "stderr_tail": step.stderr[-2000:],
+            }
+            if not step.ok:
+                solution_bundles_failed = True
+                print(step.stdout)
+                print(step.stderr, file=sys.stderr)
+
         if (
             preflight_failed
             or parity_failed
@@ -556,6 +580,7 @@ def run_lab(
             or gap_operator_failed
             or conv_rel_failed
             or telegram_exp_failed
+            or solution_bundles_failed
         ):
             parts = []
             if preflight_failed:
@@ -572,6 +597,8 @@ def run_lab(
                 parts.append("conversation_reliability")
             if telegram_exp_failed:
                 parts.append("telegram_experience")
+            if solution_bundles_failed:
+                parts.append("solution_bundles")
             if nbz_db_failed:
                 parts.append("no_blind_zone_db_proof")
             report.status = "FAIL"
@@ -589,6 +616,8 @@ def run_lab(
                 report.failure_stage = "conversation_reliability"
             elif telegram_exp_failed:
                 report.failure_stage = "telegram_experience"
+            elif solution_bundles_failed:
+                report.failure_stage = "solution_bundles"
             else:
                 report.failure_stage = "verify_e2e"
             report.failure_message = f"failed: {', '.join(parts)}"

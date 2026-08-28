@@ -3,7 +3,7 @@
 ## Counts
 
 - rows actually read: **25**
-- expected staging rows: **51**
+- source scope: **current candidate versions only**
 - source file: `qa\whieda_bundle_triage\fixtures\09_BUNDLE_CANDIDATES.tsv`
 - ready_for_owner_review: **6**
 - duplicate: **6**
@@ -14,13 +14,13 @@
 - unknown catalog items: **14**
 - active-bundle regression cases: **30**
 
-## source_missing
+## Source scope
 
-source_missing: expected 51 advisor_bundle_staging_records; read 25 from qa\whieda_bundle_triage\fixtures\09_BUNDLE_CANDIDATES.tsv. No live Postgres dump in this worktree; extra rows were not invented.
+current-scope: read 25 current candidate rows from qa\whieda_bundle_triage\fixtures\09_BUNDLE_CANDIDATES.tsv. Superseded historical versions are intentionally outside this triage.
 
 ## 10 highest-leverage owner questions
 
-1. Где выгрузка 51 строки `advisor_bundle_staging_records`? В worktree есть только 25 строк `09_BUNDLE_CANDIDATES.tsv`; недостающие 26 не выдумывались.
+1. Подтвердить, что owner review идёт только по 25 current-версиям, а 26 superseded-версий не возвращаем в очередь?
 2. Архивировать BUNDLE-0001/0002 (животные) или держать отдельным ветеринарным контуром?
 3. Подтвердить вечный `blocked_raw` для схемы «Реанимация» (BUNDLE-0010/0015/0030) — официально осуждена.
 4. Канон 3-этапной РОВ — BUNDLE-0016 (официальные дозы 12.12.2025)? Закрыть 0004/0009/0014/0029 как duplicate?

@@ -108,7 +108,7 @@ insert into advisor_structured_solution_bundles (
   client_id,bundle_id,bundle_name,aliases,sku_groups,component_names,desired_outcome,positioning,active,priority
 ) values
 ('whieda','bundle_energy_immunity','Батарейка на 100% и Железный Иммунитет',
- 'энергия;усталость;туман в голове;батарейка;железный иммунитет',
+ 'энергия;усталость;туман в голове;батарейка;железный иммунитет;нет сил;сел ресурс',
  'F001-02|F002-02;F038-00','Эликсир;Соевый пептид',
  'Поддержка энергии и повседневного ресурса.','Два продукта для повседневного набора.',true,100),
 ('whieda','bundle_vessels_belly','Лёгкий живот и чистые сосуды',
