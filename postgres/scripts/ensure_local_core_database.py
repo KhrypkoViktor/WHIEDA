@@ -25,6 +25,8 @@ INIT_MARKER_TABLE = "tenants"
 LOCAL_CORE_API_ROLE = "whieda_platform_api_local"
 LOCAL_CORE_API_PASSWORD = "local_core_api_only"
 LOCAL_ADVISOR_SEED = _SCRIPT_DIR / "staging_seed_whieda_advisor_local_v1.sql"
+STRUCTURED_BASE_SQL = "platform_advisor_structured_base_v1.sql"
+SOLUTION_BUNDLES_SQL = "platform_advisor_structured_solution_bundles_v1.sql"
 
 
 def _run(cmd: list[str], *, input_text: str | None = None) -> None:
@@ -107,6 +109,15 @@ def _apply_schema() -> None:
     # Same skip as run_local_staging_proof: journey seed is stale vs onboarding.
 
 
+def _ensure_structured_advisor_schema() -> None:
+    """Upgrade persistent local DBs as additive structured schema evolves."""
+
+    # Both files are deliberately additive/idempotent. Re-running only this
+    # narrow pair avoids replaying the entire platform chain on every lab run.
+    _psql_file(LOCAL_CORE_DB, SQL_DIR / STRUCTURED_BASE_SQL)
+    _psql_file(LOCAL_CORE_DB, SQL_DIR / SOLUTION_BUNDLES_SQL)
+
+
 def _ensure_api_role() -> None:
     _psql_exec(
         "postgres",
@@ -152,6 +163,8 @@ def main() -> int:
         _apply_schema()
     else:
         print(f"OK: {LOCAL_CORE_DB} already initialized; refreshing local API role grants")
+
+    _ensure_structured_advisor_schema()
 
     # This seed is an idempotent local-only fixture for the Core HTTP lab.
     _psql_file(LOCAL_CORE_DB, LOCAL_ADVISOR_SEED)

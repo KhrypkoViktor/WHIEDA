@@ -96,6 +96,8 @@ def test_ensure_core_db_skips_reapply_when_initialized():
     assert "--force-reapply" in text
     assert "already initialized" in text
     assert 'INIT_MARKER_TABLE = "tenants"' in text
+    assert 'STRUCTURED_BASE_SQL = "platform_advisor_structured_base_v1.sql"' in text
+    assert 'SOLUTION_BUNDLES_SQL = "platform_advisor_structured_solution_bundles_v1.sql"' in text
     assert 'LOCAL_CORE_API_ROLE = "whieda_platform_api_local"' in text
     assert "NOBYPASSRLS" in text
     registry = (ROOT / "postgres" / "sql" / "platform_tenant_registry_v1.sql").read_text(encoding="utf-8")
