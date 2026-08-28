@@ -19,6 +19,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REMOTE_DIR = "/opt/whieda-platform-core"
 LOCAL_DEPLOY = REPO_ROOT / "backend" / "deploy" / "core"
 LOCAL_API = REPO_ROOT / "backend" / "platform-api"
+ROUTE_DEFAULTS = {
+    "CORE_ROUTE_PUBLIC_REF": "core",
+    "CORE_ROUTE_LEADS": "core",
+    "CORE_ROUTE_ADVISOR": "core",
+    "CORE_ROUTE_TELEGRAM": "core",
+    "CORE_ROUTE_DEEP": "off",
+}
 
 
 def ssh_exec(client: paramiko.SSHClient, command: str, timeout: int = 600) -> str:
@@ -85,6 +92,26 @@ def fetch_remote_env_value(client: paramiko.SSHClient, key: str) -> str | None:
     return None
 
 
+def fetch_container_env_value(client: paramiko.SSHClient, key: str) -> str | None:
+    """Read a non-secret live setting so a source deploy cannot change routes."""
+
+    try:
+        value = ssh_exec(client, f"docker exec core-api-1 printenv {key} 2>/dev/null || true", timeout=15)
+        return value or None
+    except Exception:
+        return None
+
+
+def preserved_route_value(client: paramiko.SSHClient | None, key: str) -> str:
+    if client is not None:
+        return (
+            fetch_container_env_value(client, key)
+            or fetch_remote_env_value(client, key)
+            or ROUTE_DEFAULTS[key]
+        )
+    return ROUTE_DEFAULTS[key]
+
+
 def render_env_file(client: paramiko.SSHClient | None = None) -> str:
     telegram_token = os.environ.get("PLATFORM_TELEGRAM_BOT_TOKEN", "").strip()
     if not telegram_token and client is not None:
@@ -94,11 +121,7 @@ def render_env_file(client: paramiko.SSHClient | None = None) -> str:
         "PLATFORM_REDIS_URL=redis://redis:6379/0",
         "PLATFORM_LEGACY_N8N_BASE_URL=https://sysarchn8n.duckdns.org",
         "PLATFORM_LEAD_DELIVERY_WEBHOOK_PATH=/webhook/whieda-lead-delivery-v1",
-        "CORE_ROUTE_PUBLIC_REF=core",
-        "CORE_ROUTE_LEADS=core",
-        "CORE_ROUTE_ADVISOR=shadow",
-        "CORE_ROUTE_TELEGRAM=legacy",
-        "CORE_ROUTE_DEEP=off",
+        *(f"{key}={preserved_route_value(client, key)}" for key in ROUTE_DEFAULTS),
     ]
     if telegram_token:
         lines.append(f"PLATFORM_TELEGRAM_BOT_TOKEN={telegram_token}")
@@ -122,14 +145,20 @@ def main() -> int:
     tarball = build_tarball()
 
     if args.dry_run:
-        env_content = render_env_file()
         print(
             json.dumps(
                 {
                     "action": "dry-run",
                     "remote_dir": REMOTE_DIR,
                     "tar_bytes": len(tarball),
-                    "env_keys": [line.split("=", 1)[0] for line in env_content.splitlines() if "=" in line],
+                    "env_keys": [
+                        "PLATFORM_DATABASE_URL (resolved on server)",
+                        "PLATFORM_REDIS_URL",
+                        "PLATFORM_LEGACY_N8N_BASE_URL",
+                        "PLATFORM_LEAD_DELIVERY_WEBHOOK_PATH",
+                        *ROUTE_DEFAULTS.keys(),
+                    ],
+                    "routing": "preserve live container values when deploying",
                 },
                 ensure_ascii=False,
             )
