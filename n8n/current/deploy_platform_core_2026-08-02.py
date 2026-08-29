@@ -85,20 +85,40 @@ def fetch_remote_env_value(client: paramiko.SSHClient, key: str) -> str | None:
     return None
 
 
+def fetch_remote_telegram_bot_username(client: paramiko.SSHClient) -> str | None:
+    """Read the public bot username without bringing the token into local output."""
+    try:
+        command = (
+            f"token=$(grep -m1 '^PLATFORM_TELEGRAM_BOT_TOKEN=' {REMOTE_DIR}/src/deploy/core/.env "
+            "2>/dev/null | cut -d= -f2-); "
+            "[ -n \"$token\" ] && curl -fsS --max-time 12 \"https://api.telegram.org/bot${token}/getMe\" "
+            "| sed -n 's/.*\"username\":\"\\([^\"]*\\)\".*/\\1/p'"
+        )
+        value = ssh_exec(client, command, timeout=20)
+        return value.strip() or None
+    except Exception:
+        return None
+
+
 def render_env_file(client: paramiko.SSHClient | None = None) -> str:
     telegram_token = os.environ.get("PLATFORM_TELEGRAM_BOT_TOKEN", "").strip()
     if not telegram_token and client is not None:
         telegram_token = fetch_n8n_env(client, "WHIEDA_ADVISOR_TELEGRAM_BOT_TOKEN") or ""
+    def current_or_default(key: str, default: str) -> str:
+        if client is not None:
+            return fetch_remote_env_value(client, key) or default
+        return os.environ.get(key, default).strip() or default
+
     lines = [
         f"PLATFORM_DATABASE_URL={database_url_from_env(client)}",
         "PLATFORM_REDIS_URL=redis://redis:6379/0",
-        "PLATFORM_LEGACY_N8N_BASE_URL=https://sysarchn8n.duckdns.org",
-        "PLATFORM_LEAD_DELIVERY_WEBHOOK_PATH=/webhook/whieda-lead-delivery-v1",
-        "CORE_ROUTE_PUBLIC_REF=core",
-        "CORE_ROUTE_LEADS=core",
-        "CORE_ROUTE_ADVISOR=shadow",
-        "CORE_ROUTE_TELEGRAM=legacy",
-        "CORE_ROUTE_DEEP=off",
+        f"PLATFORM_LEGACY_N8N_BASE_URL={current_or_default('PLATFORM_LEGACY_N8N_BASE_URL', 'https://sysarchn8n.duckdns.org')}",
+        f"PLATFORM_LEAD_DELIVERY_WEBHOOK_PATH={current_or_default('PLATFORM_LEAD_DELIVERY_WEBHOOK_PATH', '/webhook/whieda-lead-delivery-v1')}",
+        f"CORE_ROUTE_PUBLIC_REF={current_or_default('CORE_ROUTE_PUBLIC_REF', 'core')}",
+        f"CORE_ROUTE_LEADS={current_or_default('CORE_ROUTE_LEADS', 'core')}",
+        f"CORE_ROUTE_ADVISOR={current_or_default('CORE_ROUTE_ADVISOR', 'core')}",
+        f"CORE_ROUTE_TELEGRAM={current_or_default('CORE_ROUTE_TELEGRAM', 'core')}",
+        f"CORE_ROUTE_DEEP={current_or_default('CORE_ROUTE_DEEP', 'off')}",
     ]
     if telegram_token:
         lines.append(f"PLATFORM_TELEGRAM_BOT_TOKEN={telegram_token}")
@@ -107,6 +127,12 @@ def render_env_file(client: paramiko.SSHClient | None = None) -> str:
         webhook_secret = fetch_remote_env_value(client, "PLATFORM_TELEGRAM_WEBHOOK_SECRET") or ""
     if webhook_secret:
         lines.append(f"PLATFORM_TELEGRAM_WEBHOOK_SECRET={webhook_secret}")
+    bot_username = os.environ.get("PLATFORM_TELEGRAM_BOT_USERNAME", "").strip()
+    if not bot_username and client is not None:
+        bot_username = fetch_remote_env_value(client, "PLATFORM_TELEGRAM_BOT_USERNAME") or ""
+        bot_username = bot_username or fetch_remote_telegram_bot_username(client) or ""
+    if bot_username:
+        lines.append(f"PLATFORM_TELEGRAM_BOT_USERNAME={bot_username.lstrip('@')}")
     lines.append("PLATFORM_TELEGRAM_LEGACY_TIMEOUT_SEC=180")
     lines.append("PLATFORM_LEGACY_REQUEST_TIMEOUT_SEC=30")
     lines.append("")
@@ -122,14 +148,14 @@ def main() -> int:
     tarball = build_tarball()
 
     if args.dry_run:
-        env_content = render_env_file()
         print(
             json.dumps(
                 {
                     "action": "dry-run",
                     "remote_dir": REMOTE_DIR,
                     "tar_bytes": len(tarball),
-                    "env_keys": [line.split("=", 1)[0] for line in env_content.splitlines() if "=" in line],
+                    "env_resolution": "skipped",
+                    "network": "not_used",
                 },
                 ensure_ascii=False,
             )
