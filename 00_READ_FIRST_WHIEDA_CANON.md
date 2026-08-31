@@ -15,6 +15,9 @@
 4. `WHIEDA_MARKETING_VOICE_AND_CONTENT_SYSTEM_V1.md` — обязательная система сильного языка, офферов, лестницы спроса и генерации контента.
 5. `WHIEDA_PLATFORM_MASTER_PROGRAM_SPEC_V1_2026-08-09.md` — общая программа продукта, единые сущности и связи модулей.
 6. `WHIEDA_FILE_MAP_CURRENT.md` — актуальная карта проекта.
+6a. `WHIEDA_WORKSPACE_CONSOLIDATION_2026-08-31.md` — обязательна, пока идёт
+    разбор сохранённого переезда. Сначала выбрать тематический срез, затем
+    работать; запрещено переносить или коммитить весь исторический snapshot.
 7. `WHIEDA_CURRENT_BUILD_PLAN_SITE_TELEGRAM_ONBOARDING_V1_2026-08-07.md` — единственное текущее исполняемое ТЗ Core/Telegram.
 8. `backend/platform-api/docs/WHIEDA_ADVISOR_EXPERIENCE_CONTRACT_V1_2026-08-12.md` — обязательный UX-контракт новичка, Telegram, каталога, калькулятора, Mini App и PWA.
 8a. `WHIEDA_SITE_CORE_API_FACADE_AND_SCALE_TZ_V1_2026-08-19.md` — при работе с nginx сайта, `/api/v1/*`, корзиной, Mini App, NSP-tenant или вопросом «не один ли сервер».
@@ -29,7 +32,7 @@
     новый коммерческий приоритет WWC: персональный сайт по подписке, Telegram
     login, закрытая библиотека, учет оплаты, design-token темы, staging и
     российский mirror. Документ не отменяет оплаченный NSP canary.
-8b. `03_Website/wwc-best/docs/PARTNER_ONBOARDING_STANDARD_V1.md` — обязательно при
+8j. `03_Website/wwc-best/docs/PARTNER_ONBOARDING_STANDARD_V1.md` — обязательно при
     новом партнёре, ref-коде, поддомене, персональной странице, QR или маршрутизации
     заявок. Перед запросом данных использовать
     `03_Website/wwc-best/docs/PARTNER_INFORMATION_REQUEST_TEMPLATE.md`.
