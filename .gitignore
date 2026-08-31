@@ -74,3 +74,6 @@ qa/parity/baselines/*
 
 # Disposable diagnostics, generated test fixtures and release staging bundles
 .tmp/
+
+# Local Telegram Golden HTTP target
+qa/telegram_golden/golden_target.local.json
