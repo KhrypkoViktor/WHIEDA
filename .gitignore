@@ -71,3 +71,6 @@ qa/parity/baselines/*
 
 # Local pre-release recovery patches
 .work-snapshots/
+
+# Disposable diagnostics, generated test fixtures and release staging bundles
+.tmp/
