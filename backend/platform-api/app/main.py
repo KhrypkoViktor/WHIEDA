@@ -7,12 +7,17 @@ import httpx
 from fastapi import FastAPI
 from fastapi.exceptions import HTTPException
 
+from app.admin.routes import router as admin_router
 from app.advisor.routes import router as advisor_router
+from app.cart.routes import router as cart_router
+from app.content_access.routes import router as content_access_router
 from app.db import check_postgres, close_pool, init_pool
+from app.health import runtime_health
 from app.errors import http_exception_handler, unhandled_exception_handler
 from app.identity.routes import router as identity_router
 from app.journey.routes import router as journey_router
 from app.leads.routes import router as leads_router
+from app.markets.routes import router as markets_router
 from app.memory.routes import router as memory_router
 from app.onboarding.routes import router as onboarding_router
 from app.pilot.routes import router as pilot_router
@@ -23,6 +28,7 @@ from app.ref.routes import router as ref_router
 from app.settings import get_settings
 from app.telegram.routes import router as telegram_router
 from app.tenancy import TenantMiddleware
+from app.theme_access.routes import router as theme_access_router
 
 
 @asynccontextmanager
@@ -54,10 +60,10 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/health/ready")
-    async def health_ready() -> dict[str, str]:
+    async def health_ready() -> dict:
         if not await check_postgres():
             raise HTTPException(status_code=503, detail={"error": "postgres_unavailable"})
-        return {"status": "ready"}
+        return await runtime_health()
 
     app.include_router(ref_router)
     app.include_router(leads_router)
@@ -69,6 +75,11 @@ def create_app() -> FastAPI:
     app.include_router(pilot_router)
     app.include_router(retention_router)
     app.include_router(advisor_router)
+    app.include_router(cart_router)
+    app.include_router(markets_router)
+    app.include_router(content_access_router)
+    app.include_router(theme_access_router)
+    app.include_router(admin_router)
     app.include_router(telegram_router)
     return app
 
