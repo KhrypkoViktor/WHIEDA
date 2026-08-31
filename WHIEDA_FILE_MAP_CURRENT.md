@@ -7,8 +7,10 @@
 
 Перед любой работой в WHIEDA читать в таком порядке:
 
-1. `00_READ_FIRST_WHIEDA_DEVELOPMENT_BIBLE_V1_2026-07-14.md`.
+1. `00_READ_FIRST_WHIEDA_CANON.md`.
 2. Этот файл: `WHIEDA_FILE_MAP_CURRENT.md`.
+3. `WHIEDA_WORKSPACE_CONSOLIDATION_2026-08-31.md` — пока не завершён разбор
+   сохранённого workspace snapshot.
 3. `WHIEDA_ACCESS_MAP_PRIVATE_2026-07-07.md` — только если работа требует live-доступов.
 4. Нужное тематическое ТЗ из корня.
 
@@ -20,6 +22,8 @@
 
 - `00_READ_FIRST_WHIEDA_DEVELOPMENT_BIBLE_V1_2026-07-14.md` — главный источник решений.
 - `WHIEDA_FILE_MAP_CURRENT.md` — эта карта.
+- `WHIEDA_WORKSPACE_CONSOLIDATION_2026-08-31.md` — состояние веток и правило
+  извлечения тематических срезов из сохранённого переезда.
 - `WHIEDA_ACCESS_MAP_PRIVATE_2026-07-07.md` — private-доступы.
 - `WHIEDA_COMPLIANCE_SELLING_LANGUAGE_ACCESS_MONETIZATION_RB_2026-07-14.md` — продающий язык, доступ и монетизация.
 - `WHIEDA_SQL_FAST_ANSWERS_TWO_WEEK_BUILD_PLAN_2026-07-25.md` — текущее исполняемое ТЗ по Structure Basic и автономному циклу улучшения SQL-ответов.
