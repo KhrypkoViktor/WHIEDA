@@ -9,6 +9,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from app.telegram.log_safe import install_telegram_log_filter
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,6 +19,11 @@ def configure_logging(level: str) -> None:
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # httpx logs complete request URLs. Telegram Bot API embeds its token in the
+    # path, so application logs must never emit httpx INFO request lines.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    install_telegram_log_filter()
 
 
 class TraceMiddleware(BaseHTTPMiddleware):

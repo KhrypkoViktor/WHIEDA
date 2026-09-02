@@ -84,3 +84,14 @@ async def fetch_all(
         await cur.execute(query, params or ())
         rows = await cur.fetchall()
         return list(rows)
+
+
+@asynccontextmanager
+async def admin_connection() -> AsyncIterator[AsyncConnection]:
+    """Platform admin tables (RLS via app.admin_service)."""
+    pool = get_pool()
+    async with pool.connection(timeout=get_settings().database_timeout_sec) as conn:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute("select set_config('app.admin_service', 'true', true)")
+            yield conn

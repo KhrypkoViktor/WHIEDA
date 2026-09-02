@@ -8,20 +8,29 @@ from typing import Any
 
 from app.advisor.service import handle_structured_query
 from app.advisor.sql import repository as repo
+from app.advisor.sql.engine import CALCULATOR_INSTRUCTION
+from app.cart.service import create_session
+from app.cart.web_links import calculator_web_url
 from app.db import tenant_connection
-from app.settings import get_settings
+from app.onboarding.service import handle_onboarding_text
+from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import (
     answer_callback_query,
     deliver_structured_advisor_response,
     send_telegram_text,
 )
 from app.telegram.navigation import (
+    NEWCOMER_ADVISOR_QUESTIONS,
+    NEWCOMER_PANEL_TEXT,
     ParsedCallback,
+    calculator_open_inline_keyboard,
     catalog_list_inline_keyboard,
     clamp_page,
     clamp_page_size,
+    is_newcomer_panel_request,
     main_menu_reply_keyboard,
     menu_intent_to_advisor_question,
+    newcomer_inline_keyboard,
     parse_callback_data,
     product_action_question,
     product_actions_inline_keyboard,
@@ -45,34 +54,37 @@ async def _deliver_navigation_text(
     inline_markup: dict | None = None,
     include_main_menu: bool = True,
 ) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token or not text.strip():
+    if not text.strip():
         return
+    binding = current_bot_binding()
+    include_calculator = binding.tenant.tenant_id == "whieda"
     reply_markup = inline_markup
     if include_main_menu and inline_markup is None:
-        reply_markup = main_menu_reply_keyboard()
+        reply_markup = main_menu_reply_keyboard(
+            include_calculator=include_calculator
+        )
     await send_telegram_text(
         chat_id=str(chat_id),
         text=text.strip(),
-        bot_token=settings.telegram_bot_token,
+        bot_token=binding.bot_token,
         reply_markup=reply_markup,
     )
     if include_main_menu and inline_markup is not None:
         await send_telegram_text(
             chat_id=str(chat_id),
             text="Разделы меню:",
-            bot_token=settings.telegram_bot_token,
-            reply_markup=main_menu_reply_keyboard(),
+            bot_token=binding.bot_token,
+            reply_markup=main_menu_reply_keyboard(
+                include_calculator=include_calculator
+            ),
         )
 
 
 async def _ack_callback(callback_query_id: str) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token:
-        return
+    binding = current_bot_binding()
     await answer_callback_query(
         callback_query_id=callback_query_id,
-        bot_token=settings.telegram_bot_token,
+        bot_token=binding.bot_token,
     )
 
 
@@ -90,14 +102,14 @@ async def _run_advisor_question(
         "language": "ru",
     }
     core_response = await handle_structured_query(tenant, body, trace_id)
-    settings = get_settings()
-    if settings.telegram_bot_token:
-        await deliver_structured_advisor_response(
-            chat_id,
-            core_response,
-            bot_token=settings.telegram_bot_token,
-            reply_markup=main_menu_reply_keyboard(),
-        )
+    await deliver_structured_advisor_response(
+        chat_id,
+        core_response,
+        bot_token=current_bot_binding().bot_token,
+        reply_markup=main_menu_reply_keyboard(
+            include_calculator=tenant.tenant_id == "whieda"
+        ),
+    )
     return core_response
 
 
@@ -114,13 +126,18 @@ async def render_catalog_page(
         if total == 0:
             return (
                 "Каталог пока пуст. Напишите название товара или артикул.",
-                main_menu_reply_keyboard(),
+                main_menu_reply_keyboard(
+                    include_calculator=tenant.tenant_id == "whieda"
+                ),
             )
         total_pages = max(1, math.ceil(total / safe_size))
         if safe_page > total_pages:
             safe_page = total_pages
         products = await repo.list_catalog_products(conn, tenant.tenant_id, safe_page, safe_size)
-    lines = [f"Каталог WHIEDA — страница {safe_page} из {total_pages}", ""]
+    lines = [
+        f"Каталог {tenant.display_name} — страница {safe_page} из {total_pages}",
+        "",
+    ]
     for index, product in enumerate(products, start=1):
         name = str(product.get("canonical_name") or product.get("sku") or "").strip()
         lines.append(f"{index}. {name}")
@@ -221,19 +238,112 @@ async def handle_main_menu(
     *,
     trace_id: str = "",
 ) -> dict[str, Any]:
-    _ = tenant
     lines = [
-        "Главное меню WHIEDA:",
+        f"Главное меню {tenant.display_name}:",
         "",
         "📦 Товары — каталог",
-        "🧮 Калькулятор — расчёт корзины",
         "📈 Бизнес — вход и маркетинг",
         "🏢 О компании",
         "🧭 Подбор — стартовый набор",
         "📅 Встречи — события",
     ]
+    if tenant.tenant_id == "whieda":
+        lines.insert(3, "🧮 Калькулятор — расчёт корзины")
     await _deliver_navigation_text(chat_id, "\n".join(lines), include_main_menu=True)
     return {"ok": True, "route": "main_menu", "trace_id": trace_id}
+
+
+async def handle_newcomer_panel(
+    tenant: TenantContext,
+    chat_id: int | str,
+    *,
+    trace_id: str = "",
+) -> dict[str, Any]:
+    await _deliver_navigation_text(
+        chat_id,
+        NEWCOMER_PANEL_TEXT,
+        inline_markup=newcomer_inline_keyboard(
+            include_calculator=tenant.tenant_id == "whieda"
+        ),
+        include_main_menu=True,
+    )
+    return {"ok": True, "route": "newcomer_panel", "trace_id": trace_id}
+
+
+async def handle_open_calculator(
+    tenant: TenantContext,
+    chat_id: int | str,
+    *,
+    trace_id: str = "",
+) -> dict[str, Any]:
+    if tenant.tenant_id != "whieda":
+        await _deliver_navigation_text(
+            chat_id,
+            "Калькулятор для этого проекта пока не включён.",
+            include_main_menu=True,
+        )
+        return {
+            "ok": True,
+            "route": "calculator_unavailable",
+            "trace_id": trace_id,
+        }
+    cart_session_id = None
+    try:
+        created = await create_session(tenant.tenant_id, {})
+        cart_session_id = str(created.get("cart_session_id") or "").strip() or None
+    except Exception:
+        logger.exception("telegram_calculator_cart_failed", extra={"trace_id": trace_id})
+    url = calculator_web_url(cart_session_id=cart_session_id)
+    await _deliver_navigation_text(
+        chat_id,
+        CALCULATOR_INSTRUCTION,
+        inline_markup=calculator_open_inline_keyboard(url=url),
+        include_main_menu=True,
+    )
+    return {
+        "ok": True,
+        "route": "open_calculator",
+        "trace_id": trace_id,
+        "cart_session_id": cart_session_id,
+    }
+
+
+async def handle_newcomer_action(
+    tenant: TenantContext,
+    chat_id: int | str,
+    action: str,
+    *,
+    user_id: int | None = None,
+    trace_id: str = "",
+) -> dict[str, Any]:
+    if action == "products":
+        return await handle_catalog_products(tenant, chat_id, page=1, trace_id=trace_id)
+    if action == "calc":
+        return await handle_open_calculator(tenant, chat_id, trace_id=trace_id)
+    if action == "mentor":
+        result = None
+        if user_id is not None:
+            result = await handle_onboarding_text(
+                tenant.tenant_id,
+                telegram_user_id=user_id,
+                text="мой наставник",
+            )
+        text = str(
+            (result or {}).get("answer_text")
+            or "Наставник будет назначен по вашей ref-ссылке."
+        )
+        await _deliver_navigation_text(chat_id, text, include_main_menu=True)
+        return {"ok": True, "route": "newcomer_mentor", "trace_id": trace_id}
+    question = NEWCOMER_ADVISOR_QUESTIONS.get(action)
+    if not question:
+        return await handle_safe_menu_fallback(tenant, chat_id, trace_id=trace_id)
+    core_response = await _run_advisor_question(tenant, chat_id, question, trace_id)
+    return {
+        "ok": True,
+        "route": f"newcomer_{action}",
+        "answer_mode": core_response.get("answer_mode"),
+        "trace_id": trace_id,
+    }
 
 
 async def dispatch_parsed_callback(
@@ -242,11 +352,17 @@ async def dispatch_parsed_callback(
     parsed: ParsedCallback,
     *,
     trace_id: str = "",
+    user_id: int | None = None,
 ) -> dict[str, Any]:
     if parsed.kind == "nav_products":
         return await handle_catalog_products(tenant, chat_id, page=1, trace_id=trace_id)
     if parsed.kind == "nav_menu":
         return await handle_main_menu(tenant, chat_id, trace_id=trace_id)
+    if parsed.kind.startswith("newcomer_"):
+        action = parsed.kind.removeprefix("newcomer_")
+        return await handle_newcomer_action(
+            tenant, chat_id, action, user_id=user_id, trace_id=trace_id
+        )
     if parsed.kind == "catalog_page" and parsed.page is not None:
         return await handle_catalog_products(tenant, chat_id, page=parsed.page, trace_id=trace_id)
     if parsed.kind == "catalog_sku" and parsed.sku:
@@ -267,11 +383,15 @@ async def handle_navigation_text(
     msg: TelegramMessage,
     trace_id: str,
 ) -> dict[str, Any] | None:
+    if is_newcomer_panel_request(msg.text):
+        return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
     intent = resolve_menu_text_intent(msg.text)
     if not intent:
         return None
     if intent == "nav_products":
         return await handle_catalog_products(tenant, msg.chat_id, page=1, trace_id=trace_id)
+    if intent == "nav_calculator":
+        return await handle_open_calculator(tenant, msg.chat_id, trace_id=trace_id)
     advisor_question = menu_intent_to_advisor_question(intent)
     if not advisor_question:
         return await handle_safe_menu_fallback(tenant, msg.chat_id, trace_id=trace_id)
@@ -299,4 +419,5 @@ async def handle_callback_query(
         callback.chat_id,
         parsed,
         trace_id=trace_id,
+        user_id=callback.user_id,
     )

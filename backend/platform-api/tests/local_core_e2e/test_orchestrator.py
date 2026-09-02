@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from http.client import RemoteDisconnected
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,6 +52,25 @@ def test_wait_api_health_pass(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: Resp())
     result = wait_api_health(5)
     assert result["status"] == "PASS"
+
+
+def test_wait_api_health_retries_transient_disconnect(monkeypatch):
+    calls = {"count": 0}
+
+    def transient_disconnect(*args, **kwargs):
+        calls["count"] += 1
+        raise RemoteDisconnected("startup connection closed")
+
+    clock = iter((0, 0, 2))
+    monkeypatch.setattr("urllib.request.urlopen", transient_disconnect)
+    monkeypatch.setattr("local_core_lab.orchestrator.time.time", lambda: next(clock))
+    monkeypatch.setattr("local_core_lab.orchestrator.time.sleep", lambda _: None)
+
+    result = wait_api_health(1)
+
+    assert calls["count"] == 1
+    assert result["status"] == "FAIL"
+    assert "startup connection closed" in result["last_error"]
 
 
 def test_extract_acceptance_summary():

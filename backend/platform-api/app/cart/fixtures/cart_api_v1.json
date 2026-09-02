@@ -1,0 +1,68 @@
+{
+  "version": "v1",
+  "owner": "core",
+  "price_source": "advisor_structured_products",
+  "checkout": "existing POST /v1/leads with product_sku cart-order",
+  "notes": [
+    "Frontend must not send prices, owner, or SKU lists in share URLs.",
+    "Missing price stays null and is excluded from money totals; never coerced to 0.",
+    "first_ref is set on create and never overwritten.",
+    "Site localStorage may cache the opaque cart_session_id only."
+  ],
+  "catalog": [
+    {
+      "sku": "M015-00",
+      "canonical_name": "Активатор клеток",
+      "retail_price_byn": 1750,
+      "partner_price_byn": 1050,
+      "retail_price_rub": 50000,
+      "partner_price_rub": 30000,
+      "partner_w": 300
+    },
+    {
+      "sku": "EU-N000021-24",
+      "canonical_name": "Magic Foherb",
+      "retail_price_byn": 245,
+      "partner_price_byn": 196,
+      "retail_price_rub": 7000,
+      "partner_price_rub": 5600,
+      "partner_w": 50
+    },
+    {
+      "sku": "T003",
+      "canonical_name": "Пояс",
+      "retail_price_byn": null,
+      "partner_price_byn": null,
+      "retail_price_rub": null,
+      "partner_price_rub": null,
+      "partner_w": 0
+    }
+  ],
+  "create_request": {
+    "ref": "ladnaya",
+    "market_id": "by",
+    "price_mode": "primary"
+  },
+  "create_response": {
+    "ok": true,
+    "cart_session_id": "opaque",
+    "market_id": "by",
+    "currency_code": "BYN",
+    "price_mode": "primary",
+    "first_ref": "ladnaya",
+    "ref": "ladnaya",
+    "items": [],
+    "totals": {
+      "amount": 0,
+      "pv": 0,
+      "currency_code": "BYN",
+      "unavailable_count": 0
+    }
+  },
+  "item_request": {
+    "sku": "M015-00",
+    "qty": 2,
+    "idempotency_key": "item-1"
+  },
+  "share_path_prefix": "/price/?snap="
+}

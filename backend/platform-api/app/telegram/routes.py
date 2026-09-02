@@ -1,21 +1,34 @@
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 
 from app.advisor.service import handle_structured_query
 from app.settings import get_settings
-from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
-from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
 from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.content_access import try_handle_content_access
+from app.telegram.bindings import (
+    BotBindingContext,
+    binding_context_scope,
+    current_bot_binding,
+    resolve_bot_binding_context,
+    verify_webhook_secret,
+)
+from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
+from app.telegram.log_safe import chat_ref
+from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.sequencer import build_message_fingerprint, get_chat_sequencer
-from app.telegram.update_parser import parse_telegram_callback, parse_telegram_message, should_process_telegram_message
-from app.tenancy import get_trace_id, resolve_tenant_from_bot_binding
+from app.telegram.update_parser import (
+    parse_telegram_callback,
+    parse_telegram_message,
+    should_process_telegram_message,
+)
+from app.tenancy import get_trace_id
 
 LEGACY_TELEGRAM_WEBHOOK = "/webhook/advisor-whieda-v0"
 
@@ -23,22 +36,12 @@ router = APIRouter(tags=["telegram"])
 logger = logging.getLogger(__name__)
 
 
-def _verify_telegram_secret(request: Request) -> None:
-    settings = get_settings()
-    secret = request.headers.get("x-telegram-bot-api-secret-token", "")
-    expected = settings.telegram_webhook_secret
-    if expected and secret != expected:
-        raise HTTPException(status_code=403, detail={"error": "invalid_webhook_secret"})
-
-
 async def _deliver_core_answer(chat_id: str, core_response: dict) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token:
-        return
+    binding = current_bot_binding()
     await deliver_structured_advisor_response(
         chat_id=str(chat_id),
         core_response=core_response,
-        bot_token=settings.telegram_bot_token,
+        bot_token=binding.bot_token,
     )
 
 
@@ -46,6 +49,9 @@ async def _forward_to_legacy_consultant(
     update: dict,
     trace_id: str | None = None,
 ) -> None:
+    binding = current_bot_binding()
+    if binding.tenant.tenant_id != "whieda":
+        raise RuntimeError("non_whieda_legacy_fallback_forbidden")
     settings = get_settings()
     url = f"{settings.legacy_n8n_base_url.rstrip('/')}{LEGACY_TELEGRAM_WEBHOOK}"
     headers = {"content-type": "application/json"}
@@ -62,31 +68,36 @@ async def _forward_to_legacy_consultant(
             raise RuntimeError(f"legacy_status_{response.status_code}")
     except Exception as exc:
         logger.warning("telegram_legacy_consultant_failed", exc_info=exc)
-        if chat_id and settings.telegram_bot_token:
+        if chat_id:
             await send_telegram_text(
                 chat_id=str(chat_id),
                 text="Сейчас высокая нагрузка на советника. Повторите вопрос через минуту.",
-                bot_token=settings.telegram_bot_token,
+                bot_token=binding.bot_token,
             )
 
 
 async def _process_telegram_update_body(
-    binding_id: str,
+    binding: BotBindingContext,
     update: dict,
     trace_id: str | None,
 ) -> None:
-    settings = get_settings()
-    tenant = await resolve_tenant_from_bot_binding(binding_id)
+    tenant = binding.tenant
+    route_mode = binding.processing_mode
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
             logger.info("telegram_group_callback_ignored", extra={"trace_id": trace_id})
             return
-        if settings.core_route_telegram == "legacy":
+        if route_mode == "legacy":
             return
-        if settings.core_route_telegram == "core":
+        if route_mode == "core":
             try:
-                await process_core_telegram_update(tenant, update, trace_id or "")
+                await process_core_telegram_update(
+                    tenant,
+                    update,
+                    trace_id or "",
+                    binding=binding,
+                )
             except Exception:
                 logger.exception("telegram_core_callback_failed")
             return
@@ -101,7 +112,7 @@ async def _process_telegram_update_body(
 
     parsed_message = parse_telegram_message(update)
     if not parsed_message or not should_process_telegram_message(
-        parsed_message, settings.telegram_bot_username
+        parsed_message, binding.bot_username
     ):
         logger.info("telegram_group_message_ignored", extra={"trace_id": trace_id})
         return
@@ -110,20 +121,29 @@ async def _process_telegram_update_body(
     if admin_result is not None:
         return
 
-    if settings.core_route_telegram == "legacy":
+    content_result = await try_handle_content_access(update, trace_id=trace_id)
+    if content_result is not None:
+        return
+
+    if route_mode == "legacy":
         await _forward_to_legacy_consultant(update, trace_id)
         return
 
-    if settings.core_route_telegram == "core":
+    if route_mode == "core":
         try:
-            await process_core_telegram_update(tenant, update, trace_id or "")
+            await process_core_telegram_update(
+                tenant,
+                update,
+                trace_id or "",
+                binding=binding,
+            )
         except Exception:
             logger.exception("telegram_core_processor_failed")
-            if settings.telegram_bot_token and chat_id:
+            if chat_id:
                 await send_telegram_text(
                     chat_id=str(chat_id),
                     text="Не удалось обработать сообщение. Попробуйте ещё раз.",
-                    bot_token=settings.telegram_bot_token,
+                    bot_token=binding.bot_token,
                 )
         return
 
@@ -138,15 +158,14 @@ async def _process_telegram_update_body(
         core_response = await handle_structured_query(tenant, body, trace_id or "")
     except Exception:
         logger.exception("telegram_structured_query_failed")
-        if settings.telegram_bot_token:
-            await send_telegram_text(
-                chat_id=str(chat_id),
-                text="Не удалось обработать запрос. Попробуйте ещё раз.",
-                bot_token=settings.telegram_bot_token,
-            )
+        await send_telegram_text(
+            chat_id=str(chat_id),
+            text="Не удалось обработать запрос. Попробуйте ещё раз.",
+            bot_token=binding.bot_token,
+        )
         return
 
-    if settings.core_route_telegram == "shadow":
+    if route_mode == "shadow":
         await _forward_to_legacy_consultant(update, trace_id)
         if is_telegram_deliverable(core_response.get("answer_mode")):
             logger.info(
@@ -163,13 +182,15 @@ async def _process_telegram_update_body(
 
 
 async def _process_telegram_update(
-    binding_id: str,
+    binding: BotBindingContext,
     update: dict,
     trace_id: str | None,
 ) -> None:
     message = (update or {}).get("message") or {}
     callback = (update or {}).get("callback_query") or {}
-    chat_id = (message.get("chat") or {}).get("id") or ((callback.get("message") or {}).get("chat") or {}).get("id")
+    message_chat_id = (message.get("chat") or {}).get("id")
+    callback_chat_id = ((callback.get("message") or {}).get("chat") or {}).get("id")
+    chat_id = message_chat_id or callback_chat_id
     if chat_id is None:
         return
     update_id = (update or {}).get("update_id")
@@ -190,25 +211,31 @@ async def _process_telegram_update(
             "trace_id": trace_id,
             "update_id": update_id,
             "message_id": message_id,
-            "chat_id": chat_key,
+            "chat_id": chat_ref(chat_key),
             "text_hash": text_hash,
             "callback_hash": callback_hash,
         },
     )
 
     async def handler() -> None:
-        await _process_telegram_update_body(binding_id, update, trace_id)
+        with binding_context_scope(binding):
+            await _process_telegram_update_body(binding, update, trace_id)
 
     result = await sequencer.run_ordered(
         chat_key,
         update_id,
         handler,
         message_fingerprint=message_fingerprint,
+        namespace=binding.binding_id,
     )
     if result.duplicate:
         logger.info(
             "telegram_duplicate_update_ignored",
-            extra={"trace_id": trace_id, "update_id": update_id, "chat_id": chat_key},
+            extra={
+                "trace_id": trace_id,
+                "update_id": update_id,
+                "chat_id": chat_ref(chat_key),
+            },
         )
 
 
@@ -218,8 +245,18 @@ async def telegram_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> dict:
-    _verify_telegram_secret(request)
+    binding = await resolve_bot_binding_context(binding_id)
+    if binding is None:
+        logger.info(
+            "telegram_bot_binding_ignored",
+            extra={"binding_id": binding_id, "trace_id": get_trace_id(request)},
+        )
+        return {"ok": True}
+    verify_webhook_secret(
+        binding,
+        request.headers.get("x-telegram-bot-api-secret-token", ""),
+    )
     update = await request.json()
     trace_id = get_trace_id(request)
-    background_tasks.add_task(_process_telegram_update, binding_id, update, trace_id)
+    background_tasks.add_task(_process_telegram_update, binding, update, trace_id)
     return {"ok": True}

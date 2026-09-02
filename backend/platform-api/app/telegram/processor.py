@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
 from app.onboarding.service import handle_onboarding_text
-from app.settings import get_settings
-from app.telegram.catalog_browse import handle_callback_query, handle_navigation_text
+from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.content_access import try_handle_content_access
+from app.telegram.bindings import (
+    BotBindingContext,
+    binding_context_scope,
+    current_bot_binding,
+)
+from app.telegram.log_safe import chat_ref
+from app.telegram.catalog_browse import (
+    handle_callback_query,
+    handle_navigation_text,
+    handle_newcomer_panel,
+)
 from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
 from app.telegram.modes import should_deliver_telegram_response
-from app.telegram.navigation import main_menu_reply_keyboard
-from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.navigation import (
+    advisor_followup_inline_keyboard,
+    is_newcomer_panel_request,
+    main_menu_reply_keyboard,
+)
 from app.telegram.update_parser import (
     TelegramMessage,
     parse_start_token,
@@ -28,13 +43,13 @@ logger = logging.getLogger(__name__)
 
 
 async def deliver_text(chat_id: int | str, text: str) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token or not text.strip():
+    if not text.strip():
         return
+    binding = current_bot_binding()
     await send_telegram_text(
         chat_id=str(chat_id),
         text=text.strip(),
-        bot_token=settings.telegram_bot_token,
+        bot_token=binding.bot_token,
     )
 
 
@@ -44,13 +59,11 @@ async def deliver_advisor_response(
     *,
     reply_markup: dict[str, Any] | None = None,
 ) -> None:
-    settings = get_settings()
-    if not settings.telegram_bot_token:
-        return
+    binding = current_bot_binding()
     await deliver_structured_advisor_response(
         chat_id,
         core_response,
-        bot_token=settings.telegram_bot_token,
+        bot_token=binding.bot_token,
         reply_markup=reply_markup,
     )
 
@@ -73,7 +86,8 @@ async def handle_start_token(
     elif result.first_ref:
         lines.append("Наставник назначен по вашей персональной ссылке.")
     topic = (result.context or {}).get("topic")
-    product = (result.context or {}).get("last_product_name") or (result.context or {}).get("last_product_sku")
+    context = result.context or {}
+    product = context.get("last_product_name") or context.get("last_product_sku")
     if topic or product:
         lines.append(f"Последняя тема: {product or topic}.")
     lines.append("Напишите вопрос по товару или «начать обучение» для 7-дневного плана.")
@@ -119,20 +133,38 @@ async def handle_advisor_query(
         "telegram_advisor_response_ready",
         extra={
             "trace_id": trace_id,
-            "chat_id": str(msg.chat_id),
+            "chat_id": chat_ref(msg.chat_id),
             "text_hash": hashlib.sha256(msg.text.encode("utf-8")).hexdigest()[:12],
             "answer_mode": mode,
             "gap_kind": core_response.get("gap_kind"),
         },
     )
     if should_deliver_telegram_response(core_response):
+        include_calculator = tenant.tenant_id == "whieda"
+        inline = advisor_followup_inline_keyboard(
+            core_response,
+            include_calculator=include_calculator,
+        )
         await deliver_advisor_response(
             msg.chat_id,
             core_response,
-            reply_markup=main_menu_reply_keyboard(),
+            reply_markup=inline
+            or main_menu_reply_keyboard(include_calculator=include_calculator),
         )
+        if inline:
+            await send_telegram_text(
+                chat_id=str(msg.chat_id),
+                text="Разделы меню:",
+                bot_token=current_bot_binding().bot_token,
+                reply_markup=main_menu_reply_keyboard(
+                    include_calculator=include_calculator
+                ),
+            )
     elif mode and str(mode) not in {"", "fallback", "error"}:
-        logger.warning("telegram_response_not_delivered", extra={"answer_mode": mode, "trace_id": trace_id})
+        logger.warning(
+            "telegram_response_not_delivered",
+            extra={"answer_mode": mode, "trace_id": trace_id},
+        )
     return {"ok": True, "route": "advisor", "answer_mode": mode, "trace_id": trace_id}
 
 
@@ -140,11 +172,26 @@ async def process_core_telegram_update(
     tenant: TenantContext,
     update: dict[str, Any],
     trace_id: str,
+    *,
+    binding: BotBindingContext,
 ) -> dict[str, Any]:
-    """Full Core path: admin login → callback → start token → onboarding → navigation → SQL advisor."""
+    """Full Core path: admin login → content access → callback → start token → onboarding → navigation → SQL advisor."""
+    with binding_context_scope(binding):
+        return await _process_core_telegram_update_scoped(tenant, update, trace_id)
+
+
+async def _process_core_telegram_update_scoped(
+    tenant: TenantContext,
+    update: dict[str, Any],
+    trace_id: str,
+) -> dict[str, Any]:
     admin_result = await try_handle_admin_login(update, trace_id=trace_id)
     if admin_result is not None:
         return admin_result
+
+    content_result = await try_handle_content_access(update, trace_id=trace_id)
+    if content_result is not None:
+        return content_result
 
     callback = parse_telegram_callback(update)
     if callback:
@@ -156,7 +203,7 @@ async def process_core_telegram_update(
     if not msg:
         return {"ok": True, "route": "ignored"}
 
-    if not should_process_telegram_message(msg, get_settings().telegram_bot_username):
+    if not should_process_telegram_message(msg, current_bot_binding().bot_username):
         return {"ok": True, "route": "ignored_group_message"}
 
     start_token = parse_start_token(msg.text)
@@ -166,6 +213,9 @@ async def process_core_telegram_update(
     onboarding_result = await handle_onboarding(tenant, msg)
     if onboarding_result:
         return onboarding_result
+
+    if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
+        return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
 
     navigation_result = await handle_navigation_text(tenant, msg, trace_id)
     if navigation_result:

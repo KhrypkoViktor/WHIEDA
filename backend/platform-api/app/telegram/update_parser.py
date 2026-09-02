@@ -85,6 +85,10 @@ def should_process_telegram_message(msg: TelegramMessage, bot_username: str | No
     return str(reply_from.get("username") or "").lstrip("@").lower() == username
 
 
+def is_start_command(text: str) -> bool:
+    return bool(START_TOKEN_RE.match(str(text or "").strip()))
+
+
 def parse_start_token(text: str) -> str | None:
     match = START_TOKEN_RE.match(text.strip())
     if not match:

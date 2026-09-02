@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import create_app
+from app.telegram.bindings import BotBindingContext
 from app.tenancy import TenantContext
 
 
@@ -21,7 +22,12 @@ def app(monkeypatch):
         from app.tenancy import normalize_host
 
         normalized = normalize_host(host)
-        if normalized in {"wwc.best", "samtsova.wwc.best"}:
+        if normalized in {
+            "wwc.best",
+            "samtsova.wwc.best",
+            "cabinet.staging.wwc.best",
+            "cabinet.test.local",
+        }:
             return TenantContext(
                 tenant_id="whieda",
                 status="active",
@@ -70,4 +76,19 @@ def whieda_tenant() -> TenantContext:
             "partner_leads": True,
             "deep_coach": False,
         },
+    )
+
+
+@pytest.fixture
+def whieda_bot_binding(whieda_tenant: TenantContext) -> BotBindingContext:
+    return BotBindingContext(
+        binding_id="whieda-test-binding",
+        tenant=whieda_tenant,
+        bot_token_ref="env:TEST_WHIEDA_BOT_TOKEN",
+        webhook_secret_ref="env:TEST_WHIEDA_WEBHOOK_SECRET",
+        bot_username="WHIEDA_Advisor_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="whieda-test-token",
+        webhook_secret="whieda-test-secret",
     )

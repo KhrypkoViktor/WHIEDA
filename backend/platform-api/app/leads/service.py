@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 
@@ -17,6 +18,10 @@ FORBIDDEN_OWNER_FIELDS = {
     "assigned_owner_id",
     "attributed_owner_id",
     "watchers",
+}
+SUBDOMAIN_TO_REF = {
+    "elena": "onlineelena",
+    "samtsova": "olga-samtsova",
 }
 
 
@@ -42,6 +47,37 @@ class LeadInput:
 def clean(value: Any, max_len: int = 1000) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     return text[:max_len]
+
+
+def ref_from_host(hostname: str) -> str:
+    host = clean(hostname, 253).lower()
+    if not host.endswith(".wwc.best") or host in {"wwc.best", "www.wwc.best"}:
+        return ""
+    sub = host.split(".")[0]
+    return SUBDOMAIN_TO_REF.get(sub, sub)
+
+
+def ref_from_page_url(page_url: str) -> str:
+    raw = clean(page_url, 1000)
+    if not raw:
+        return ""
+    parsed = urlparse(raw)
+    query_ref = (parse_qs(parsed.query).get("ref") or [""])[0]
+    query_ref = clean(query_ref, 64).lower()
+    if query_ref:
+        return query_ref
+    return ref_from_host(parsed.hostname or "")
+
+
+def resolve_lead_refs(body: dict[str, Any]) -> tuple[str, str]:
+    first = clean(body.get("initial_ref") or body.get("first_ref") or body.get("ref"), 64).lower()
+    active = clean(body.get("active_ref") or body.get("ref"), 64).lower()
+    from_url = ref_from_page_url(str(body.get("page_url") or body.get("landing_url") or ""))
+    if not active:
+        active = from_url
+    if not first:
+        first = from_url or active
+    return first, active
 
 
 def parse_lead_body(body: dict[str, Any], tenant_id: str) -> LeadInput:
@@ -77,14 +113,23 @@ def parse_lead_body(body: dict[str, Any], tenant_id: str) -> LeadInput:
         )
 
     country = clean(body.get("country_code"), 2).upper()
-    if country not in {"RU", "BY"}:
+    if not country:
+        iso = clean(body.get("country_iso"), 8).upper()
+        if iso == "BY":
+            country = "BY"
+        elif iso == "RU":
+            country = "RU"
+        elif iso in {"", "*"}:
+            country = "RU"
+        else:
+            country = "RU"
+    elif country not in {"RU", "BY"}:
         country = "RU"
 
     settings = get_settings()
     consent = clean(body.get("consent_version"), 80) or settings.lead_consent_version
 
-    ref = clean(body.get("initial_ref") or body.get("ref"), 64).lower()
-    active_ref = clean(body.get("active_ref") or body.get("ref"), 64).lower()
+    first, active_ref = resolve_lead_refs(body)
     visitor_session_id = clean(body.get("visitor_session_id"), 64)
 
     return LeadInput(
@@ -96,7 +141,7 @@ def parse_lead_body(body: dict[str, Any], tenant_id: str) -> LeadInput:
         product_variant=clean(body.get("product_variant"), 240),
         comment=clean(body.get("comment"), 2000),
         page_url=clean(body.get("page_url"), 1000),
-        first_ref_code=ref,
+        first_ref_code=first,
         active_ref_code=active_ref,
         visitor_session_id=visitor_session_id,
         idempotency_key=idempotency,
@@ -108,6 +153,11 @@ def parse_lead_body(body: dict[str, Any], tenant_id: str) -> LeadInput:
             "visitor_session_id": visitor_session_id or None,
             "journey_type": clean(body.get("journey_type"), 32) or None,
             "route": clean(body.get("route"), 64) or None,
+            "market_id": clean(body.get("market_id"), 16) or None,
+            "country_iso": clean(body.get("country_iso"), 8) or None,
+            "country_name": clean(body.get("country"), 120) or None,
+            "city_selected": clean(body.get("city_selected") or body.get("city"), 160) or None,
+            "center_id": clean(body.get("center_id"), 80) or None,
         },
     )
 
@@ -135,14 +185,16 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
           else null
         end as active_ref_code,
         case
-          when supplied.requested_country <> 'BY' and first_profile.owner_id = 'harold'
+          when supplied.requested_country <> 'BY'
+           and coalesce(active_profile.owner_id, first_profile.owner_id) = 'harold'
           then 'viktor'
-          else coalesce(first_profile.owner_id, 'viktor')
+          else coalesce(active_profile.owner_id, first_profile.owner_id, 'viktor')
         end as attributed_owner_id,
         case
-          when supplied.requested_country <> 'BY' and first_profile.owner_id = 'harold'
+          when supplied.requested_country <> 'BY'
+           and coalesce(active_profile.owner_id, first_profile.owner_id) = 'harold'
           then 'viktor'
-          else coalesce(first_profile.owner_id, 'viktor')
+          else coalesce(active_profile.owner_id, first_profile.owner_id, 'viktor')
         end as assigned_owner_id,
         supplied.requested_country,
         first_profile.profile_version as ref_profile_version

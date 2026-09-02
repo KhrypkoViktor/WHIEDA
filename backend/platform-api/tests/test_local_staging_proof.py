@@ -92,8 +92,17 @@ def test_legacy_rls_covers_all_tenant_lead_tables():
 
 def test_rls_proof_tables_are_covered_by_legacy_rls():
     covered = legacy_rls_covers_lead_tables()
-    for table in RLS_PROOF_TABLES:
+    legacy_tables = tuple(t for t in RLS_PROOF_TABLES if not t.startswith("wwc_"))
+    for table in legacy_tables:
         assert table in covered
+
+
+def test_wwc_rls_policies_defined_in_markets_migration():
+    text = (ROOT / "postgres" / "sql" / "platform_wwc_markets_v1.sql").read_text(encoding="utf-8").lower()
+    for table in RLS_PROOF_TABLES:
+        if not table.startswith("wwc_"):
+            continue
+        assert f"create policy {table}_tenant_isolation on {table}" in text
 
 
 def test_verify_script_rejects_production_db_names():
