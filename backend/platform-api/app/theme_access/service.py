@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.db import fetch_one, tenant_connection
+from app.observability import log_event
 
 ALLOWED_THEME_IDS = ("whieda-bright", "sankofa")
 _SITE_ID_RE = re.compile(r"^[a-z0-9-]{1,64}$")
@@ -92,20 +93,31 @@ def public_theme_payload(site: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def entitlement_payload(site: dict[str, Any], telegram_user_id: str) -> dict[str, Any]:
+def entitlement_payload(
+    site: dict[str, Any],
+    telegram_user_id: str,
+    *,
+    temporary_free: bool = False,
+) -> dict[str, Any]:
     profile = site.get("public_profile") or {}
     owner_telegram_id = str(site.get("telegram_chat_id") or "")
     is_owner = bool(telegram_user_id and owner_telegram_id and telegram_user_id == owner_telegram_id)
+    # Temporary free mode: any verified Telegram user (a valid session was
+    # checked by the caller) may customize an enabled personal profile.
+    temporary_grant = bool(temporary_free and telegram_user_id and not is_owner)
+    allowed = is_owner or temporary_grant
     selected = selected_theme(profile)
     return {
         "ok": True,
         "telegram_user_id": telegram_user_id,
         "site_id": site["ref_code"],
-        "theme_customization_allowed": is_owner,
-        "allowed_theme_ids": list(ALLOWED_THEME_IDS) if is_owner else [],
-        "selected_theme_id": selected if is_owner else "",
+        "theme_customization_allowed": allowed,
+        "allowed_theme_ids": list(ALLOWED_THEME_IDS) if allowed else [],
+        "selected_theme_id": selected if allowed else "",
         "access_expires_at": None,
-        "source_status": "temporary_free" if is_owner else "not_site_owner",
+        "source_status": (
+            "site_owner" if is_owner else "temporary_free" if temporary_grant else "not_site_owner"
+        ),
     }
 
 
@@ -115,6 +127,7 @@ async def save_selected_theme(
     site_id: str,
     telegram_user_id: str,
     theme_id: str,
+    temporary_free: bool = False,
 ) -> dict[str, Any]:
     if theme_id not in ALLOWED_THEME_IDS:
         raise HTTPException(status_code=400, detail={"error": "theme_not_allowed"})
@@ -122,10 +135,11 @@ async def save_selected_theme(
     site = await load_theme_site(tenant_id, site_id)
     if not site:
         raise HTTPException(status_code=404, detail={"error": "site_not_found"})
-    entitlement = entitlement_payload(site, telegram_user_id)
+    entitlement = entitlement_payload(site, telegram_user_id, temporary_free=temporary_free)
     if not entitlement["theme_customization_allowed"]:
         raise HTTPException(status_code=403, detail={"error": "theme_owner_required"})
 
+    previous_theme_id = selected_theme(site.get("public_profile"))
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,
@@ -149,4 +163,22 @@ async def save_selected_theme(
     if not row:
         raise HTTPException(status_code=404, detail={"error": "site_not_found"})
 
-    return entitlement_payload({**site, "public_profile": row["public_profile"]}, telegram_user_id)
+    # Audit the server-side theme decision: who saved, which site, which
+    # theme, when (the log record carries the timestamp).
+    log_event(
+        f"theme_access.theme_saved tenant_id={tenant_id} site_id={site['ref_code']} "
+        f"telegram_user_id={telegram_user_id} theme_id={theme_id} "
+        f"previous_theme_id={previous_theme_id or ''} granted_via={entitlement['source_status']}",
+        tenant_id=tenant_id,
+        site_id=site["ref_code"],
+        telegram_user_id=telegram_user_id,
+        theme_id=theme_id,
+        previous_theme_id=previous_theme_id,
+        granted_via=entitlement["source_status"],
+    )
+
+    return entitlement_payload(
+        {**site, "public_profile": row["public_profile"]},
+        telegram_user_id,
+        temporary_free=temporary_free,
+    )
