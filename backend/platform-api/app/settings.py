@@ -152,6 +152,15 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_CONTENT_COOKIE_SAMESITE",
     )
 
+    # Theme access: when enabled, every verified Telegram user (valid content
+    # session) may customize the theme of an enabled personal profile without
+    # being its owner. Rights are always decided server-side, never in the
+    # browser.
+    temporary_free_for_verified_telegram_users: bool = Field(
+        default=False,
+        validation_alias="THEME_TEMPORARY_FREE_FOR_VERIFIED_TELEGRAM_USERS",
+    )
+
     platform_admin_source_url_markets: str | None = Field(
         default=None,
         validation_alias="PLATFORM_ADMIN_SOURCE_URL_MARKETS",

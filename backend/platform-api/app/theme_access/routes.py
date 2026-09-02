@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.content_access.cookies import read_session_cookie
 from app.content_access.service import validate_content_session
+from app.settings import get_settings
 from app.tenancy import get_request_tenant, normalize_host, require_entitlement
 from app.theme_access.service import (
     entitlement_payload,
@@ -16,6 +17,10 @@ from app.theme_access.service import (
 )
 
 router = APIRouter(tags=["theme-access"])
+
+
+def _temporary_free_flag() -> bool:
+    return get_settings().temporary_free_for_verified_telegram_users
 
 
 class ThemeSaveBody(BaseModel):
@@ -83,7 +88,7 @@ async def get_theme_entitlement(request: Request) -> dict:
     if not site:
         raise HTTPException(status_code=404, detail={"error": "site_not_found"})
     telegram_user_id = await _current_telegram_user_id(request)
-    return entitlement_payload(site, telegram_user_id)
+    return entitlement_payload(site, telegram_user_id, temporary_free=_temporary_free_flag())
 
 
 @router.put("/api/v1/theme-access/entitlement")
@@ -95,4 +100,5 @@ async def put_theme_entitlement(body: ThemeSaveBody, request: Request) -> dict:
         site_id=body.site_id,
         telegram_user_id=telegram_user_id,
         theme_id=body.selected_theme_id,
+        temporary_free=_temporary_free_flag(),
     )
