@@ -4,11 +4,14 @@
 Safety model (lead review 2026-09-02):
 - source: only a pinned commit via ``git archive`` (dirty worktree is never used);
 - SSH: pinned ed25519 host key from scripts/core_deploy_host_keys.json, verified
-  BEFORE any credential is sent; mismatch refuses the connection;
+  BEFORE any credential is sent; mismatch refuses the connection; the host from
+  the SSH config must equal the pinned host, otherwise the run refuses;
 - ``--plan`` is the default; ``--apply`` requires ``--confirm-release`` and
   ``--target staging`` (production is refused in this slice);
-- backup covers all changed files INCLUDING the compose env; rollback restores
-  them, rebuilds, restarts and re-checks health;
+- remote existing/missing paths are computed BEFORE upload: the code backup
+  archives only files that already exist remotely, and newly added files are
+  removed on rollback (rollback restores code + env, rebuilds, restarts,
+  re-checks health);
 - JSON manifest (source commit, archive sha256, target, backups, health, flag).
 """
 from __future__ import annotations
@@ -19,6 +22,7 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 import tarfile
 import time
 from datetime import datetime, timezone
@@ -95,11 +99,12 @@ def build_archive(commit: str) -> tuple[bytes, str]:
     return data, hashlib.sha256(data).hexdigest()
 
 
-def load_pinned_host_key() -> tuple[paramiko.Ed25519Key, str]:
+def load_pinned_host_key() -> tuple[paramiko.Ed25519Key, str, str]:
     pin = json.loads(KEYS_FILE.read_text(encoding="utf-8"))
     if pin.get("key_type") != "ssh-ed25519":
         raise RuntimeError("unsupported pinned host key type: " + str(pin.get("key_type")))
-    return paramiko.Ed25519Key(data=base64.b64decode(pin["public_key"])), pin["fingerprint"]
+    key = paramiko.Ed25519Key(data=base64.b64decode(pin["public_key"]))
+    return key, pin["fingerprint"], pin["host"]
 
 
 def _fingerprint(public_b64: str) -> str:
@@ -122,6 +127,14 @@ def connect_verified(cfg: dict, expected_key: paramiko.Ed25519Key, pinned_finger
     client = paramiko.SSHClient()
     client._transport = transport
     return client
+
+
+def check_host_matches_pin(cfg: dict, pinned_host: str) -> None:
+    actual = cfg.get("host")
+    if actual != pinned_host:
+        raise SystemExit(
+            f"refusal: ssh config host {actual!r} does not match pinned host {pinned_host!r}"
+        )
 
 
 def _exec(client, command: str, timeout: int = 900) -> str:
@@ -148,14 +161,29 @@ def health_poll(client, url: str, attempts: int = 12, delay: int = 5) -> bool:
     return False
 
 
-def backup_remote(client, target: dict, ts: str) -> tuple[str, str]:
+def remote_existing_paths(client, remote_api: str) -> list[str]:
+    """Return the subset of FILES that already exist on the remote."""
+    quoted = " ".join("app/" + name for name in FILES)
+    output = _exec(
+        client,
+        "cd " + remote_api
+        + " && for path in " + quoted
+        + "; do test -f \"$path\" && printf '%s\\n' \"$path\"; done; true",
+    )
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def backup_remote(client, target: dict, ts: str, existing_paths: list[str]) -> tuple[str, str]:
+    """Backup ONLY the files that exist remotely (new files have nothing to back up)."""
     remote_api = target["remote_api"]
     compose_dir = target["compose_dir"]
     code_backup = target["remote"] + "/backups/ref-theme-code-" + ts + ".tar.gz"
     env_backup = target["remote"] + "/backups/ref-theme-env-" + ts + ".bak"
-    quoted = " ".join("app/" + name for name in FILES)
     _exec(client, "mkdir -p " + target["remote"] + "/backups")
-    _exec(client, "cd " + remote_api + " && tar -czf " + code_backup + " -C " + remote_api + " " + quoted)
+    if existing_paths:
+        _exec(client, "cd " + remote_api + " && tar -czf " + code_backup + " -C " + remote_api + " " + " ".join(existing_paths))
+    else:
+        _exec(client, "tar -czf " + code_backup + " --files-from /dev/null")
     _exec(client, "cd " + compose_dir + " && cp .env " + env_backup)
     return code_backup, env_backup
 
@@ -194,8 +222,12 @@ def apply(client, target: dict, commit: str, archive: bytes, archive_sha: str) -
     remote_api = target["remote_api"]
     compose_dir = target["compose_dir"]
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    code_backup, env_backup = backup_remote(client, target, ts)
-    new_paths: list[str] = []
+
+    existing = remote_existing_paths(client, remote_api)
+    all_paths = list(FILES)
+    new_paths = [path for path in all_paths if path not in existing]
+    code_backup, env_backup = backup_remote(client, target, ts, existing)
+
     sftp = client.open_sftp()
     try:
         with sftp.file(remote + "/ref-theme-slice.tar.gz", "wb") as target_file:
@@ -216,6 +248,7 @@ def apply(client, target: dict, commit: str, archive: bytes, archive_sha: str) -
             "archive_sha256": archive_sha,
             "target": "staging",
             "files": list(FILES),
+            "new_remote_files": new_paths,
             "code_backup": code_backup,
             "env_backup": env_backup,
             "flag": FLAG_LINE,
@@ -248,7 +281,7 @@ def main() -> int:
 
     target = resolve_target(args.target)
     archive, archive_sha = build_archive(args.commit)
-    pinned_key, pinned_fingerprint = load_pinned_host_key()
+    pinned_key, pinned_fingerprint, pinned_host = load_pinned_host_key()
     plan = {
         "action": "plan",
         "source_commit": args.commit,
@@ -267,7 +300,9 @@ def main() -> int:
     sys.path.insert(0, str(N8N_DIR))
     from whieda_runtime_env import ssh_config
 
-    client = connect_verified(ssh_config(), pinned_key, pinned_fingerprint)
+    ssh = ssh_config()
+    check_host_matches_pin(ssh, pinned_host)
+    client = connect_verified(ssh, pinned_key, pinned_fingerprint)
     try:
         manifest = apply(client, target, args.commit, archive, archive_sha)
         print(json.dumps({"action": "deployed", **manifest}, ensure_ascii=False, indent=2))
