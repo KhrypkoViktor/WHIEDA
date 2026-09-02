@@ -155,10 +155,21 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        if request.url.path.startswith("/health"):
+        path = request.url.path
+        if path.startswith("/health"):
             return await call_next(request)
 
-        if request.url.path.startswith("/v1/telegram/"):
+        if path.startswith("/v1/telegram/"):
+            return await call_next(request)
+
+        if path == "/v1/admin/auth/telegram-confirm":
+            return await call_next(request)
+
+        if path.startswith("/v1/admin/"):
+            host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+            tenant = await _resolve_optional_tenant_from_host(host or "")
+            if tenant is not None:
+                request.state.tenant = tenant
             return await call_next(request)
 
         host = request.headers.get("x-forwarded-host") or request.headers.get("host")
@@ -172,6 +183,26 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         request.state.tenant = tenant
         return await call_next(request)
+
+
+async def _resolve_optional_tenant_from_host(host: str) -> TenantContext | None:
+    normalized = normalize_host(host)
+    cabinet_hosts = {
+        "admin-staging.wwc.best": "whieda",
+        "cabinet.staging.wwc.best": "whieda",
+        "cabinet.test.local": "whieda",
+    }
+    if normalized in cabinet_hosts:
+        return await _load_tenant(cabinet_hosts[normalized])
+    settings = get_settings()
+    if not normalized:
+        if settings.default_host_tenant and settings.environment != "production":
+            return await _load_tenant(settings.default_host_tenant)
+        return None
+    try:
+        return await resolve_tenant_from_host(host)
+    except HTTPException:
+        return None
 
 
 def get_request_tenant(request: Request) -> TenantContext:

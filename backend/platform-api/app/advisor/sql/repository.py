@@ -269,6 +269,40 @@ async def load_recommendation_catalog(conn, tenant_id: str) -> list[dict[str, An
     )
 
 
+async def load_active_solution_bundles(conn, tenant_id: str) -> list[dict[str, Any]]:
+    """Load the active bundle set for the current tenant."""
+
+    rows = await fetch_all(
+        conn,
+        """
+        select to_jsonb(bundle) as bundle
+        from advisor_structured_solution_bundles bundle
+        where bundle.client_id = %s
+          and coalesce(bundle.active, false) is true
+        order by bundle.priority desc, bundle.bundle_id
+        """,
+        (client_id(tenant_id),),
+    )
+    return [dict(row.get("bundle") or {}) for row in rows]
+
+
+async def load_products_by_skus(
+    conn, tenant_id: str, skus: list[str]
+) -> list[dict[str, Any]]:
+    if not skus:
+        return []
+    return await fetch_all(
+        conn,
+        f"""
+        select {_PRODUCT_COLUMNS}
+        from advisor_structured_products
+        where client_id = %s
+          and sku = any(%s)
+        """,
+        (client_id(tenant_id), skus),
+    )
+
+
 async def load_starter_basket_templates(conn, tenant_id: str) -> list[dict[str, Any]]:
     return await fetch_all(
         conn,

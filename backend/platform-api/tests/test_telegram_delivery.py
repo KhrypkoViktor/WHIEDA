@@ -8,7 +8,7 @@ from app.telegram.processor import process_core_telegram_update
 
 
 @pytest.mark.asyncio
-async def test_telegram_core_sends_answer(monkeypatch):
+async def test_telegram_core_sends_answer(monkeypatch, whieda_bot_binding):
     tenant = type(
         "T",
         (),
@@ -38,7 +38,12 @@ async def test_telegram_core_sends_answer(monkeypatch):
             "text": "цена спирулина",
         }
     }
-    result = await process_core_telegram_update(tenant, update, "trace-1")
+    result = await process_core_telegram_update(
+        tenant,
+        update,
+        "trace-1",
+        binding=whieda_bot_binding,
+    )
     assert result["route"] == "advisor"
     assert result["answer_mode"] == "structured_price"
     deliver.assert_awaited_once()

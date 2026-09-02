@@ -6,6 +6,63 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.cart.web_links import CALCULATOR_WEB_URL, calculator_web_url
+
+NEWCOMER_PANEL_TEXT = (
+    "Помогу быстро освоиться. Названия товаров знать не обязательно — выберите, что хотите сделать.\n\n"
+    "📦 Посмотреть товары\n"
+    "🧭 Подобрать под задачу\n"
+    "🛒 Первая покупка\n"
+    "🧮 Посчитать корзину\n"
+    "🎥 Отзывы и материалы\n"
+    "📚 Как пользоваться\n"
+    "👤 Мой наставник"
+)
+
+NEWCOMER_ACTION_LABELS: dict[str, str] = {
+    "products": "📦 Посмотреть товары",
+    "match": "🧭 Подобрать под задачу",
+    "first": "🛒 Первая покупка",
+    "calc": "🧮 Посчитать корзину",
+    "materials": "🎥 Отзывы и материалы",
+    "help": "📚 Как пользоваться",
+    "mentor": "👤 Мой наставник",
+}
+
+# Unfinished actions stay hidden: no empty button, no invented review feed.
+NEWCOMER_ACTIONS_ENABLED: frozenset[str] = frozenset(
+    {"products", "match", "first", "calc", "help", "mentor"}
+)
+
+NEWCOMER_ADVISOR_QUESTIONS: dict[str, str] = {
+    "match": "подбери товар",
+    "first": "подбери стартовый набор",
+    "calc": "калькулятор",
+    "help": "помощь",
+    "mentor": "мой наставник",
+}
+
+# Known ambiguous names from Core SQL — buttons reuse catalog SKU callbacks.
+CLARIFICATION_PRODUCT_CHOICES: dict[str, tuple[tuple[str, str], ...]] = {
+    "product_ambiguity_activator": (
+        ("Активатор клеток", "M015-00"),
+        ("Активатор PRO", "EU-N000031-25"),
+    ),
+    "product_ambiguity_paste": (
+        ("Паста Цинфэн", "F071-00"),
+        ("Зубная паста", "EU-N000030-25"),
+    ),
+    "product_ambiguity_color_красн": (("Эликсир Фохоу", "F001-02"),),
+    "product_ambiguity_color_зелен": (("Эликсир Саньцин", "F003-02"),),
+    "product_ambiguity_color_син": (("Эликсир 3 Драгоценности", "F002-02"),),
+    "product_ambiguity_belt": (("Магнитный пояс", "T003"),),
+}
+
+GAP_DIRECTION_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("📦 Товары", "nav:products"),
+    ("🧭 Подбор", "nc:match"),
+)
+
 MAX_CALLBACK_BYTES = 64
 MAX_CATALOG_PAGE_SIZE = 8
 SKU_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
@@ -22,6 +79,7 @@ LABEL_BUSINESS = "📈 Бизнес"
 LABEL_COMPANY = "🏢 О компании"
 LABEL_BASKET = "🧭 Подбор"
 LABEL_EVENTS = "📅 Встречи"
+LABEL_OPEN_CALCULATOR = "Открыть калькулятор"
 
 MENU_LABELS: tuple[str, ...] = (
     LABEL_PRODUCTS,
@@ -99,6 +157,18 @@ def resolve_menu_text_intent(text: str) -> str | None:
     return None
 
 
+def is_newcomer_panel_request(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    if _normalize(stripped) == "с чего начать":
+        return True
+    match = re.match(r"^/start(?:@\w+)?(?:\s+(.+))?$", stripped, re.I)
+    if not match:
+        return False
+    return not (match.group(1) or "").strip()
+
+
 def is_catalog_list_request(text: str) -> bool:
     return resolve_menu_text_intent(text) == "nav_products"
 
@@ -152,6 +222,15 @@ def build_menu_callback() -> str:
     return "nav:menu"
 
 
+def build_newcomer_callback(action: str) -> str:
+    if action not in NEWCOMER_ACTION_LABELS:
+        raise ValueError("unknown newcomer action")
+    data = f"nc:{action}"
+    if not _callback_fits(data):
+        raise ValueError("callback too long")
+    return data
+
+
 def validate_sku(sku: str) -> str:
     value = str(sku or "").strip()
     if not SKU_RE.fullmatch(value):
@@ -167,6 +246,11 @@ def parse_callback_data(data: str) -> ParsedCallback | None:
         return ParsedCallback(kind="nav_products")
     if raw == "nav:menu":
         return ParsedCallback(kind="nav_menu")
+    if raw.startswith("nc:"):
+        action = raw.split(":", 1)[1]
+        if action not in NEWCOMER_ACTIONS_ENABLED:
+            return None
+        return ParsedCallback(kind=f"newcomer_{action}")
     if raw.startswith("cat:p:"):
         try:
             page = int(raw.split(":", 2)[2])
@@ -197,9 +281,14 @@ def parse_callback_data(data: str) -> ParsedCallback | None:
     return None
 
 
-def main_menu_reply_keyboard() -> dict[str, Any]:
+def main_menu_reply_keyboard(*, include_calculator: bool = True) -> dict[str, Any]:
+    labels = (
+        MENU_LABELS
+        if include_calculator
+        else tuple(label for label in MENU_LABELS if label != LABEL_CALCULATOR)
+    )
     return {
-        "keyboard": [[{"text": label}] for label in MENU_LABELS],
+        "keyboard": [[{"text": label}] for label in labels],
         "resize_keyboard": True,
         "is_persistent": True,
     }
@@ -207,6 +296,68 @@ def main_menu_reply_keyboard() -> dict[str, Any]:
 
 def _inline_button(text: str, callback_data: str) -> dict[str, str]:
     return {"text": text, "callback_data": callback_data}
+
+
+def newcomer_inline_keyboard(*, include_calculator: bool = True) -> dict[str, Any]:
+    rows: list[list[dict[str, str]]] = []
+    for action in ("products", "match", "first", "calc", "materials", "help", "mentor"):
+        if action not in NEWCOMER_ACTIONS_ENABLED:
+            continue
+        if action == "calc" and not include_calculator:
+            continue
+        rows.append([_inline_button(NEWCOMER_ACTION_LABELS[action], build_newcomer_callback(action))])
+    return {"inline_keyboard": rows}
+
+
+def calculator_open_inline_keyboard(*, url: str | None = None) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [{"text": LABEL_OPEN_CALCULATOR, "url": url or calculator_web_url()}]
+        ]
+    }
+
+
+def clarification_choice_inline_keyboard(clarification_keys: list[str] | tuple[str, ...] | None) -> dict[str, Any] | None:
+    seen: set[str] = set()
+    rows: list[list[dict[str, str]]] = []
+    for key in clarification_keys or []:
+        choices = CLARIFICATION_PRODUCT_CHOICES.get(str(key) or "")
+        if not choices:
+            continue
+        for label, sku in choices:
+            if sku in seen:
+                continue
+            seen.add(sku)
+            rows.append([_inline_button(label, build_catalog_sku_callback(sku))])
+            if len(rows) >= 3:
+                return {"inline_keyboard": rows}
+    if not rows:
+        return None
+    return {"inline_keyboard": rows}
+
+
+def fallback_direction_inline_keyboard(*, include_calculator: bool = True) -> dict[str, Any]:
+    rows = [[{"text": label, "callback_data": data}] for label, data in GAP_DIRECTION_ACTIONS]
+    if include_calculator:
+        rows.append([{"text": LABEL_OPEN_CALCULATOR, "url": CALCULATOR_WEB_URL}])
+    return {"inline_keyboard": rows}
+
+
+def advisor_followup_inline_keyboard(
+    core_response: dict[str, Any] | None,
+    *,
+    include_calculator: bool = True,
+) -> dict[str, Any] | None:
+    payload = core_response or {}
+    choice = clarification_choice_inline_keyboard(
+        [str(item) for item in (payload.get("clarifications") or [])]
+    )
+    if choice:
+        return choice
+    gap = str(payload.get("gap_kind") or "")
+    if gap in {"unrouted_message", "unknown_product", "unknown_followup", "unsupported_topic"}:
+        return fallback_direction_inline_keyboard(include_calculator=include_calculator)
+    return None
 
 
 def catalog_list_inline_keyboard(

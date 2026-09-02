@@ -46,7 +46,7 @@ class ChatUpdateSequencer:
         self._message_fingerprint_ttl_sec = message_fingerprint_ttl_sec
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._last_access: dict[str, float] = {}
-        self._processed_updates: dict[int, float] = {}
+        self._processed_updates: dict[str, float] = {}
         self._recent_message_fingerprints: dict[tuple[str, str], float] = {}
         self._meta_lock = asyncio.Lock()
 
@@ -57,30 +57,37 @@ class ChatUpdateSequencer:
         handler: Callable[[], Awaitable[T]],
         *,
         message_fingerprint: str | None = None,
+        namespace: str = "default",
     ) -> SequencerResult:
-        if message_fingerprint and await self._is_duplicate_fingerprint(chat_key, message_fingerprint):
+        scoped_chat_key = f"{namespace}:{chat_key}"
+        update_key = f"{namespace}:{update_id}" if update_id is not None else None
+        if message_fingerprint and await self._is_duplicate_fingerprint(
+            scoped_chat_key, message_fingerprint
+        ):
             return SequencerResult(duplicate=True, value=None)
-        if update_id is not None and await self._is_duplicate(update_id):
+        if update_key is not None and await self._is_duplicate(update_key):
             return SequencerResult(duplicate=True, value=None)
 
-        lock = await self._chat_lock(chat_key)
+        lock = await self._chat_lock(scoped_chat_key)
         async with lock:
-            if message_fingerprint and await self._is_duplicate_fingerprint(chat_key, message_fingerprint):
+            if message_fingerprint and await self._is_duplicate_fingerprint(
+                scoped_chat_key, message_fingerprint
+            ):
                 return SequencerResult(duplicate=True, value=None)
-            if update_id is not None and await self._is_duplicate(update_id):
+            if update_key is not None and await self._is_duplicate(update_key):
                 return SequencerResult(duplicate=True, value=None)
             try:
                 value = await handler()
             except Exception:
                 raise
             else:
-                if update_id is not None:
-                    await self._remember_update(update_id)
+                if update_key is not None:
+                    await self._remember_update(update_key)
                 if message_fingerprint:
-                    await self._remember_fingerprint(chat_key, message_fingerprint)
+                    await self._remember_fingerprint(scoped_chat_key, message_fingerprint)
                 return SequencerResult(duplicate=False, value=value)
             finally:
-                await self._touch_chat(chat_key)
+                await self._touch_chat(scoped_chat_key)
 
     async def _chat_lock(self, chat_key: str) -> asyncio.Lock:
         async with self._meta_lock:
@@ -96,15 +103,15 @@ class ChatUpdateSequencer:
         async with self._meta_lock:
             self._last_access[chat_key] = time.monotonic()
 
-    async def _is_duplicate(self, update_id: int) -> bool:
+    async def _is_duplicate(self, update_key: str) -> bool:
         async with self._meta_lock:
             self._cleanup_updates_locked(time.monotonic())
-            return update_id in self._processed_updates
+            return update_key in self._processed_updates
 
-    async def _remember_update(self, update_id: int) -> None:
+    async def _remember_update(self, update_key: str) -> None:
         async with self._meta_lock:
             now = time.monotonic()
-            self._processed_updates[update_id] = now
+            self._processed_updates[update_key] = now
             self._cleanup_updates_locked(now)
 
     async def _is_duplicate_fingerprint(self, chat_key: str, fingerprint: str) -> bool:
@@ -137,17 +144,17 @@ class ChatUpdateSequencer:
 
     def _cleanup_updates_locked(self, now: float) -> None:
         expired = [
-            uid
-            for uid, seen in self._processed_updates.items()
+            key
+            for key, seen in self._processed_updates.items()
             if now - seen > self._update_id_ttl_sec
         ]
-        for uid in expired:
-            self._processed_updates.pop(uid, None)
+        for key in expired:
+            self._processed_updates.pop(key, None)
         if len(self._processed_updates) <= self._max_update_ids:
             return
         overflow = len(self._processed_updates) - self._max_update_ids
-        for uid in sorted(self._processed_updates, key=self._processed_updates.get)[:overflow]:
-            self._processed_updates.pop(uid, None)
+        for key in sorted(self._processed_updates, key=self._processed_updates.get)[:overflow]:
+            self._processed_updates.pop(key, None)
 
     def _cleanup_fingerprints_locked(self, now: float) -> None:
         expired = [

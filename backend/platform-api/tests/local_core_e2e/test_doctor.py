@@ -115,7 +115,7 @@ def test_check_env_local_example_safe_pass():
 def test_check_staging_sql_files_pass():
     result = check_staging_sql_files()
     assert result.status == "PASS"
-    assert "12" in result.message
+    assert "apply-order SQL files + seed exist" in result.message
 
 
 def test_check_api_role_nobypassrls_pass():

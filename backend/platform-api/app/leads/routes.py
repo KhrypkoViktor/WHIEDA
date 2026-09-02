@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+import json
+
+from fastapi import APIRouter, HTTPException, Request, Response
 from starlette import status
 
 from app.leads.service import parse_lead_body, save_lead, validate_lead_shadow
@@ -30,7 +32,10 @@ async def _create_lead(request: Request) -> dict:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "partner_leads")
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail={"error": "invalid_json"}) from exc
     if not isinstance(body, dict):
         body = {}
 

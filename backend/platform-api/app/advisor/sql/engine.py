@@ -23,6 +23,13 @@ from app.advisor.sql.comparison import build_compare_answer
 from app.advisor.sql.coach import build_coach_response, parse_coach_command
 from app.advisor.sql import resolver as product_resolver
 from app.advisor.sql.product_discovery import build_discovery_choice_response
+from app.advisor.sql.solution_bundles import (
+    choose_bundle_products,
+    format_solution_bundle,
+    match_solution_bundle,
+    may_match_solution_bundle,
+    ordered_bundle_skus,
+)
 from app.advisor.sql.text import (
     detect_service_intent,
     has_basket_intent,
@@ -265,6 +272,43 @@ async def run_structured_query(
 
     if is_calculator_request(question):
         return fmt.ok_response(CALCULATOR_INSTRUCTION, "structured_business", trace_id, media=fmt.empty_media())
+
+    # Bundle aliases live in the structured master sheet.  Load the small
+    # active set for any meaningful query instead of maintaining a second,
+    # incomplete topic list in Python.
+    if may_match_solution_bundle(question):
+        async with tenant_connection(tenant.tenant_id) as conn:
+            active_bundles = await repo.load_active_solution_bundles(conn, tenant.tenant_id)
+            bundle = match_solution_bundle(question, active_bundles)
+            if bundle:
+                products = await repo.load_products_by_skus(
+                    conn, tenant.tenant_id, ordered_bundle_skus(bundle)
+                )
+                selected_products = choose_bundle_products(bundle, products)
+                skus = [str(product.get("sku")) for product in selected_products if product.get("sku")]
+                context = {
+                    "last_solution_bundle_id": str(bundle.get("bundle_id") or ""),
+                    "last_solution_bundle_name": str(
+                        bundle.get("bundle_name") or bundle.get("title") or ""
+                    ),
+                }
+                if selected_products:
+                    context.update(
+                        {
+                            "last_product_sku": str(selected_products[0].get("sku") or ""),
+                            "last_product_name": str(selected_products[0].get("canonical_name") or ""),
+                        }
+                    )
+                response = fmt.ok_response(
+                    format_solution_bundle(bundle, selected_products, country),
+                    "structured_solution_bundle",
+                    trace_id,
+                    product={"bundle_id": bundle.get("bundle_id"), "skus": skus},
+                    context=context,
+                )
+                if session:
+                    await session_ctx.merge_session_context(conn, tenant.tenant_id, session, context)
+                return response
 
     if is_product_selection_request(question):
         return fmt.ok_response(

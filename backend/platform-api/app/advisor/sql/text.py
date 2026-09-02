@@ -39,11 +39,18 @@ DISCOMFORT_BOUNDARY_RE = re.compile(
 )
 # These are not product-selection questions.  Keep this deliberately narrow: the
 # advisor must not turn an acute human or animal case into a product dialogue.
+# Extra stems (2026-08-30): do_not_route for dialysis / onco / pregnancy /
+# lactation / the unofficial «Реанимация» dump — files 15, 16, 17, 28.
 HIGH_RISK_MEDICAL_BOUNDARY_RE = re.compile(
     r"(гнойн\w*\s+ангин|гемангиом|врожд[её]н\w*|\b\d+\s+месяц\w*|"
     r"гипертони\w*.*(?:скак|пульсир)|пульсир\w*.*(?:давлен|голов)|"
     r"кот\s+умира|почки\s+отказ|сожг\w*\s+внутр|лимфоуз|"
-    r"от[её]к.*(?:глаз|щек|виск)|(?:глаз|щек|виск).*от[её]к)",
+    r"от[её]к.*(?:глаз|щек|виск)|(?:глаз|щек|виск).*от[её]к|"
+    r"онколог|химиотерап|\bхимио\b|метастаз|лучев\w*\s+терап|"
+    r"\bрак(?:а|ом|у|е)?\b|сарком|"
+    r"диализ|гемодиализ|пересадк\w*\s+почк|"
+    r"беременн|кормящ|лактац|"
+    r"реанимац)",
     re.I,
 )
 PROMOTION_RE = re.compile(r"(акци|скидк|подар|выгод|promo)", re.I)
