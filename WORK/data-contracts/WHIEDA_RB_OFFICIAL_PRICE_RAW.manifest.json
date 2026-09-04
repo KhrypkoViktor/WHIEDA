@@ -1,0 +1,18 @@
+{
+  "contract": "whieda-rb-official-price-evidence",
+  "captured_at": "2026-09-04T11:11:17+03:00",
+  "source": "owner-provided extracts from https://www.whieda.org/",
+  "authority": "evidence_only_google_sheet_products_prices_remains_master",
+  "conversion_rule": "1 W$ = 100 RUB",
+  "files": [
+    {
+      "name": "WHIEDA_RB_PRIMARY_OFFICIAL_PRICE_RAW_2026-09-04.txt",
+      "sha256": "5afd9e3e13212640dba32e9322f6fb5863a60393207ad8ad1d30103026a3f59b"
+    },
+    {
+      "name": "WHIEDA_RB_REPEAT_OFFICIAL_PRICE_RAW_2026-09-04.txt",
+      "sha256": "69f2a1d2006907b3f96d41eb5132bac83cd27a9906fc82bdb37d933e4f8ecc67"
+    }
+  ],
+  "change_policy": "owner_request_only"
+}

@@ -1,0 +1,12 @@
+{
+  "contract": "whieda-products-prices-master",
+  "version": 1,
+  "authority": "owner-managed Google Sheet",
+  "spreadsheet_id": "1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4",
+  "sheet": "Products_Prices",
+  "sheet_gid": 1035748906,
+  "captured_at": "2026-09-04T10:10:00+03:00",
+  "data_rows": 40,
+  "change_policy": "owner_request_only",
+  "sha256": "bee218217100c0e36a473b593fd247a5edcfa494cc2d19c7c8fbe4ec0786d458"
+}
