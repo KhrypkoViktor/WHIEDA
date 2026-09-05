@@ -49,6 +49,9 @@ const PATTERNS = [
   { type: 'basic-auth в URL', re: /https?:\/\/[^\s:@/]+:[^\s@/]+@/ },
 ];
 
+/** A filesystem path is not a secret: HTPASSWD = '/etc/nginx/.htpasswd'. */
+const FILE_PATH_VALUE = /[:=]\s*["'][/\][^"']*["']/;
+
 /** Placeholders and documentation examples are not secrets. */
 const PLACEHOLDER = /(?:example|placeholder|your[_-]?|<[^>]+>|\*{4,}|xxx+|changeme|dummy|sample|%\(|\{\{)/i;
 
@@ -57,7 +60,10 @@ const PLACEHOLDER = /(?:example|placeholder|your[_-]?|<[^>]+>|\*{4,}|xxx+|change
  * A value that is a dotted identifier or a bare variable is a reference; only a
  * quoted string or a bare high-entropy run is a literal worth reporting.
  */
-const REFERENCE_VALUE = /[:=]\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\s*[,;)]?\s*$/;
+// An unquoted value that is a plain identifier - PASSWORD, config.pwd,
+// creds['pass'] - is a reference. A secret written into code is quoted;
+// `password=PASSWORD` in a connect() call carries nothing.
+const REFERENCE_VALUE = /[:=]\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*(?:\[[^\]]*\])?\s*(?:[,;)\]}]|$)/;
 
 /** Reading the value from the environment means the file holds nothing. */
 const FROM_ENVIRONMENT = /(?:\$env:|process\.env|os\.environ|getenv|ENV\[|Read-Host|secrets\.|vault|\$\{[A-Za-z_]+\})/i;
@@ -116,7 +122,7 @@ for (const file of walk(root, [])) {
     for (const { type, re } of PATTERNS) {
       if (!re.test(line)) continue;
       if (PLACEHOLDER.test(line)) continue;
-      const literal = !FROM_ENVIRONMENT.test(line) && !REFERENCE_VALUE.test(line);
+      const literal = !FROM_ENVIRONMENT.test(line) && !REFERENCE_VALUE.test(line) && !FILE_PATH_VALUE.test(line);
       const rel = path.relative(root, file).replace(/\\/g, '/');
       const key = [rel, type, literal].join(' | ');
       if (!findings.has(key)) findings.set(key, { rel, type, literal, lines: [] });
