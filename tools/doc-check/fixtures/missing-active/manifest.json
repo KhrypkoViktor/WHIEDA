@@ -1,0 +1,6 @@
+{
+  "root": ".",
+  "searchRoots": ["."],
+  "documents": [{ "path": "GUIDE.md", "status": "active", "checkLinks": true }],
+  "knownMissing": []
+}

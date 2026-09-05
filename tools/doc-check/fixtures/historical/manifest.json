@@ -1,0 +1,8 @@
+{
+  "root": ".",
+  "searchRoots": ["."],
+  "documents": [{ "path": "GUIDE.md", "status": "active", "checkLinks": true }],
+  "knownMissing": [
+    { "path": "OLD_GATE_TZ_V1.md", "reason": "исполнено и архивировано 2026-08-30; восстанавливать не нужно" }
+  ]
+}
