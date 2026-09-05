@@ -6,6 +6,10 @@ WHIEDA_ACCESS_MAP_PRIVATE*.md
 **/credentials/
 **/*token*
 **/*secret*
+# The scanner itself carries no values - only the patterns it looks for - and
+# has to be in Git to be runnable by anyone else. Its OUTPUT stays ignored:
+# a list of where secrets live is a roadmap for whoever has the repository.
+!tools/secret-scan.mjs
 
 # Generated runtime artifacts
 n8n/backups/
