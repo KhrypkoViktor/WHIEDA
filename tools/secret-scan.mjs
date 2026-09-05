@@ -50,7 +50,7 @@ const PATTERNS = [
 ];
 
 /** A filesystem path is not a secret: HTPASSWD = '/etc/nginx/.htpasswd'. */
-const FILE_PATH_VALUE = /[:=]\s*["'][/\][^"']*["']/;
+const FILE_PATH_VALUE = /[:=]\s*["'][^"'\s]*[/\][^"'\s]*["']/;
 
 /** Placeholders and documentation examples are not secrets. */
 const PLACEHOLDER = /(?:example|placeholder|your[_-]?|<[^>]+>|\*{4,}|xxx+|changeme|dummy|sample|%\(|\{\{)/i;
