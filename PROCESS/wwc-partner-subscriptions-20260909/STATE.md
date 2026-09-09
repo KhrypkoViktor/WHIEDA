@@ -1,7 +1,8 @@
 # STATE: wwc-partner-subscriptions-20260909
 
 **Обновлено:** 2026-09-09
-**Статус:** блоки 0, 1 и 2 выполнены. Следующий шаг: блок 3, платный доступ и repeat prices.
+**Статус:** блоки 0-5 реализованы и проверены локально. Следующий шаг: блок 6,
+сквозной canary на staging после отдельного разрешения на применение миграций и deploy.
 
 ## Источник задачи
 
@@ -194,12 +195,40 @@ binding, processor, navigation и route truth-table зелёные.
   в worktree старых `n8n/current` и SQL-файлов. Порядок новой миграции отдельно
   проверяется зелёным тестом блока 4.
 
+## Выполнено в блоке 5
+
+- Core commit: `042fc12` (`feat: enforce paid partner edge access`).
+- Закрытый `/v1/internal/edge/partner-hosts` работает внутри обычного tenant
+  middleware, требует отдельный `PLATFORM_EDGE_SNAPSHOT_SECRET`, возвращает только
+  active/grace hostname и подписывает точные байты ответа HMAC-SHA256. При неверном
+  или отсутствующем секрете отвечает безопасным `404`.
+- Sync на VPS сайта проверяет HTTP, подпись, точную схему, tenant, свежесть времени,
+  hostname, deny-list технических имён и SHA списка. Пустой snapshot запрещён.
+- Кандидат карты сначала проходит изолированный `nginx -t`, затем заменяется
+  атомарно. После замены выполняется полный `nginx -t` и reload; ошибка возвращает
+  предыдущие байты. Ошибка первой установки удаляет невалидную карту.
+- Gate делает временный `302` на `https://wwc.best$uri`: путь сохраняется, query
+  удаляется. Он предназначен только для wildcard-vhost партнёров; основной,
+  staging, admin, API и media host в него не включаются.
+- Systemd timer запускает sync раз в 60 секунд. Секрет читается из файла окружения
+  с ожидаемыми правами `0600`, в CLI и лог не передаётся.
+- Public ref теперь одинаково возвращает `referral_not_available` для отсутствующего,
+  disabled, no-subscription и suspended партнёра.
+- Новые заявки проверяют active/grace в БД. Исходный first-touch сохраняется в
+  `initial_ref_code` и `first_ref_code`; недоступный ref не получает ownership.
+  Fallback owner вынесен в `PLATFORM_ORGANIC_OWNER_ID`.
+- Локальная регрессия: `95 passed, 1 skipped`; compileall и `git diff --check`
+  успешны. Пропущен существующий PostgreSQL integration при недоступной локальной БД.
+- Настоящий nginx-canary не выполнялся: nginx на Windows-host отсутствует. Создан
+  отдельный loopback-шаблон `127.0.0.1:8443` и runbook. Общий `:443`, TLS, HTTP/2,
+  gzip, DNS, shared staging и production не изменялись.
+
 ## Следующий шаг
 
-Блок 5: edge-map активных hostname, redirect всего просроченного партнёрского
-поддомена на `https://wwc.best/` после grace и перевод новых заявок на органического
-владельца. Сначала устранить или локально обойти расхождение четырёх hostname-карт,
-не меняя live nginx.
+Блок 6 разрешён только как контролируемый staging canary: применить миграции к
+staging-БД, настроить тестовый S3, три test referral active/grace/suspended,
+развернуть Core и сайт, проверить полный путь. Сначала только isolated edge listener
+`127.0.0.1:8443`; общий `:443` и production остаются заморожены.
 
 ## Пока не делать
 
