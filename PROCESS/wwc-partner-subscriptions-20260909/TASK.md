@@ -867,3 +867,24 @@ subdomain(ref) = public_profile->>'subdomain'
 
 Shared staging, production webhook, реальные Telegram-сообщения и реальные
 платежи не затрагивались.
+
+### 25.7. Результат блока 5
+
+Блок 5 реализован коммитом Core `042fc12`.
+
+- Внутренний snapshot не открыт через публичный сайт и не принимает tenant из
+  query/path. Tenant задаётся штатным host middleware; доступ требует отдельный
+  edge-secret, а тело подписывается HMAC-SHA256.
+- Сайт-VPS получает только список разрешённых active/grace host. Sync отклоняет
+  неверную подпись, чужой tenant, старое или будущее время, изменённую схему,
+  пустой список, технический/невалидный host и неверную версию.
+- Обновление карты атомарно и fail-last-known-good. До замены проверяется отдельный
+  кандидат, после замены весь nginx; reload происходит только после обоих тестов.
+- Nginx gate использует `302 https://wwc.best$uri`, поэтому сохраняет путь и
+  намеренно удаляет query string. Подключать его можно только в wildcard-vhost
+  партнёрских сайтов после отделения точных технических vhost.
+- Public ref и маршрутизация новых заявок теперь проверяют active/grace. История
+  first-touch сохраняется, ownership просроченному партнёру не выдаётся, organic
+  owner берётся из `PLATFORM_ORGANIC_OWNER_ID`.
+- Unit/regression: `95 passed, 1 skipped`. Настоящий nginx и staging не менялись;
+  canary на отдельном listener относится к блоку 6 и требует отдельного разрешения.
