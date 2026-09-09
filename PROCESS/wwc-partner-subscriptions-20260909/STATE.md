@@ -1,8 +1,8 @@
 # STATE: wwc-partner-subscriptions-20260909
 
 **Обновлено:** 2026-09-09
-**Статус:** блоки 0-5 реализованы и проверены локально. Следующий шаг: блок 6,
-сквозной canary на staging после отдельного разрешения на применение миграций и deploy.
+**Статус:** блоки 0-5 реализованы, локальная часть блока 6 выполнена. Следующий
+шаг: живой staging canary после отдельного разрешения на миграции и deploy.
 
 ## Источник задачи
 
@@ -223,9 +223,33 @@ binding, processor, navigation и route truth-table зелёные.
   отдельный loopback-шаблон `127.0.0.1:8443` и runbook. Общий `:443`, TLS, HTTP/2,
   gzip, DNS, shared staging и production не изменялись.
 
+## Выполнено локально в блоке 6
+
+- Core canary commit: `b9120b0` (`test: prove paid referral lead routing`).
+- Website UI commit: `58c4f98` (`feat: show partner subscription status`).
+- На отдельном локальном PostgreSQL 18, `127.0.0.1:55439`, выполнены два
+  integration-теста: подписки/RLS/конкурентность и реальные INSERT заявок для
+  active, grace, suspended. Результат `2 passed`; тестовый сервер остановлен.
+- Доказано на реальных SQL-строках: active и grace получают ownership; suspended
+  сохраняется в `initial_ref_code`/`first_ref_code`, получает `active_ref_code = null`,
+  а `assigned_owner_id` и `attributed_owner_id` становятся organic owner. Public ref
+  для active/grace доступен, для suspended отсутствует.
+- UI показывает `Доступ оплачен до <дата>` для active, `Льготный срок до <дата>`
+  для grace и понятный путь продления для suspended. Суммы, ledger и Telegram ID
+  в интерфейс не попадают.
+- Website: build успешен; unit `248 passed`; browser desktop/mobile `14 passed`;
+  SEO `6/6`; repeat-price leak-check успешен. QA-скриншоты обновлены и просмотрены.
+- Общий live smoke: `6/7`; прежний production advisor снова вернул пустое тело.
+  Этот endpoint не менялся ни в одном блоке задачи.
+- Оба worktree после коммитов чистые.
+
+Живой staging canary не выполнялся. Для него ещё нужны: применение миграций к
+staging-БД, отдельные staging-секреты, тестовый private S3, deploy Core/сайта и
+read-only снимок живого `nginx -T` перед подключением isolated listener.
+
 ## Следующий шаг
 
-Блок 6 разрешён только как контролируемый staging canary: применить миграции к
+Оставшаяся часть блока 6 выполняется как контролируемый staging canary: применить миграции к
 staging-БД, настроить тестовый S3, три test referral active/grace/suspended,
 развернуть Core и сайт, проверить полный путь. Сначала только isolated edge listener
 `127.0.0.1:8443`; общий `:443` и production остаются заморожены.

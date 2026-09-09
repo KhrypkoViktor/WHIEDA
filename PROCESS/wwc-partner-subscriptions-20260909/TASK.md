@@ -888,3 +888,18 @@ Shared staging, production webhook, реальные Telegram-сообщения
   owner берётся из `PLATFORM_ORGANIC_OWNER_ID`.
 - Unit/regression: `95 passed, 1 skipped`. Настоящий nginx и staging не менялись;
   canary на отдельном listener относится к блоку 6 и требует отдельного разрешения.
+
+### 25.8. Локальный результат блока 6
+
+- PostgreSQL integration canary добавлен коммитом `b9120b0` и выполнен вместе с
+  тестом подписки: `2 passed`. Тест использовал временную БД на локальном сервере,
+  после проверки сервер остановлен и тестовая БД удалена.
+- Реальными INSERT доказана матрица lead routing active/grace/suspended и сохранение
+  first-touch при переводе ownership просроченного ref к organic owner.
+- Website-коммит `58c4f98` добавил видимые статусы и даты active/grace/suspended.
+  Свежая Astro-сборка успешна; `248` unit и `14` browser-тестов прошли на desktop и
+  mobile; SEO и private-data checks зелёные.
+- Live smoke сохранил известный baseline `6/7`: production advisor отдаёт пустое
+  тело. Задача подписок этот endpoint не меняет.
+- Shared staging и production не изменялись. До окончательного DoD §24 остаётся
+  настоящий staging deploy с секретами, S3, Telegram и isolated nginx canary.
