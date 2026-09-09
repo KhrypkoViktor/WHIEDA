@@ -12,10 +12,12 @@ from httpx import ASGITransport, AsyncClient
 from app.content_access.service import (
     CONTENT_START_PREFIX,
     build_content_deep_link,
+    format_me_payload,
     normalize_content_scope,
     sanitize_content_key,
     sanitize_return_to,
 )
+from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.main import create_app
 from app.settings import get_settings
 from app.tenancy import TenantContext
@@ -28,6 +30,19 @@ CONTENT_KEY = "article/krasnye-sledy-na-anionnyh-stelkah/appendix"
 
 def test_sanitize_return_to_allows_article_path():
     assert sanitize_return_to(RETURN_TO) == RETURN_TO
+
+
+def test_repeat_price_catalog_has_stable_server_schema():
+    catalog = load_repeat_price_catalog()
+    rows = [row for section in catalog["sections"] for row in section["rows"]]
+    assert catalog["version"] == 1
+    assert catalog["updated_label"]
+    assert len(catalog["sections"]) == 5
+    assert len(rows) == 66
+    assert len({row["row_id"] for row in rows}) == len(rows)
+    assert all(isinstance(row["rub"], (int, float)) and row["rub"] >= 0 for row in rows)
+    assert all(isinstance(row["byn"], (int, float)) and row["byn"] >= 0 for row in rows)
+    assert all(isinstance(row["pv"], (int, float)) and row["pv"] >= 0 for row in rows)
 
 
 def test_sanitize_return_to_allows_reviews_path():
@@ -233,6 +248,105 @@ async def test_poll_approved_sets_http_only_cookie_not_in_body(content_client):
 async def test_me_without_cookie_is_unauthorized(content_client):
     response = await content_client.get("/api/v1/content-access/me", headers=HOST)
     assert response.status_code == 401
+
+
+def test_me_payload_does_not_promote_verified_session_to_paid():
+    payload = format_me_payload(
+        {
+            "scope": "telegram_verified",
+            "expires_at": datetime.now(timezone.utc) + timedelta(days=30),
+            "telegram_user_id": 999001,
+        }
+    )
+    assert payload["authenticated"] is True
+    assert payload["telegram_verified"] is True
+    assert payload["partner_paid"] is False
+    assert payload["subscription_status"] == "no_subscription"
+    assert "telegram_user_id" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subscription_status", "partner_paid"),
+    [("active", True), ("grace", True), ("suspended", False)],
+)
+async def test_me_computes_live_partner_access(
+    content_client,
+    subscription_status,
+    partner_paid,
+):
+    session = {
+        "session_id": "s1",
+        "tenant_id": "whieda",
+        "scope": "telegram_verified",
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=30),
+        "telegram_user_id": 999001,
+    }
+    subscription = {
+        "subscription_status": subscription_status,
+        "partner_paid": partner_paid,
+        "paid_until": datetime(2026, 9, 22, tzinfo=timezone.utc),
+        "grace_until": datetime(2026, 9, 25, tzinfo=timezone.utc),
+    }
+    with patch("app.content_access.routes.read_session_cookie", return_value="raw-session-token"), patch(
+        "app.content_access.routes.validate_content_session", AsyncMock(return_value=session)
+    ), patch(
+        "app.content_access.routes.resolve_partner_subscription_by_telegram_user_id",
+        AsyncMock(return_value=subscription),
+    ):
+        response = await content_client.get("/api/v1/content-access/me", headers=HOST)
+    assert response.status_code == 200
+    assert response.json()["partner_paid"] is partner_paid
+    assert response.json()["subscription_status"] == subscription_status
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "telegram_user_id" not in response.json()
+
+
+@pytest.mark.asyncio
+async def test_repeat_prices_require_content_session(content_client):
+    response = await content_client.get("/api/v1/content-access/repeat-prices", headers=HOST)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("subscription", "expected_status"),
+    [
+        (None, 403),
+        ({"subscription_status": "suspended", "partner_paid": False}, 403),
+        ({"subscription_status": "active", "partner_paid": True}, 200),
+        ({"subscription_status": "grace", "partner_paid": True}, 200),
+    ],
+)
+async def test_repeat_prices_recheck_live_subscription(
+    content_client,
+    subscription,
+    expected_status,
+):
+    session = {
+        "session_id": "s1",
+        "tenant_id": "whieda",
+        "scope": "telegram_verified",
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=30),
+        "telegram_user_id": 999001,
+    }
+    catalog = {"version": 1, "updated_label": "август 2026", "sections": []}
+    with patch("app.content_access.routes.read_session_cookie", return_value="raw-session-token"), patch(
+        "app.content_access.routes.validate_content_session", AsyncMock(return_value=session)
+    ), patch(
+        "app.content_access.routes.resolve_partner_subscription_by_telegram_user_id",
+        AsyncMock(return_value=subscription),
+    ), patch("app.content_access.routes.load_repeat_price_catalog", return_value=catalog):
+        response = await content_client.get(
+            "/api/v1/content-access/repeat-prices",
+            headers=HOST,
+        )
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json()["catalog"] == catalog
+        assert response.headers["cache-control"] == "private, no-store"
+    else:
+        assert response.json()["error"] == "partner_paid_required"
 
 
 @pytest.mark.asyncio
