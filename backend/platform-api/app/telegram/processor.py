@@ -11,6 +11,7 @@ from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
 from app.onboarding.service import handle_onboarding_text
 from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.bindings import (
     BotBindingContext,
@@ -175,7 +176,7 @@ async def process_core_telegram_update(
     *,
     binding: BotBindingContext,
 ) -> dict[str, Any]:
-    """Full Core path: admin login → content access → callback → start token → onboarding → navigation → SQL advisor."""
+    """Full Core path with owner billing before generic callbacks and advisor routes."""
     with binding_context_scope(binding):
         return await _process_core_telegram_update_scoped(tenant, update, trace_id)
 
@@ -193,6 +194,12 @@ async def _process_core_telegram_update_scoped(
     if content_result is not None:
         return content_result
 
+    billing_callback_result = await try_handle_billing_callback(
+        tenant, update, trace_id=trace_id
+    )
+    if billing_callback_result is not None:
+        return billing_callback_result
+
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
@@ -205,6 +212,10 @@ async def _process_core_telegram_update_scoped(
 
     if not should_process_telegram_message(msg, current_bot_binding().bot_username):
         return {"ok": True, "route": "ignored_group_message"}
+
+    billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
+    if billing_result is not None:
+        return billing_result
 
     start_token = parse_start_token(msg.text)
     if start_token:

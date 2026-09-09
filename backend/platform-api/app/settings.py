@@ -105,6 +105,11 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ADMIN_SUPER_TELEGRAM_IDS",
         description="Comma-separated Telegram user IDs allowed as super_admin bootstrap.",
     )
+    platform_billing_owner_telegram_id: int | None = Field(
+        default=None,
+        validation_alias="PLATFORM_BILLING_OWNER_TELEGRAM_ID",
+        description="Single Telegram user ID allowed to confirm manual partner payments.",
+    )
     platform_admin_confirm_secret: str | None = Field(
         default=None,
         validation_alias="PLATFORM_ADMIN_CONFIRM_SECRET",

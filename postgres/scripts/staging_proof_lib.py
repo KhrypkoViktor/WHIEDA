@@ -57,6 +57,7 @@ RLS_PROOF_TABLES = (
     "referral_agreements",
     "partner_subscriptions",
     "partner_payment_ledger",
+    "partner_payment_intents",
 )
 
 LEADS_SCHEMA_FILES = (

@@ -845,3 +845,25 @@ subdomain(ref) = public_profile->>'subdomain'
 Интеграционный тест подписок создаёт минимальную реальную схему `lead_actors` и
 `referral_profiles`, а `apply_staging_platform_all.ps1` сохраняет прежний контракт:
 эти таблицы уже должны существовать на целевой staging-базе.
+
+### 25.6. Результат блока 2
+
+Блок 2 выполнен в ветке `core/partner-subscriptions-20260909`.
+
+- Добавлена отдельная настройка `PLATFORM_BILLING_OWNER_TELEGRAM_ID`; список
+  администраторов и username правом подтверждать платёж не являются.
+- Команды `оплата`/`/pay`, `статус`/`/status` и `/due` распознаются только по
+  точному первому слову, работают только в личном чате и обрабатываются до
+  onboarding/navigation/advisor.
+- Billing callbacks имеют собственный префикс и обрабатываются до каталога.
+- Для preview добавлена таблица `partner_payment_intents`. Это не платёжный журнал:
+  intent хранит нормализованные данные 10 минут и становится подтверждённым или
+  отменённым. В `partner_payment_ledger` попадает только подтверждённая операция.
+- Callback содержит только действие и UUID intent, укладывается в лимит Telegram
+  64 bytes. Tenant, Telegram user ID и chat ID повторно проверяются по БД.
+- Подтверждение intent, блокировка подписки, продление и запись ledger выполняются
+  одним DB connection. Контракт отдельно проверен при `database_pool_max=1`.
+- Unit/regression: `98 passed`; PostgreSQL integration: `1 passed`.
+
+Shared staging, production webhook, реальные Telegram-сообщения и реальные
+платежи не затрагивались.
