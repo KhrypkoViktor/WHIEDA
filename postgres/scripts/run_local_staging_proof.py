@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import shutil
 import subprocess
@@ -190,12 +191,35 @@ def seed_rls_fixtures(db: str) -> None:
         db,
         """
 INSERT INTO lead_actors (actor_id, tenant_id, display_name)
-VALUES ('acme-owner', 'test-acme', 'Acme Owner')
+VALUES
+  ('acme-owner', 'test-acme', 'Acme Owner'),
+  ('proof-pay-owner', 'whieda', 'Proof Payment Owner')
 ON CONFLICT (actor_id) DO UPDATE SET tenant_id = EXCLUDED.tenant_id;
 
 INSERT INTO referral_profiles (ref_code, tenant_id, owner_id, display_mode, enabled)
-VALUES ('acme-ref', 'test-acme', 'acme-owner', 'named', true)
+VALUES
+  ('acme-ref', 'test-acme', 'acme-owner', 'named', true),
+  ('proof-pay', 'whieda', 'proof-pay-owner', 'named', true)
 ON CONFLICT (ref_code) DO UPDATE SET tenant_id = EXCLUDED.tenant_id;
+
+INSERT INTO partner_subscriptions (tenant_id, ref_code, paid_until)
+VALUES
+  ('whieda', 'ladnaya', now() + interval '3 months'),
+  ('test-acme', 'acme-ref', now() + interval '3 months')
+ON CONFLICT (tenant_id, ref_code) DO UPDATE
+SET paid_until = EXCLUDED.paid_until,
+    updated_at = now();
+
+INSERT INTO partner_payment_ledger (
+  tenant_id, ref_code, amount_minor, currency, access_months,
+  period_start, period_end, source,
+  telegram_chat_id, telegram_message_id, telegram_user_id
+) VALUES
+  ('whieda', 'ladnaya', 300000, 'RUB', 3,
+   now(), now() + interval '3 months', 'telegram_manual', 1001, 2001, 1001),
+  ('test-acme', 'acme-ref', 10500, 'BYN', 3,
+   now(), now() + interval '3 months', 'telegram_manual', 1002, 2002, 1002)
+ON CONFLICT (tenant_id, source, telegram_chat_id, telegram_message_id) DO NOTHING;
 
 INSERT INTO website_leads (
   tenant_id, name, contact, product_name, assigned_owner_id, idempotency_key
@@ -286,6 +310,16 @@ INSERT INTO website_leads (
     )
     checks.append("website_leads: cross-tenant INSERT rejected")
 
+    api_expect_fail(
+        db,
+        """
+SELECT platform_set_tenant_context('whieda');
+INSERT INTO partner_subscriptions (tenant_id, ref_code, paid_until)
+VALUES ('test-acme', 'acme-ref', now() + interval '3 months');
+""",
+    )
+    checks.append("partner_subscriptions: cross-tenant INSERT rejected")
+
     role_flags = psql_scalar(
         db,
         f"SELECT rolsuper::text || '|' || rolbypassrls::text FROM pg_roles WHERE rolname='{API_PROOF_ROLE}';",
@@ -298,6 +332,79 @@ INSERT INTO website_leads (
 
     for line in checks:
         print(f"  PASS {line}")
+
+
+def run_partner_subscription_service_checks(db: str) -> None:
+    print("=== partner subscription service checks ===")
+    backend = Path(__file__).resolve().parents[2] / "backend" / "platform-api"
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    os.environ["PLATFORM_DATABASE_URL"] = (
+        f"postgresql://{API_PROOF_ROLE}:{API_PROOF_PASSWORD}"
+        f"@{LOCAL_STAGING_HOST}:{LOCAL_STAGING_PORT}/{db}"
+    )
+
+    from app.db import close_pool, init_pool, tenant_connection
+    from app.settings import get_settings
+    from app.subscriptions.service import get_subscription, record_manual_payment
+
+    get_settings.cache_clear()
+
+    async def proof() -> None:
+        await init_pool()
+        try:
+            duplicate_args = {
+                "ref_code": "proof-pay",
+                "amount_minor": 300000,
+                "currency": "RUB",
+                "telegram_chat_id": 81001,
+                "telegram_message_id": 91001,
+                "telegram_user_id": 71001,
+            }
+            duplicate_results = await asyncio.gather(
+                record_manual_payment("whieda", **duplicate_args),
+                record_manual_payment("whieda", **duplicate_args),
+            )
+            if sorted(result["idempotent"] for result in duplicate_results) != [False, True]:
+                raise AssertionError("duplicate payment must create one ledger row")
+
+            distinct = await asyncio.gather(
+                record_manual_payment(
+                    "whieda",
+                    **{**duplicate_args, "telegram_message_id": 91002},
+                ),
+                record_manual_payment(
+                    "whieda",
+                    **{**duplicate_args, "telegram_message_id": 91003},
+                ),
+            )
+            periods = sorted(
+                ((row["period_start"], row["period_end"]) for row in distinct),
+                key=lambda item: item[0],
+            )
+            if periods[0][1] != periods[1][0]:
+                raise AssertionError("concurrent payments must form a continuous chain")
+
+            subscription = await get_subscription("whieda", "proof-pay")
+            if not subscription or subscription["paid_until"] != periods[1][1]:
+                raise AssertionError("subscription must end at the last serialized period")
+
+            async with tenant_connection("whieda") as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "select count(*) from partner_payment_ledger "
+                        "where tenant_id = %s and ref_code = %s",
+                        ("whieda", "proof-pay"),
+                    )
+                    count = (await cur.fetchone())["count"]
+            if count != 3:
+                raise AssertionError(f"expected 3 payment rows after concurrency proof, got {count}")
+        finally:
+            await close_pool()
+
+    asyncio.run(proof())
+    print("  PASS duplicate update is idempotent")
+    print("  PASS concurrent distinct payments serialize without lost months")
 
 
 def drop_db(db: str) -> None:
@@ -354,6 +461,7 @@ def main() -> int:
         create_api_role(db)
         seed_rls_fixtures(db)
         run_rls_checks(db)
+        run_partner_subscription_service_checks(db)
 
         print("\n=== LOCAL STAGING PROOF: PASS ===")
         print(f"  SQL files x2: {len(APPLY_ORDER)} (+ seed)")
