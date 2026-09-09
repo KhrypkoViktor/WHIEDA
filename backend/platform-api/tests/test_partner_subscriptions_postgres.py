@@ -113,6 +113,14 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
 
                 insert into partner_subscriptions (tenant_id, ref_code, paid_until)
                 values ('test-acme', 'proof-acme', now() + interval '3 months');
+
+                insert into partner_payment_intents (
+                  tenant_id, ref_code, amount_minor, currency,
+                  telegram_chat_id, telegram_message_id, telegram_user_id, expires_at
+                ) values (
+                  'test-acme', 'proof-acme', 10000, 'RUB',
+                  40001, 40002, 40003, now() + interval '10 minutes'
+                );
                 """
             )
             conn.execute(
@@ -153,6 +161,10 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                 "select count(*) from partner_subscriptions where tenant_id = 'test-acme'"
             ).fetchone()[0]
             assert foreign_count == 0
+            foreign_intents = conn.execute(
+                "select count(*) from partner_payment_intents where tenant_id = 'test-acme'"
+            ).fetchone()[0]
+            assert foreign_intents == 0
 
         with psycopg.connect(api_dsn) as conn:
             conn.execute("select platform_set_tenant_context('whieda')")
@@ -162,11 +174,29 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                     "values ('test-acme', 'proof-acme', now() + interval '3 months')"
                 )
 
+        with psycopg.connect(api_dsn) as conn:
+            conn.execute("select platform_set_tenant_context('whieda')")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(
+                    "insert into partner_payment_intents ("
+                    "tenant_id, ref_code, amount_minor, currency, telegram_chat_id, "
+                    "telegram_message_id, telegram_user_id, expires_at) values ("
+                    "'test-acme', 'proof-acme', 10000, 'RUB', 1, 2, 3, now() + interval '10 minutes')"
+                )
+
         async def service_proof() -> None:
             os.environ["PLATFORM_DATABASE_URL"] = api_dsn
             from app.db import close_pool, init_pool, tenant_connection
             from app.settings import get_settings
-            from app.subscriptions.service import get_subscription, record_manual_payment
+            from app.subscriptions.service import (
+                PaymentIntentCancelledError,
+                PaymentIntentForbiddenError,
+                cancel_payment_intent,
+                confirm_payment_intent,
+                create_payment_intent,
+                get_subscription,
+                record_manual_payment,
+            )
 
             get_settings.cache_clear()
             await close_pool()
@@ -211,6 +241,69 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                             ("whieda", "proof-whieda"),
                         )
                         assert (await cur.fetchone())["count"] == 3
+
+                await close_pool()
+                os.environ["DATABASE_POOL_MIN"] = "1"
+                os.environ["DATABASE_POOL_MAX"] = "1"
+                get_settings.cache_clear()
+                await init_pool()
+
+                intent = await create_payment_intent(
+                    "whieda",
+                    identifier="ref:proof-whieda",
+                    amount_minor=10500,
+                    currency="BYN",
+                    telegram_chat_id=81001,
+                    telegram_message_id=92001,
+                    telegram_user_id=71001,
+                )
+                confirmed = await confirm_payment_intent(
+                    "whieda",
+                    intent_id=str(intent["intent_id"]),
+                    telegram_chat_id=81001,
+                    telegram_user_id=71001,
+                )
+                repeated = await confirm_payment_intent(
+                    "whieda",
+                    intent_id=str(intent["intent_id"]),
+                    telegram_chat_id=81001,
+                    telegram_user_id=71001,
+                )
+                assert confirmed["payment_id"] == repeated["payment_id"]
+                assert repeated["idempotent"] is True
+
+                guarded = await create_payment_intent(
+                    "whieda",
+                    identifier="ref:proof-whieda",
+                    amount_minor=300000,
+                    currency="RUB",
+                    telegram_chat_id=81001,
+                    telegram_message_id=92002,
+                    telegram_user_id=71001,
+                )
+                with pytest.raises(PaymentIntentForbiddenError):
+                    await confirm_payment_intent(
+                        "whieda",
+                        intent_id=str(guarded["intent_id"]),
+                        telegram_chat_id=99999,
+                        telegram_user_id=71001,
+                    )
+                assert (
+                    await cancel_payment_intent(
+                        "whieda",
+                        intent_id=str(guarded["intent_id"]),
+                        telegram_chat_id=81001,
+                        telegram_user_id=71001,
+                    )
+                    == "cancelled"
+                )
+                with pytest.raises(PaymentIntentCancelledError):
+                    await confirm_payment_intent(
+                        "whieda",
+                        intent_id=str(guarded["intent_id"]),
+                        telegram_chat_id=81001,
+                        telegram_user_id=71001,
+                    )
             finally:
                 await close_pool()
 

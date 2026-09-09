@@ -15,6 +15,7 @@ SubscriptionState = Literal["no_subscription", "active", "grace", "suspended"]
 
 ACCESS_MONTHS = 3
 GRACE_PERIOD = timedelta(days=3)
+PAYMENT_INTENT_TTL = timedelta(minutes=10)
 PARTNER_DOMAIN = "wwc.best"
 RESERVED_SUBDOMAINS = frozenset({"", "www", "dev", "staging", "admin"})
 _SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -45,6 +46,22 @@ class ReservedPartnerHostError(SubscriptionError):
 
 
 class SeedManifestMismatchError(SubscriptionError):
+    pass
+
+
+class PaymentIntentNotFoundError(SubscriptionError):
+    pass
+
+
+class PaymentIntentForbiddenError(SubscriptionError):
+    pass
+
+
+class PaymentIntentExpiredError(SubscriptionError):
+    pass
+
+
+class PaymentIntentCancelledError(SubscriptionError):
     pass
 
 
@@ -183,118 +200,400 @@ async def record_manual_payment(
         raise PartnerNotFoundError("ref_code required")
 
     async with tenant_connection(tenant_id) as conn:
+        return await _record_manual_payment_in_connection(
+            conn,
+            tenant_id=tenant_id,
+            ref_code=normalized_ref,
+            amount_minor=amount_minor,
+            currency=normalized_currency,
+            telegram_chat_id=telegram_chat_id,
+            telegram_message_id=telegram_message_id,
+            telegram_user_id=telegram_user_id,
+        )
+
+
+async def _record_manual_payment_in_connection(
+    conn: Any,
+    *,
+    tenant_id: str,
+    ref_code: str,
+    amount_minor: int,
+    currency: str,
+    telegram_chat_id: int,
+    telegram_message_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+            select rp.tenant_id, rp.ref_code, null
+            from referral_profiles rp
+            where rp.tenant_id = %s
+              and rp.ref_code = %s
+              and rp.enabled = true
+            on conflict (tenant_id, ref_code) do nothing
+            """,
+            (tenant_id, ref_code),
+        )
+
+    locked = await fetch_one(
+        conn,
+        """
+        select ps.tenant_id, ps.ref_code, ps.paid_until
+        from partner_subscriptions ps
+        join referral_profiles rp
+          on rp.ref_code = ps.ref_code
+         and rp.tenant_id = ps.tenant_id
+         and rp.enabled = true
+        where ps.tenant_id = %s and ps.ref_code = %s
+        for update of ps
+        """,
+        (tenant_id, ref_code),
+    )
+    if not locked:
+        raise PartnerNotFoundError("active referral profile not found")
+
+    existing = await fetch_one(
+        conn,
+        """
+        select payment_id, tenant_id, ref_code, amount_minor, currency,
+               period_start, period_end, previous_paid_until, access_months,
+               telegram_user_id, created_at
+        from partner_payment_ledger
+        where tenant_id = %s
+          and source = 'telegram_manual'
+          and telegram_chat_id = %s
+          and telegram_message_id = %s
+        limit 1
+        """,
+        (tenant_id, telegram_chat_id, telegram_message_id),
+    )
+    if existing:
+        same_input = (
+            existing["ref_code"] == ref_code
+            and int(existing["amount_minor"]) == amount_minor
+            and existing["currency"] == currency
+            and int(existing["telegram_user_id"]) == telegram_user_id
+        )
+        if not same_input:
+            raise PaymentIdempotencyConflictError(
+                "telegram message already records a different payment"
+            )
+        return {**existing, "paid_until": locked["paid_until"], "idempotent": True}
+
+    clock = await fetch_one(conn, "select now() as current_time")
+    current = _as_utc(clock["current_time"])
+    previous_paid_until = locked.get("paid_until")
+    current_state = subscription_state(previous_paid_until, at=current)
+    period_start = (
+        _as_utc(previous_paid_until)
+        if previous_paid_until is not None and current_state in {"active", "grace"}
+        else current
+    )
+    period_end = add_calendar_months(period_start)
+    payment_id = str(uuid.uuid4())
+
+    updated = await fetch_one(
+        conn,
+        """
+        update partner_subscriptions
+        set paid_until = %s, updated_at = now()
+        where tenant_id = %s and ref_code = %s
+        returning paid_until, updated_at
+        """,
+        (period_end, tenant_id, ref_code),
+    )
+    ledger = await fetch_one(
+        conn,
+        """
+        insert into partner_payment_ledger (
+          payment_id, tenant_id, ref_code, amount_minor, currency,
+          access_months, period_start, period_end, previous_paid_until,
+          source, telegram_chat_id, telegram_message_id, telegram_user_id
+        ) values (
+          %s::uuid, %s, %s, %s, %s,
+          3, %s, %s, %s,
+          'telegram_manual', %s, %s, %s
+        )
+        returning payment_id, tenant_id, ref_code, amount_minor, currency,
+                  period_start, period_end, previous_paid_until, access_months,
+                  telegram_user_id, created_at
+        """,
+        (
+            payment_id,
+            tenant_id,
+            ref_code,
+            amount_minor,
+            currency,
+            period_start,
+            period_end,
+            previous_paid_until,
+            telegram_chat_id,
+            telegram_message_id,
+            telegram_user_id,
+        ),
+    )
+    return {**ledger, "paid_until": updated["paid_until"], "idempotent": False}
+
+
+def _billing_identifier(identifier: str) -> tuple[str, str]:
+    value = str(identifier or "").strip()
+    if value.startswith("@") and len(value) > 1:
+        return "username", value[1:].lower()
+    if value.lower().startswith("ref:") and len(value) > 4:
+        return "ref", value[4:].strip().lower()
+    raise SubscriptionError("partner identifier must be @username or ref:code")
+
+
+async def resolve_partner_for_billing(tenant_id: str, identifier: str) -> dict[str, Any]:
+    kind, value = _billing_identifier(identifier)
+    if kind == "username":
+        condition = "lower(coalesce(la.telegram_username, '')) = %s"
+    else:
+        condition = "rp.ref_code = %s"
+    async with tenant_connection(tenant_id) as conn:
+        rows = await fetch_all(
+            conn,
+            f"""
+            select rp.tenant_id, rp.ref_code, rp.public_profile,
+                   la.actor_id, la.display_name, la.telegram_username,
+                   ps.paid_until
+            from referral_profiles rp
+            join lead_actors la
+              on la.actor_id = rp.owner_id
+             and la.tenant_id = rp.tenant_id
+             and la.active = true
+            left join partner_subscriptions ps
+              on ps.tenant_id = rp.tenant_id
+             and ps.ref_code = rp.ref_code
+            where rp.tenant_id = %s
+              and rp.enabled = true
+              and {condition}
+            order by rp.ref_code
+            limit 3
+            """,
+            (tenant_id, value),
+        )
+    if not rows:
+        raise PartnerNotFoundError("active referral profile not found")
+    if len(rows) != 1:
+        raise PartnerIdentityAmbiguousError("partner identifier is ambiguous")
+    row = rows[0]
+    return {
+        **row,
+        "hostname": resolve_partner_hostname(row["ref_code"], row.get("public_profile")),
+    }
+
+
+async def create_payment_intent(
+    tenant_id: str,
+    *,
+    identifier: str,
+    amount_minor: int,
+    currency: str,
+    telegram_chat_id: int,
+    telegram_message_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    normalized_currency = _validate_payment_input(
+        amount_minor=amount_minor,
+        currency=currency,
+        telegram_chat_id=telegram_chat_id,
+        telegram_message_id=telegram_message_id,
+        telegram_user_id=telegram_user_id,
+    )
+    partner = await resolve_partner_for_billing(tenant_id, identifier)
+    async with tenant_connection(tenant_id) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
                 insert into partner_subscriptions (tenant_id, ref_code, paid_until)
-                select rp.tenant_id, rp.ref_code, null
-                from referral_profiles rp
-                where rp.tenant_id = %s
-                  and rp.ref_code = %s
-                  and rp.enabled = true
+                values (%s, %s, %s)
                 on conflict (tenant_id, ref_code) do nothing
                 """,
-                (tenant_id, normalized_ref),
+                (tenant_id, partner["ref_code"], partner.get("paid_until")),
             )
-
-        locked = await fetch_one(
-            conn,
-            """
-            select ps.tenant_id, ps.ref_code, ps.paid_until
-            from partner_subscriptions ps
-            join referral_profiles rp
-              on rp.ref_code = ps.ref_code
-             and rp.tenant_id = ps.tenant_id
-             and rp.enabled = true
-            where ps.tenant_id = %s and ps.ref_code = %s
-            for update of ps
-            """,
-            (tenant_id, normalized_ref),
-        )
-        if not locked:
-            raise PartnerNotFoundError("active referral profile not found")
-
-        existing = await fetch_one(
-            conn,
-            """
-            select payment_id, tenant_id, ref_code, amount_minor, currency,
-                   period_start, period_end, previous_paid_until, access_months,
-                   telegram_user_id, created_at
-            from partner_payment_ledger
-            where tenant_id = %s
-              and source = 'telegram_manual'
-              and telegram_chat_id = %s
-              and telegram_message_id = %s
-            limit 1
-            """,
-            (tenant_id, telegram_chat_id, telegram_message_id),
-        )
-        if existing:
-            same_input = (
-                existing["ref_code"] == normalized_ref
-                and int(existing["amount_minor"]) == amount_minor
-                and existing["currency"] == normalized_currency
-                and int(existing["telegram_user_id"]) == telegram_user_id
-            )
-            if not same_input:
-                raise PaymentIdempotencyConflictError(
-                    "telegram message already records a different payment"
-                )
-            return {**existing, "paid_until": locked["paid_until"], "idempotent": True}
-
         clock = await fetch_one(conn, "select now() as current_time")
         current = _as_utc(clock["current_time"])
-        previous_paid_until = locked.get("paid_until")
-        current_state = subscription_state(previous_paid_until, at=current)
-        period_start = (
-            _as_utc(previous_paid_until)
-            if previous_paid_until is not None and current_state in {"active", "grace"}
-            else current
-        )
-        period_end = add_calendar_months(period_start)
-        payment_id = str(uuid.uuid4())
-
-        updated = await fetch_one(
+        intent_id = str(uuid.uuid4())
+        await fetch_one(
             conn,
             """
-            update partner_subscriptions
-            set paid_until = %s, updated_at = now()
-            where tenant_id = %s and ref_code = %s
-            returning paid_until, updated_at
-            """,
-            (period_end, tenant_id, normalized_ref),
-        )
-        ledger = await fetch_one(
-            conn,
-            """
-            insert into partner_payment_ledger (
-              payment_id, tenant_id, ref_code, amount_minor, currency,
-              access_months, period_start, period_end, previous_paid_until,
-              source, telegram_chat_id, telegram_message_id, telegram_user_id
-            ) values (
-              %s::uuid, %s, %s, %s, %s,
-              3, %s, %s, %s,
-              'telegram_manual', %s, %s, %s
-            )
-            returning payment_id, tenant_id, ref_code, amount_minor, currency,
-                      period_start, period_end, previous_paid_until, access_months,
-                      telegram_user_id, created_at
+            insert into partner_payment_intents (
+              intent_id, tenant_id, ref_code, amount_minor, currency,
+              telegram_chat_id, telegram_message_id, telegram_user_id, expires_at
+            ) values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (tenant_id, telegram_chat_id, telegram_message_id) do nothing
+            returning intent_id
             """,
             (
-                payment_id,
+                intent_id,
                 tenant_id,
-                normalized_ref,
+                partner["ref_code"],
                 amount_minor,
                 normalized_currency,
-                period_start,
-                period_end,
-                previous_paid_until,
                 telegram_chat_id,
                 telegram_message_id,
                 telegram_user_id,
+                current + PAYMENT_INTENT_TTL,
             ),
         )
-        return {**ledger, "paid_until": updated["paid_until"], "idempotent": False}
+        intent = await fetch_one(
+            conn,
+            """
+            select intent_id, tenant_id, ref_code, amount_minor, currency,
+                   telegram_chat_id, telegram_message_id, telegram_user_id,
+                   expires_at, consumed_payment_id, cancelled_at, created_at
+            from partner_payment_intents
+            where tenant_id = %s and telegram_chat_id = %s and telegram_message_id = %s
+            """,
+            (tenant_id, telegram_chat_id, telegram_message_id),
+        )
+    if not intent:
+        raise SubscriptionError("payment intent was not created")
+    same_input = (
+        intent["ref_code"] == partner["ref_code"]
+        and int(intent["amount_minor"]) == amount_minor
+        and intent["currency"] == normalized_currency
+        and int(intent["telegram_user_id"]) == telegram_user_id
+    )
+    if not same_input:
+        raise PaymentIdempotencyConflictError(
+            "telegram message already contains a different payment intent"
+        )
+    paid_until = partner.get("paid_until")
+    state = subscription_state(paid_until, at=current)
+    period_start = (
+        _as_utc(paid_until)
+        if paid_until is not None and state in {"active", "grace"}
+        else current
+    )
+    return {
+        **intent,
+        **partner,
+        "period_start": period_start,
+        "period_end": add_calendar_months(period_start),
+        "grace_until": add_calendar_months(period_start) + GRACE_PERIOD,
+    }
+
+
+async def confirm_payment_intent(
+    tenant_id: str,
+    *,
+    intent_id: str,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    try:
+        normalized_intent_id = str(uuid.UUID(str(intent_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise PaymentIntentNotFoundError("payment intent not found") from exc
+
+    async with tenant_connection(tenant_id) as conn:
+        intent = await fetch_one(
+            conn,
+            """
+            select intent_id, ref_code, amount_minor, currency,
+                   telegram_chat_id, telegram_message_id, telegram_user_id,
+                   expires_at, consumed_payment_id, cancelled_at
+            from partner_payment_intents
+            where tenant_id = %s and intent_id = %s::uuid
+            for update
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+        if not intent:
+            raise PaymentIntentNotFoundError("payment intent not found")
+        if (
+            int(intent["telegram_chat_id"]) != telegram_chat_id
+            or int(intent["telegram_user_id"]) != telegram_user_id
+        ):
+            raise PaymentIntentForbiddenError("payment intent belongs to another Telegram user")
+        if intent.get("cancelled_at") is not None:
+            raise PaymentIntentCancelledError("payment intent was cancelled")
+        if intent.get("consumed_payment_id") is not None:
+            payment = await fetch_one(
+                conn,
+                """
+                select payment_id, tenant_id, ref_code, amount_minor, currency,
+                       period_start, period_end, previous_paid_until, access_months,
+                       telegram_user_id, created_at
+                from partner_payment_ledger
+                where tenant_id = %s and payment_id = %s
+                """,
+                (tenant_id, intent["consumed_payment_id"]),
+            )
+            return {**payment, "paid_until": payment["period_end"], "idempotent": True}
+        clock = await fetch_one(conn, "select now() as current_time")
+        if _as_utc(intent["expires_at"]) <= _as_utc(clock["current_time"]):
+            raise PaymentIntentExpiredError("payment intent expired")
+
+        payment = await _record_manual_payment_in_connection(
+            conn,
+            tenant_id=tenant_id,
+            ref_code=intent["ref_code"],
+            amount_minor=int(intent["amount_minor"]),
+            currency=intent["currency"],
+            telegram_chat_id=int(intent["telegram_chat_id"]),
+            telegram_message_id=int(intent["telegram_message_id"]),
+            telegram_user_id=int(intent["telegram_user_id"]),
+        )
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update partner_payment_intents
+                set consumed_payment_id = %s
+                where tenant_id = %s and intent_id = %s::uuid
+                """,
+                (payment["payment_id"], tenant_id, normalized_intent_id),
+            )
+        return payment
+
+
+async def cancel_payment_intent(
+    tenant_id: str,
+    *,
+    intent_id: str,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> str:
+    try:
+        normalized_intent_id = str(uuid.UUID(str(intent_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise PaymentIntentNotFoundError("payment intent not found") from exc
+    async with tenant_connection(tenant_id) as conn:
+        intent = await fetch_one(
+            conn,
+            """
+            select telegram_chat_id, telegram_user_id, consumed_payment_id, cancelled_at
+            from partner_payment_intents
+            where tenant_id = %s and intent_id = %s::uuid
+            for update
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+        if not intent:
+            raise PaymentIntentNotFoundError("payment intent not found")
+        if (
+            int(intent["telegram_chat_id"]) != telegram_chat_id
+            or int(intent["telegram_user_id"]) != telegram_user_id
+        ):
+            raise PaymentIntentForbiddenError("payment intent belongs to another Telegram user")
+        if intent.get("consumed_payment_id") is not None:
+            return "confirmed"
+        if intent.get("cancelled_at") is not None:
+            return "cancelled"
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update partner_payment_intents
+                set cancelled_at = now()
+                where tenant_id = %s and intent_id = %s::uuid
+                """,
+                (tenant_id, normalized_intent_id),
+            )
+    return "cancelled"
 
 
 async def resolve_paid_partner_by_telegram_user_id(

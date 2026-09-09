@@ -75,6 +75,29 @@ create table if not exists partner_payment_ledger (
 create index if not exists idx_partner_payment_ledger_partner_time
   on partner_payment_ledger (tenant_id, ref_code, created_at desc);
 
+create table if not exists partner_payment_intents (
+  intent_id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  ref_code text not null,
+  amount_minor bigint not null check (amount_minor > 0),
+  currency text not null check (currency in ('RUB', 'BYN')),
+  telegram_chat_id bigint not null,
+  telegram_message_id bigint not null,
+  telegram_user_id bigint not null,
+  expires_at timestamptz not null,
+  consumed_payment_id uuid references partner_payment_ledger (payment_id),
+  cancelled_at timestamptz,
+  created_at timestamptz not null default now(),
+  foreign key (tenant_id, ref_code)
+    references partner_subscriptions (tenant_id, ref_code),
+  unique (tenant_id, telegram_chat_id, telegram_message_id),
+  check (not (consumed_payment_id is not null and cancelled_at is not null))
+);
+
+create index if not exists idx_partner_payment_intents_expiry
+  on partner_payment_intents (tenant_id, expires_at)
+  where consumed_payment_id is null and cancelled_at is null;
+
 create or replace function partner_subscription_ref_tenant_guard()
 returns trigger
 language plpgsql
@@ -103,6 +126,7 @@ for each row execute function partner_subscription_ref_tenant_guard();
 
 alter table partner_subscriptions enable row level security;
 alter table partner_payment_ledger enable row level security;
+alter table partner_payment_intents enable row level security;
 
 drop policy if exists partner_subscriptions_tenant_isolation
   on partner_subscriptions;
@@ -113,6 +137,12 @@ create policy partner_subscriptions_tenant_isolation on partner_subscriptions
 drop policy if exists partner_payment_ledger_tenant_isolation
   on partner_payment_ledger;
 create policy partner_payment_ledger_tenant_isolation on partner_payment_ledger
+  using (tenant_id = platform_current_tenant_id())
+  with check (tenant_id = platform_current_tenant_id());
+
+drop policy if exists partner_payment_intents_tenant_isolation
+  on partner_payment_intents;
+create policy partner_payment_intents_tenant_isolation on partner_payment_intents
   using (tenant_id = platform_current_tenant_id())
   with check (tenant_id = platform_current_tenant_id());
 

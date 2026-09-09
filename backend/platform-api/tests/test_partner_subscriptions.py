@@ -124,6 +124,7 @@ def test_subscription_migration_has_strict_period_rls_and_tenant_idempotency():
     assert "check (access_months = 3)" in sql
     assert "alter table partner_subscriptions enable row level security" in sql
     assert "alter table partner_payment_ledger enable row level security" in sql
+    assert "alter table partner_payment_intents enable row level security" in sql
     assert "unique (tenant_id, source, telegram_chat_id, telegram_message_id)" in sql
     assert "idx_lead_actors_tenant_telegram_user" in sql
 

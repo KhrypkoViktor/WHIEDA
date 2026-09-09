@@ -1,7 +1,7 @@
 # STATE: wwc-partner-subscriptions-20260909
 
 **Обновлено:** 2026-09-09
-**Статус:** блоки 0 и 1 выполнены. Следующий шаг: блок 2, owner-only Telegram.
+**Статус:** блоки 0, 1 и 2 выполнены. Следующий шаг: блок 3, платный доступ и repeat prices.
 
 ## Источник задачи
 
@@ -118,16 +118,33 @@ nullable `country_code/region_code` включены в primary key `lead_actor_
 падает на `NOT NULL`. Его не исправлять внутри этой задачи. Тест подписок использует
 минимальную реальную prerequisite-схему; shared staging не изменялась.
 
+## Выполнено в блоке 2
+
+- `app/telegram/billing.py`: parser, owner guard, preview, status, due и callbacks.
+- `app/telegram/processor.py`: billing callback до catalog callback, billing message
+  до start/onboarding/navigation/advisor.
+- `partner_payment_intents`: durable preview с TTL 10 минут, привязкой к tenant,
+  user, chat и исходному message ID; RLS и короткий UUID callback.
+- Подтверждение использует один DB connection и одну транзакцию для intent,
+  subscription и ledger; проверено также при `database_pool_max=1`.
+- `PLATFORM_BILLING_OWNER_TELEGRAM_ID` добавлен отдельно от admin allow-list.
+- Критичный Telegram regression: `98 passed in 0.68s`.
+- Живой локальный PostgreSQL: `1 passed in 0.81s`.
+
+Широкий набор `test_telegram*.py` по-прежнему содержит baseline-проблемы:
+3 collection error из-за отсутствующей `qa/telegram_golden`, ещё 13 старых тестов
+advisor не мокируют новый `load_active_solution_bundles`. Профильные ingress,
+binding, processor, navigation и route truth-table зелёные.
+
 ## Следующий шаг
 
-Блок 2 в том же изолированном worktree:
+Блок 3 в том же Core worktree и отдельном website worktree от website `master`:
 
-1. Отдельная настройка `PLATFORM_BILLING_OWNER_TELEGRAM_ID`.
-2. Строгий parser `оплата`/`/pay`, `статус`/`/status`, `/due`.
-3. Owner check до разбора пользовательских аргументов.
-4. Preview + inline callback confirmation с привязкой к исходному update.
-5. Billing routing до onboarding, navigation, catalog callback и advisor.
-6. Unit tests без реальной отправки Telegram и без shared/live БД.
+1. Вычисляемый `partner_paid` при каждом запросе через Telegram identity.
+2. Расширение `/api/v1/content-access/me` без выдачи права со стороны клиента.
+3. Защищённый Core API повторных цен.
+4. Удаление повторных цен из статической website-сборки.
+5. Закрытие repeat calculator mode и staging-проверка эталонной страницы.
 
 ## Пока не делать
 
