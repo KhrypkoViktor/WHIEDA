@@ -17,6 +17,7 @@ $Files = @(
     "platform_tenant_rls_v1.sql",
     # Existing staging must already contain lead_actors and referral_profiles.
     "platform_partner_subscriptions_v1.sql",
+    "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
