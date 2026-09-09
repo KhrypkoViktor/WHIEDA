@@ -163,11 +163,43 @@ binding, processor, navigation и route truth-table зелёные.
   Core. Живой PostgreSQL integration не повторялся: локальный PostgreSQL/Docker в
   текущей среде недоступен; границы подписки ранее доказаны в блоках 1-2.
 
+## Выполнено в блоке 4
+
+- Core commit: `640ee25` (`feat: add paid partner library`).
+- Website commit: `29c1579` (`feat: add paid partner resources page`).
+- Добавлена tenant-scoped таблица `partner_library_items` с RLS, состояниями
+  draft/published/archived и выдачей только published.
+- Добавлены защищённые list/download API. Каждый запрос повторно проверяет живую
+  Telegram session и `partner_paid`; список не содержит `storage_key`, download
+  возвращает короткоживущий URL и `Cache-Control: private, no-store`.
+- Storage отделён интерфейсом `StorageBackend`. Production/staging работают только
+  через приватный S3-совместимый bucket; локальный файловый адаптер разрешён лишь
+  для dev/test и использует подписанный HMAC URL. Большие файлы через Core в
+  production не проксируются.
+- Добавлен manifest importer: tenant-prefix для каждого ключа, проверка существования
+  объекта, dry-run SHA и обязательный `--expected-sha` для apply. Пример manifest
+  содержит по одной позиции каждой согласованной категории.
+- Создана `/partner/resources/`: гость видит только Telegram gate, unpaid видит
+  продление, paid получает список из Core. Прямая ссылка на файл запрашивается лишь
+  по нажатию. Повторные цены входят как защищённый внутренний инструмент.
+- В nginx repo-template добавлен отдельный GET-only prefix `/api/v1/partner-library`.
+  Живой nginx не изменялся.
+- Проверки: Core regression `108 passed`; website unit `247 passed`; browser
+  desktop/mobile `6 passed`; Astro build успешен. В `dist` нет тестовых названий,
+  `storage_key` и закрытых путей.
+- QA-скриншоты: `docs/qa/screenshots/2026-09-09/resources-paid-{desktop,mobile}.png`.
+- Миграция не применялась, bucket и реальные материалы не загружались: для этого
+  нужны выбранный S3-провайдер, credentials и утверждённые исходные файлы.
+- Общий `test_staging_sql_order.py` сохраняет baseline 3 failures из-за отсутствующих
+  в worktree старых `n8n/current` и SQL-файлов. Порядок новой миграции отдельно
+  проверяется зелёным тестом блока 4.
+
 ## Следующий шаг
 
-Блок 4: закрытая библиотека `/partner/resources/`, серверный реестр материалов,
-абстракция `StorageBackend` и приватное S3-совместимое хранилище. Это фундамент
-будущего мини-GetCourse; LMS, уроки и прогресс в этот релиз не входят.
+Блок 5: edge-map активных hostname, redirect всего просроченного партнёрского
+поддомена на `https://wwc.best/` после grace и перевод новых заявок на органического
+владельца. Сначала устранить или локально обойти расхождение четырёх hostname-карт,
+не меняя live nginx.
 
 ## Пока не делать
 
