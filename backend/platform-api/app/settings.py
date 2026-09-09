@@ -192,6 +192,17 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_PARTNER_LIBRARY_SIGNED_URL_TTL_SECONDS",
     )
 
+    platform_edge_snapshot_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_EDGE_SNAPSHOT_SECRET",
+        description="Shared secret for the private partner-host edge snapshot.",
+    )
+    platform_organic_owner_id: str = Field(
+        default="viktor",
+        validation_alias="PLATFORM_ORGANIC_OWNER_ID",
+        description="Owner for new leads whose referral cannot receive attribution.",
+    )
+
     # Theme access: when enabled, every verified Telegram user (valid content
     # session) may customize the theme of an enabled personal profile without
     # being its owner. Rights are always decided server-side, never in the

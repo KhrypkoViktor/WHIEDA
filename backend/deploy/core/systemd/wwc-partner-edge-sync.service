@@ -1,0 +1,19 @@
+[Unit]
+Description=Synchronize paid WWC partner hosts into nginx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/wwc/partner-edge-sync.env
+ExecStart=/usr/bin/python3 /opt/wwc-edge/sync_partner_host_map.py --endpoint ${WWC_EDGE_SNAPSHOT_URL} --tenant ${WWC_EDGE_TENANT} --tenant-host ${WWC_EDGE_TENANT_HOST} --output /etc/nginx/snippets/wwc-partner-access-map.conf --state /var/lib/wwc-edge/partner-host-map-state.json
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/nginx/snippets /var/lib/wwc-edge
+
+[Install]
+WantedBy=multi-user.target

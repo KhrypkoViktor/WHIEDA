@@ -68,7 +68,20 @@ def test_hostname_uses_profile_then_mapping_then_ref_fallback():
     )
 
 
-@pytest.mark.parametrize("value", ["dev", "staging", "admin", "www", "wwc.best"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "dev",
+        "staging",
+        "admin",
+        "admin-staging",
+        "fedorov-staging",
+        "api",
+        "media",
+        "www",
+        "wwc.best",
+    ],
+)
 def test_reserved_or_invalid_partner_subdomain_is_rejected(value: str):
     error = ReservedPartnerHostError if value != "wwc.best" else SubscriptionError
     with pytest.raises(error):
