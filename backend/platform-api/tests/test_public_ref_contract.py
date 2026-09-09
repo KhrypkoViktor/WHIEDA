@@ -41,6 +41,7 @@ async def test_unknown_ref_returns_404(client, monkeypatch):
     monkeypatch.setattr("app.ref.routes.load_public_ref", AsyncMock(return_value=None))
     response = await client.get("/v1/public/ref/missing", headers={"host": "wwc.best"})
     assert response.status_code == 404
+    assert response.json()["error"] == "referral_not_available"
 
 
 @pytest.mark.asyncio
@@ -267,7 +268,7 @@ async def test_public_ref_by_subdomain_unknown_returns_404(client, monkeypatch):
     assert response.status_code == 404
     body = response.json()
     assert body["ok"] is False
-    assert body["error"] == "subdomain_not_found"
+    assert body["error"] == "referral_not_available"
 
 
 @pytest.mark.asyncio
@@ -292,4 +293,6 @@ async def test_load_public_ref_by_subdomain_binds_tenant_and_issued_map(monkeypa
     assert captured["tenant_id"] == "whieda"
     assert captured["params"] == ("whieda", "samtsova", "olga-samtsova", "samtsova")
     assert "enabled = true" in captured["query"]
+    assert "partner_subscriptions" in captured["query"]
+    assert "partner_subscription_state" in captured["query"]
     assert "public_profile->>'subdomain'" in captured["query"]

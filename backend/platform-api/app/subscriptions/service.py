@@ -17,7 +17,22 @@ ACCESS_MONTHS = 3
 GRACE_PERIOD = timedelta(days=3)
 PAYMENT_INTENT_TTL = timedelta(minutes=10)
 PARTNER_DOMAIN = "wwc.best"
-RESERVED_SUBDOMAINS = frozenset({"", "www", "dev", "staging", "admin"})
+RESERVED_SUBDOMAINS = frozenset(
+    {
+        "",
+        "admin",
+        "admin-staging",
+        "api",
+        "assets",
+        "cabinet",
+        "dev",
+        "fedorov-staging",
+        "media",
+        "staging",
+        "static",
+        "www",
+    }
+)
 _SUBDOMAIN_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 

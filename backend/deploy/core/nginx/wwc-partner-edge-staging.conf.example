@@ -1,0 +1,12 @@
+# Isolated local listener for edge-map canary. It does not share public :443.
+server {
+    listen 127.0.0.1:8443;
+    server_name _;
+
+    include /etc/nginx/snippets/wwc-partner-access-gate.conf;
+
+    location / {
+        add_header X-WWC-Partner-Edge-Canary allowed always;
+        return 204;
+    }
+}
