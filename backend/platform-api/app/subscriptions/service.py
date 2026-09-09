@@ -596,7 +596,7 @@ async def cancel_payment_intent(
     return "cancelled"
 
 
-async def resolve_paid_partner_by_telegram_user_id(
+async def resolve_partner_subscription_by_telegram_user_id(
     tenant_id: str,
     telegram_user_id: int,
     *,
@@ -629,7 +629,20 @@ async def resolve_paid_partner_by_telegram_user_id(
         return None
     if len(rows) > 1:
         raise PartnerIdentityAmbiguousError("telegram user owns multiple referral profiles")
-    row = _normalize_subscription(rows[0], at=current)
+    return _normalize_subscription(rows[0], at=current)
+
+
+async def resolve_paid_partner_by_telegram_user_id(
+    tenant_id: str,
+    telegram_user_id: int,
+    *,
+    at: datetime | None = None,
+) -> dict[str, Any] | None:
+    row = await resolve_partner_subscription_by_telegram_user_id(
+        tenant_id,
+        telegram_user_id,
+        at=at,
+    )
     return row if row and row["partner_paid"] else None
 
 
