@@ -136,15 +136,38 @@ nullable `country_code/region_code` включены в primary key `lead_actor_
 advisor не мокируют новый `load_active_solution_bundles`. Профильные ingress,
 binding, processor, navigation и route truth-table зелёные.
 
+## Выполнено в блоке 3
+
+- Core commit: `2e6f224` (`feat: protect partner repeat prices`).
+- Website commit: `5f00fdd` (`feat: gate repeat prices by partner access`).
+- `/api/v1/content-access/me` при каждом запросе вычисляет `partner_paid` по
+  подтверждённому числовому Telegram ID и текущей подписке. Active и grace дают
+  доступ, suspended и отсутствие подписки не дают. Telegram ID наружу не возвращается.
+- Добавлен защищённый `/api/v1/content-access/repeat-prices`. Он независимо проверяет
+  живую content session и подписку, возвращает `401/403` без права и ставит
+  `Cache-Control: private, no-store`.
+- Повторные цены перенесены в серверный JSON Core. Статический источник сайта и
+  старый генератор удалены; `/price/` оставлен только с публичным розничным прайсом.
+- `/price/repeat/` теперь публичная оболочка: сначала Telegram gate, затем проверка
+  `partner_paid`, после неё загрузка цен из Core. Калькулятор и строки прайса до
+  успешной проверки отсутствуют в DOM.
+- В website postbuild включён стоп-тест утечки контрольных цен и товара, доступного
+  только для повторной покупки. Проверка текущего `dist` зелёная.
+- Core regression: `92 passed`. Website unit: `243 passed`. Playwright:
+  `6 passed` на guest, verified-unpaid и paid для desktop/mobile. SEO: `6/6`.
+- Общий live smoke: `6/7`; старый production `/api/advisor/query` вернул пустое тело.
+  Этот endpoint и production в блоке 3 не менялись.
+- QA-скриншоты сохранены в
+  `docs/qa/screenshots/2026-09-09/repeat-paid-{desktop,mobile}.png`.
+- Staging и production не изменялись. Эталонная страница проверена локально на mock
+  Core. Живой PostgreSQL integration не повторялся: локальный PostgreSQL/Docker в
+  текущей среде недоступен; границы подписки ранее доказаны в блоках 1-2.
+
 ## Следующий шаг
 
-Блок 3 в том же Core worktree и отдельном website worktree от website `master`:
-
-1. Вычисляемый `partner_paid` при каждом запросе через Telegram identity.
-2. Расширение `/api/v1/content-access/me` без выдачи права со стороны клиента.
-3. Защищённый Core API повторных цен.
-4. Удаление повторных цен из статической website-сборки.
-5. Закрытие repeat calculator mode и staging-проверка эталонной страницы.
+Блок 4: закрытая библиотека `/partner/resources/`, серверный реестр материалов,
+абстракция `StorageBackend` и приватное S3-совместимое хранилище. Это фундамент
+будущего мини-GetCourse; LMS, уроки и прогресс в этот релиз не входят.
 
 ## Пока не делать
 
