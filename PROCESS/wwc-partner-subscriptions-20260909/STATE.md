@@ -270,6 +270,22 @@ binding, processor, navigation и route truth-table зелёные.
 - Проверки шаблона, Telegram billing, подписок и меню: `87 passed`. Локальный
   `ruff` отсутствует; тесты и `git diff --check` прошли.
 
+### Валюты оплаты сайта
+
+- Коммит `ec484b0` устранил расхождение между уведомлением и журналом платежей:
+  для подписки разрешены только `RUB` и WHIEDA-доллары. Пользователь пишет и
+  видит `W$`, в базе хранится `WUSD`. Каталожные цены в `BYN` не изменялись.
+- Перед миграцией на Core staging проверено: в ledger и незавершённых intents
+  нет ни одной записи `BYN` или `WUSD`; 13 подписок сохранены без изменений.
+- Миграция `platform_partner_subscription_currency_v2.sql` применена только к
+  staging. Read-back подтвердил оба ограничения БД: `RUB`/`WUSD`, без `BYN`.
+- В работающем staging-контейнере команда `оплата ref:dev 30 W$` разобрана как
+  `amount_minor = 3000`, `currency = WUSD`, показана как `30 W$`; команда с
+  `BYN` отклонена. Health после перезапуска: `200`.
+- Резервная копия кода перед обновлением:
+  `/opt/whieda-platform-staging/backups/wusd-currency-code-20260910T211305Z.tar.gz`.
+- Локальная профильная регрессия: `91 passed`; `git diff --check` успешен.
+
 В canary не входят website, nginx edge-redirect, повторные цены в UI, курсы,
 storage и рассылка реальным партнёрам.
 
