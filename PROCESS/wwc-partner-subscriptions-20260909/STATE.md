@@ -1,8 +1,8 @@
 # STATE: wwc-partner-subscriptions-20260909
 
-**Обновлено:** 2026-09-09
-**Статус:** блоки 0-5 реализованы, локальная часть блока 6 выполнена. Следующий
-шаг: живой staging canary после отдельного разрешения на миграции и deploy.
+**Обновлено:** 2026-09-10
+**Статус:** блоки 0-5 реализованы, локальная часть блока 6 и read-only preflight
+staging выполнены. Следующий шаг: управляемый staging deploy и сквозной canary.
 
 ## Источник задачи
 
@@ -247,11 +247,33 @@ binding, processor, navigation и route truth-table зелёные.
 staging-БД, отдельные staging-секреты, тестовый private S3, deploy Core/сайта и
 read-only снимок живого `nginx -T` перед подключением isolated listener.
 
+## Read-only preflight staging 2026-09-10
+
+- Core staging жив: `/health/ready` вернул `200`; отдельные `api`, `worker` и
+  `redis` работают из `/opt/whieda-platform-staging`, порт API `8081`.
+- В staging-БД есть prerequisite-таблицы `referral_profiles` и `lead_actors`, но
+  таблиц подписок, payment ledger и библиотеки ещё нет. Миграции задачи не применялись.
+- В staging env пока нет billing owner, edge secret и S3-настроек. Username
+  `sunraysword` однозначно связан с одним numeric Telegram ID, входящим в
+  staging admin-list; сам ID не выводился. Его можно безопасно назначить при deploy.
+- Staging Telegram использует `wwc_admin_staging_bot`, но
+  `CORE_ROUTE_TELEGRAM=legacy`; для проверки команды оплаты нужен отдельный
+  контролируемый перевод staging-бота на Core.
+- Website: production отдаёт `61188ef`, staging отдаёт `556044f`, локальный
+  кандидат `58c4f98`. Кандидат на staging ещё не выкладывался.
+- Живой wildcard nginx не содержит `/api/v1/partner-library` и edge-gate.
+  Канонический nginx overlay маршрут библиотеки уже содержит; его контракт теперь
+  защищён тестом, коммит `44789f9`, результат `6 passed`.
+- Приватный S3-совместимый bucket и credentials в проекте не настроены. Это
+  единственный отсутствующий внешний ресурс для полного canary библиотеки.
+- Ни staging, ни production во время preflight не изменялись.
+
 ## Следующий шаг
 
-Оставшаяся часть блока 6 выполняется как контролируемый staging canary: применить миграции к
-staging-БД, настроить тестовый S3, три test referral active/grace/suspended,
-развернуть Core и сайт, проверить полный путь. Сначала только isolated edge listener
+Оставшаяся часть блока 6 выполняется как контролируемый staging canary: выбрать
+приватный S3-compatible bucket, применить миграции к staging-БД, добавить новые
+env-переменные, создать три test referral active/grace/suspended, развернуть Core
+и сайт и проверить полный путь. Сначала только isolated edge listener
 `127.0.0.1:8443`; общий `:443` и production остаются заморожены.
 
 ## Пока не делать

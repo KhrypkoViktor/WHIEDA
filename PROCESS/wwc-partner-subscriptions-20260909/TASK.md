@@ -903,3 +903,22 @@ Shared staging, production webhook, реальные Telegram-сообщения
   тело. Задача подписок этот endpoint не меняет.
 - Shared staging и production не изменялись. До окончательного DoD §24 остаётся
   настоящий staging deploy с секретами, S3, Telegram и isolated nginx canary.
+
+### 25.9. Read-only preflight staging 2026-09-10
+
+- Core staging отделён от production, отвечает `200` на `/health/ready`; сервисы
+  `api`, `worker`, `redis` работают на staging compose и API-порту `8081`.
+- Prerequisite `referral_profiles` и `lead_actors` есть. Таблицы подписок, ledger
+  и библиотеки отсутствуют, поэтому миграции задачи на staging ещё не применялись.
+- Новые billing/edge/S3 env-переменные отсутствуют. Numeric ID Виктора можно
+  однозначно получить по `sunraysword`: найдена одна числовая связь, совпадающая
+  ровно с одним staging super-admin. Значение в отчёты не выводить.
+- `wwc_admin_staging_bot` существует, но `CORE_ROUTE_TELEGRAM=legacy`. Сквозная
+  проверка owner-only оплаты требует отдельного staging cutover этого бота на Core.
+- Website production находится на `61188ef`, staging на `556044f`, кандидат UI
+  подписки `58c4f98` не развёрнут. Живой wildcard nginx пока не содержит
+  `/api/v1/partner-library` и edge-gate.
+- Nginx overlay в репозитории уже содержит правильный GET-only маршрут библиотеки;
+  коммит `44789f9` добавил его регрессионный тест, `6 passed`.
+- Для полного canary отсутствует один внешний ресурс: приватный S3-compatible
+  bucket с credentials. Ни staging, ни production во время preflight не менялись.
