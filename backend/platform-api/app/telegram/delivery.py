@@ -113,6 +113,37 @@ async def answer_callback_query(
     return {"ok": True}
 
 
+async def configure_telegram_command_menu(
+    *,
+    bot_token: str,
+    commands: list[dict[str, str]],
+    timeout_sec: float = 10.0,
+) -> dict[str, Any]:
+    """Install Telegram's compact command menu without exposing the bot token."""
+    requests = (
+        ("setMyCommands", {"commands": commands}),
+        ("setChatMenuButton", {"menu_button": {"type": "commands"}}),
+    )
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        for method, payload in requests:
+            response = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/{method}",
+                json=payload,
+            )
+            data = response.json() if response.text else {}
+            if response.status_code >= 400 or not data.get("ok"):
+                logger.warning(
+                    "telegram_menu_configuration_failed",
+                    extra={"method": method, "status": response.status_code},
+                )
+                return {
+                    "ok": False,
+                    "method": method,
+                    "status_code": response.status_code,
+                }
+    return {"ok": True, "command_count": len(commands)}
+
+
 def extract_photo_url(media: Any) -> str | None:
     if not isinstance(media, dict):
         return None
