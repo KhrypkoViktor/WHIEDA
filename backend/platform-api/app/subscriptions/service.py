@@ -397,7 +397,9 @@ async def resolve_partner_for_billing(tenant_id: str, identifier: str) -> dict[s
     row = rows[0]
     return {
         **row,
-        "hostname": resolve_partner_hostname(row["ref_code"], row.get("public_profile")),
+        "hostname": resolve_billing_partner_hostname(
+            row["ref_code"], row.get("public_profile")
+        ),
     }
 
 
@@ -727,6 +729,19 @@ def resolve_partner_hostname(ref_code: str, public_profile: Any = None) -> str:
         or normalized_ref
     )
     return f"{normalize_partner_subdomain(candidate)}.{PARTNER_DOMAIN}"
+
+
+def resolve_billing_partner_hostname(ref_code: str, public_profile: Any = None) -> str:
+    """Allow the staging-only dev profile in billing without exporting it to edge maps."""
+    normalized_ref = str(ref_code or "").strip().lower()
+    candidate = (
+        _profile_subdomain(public_profile)
+        or REF_TO_ISSUED_SUBDOMAIN.get(normalized_ref, "")
+        or normalized_ref
+    ).lower()
+    if normalized_ref == "dev" and candidate == "dev":
+        return f"dev.{PARTNER_DOMAIN}"
+    return resolve_partner_hostname(ref_code, public_profile)
 
 
 def build_host_snapshot(rows: list[dict[str, Any]], *, generated_at: datetime) -> dict[str, Any]:
