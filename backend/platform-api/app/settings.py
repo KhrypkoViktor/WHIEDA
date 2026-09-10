@@ -157,7 +157,7 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_CONTENT_COOKIE_SAMESITE",
     )
 
-    platform_partner_library_storage_backend: Literal["local", "s3"] = Field(
+    platform_partner_library_storage_backend: Literal["local", "filesystem", "s3"] = Field(
         default="local",
         validation_alias="PLATFORM_PARTNER_LIBRARY_STORAGE_BACKEND",
     )
@@ -172,6 +172,18 @@ class Settings(BaseSettings):
     platform_partner_library_local_base_url: str = Field(
         default="/api/v1/partner-library/local-files",
         validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_BASE_URL",
+    )
+    platform_partner_library_filesystem_root: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_ROOT",
+    )
+    platform_partner_library_filesystem_signing_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_SIGNING_SECRET",
+    )
+    platform_partner_library_filesystem_base_url: str = Field(
+        default="/api/v1/partner-library/files",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_BASE_URL",
     )
     platform_partner_library_s3_bucket: str | None = Field(
         default=None,

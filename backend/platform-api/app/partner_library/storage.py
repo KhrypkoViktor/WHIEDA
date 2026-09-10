@@ -170,6 +170,21 @@ def _build_storage_backend(settings: Settings) -> StorageBackend:
             region_name=settings.platform_partner_library_s3_region,
             addressing_style=settings.platform_partner_library_s3_addressing_style,
         )
+    if settings.platform_partner_library_storage_backend == "filesystem":
+        root_value = settings.platform_partner_library_filesystem_root
+        secret = settings.platform_partner_library_filesystem_signing_secret or ""
+        if not root_value:
+            raise RuntimeError("PLATFORM_PARTNER_LIBRARY_FILESYSTEM_ROOT is required")
+        root = Path(root_value)
+        if not root.is_absolute():
+            raise RuntimeError("partner library filesystem root must be absolute")
+        if len(secret) < 32:
+            raise RuntimeError("partner library filesystem signing secret must be at least 32 chars")
+        return LocalStorageBackend(
+            root,
+            signing_secret=secret,
+            base_url=settings.platform_partner_library_filesystem_base_url,
+        )
     if settings.environment.lower() not in {"development", "dev", "test", "testing", "local"}:
         raise RuntimeError("local partner library storage is allowed only in dev/test")
     if not settings.platform_partner_library_local_root:

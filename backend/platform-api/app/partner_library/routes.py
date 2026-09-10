@@ -101,8 +101,9 @@ async def download_site(
     return await _download(item_id, request, response)
 
 
+@router.get("/api/v1/partner-library/files/{token}", include_in_schema=False)
 @router.get("/api/v1/partner-library/local-files/{token}", include_in_schema=False)
-async def local_file(token: str) -> FileResponse:
+async def private_file(token: str) -> FileResponse:
     storage = get_storage_backend()
     if not isinstance(storage, LocalStorageBackend):
         raise HTTPException(status_code=404, detail={"error": "not_found"})

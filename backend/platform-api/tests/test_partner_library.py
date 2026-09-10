@@ -162,6 +162,35 @@ def test_local_storage_signed_url_is_temporary_and_tamper_evident(tmp_path):
         storage.open_signed_path(url.rsplit("/", 1)[-1] + "x")
 
 
+@pytest.mark.asyncio
+async def test_private_file_route_serves_valid_token_and_rejects_tampering(
+    library_client,
+    tmp_path,
+):
+    source = tmp_path / "whieda" / "presentations" / "welcome.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("private material", encoding="utf-8")
+    storage = LocalStorageBackend(
+        tmp_path,
+        signing_secret="x" * 32,
+        base_url="/api/v1/partner-library/files",
+    )
+    url = storage.signed_url("whieda/presentations/welcome.txt", 300)
+    token = url.rsplit("/", 1)[-1]
+
+    with patch("app.partner_library.routes.get_storage_backend", return_value=storage):
+        response = await library_client.get(url, headers=HOST)
+        tampered = await library_client.get(
+            f"/api/v1/partner-library/files/{token}x",
+            headers=HOST,
+        )
+
+    assert response.status_code == 200
+    assert response.text == "private material"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert tampered.status_code == 403
+
+
 @pytest.mark.parametrize("value", ["", "/absolute.pdf", "../secret", "a//b", "a/./b"])
 def test_storage_key_rejects_unsafe_paths(value):
     with pytest.raises(ValueError):
@@ -176,6 +205,40 @@ def test_local_storage_is_forbidden_outside_dev_and_test(tmp_path):
     )
     with pytest.raises(RuntimeError, match="only in dev/test"):
         _build_storage_backend(settings)
+
+
+def test_private_filesystem_storage_is_allowed_on_staging(tmp_path):
+    settings = Settings(
+        environment="staging",
+        platform_partner_library_storage_backend="filesystem",
+        platform_partner_library_filesystem_root=str(tmp_path.resolve()),
+        platform_partner_library_filesystem_signing_secret="x" * 32,
+    )
+    storage = _build_storage_backend(settings)
+    assert isinstance(storage, LocalStorageBackend)
+    assert storage.root == tmp_path.resolve()
+    assert storage.base_url == "/api/v1/partner-library/files"
+
+
+def test_private_filesystem_requires_absolute_root_and_strong_secret(tmp_path):
+    with pytest.raises(RuntimeError, match="must be absolute"):
+        _build_storage_backend(
+            Settings(
+                environment="staging",
+                platform_partner_library_storage_backend="filesystem",
+                platform_partner_library_filesystem_root="relative/path",
+                platform_partner_library_filesystem_signing_secret="x" * 32,
+            )
+        )
+    with pytest.raises(RuntimeError, match="at least 32 chars"):
+        _build_storage_backend(
+            Settings(
+                environment="staging",
+                platform_partner_library_storage_backend="filesystem",
+                platform_partner_library_filesystem_root=str(tmp_path.resolve()),
+                platform_partner_library_filesystem_signing_secret="too-short",
+            )
+        )
 
 
 def test_s3_storage_uses_v4_path_style_for_contabo():
