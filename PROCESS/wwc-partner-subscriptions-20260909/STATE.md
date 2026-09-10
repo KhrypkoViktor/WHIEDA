@@ -2,7 +2,8 @@
 
 **Обновлено:** 2026-09-10
 **Статус:** блоки 0-5 реализованы, локальная часть блока 6 и read-only preflight
-staging выполнены. Следующий шаг: управляемый staging deploy и сквозной canary.
+staging выполнены. S3-интеграция подготовлена; следующий шаг зависит от заказа
+Contabo Object Storage и установки credentials, затем staging deploy и canary.
 
 ## Источник задачи
 
@@ -268,12 +269,30 @@ read-only снимок живого `nginx -T` перед подключение
   единственный отсутствующий внешний ресурс для полного canary библиотеки.
 - Ни staging, ни production во время preflight не изменялись.
 
+## S3 integration 2026-09-10
+
+- Выбран Contabo Object Storage EU: endpoint `https://eu2.contabostorage.com`,
+  region `default`, обязательный addressing style `path`.
+- Коммит `a243953` добавил S3 v4/path-style конфигурацию, закрытый env-шаблон,
+  runbook и утилиту `partner_library_s3.py` с командами `check`, `probe`, `upload`.
+- `check` проверяет bucket и запрещает публичную ACL. `probe` загружает случайный
+  маленький объект, получает его по 60-секундной подписанной ссылке и удаляет.
+  `upload` принимает только storage key с префиксом tenant и ставит private ACL.
+- Профильная регрессия после изменения: `103 passed`; compileall успешен.
+- Локальная Docker-сборка не выполнена: Docker Desktop на рабочей машине выключен.
+  Установка boto3 уже входит в `pyproject.toml`; образ проверить при staging build.
+- Website worktree и живой website staging не изменялись из-за параллельной
+  переделки меню. Синхронизация UI выполняется позже отдельным срезом.
+- Физический bucket пока не создан: в окружении нет Contabo API credentials или
+  S3 access/secret keys. Это ручное действие владельца аккаунта с оплатой услуги.
+
 ## Следующий шаг
 
-Оставшаяся часть блока 6 выполняется как контролируемый staging canary: выбрать
-приватный S3-compatible bucket, применить миграции к staging-БД, добавить новые
-env-переменные, создать три test referral active/grace/suspended, развернуть Core
-и сайт и проверить полный путь. Сначала только isolated edge listener
+Оставшаяся часть блока 6 выполняется как контролируемый staging canary: заказать
+минимальный Contabo Object Storage EU, создать private bucket, установить ключи,
+применить миграции к staging-БД, добавить новые env-переменные, создать три test
+referral active/grace/suspended, развернуть Core и проверить backend-путь. Сайт
+подключать после завершения параллельной переделки UI. Сначала только isolated edge listener
 `127.0.0.1:8443`; общий `:443` и production остаются заморожены.
 
 ## Пока не делать
