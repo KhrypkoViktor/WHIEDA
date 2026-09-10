@@ -14,11 +14,13 @@ from app.telegram.catalog_browse import (
     handle_callback_query,
     handle_catalog_products,
     handle_navigation_text,
+    handle_newcomer_panel,
     handle_open_calculator,
     render_catalog_page,
 )
 from app.telegram.delivery import (
     answer_callback_query,
+    configure_telegram_command_menu,
     deliver_structured_advisor_response,
     format_telegram_html,
     send_telegram_text,
@@ -42,6 +44,7 @@ from app.telegram.navigation import (
     parse_callback_data,
     product_action_question,
     resolve_menu_text_intent,
+    telegram_menu_commands,
 )
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.sequencer import reset_chat_sequencer_for_tests
@@ -137,14 +140,47 @@ def test_newcomer_panel_request_phrases():
     assert parse_start_token("/start elena") == "elena"
 
 
-def test_menu_has_six_stable_labels():
+@pytest.mark.asyncio
+async def test_newcomer_panel_removes_old_keyboard_before_inline_actions(
+    tenant,
+    whieda_bot_binding,
+):
+    with binding_context_scope(whieda_bot_binding):
+        with patch("app.telegram.catalog_browse.send_telegram_text", AsyncMock()) as deliver:
+            await handle_newcomer_panel(tenant, 42, trace_id="trace-menu")
+
+    assert deliver.await_count == 2
+    first, second = deliver.await_args_list
+    assert first.kwargs["reply_markup"] == {"remove_keyboard": True}
+    assert second.kwargs["reply_markup"]["inline_keyboard"]
+
+
+def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
     assert len(MENU_LABELS) == 6
     assert LABEL_PRODUCTS in MENU_LABELS
-    keyboard = main_menu_reply_keyboard()
-    assert len(keyboard["keyboard"]) == 6
-    nsp_keyboard = main_menu_reply_keyboard(include_calculator=False)
-    nsp_labels = [row[0]["text"] for row in nsp_keyboard["keyboard"]]
-    assert LABEL_CALCULATOR not in nsp_labels
+    assert main_menu_reply_keyboard() == {"remove_keyboard": True}
+    commands = telegram_menu_commands()
+    assert {item["command"] for item in commands} == {
+        "start",
+        "products",
+        "calculator",
+        "business",
+        "company",
+        "match",
+        "events",
+    }
+    nsp_commands = telegram_menu_commands(include_calculator=False)
+    assert "calculator" not in {item["command"] for item in nsp_commands}
+
+
+def test_standard_menu_commands_resolve_without_entering_advisor():
+    assert resolve_menu_text_intent("/products") == "nav_products"
+    assert resolve_menu_text_intent("/calculator@WHIEDA_bot") == "nav_calculator"
+    assert resolve_menu_text_intent("/business") == "nav_business"
+    assert resolve_menu_text_intent("/company") == "nav_company"
+    assert resolve_menu_text_intent("/match") == "nav_basket"
+    assert resolve_menu_text_intent("/events") == "nav_events"
+    assert resolve_menu_text_intent("/unknown") is None
 
 
 def test_catalog_keyboard_pagination_edges():
@@ -406,6 +442,44 @@ async def test_send_text_accepts_reply_markup():
         markup = main_menu_reply_keyboard()
         await send_telegram_text(chat_id="1", text="hi", bot_token="tok", reply_markup=markup)
     assert fake.last_json["reply_markup"] == markup
+
+
+@pytest.mark.asyncio
+async def test_configure_compact_telegram_command_menu():
+    response = MagicMock()
+    response.status_code = 200
+    response.text = '{"ok": true, "result": true}'
+    response.json.return_value = {"ok": True, "result": True}
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, json=None):
+            self.calls.append((url, json))
+            return response
+
+    fake = FakeClient()
+    commands = telegram_menu_commands()
+    with patch("app.telegram.delivery.httpx.AsyncClient", return_value=fake):
+        result = await configure_telegram_command_menu(
+            bot_token="secret-token",
+            commands=commands,
+        )
+
+    assert result == {"ok": True, "command_count": len(commands)}
+    assert [url.rsplit("/", 1)[-1] for url, _ in fake.calls] == [
+        "setMyCommands",
+        "setChatMenuButton",
+    ]
+    assert fake.calls[0][1] == {"commands": commands}
+    assert fake.calls[1][1] == {"menu_button": {"type": "commands"}}
 
 
 def test_telegram_html_keeps_approved_emphasis_and_escapes_other_tags():

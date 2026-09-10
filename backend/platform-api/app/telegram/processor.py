@@ -152,15 +152,6 @@ async def handle_advisor_query(
             reply_markup=inline
             or main_menu_reply_keyboard(include_calculator=include_calculator),
         )
-        if inline:
-            await send_telegram_text(
-                chat_id=str(msg.chat_id),
-                text="Разделы меню:",
-                bot_token=current_bot_binding().bot_token,
-                reply_markup=main_menu_reply_keyboard(
-                    include_calculator=include_calculator
-                ),
-            )
     elif mode and str(mode) not in {"", "fallback", "error"}:
         logger.warning(
             "telegram_response_not_delivered",
