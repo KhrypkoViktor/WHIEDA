@@ -185,6 +185,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_PARTNER_LIBRARY_S3_REGION",
     )
+    platform_partner_library_s3_addressing_style: Literal["auto", "path", "virtual"] = Field(
+        default="auto",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_S3_ADDRESSING_STYLE",
+    )
     platform_partner_library_signed_url_ttl_seconds: int = Field(
         default=300,
         ge=60,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import ModuleType
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
@@ -12,6 +14,7 @@ from app.partner_library.import_manifest import manifest_sha, normalize_manifest
 from app.partner_library.service import public_item
 from app.partner_library.storage import (
     LocalStorageBackend,
+    S3StorageBackend,
     _build_storage_backend,
     validate_storage_key,
 )
@@ -173,6 +176,61 @@ def test_local_storage_is_forbidden_outside_dev_and_test(tmp_path):
     )
     with pytest.raises(RuntimeError, match="only in dev/test"):
         _build_storage_backend(settings)
+
+
+def test_s3_storage_uses_v4_path_style_for_contabo():
+    client = Mock()
+    create_client = Mock(return_value=client)
+    boto3_module = ModuleType("boto3")
+    boto3_module.client = create_client
+    botocore_module = ModuleType("botocore")
+    config_module = ModuleType("botocore.config")
+
+    class FakeConfig:
+        def __init__(self, *, signature_version, s3):
+            self.signature_version = signature_version
+            self.s3 = s3
+
+    config_module.Config = FakeConfig
+    with patch.dict(
+        sys.modules,
+        {
+            "boto3": boto3_module,
+            "botocore": botocore_module,
+            "botocore.config": config_module,
+        },
+    ):
+        storage = S3StorageBackend(
+            bucket="wwc-private-library",
+            endpoint_url="https://eu2.contabostorage.com",
+            region_name="default",
+            addressing_style="path",
+        )
+    assert storage.client is client
+    kwargs = create_client.call_args.kwargs
+    assert kwargs["endpoint_url"] == "https://eu2.contabostorage.com"
+    assert kwargs["region_name"] == "default"
+    assert kwargs["config"].signature_version == "s3v4"
+    assert kwargs["config"].s3["addressing_style"] == "path"
+
+
+def test_s3_settings_are_forwarded_to_backend():
+    settings = Settings(
+        environment="staging",
+        platform_partner_library_storage_backend="s3",
+        platform_partner_library_s3_bucket="wwc-private-library",
+        platform_partner_library_s3_endpoint_url="https://eu2.contabostorage.com",
+        platform_partner_library_s3_region="default",
+        platform_partner_library_s3_addressing_style="path",
+    )
+    with patch("app.partner_library.storage.S3StorageBackend") as backend:
+        _build_storage_backend(settings)
+    backend.assert_called_once_with(
+        bucket="wwc-private-library",
+        endpoint_url="https://eu2.contabostorage.com",
+        region_name="default",
+        addressing_style="path",
+    )
 
 
 def test_manifest_is_tenant_scoped_and_sha_is_stable():
