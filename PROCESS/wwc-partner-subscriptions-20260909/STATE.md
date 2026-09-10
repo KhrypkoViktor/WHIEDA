@@ -1,9 +1,9 @@
 # STATE: wwc-partner-subscriptions-20260909
 
 **Обновлено:** 2026-09-10
-**Статус:** блоки 0-5 реализованы, локальная часть блока 6 и read-only preflight
-staging выполнены. Для MVP выбрано приватное файловое хранилище на Core VPS;
-покупка S3 больше не блокирует staging deploy. Website пока не синхронизировать.
+**Статус:** платёжный контур и контроль подписки локально готовы к финальной
+проверке перед staging. Курсы и библиотека оставлены заглушкой и исключены из
+ближайшего canary. Staging/production не изменялись. Website пока не синхронизировать.
 
 ## Источник задачи
 
@@ -244,9 +244,9 @@ binding, processor, navigation и route truth-table зелёные.
   Этот endpoint не менялся ни в одном блоке задачи.
 - Оба worktree после коммитов чистые.
 
-Живой staging canary не выполнялся. Для него ещё нужны: применение миграций к
-staging-БД, отдельные staging-секреты, тестовый private S3, deploy Core/сайта и
-read-only снимок живого `nginx -T` перед подключением isolated listener.
+Живой staging canary не выполнялся. Ближайший canary ограничен оплатами и
+Telegram-меню: миграция подписок, staging owner-secret, Core deploy и один
+контролируемый staging bot binding. Курсы, storage, сайт и nginx в него не входят.
 
 ## Read-only preflight staging 2026-09-10
 
@@ -306,18 +306,19 @@ read-only снимок живого `nginx -T` перед подключение
 
 ## Следующий шаг
 
-Оставшаяся часть блока 6 выполняется как контролируемый staging canary: создать
-приватный каталог на Core VPS, сгенерировать signing secret, применить миграции к
-staging-БД, добавить filesystem env, положить один тестовый файл, создать три test
-referral active/grace/suspended, развернуть только Core staging и проверить полный
-backend-путь. Website подключать после завершения параллельной переделки UI.
-Edge проверять сначала только на isolated listener `127.0.0.1:8443`; общий `:443`
-и production остаются заморожены.
+Сначала Виктор выполняет минимальный review по
+`backend/deploy/core/PAYMENTS_STAGING_REVIEW.md`. После прямого подтверждения
+выполняется ограниченный staging canary оплат: применить только миграцию подписок,
+установить owner-secret, развернуть Core staging, выдать стартовый доступ и
+проверить RUB/BYN, cancel/confirm/idempotency/status/due и чужой Telegram ID.
+Курсы, storage, website, общий nginx `:443` и production не трогать.
 
 ## Пока не делать
 
 - не применять SQL к shared staging/production;
 - не менять live nginx;
+- не разворачивать библиотеку курсов и файловое хранилище: пока это заглушка;
+- не синхронизировать текущую ветку с активно меняющимся website;
 - не подключать реальную оплату;
 - не слать Telegram-сообщения реальным партнёрам;
 - не смешивать этот diff с незакоммиченными изменениями root/website;
@@ -337,3 +338,19 @@ Edge проверять сначала только на isolated listener `127.
 Указанный старым каноном `WWC_PERSONAL_SITE_SUBSCRIPTION_AND_ACCESS_TZ_V1_2026-08-29.md`
 отсутствует. Контракт текущей задачи находится в `TASK.md` и не требует восстановления
 старого файла.
+
+## Финальный локальный срез 2026-09-10
+
+- Коммит `53db8ad` заменил постоянную reply-клавиатуру на стандартное Telegram
+  command menu. `/start` удаляет старую большую клавиатуру; `/products`,
+  `/calculator`, `/business`, `/company`, `/match`, `/events` идут в существующие
+  детерминированные обработчики, а не в advisor.
+- Добавлен owner-safe скрипт `configure_telegram_menu.py`: он получает bot token
+  через существующий secret-ref, вызывает `setMyCommands` и `setChatMenuButton` и
+  не печатает токен.
+- Профиль оплат, подписок, доступа, edge и Telegram: `151 passed`; compileall и
+  `git diff --check` успешны.
+- Текущий `staging.wwc.best` просмотрен read-only на desktop/mobile. Новый header,
+  мобильный burger и боковое меню уже являются UI-каноном; будущий статус подписки
+  и закрытые пункты встраиваются в него отдельной синхронизацией, не в старый header.
+- Staging не выкатывался по прямому указанию Виктора.
