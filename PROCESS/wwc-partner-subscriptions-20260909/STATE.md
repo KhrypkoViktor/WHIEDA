@@ -1,9 +1,9 @@
 # STATE: wwc-partner-subscriptions-20260909
 
-**Обновлено:** 2026-09-10
-**Статус:** платёжный контур и контроль подписки локально готовы к финальной
-проверке перед staging. Курсы и библиотека оставлены заглушкой и исключены из
-ближайшего canary. Staging/production не изменялись. Website пока не синхронизировать.
+**Обновлено:** 2026-09-11
+**Статус:** платёжный контур развёрнут на Core staging. Курсы и библиотека
+оставлены заглушкой. Website и production не изменялись; UI сайта пока не
+синхронизировать.
 
 ## Источник задачи
 
@@ -244,9 +244,33 @@ binding, processor, navigation и route truth-table зелёные.
   Этот endpoint не менялся ни в одном блоке задачи.
 - Оба worktree после коммитов чистые.
 
-Живой staging canary не выполнялся. Ближайший canary ограничен оплатами и
-Telegram-меню: миграция подписок, staging owner-secret, Core deploy и один
-контролируемый staging bot binding. Курсы, storage, сайт и nginx в него не входят.
+## Staging canary 2026-09-11
+
+- Развёрнут Core commit `b8953f7` только на
+  `/opt/whieda-platform-staging`; production не изменялся.
+- Применена добавочная миграция `platform_partner_subscriptions_v1.sql`.
+- В staging созданы 13 подписок: 12 проверенных персональных сайтов и отдельный
+  технический `dev`. Всем выставлен `paid_until = 22.09.2026 00:00 МСК`, то есть
+  доступ по 21 сентября включительно и grace по 24 сентября включительно.
+- Служебный профиль `nnm` в seed не попал. Алиасы `onlineelena -> elena` и
+  `olga-samtsova -> samtsova` сверены до записи.
+- `PLATFORM_BILLING_OWNER_TELEGRAM_ID` установлен только в staging и указывает
+  на Виктора. Подтверждать ручные платежи может только этот numeric Telegram ID.
+- У `@wwc_admin_staging_bot` установлен компактный command menu. Старую большую
+  reply-клавиатуру бот удаляет следующим своим сообщением.
+- Отправлено одно тестовое уведомление для `dev` в чат Виктора, Telegram
+  подтвердил `message_id = 38`. Текст построен из staging-БД; для страны РБ
+  показан только белорусский способ оплаты.
+- Единый операторский реестр создан первым листом `Partner_Subscriptions` в
+  Google Sheet `1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4`. Есть поля страны,
+  chat ID, признака `/start`, срока, grace, уведомлений и подтверждения платежа.
+- Health после финального деплоя: `200`. Последняя резервная копия перед ним:
+  `/opt/whieda-platform-staging/backups/partner-subscriptions-20260910T210022Z.tar.gz`.
+- Проверки шаблона, Telegram billing, подписок и меню: `87 passed`. Локальный
+  `ruff` отсутствует; тесты и `git diff --check` прошли.
+
+В canary не входят website, nginx edge-redirect, повторные цены в UI, курсы,
+storage и рассылка реальным партнёрам.
 
 ## Read-only preflight staging 2026-09-10
 
@@ -306,21 +330,23 @@ Telegram-меню: миграция подписок, staging owner-secret, Core
 
 ## Следующий шаг
 
-Сначала Виктор выполняет минимальный review по
-`backend/deploy/core/PAYMENTS_STAGING_REVIEW.md`. После прямого подтверждения
-выполняется ограниченный staging canary оплат: применить только миграцию подписок,
-установить owner-secret, развернуть Core staging, выдать стартовый доступ и
-проверить RUB/BYN, cancel/confirm/idempotency/status/due и чужой Telegram ID.
-Курсы, storage, website, общий nginx `:443` и production не трогать.
+1. Виктор проставляет `РБ`/`РФ` на листе `Partner_Subscriptions`.
+2. До массовой рассылки сверить неизвестные chat ID и признак `/start`; партнёрам
+   без chat ID отправить личную просьбу открыть `@wwc_admin_staging_bot` и нажать
+   `/start`.
+3. На `dev` проверить команды `статус ref:dev`, RUB/BYN preview, cancel/confirm,
+   повторное подтверждение и отказ для чужого Telegram ID.
+4. После приёмки отдельно синхронизировать новый website UI с Core staging.
+5. Edge redirect, массовую рассылку и production выпускать отдельным решением.
 
 ## Пока не делать
 
-- не применять SQL к shared staging/production;
+- не применять SQL к production;
 - не менять live nginx;
 - не разворачивать библиотеку курсов и файловое хранилище: пока это заглушка;
 - не синхронизировать текущую ветку с активно меняющимся website;
 - не подключать реальную оплату;
-- не слать Telegram-сообщения реальным партнёрам;
+- не слать Telegram-сообщения реальным партнёрам до заполнения стран и chat ID;
 - не смешивать этот diff с незакоммиченными изменениями root/website;
 - не чинить существующий дрейф `postgres/sql` и apply-скрипта — это чужая задача;
 - не создавать SQL-колонку `subdomain`.
