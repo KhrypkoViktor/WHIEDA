@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from app.db import fetch_all, fetch_one, tenant_connection
-from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
+from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF, REF_TO_ISSUED_SUBDOMAIN
 
 SubscriptionState = Literal["no_subscription", "active", "grace", "suspended"]
 
@@ -803,7 +803,23 @@ def build_seed_manifest(
     cutoff = _as_utc(paid_until)
     partners: list[dict[str, Any]] = []
     seen_hosts: dict[str, str] = {}
+    issued_refs = frozenset(ISSUED_SUBDOMAIN_TO_REF.values())
     for row in rows:
+        profile = row.get("public_profile")
+        if isinstance(profile, str):
+            try:
+                profile = json.loads(profile)
+            except json.JSONDecodeError:
+                profile = {}
+        profile = profile if isinstance(profile, dict) else {}
+        ref_code = str(row.get("ref_code") or "").strip().lower()
+        is_personal_site = (
+            profile.get("site_type") == "subdomain_site"
+            or profile.get("page_mode") == "subdomain_site"
+            or ref_code in issued_refs
+        )
+        if not is_personal_site:
+            continue
         try:
             host = resolve_partner_hostname(row["ref_code"], row.get("public_profile"))
         except ReservedPartnerHostError:

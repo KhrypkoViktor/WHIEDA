@@ -112,7 +112,7 @@ def test_seed_manifest_is_stable_and_never_shortens_existing_access():
         {
             "tenant_id": "whieda",
             "ref_code": "fedorov",
-            "public_profile": {},
+            "public_profile": {"site_type": "subdomain_site"},
             "paid_until": dt(2026, 12, 1),
         },
         {
@@ -127,6 +127,26 @@ def test_seed_manifest_is_stable_and_never_shortens_existing_access():
     assert first == second
     assert len(first["partners"]) == 1
     assert first["partners"][0]["new_paid_until"] == dt(2026, 12, 1).isoformat()
+
+
+def test_seed_manifest_excludes_platform_root_and_keeps_issued_aliases():
+    cutoff = dt(2026, 9, 21, 21)
+    rows = [
+        {
+            "tenant_id": "whieda",
+            "ref_code": "nnm",
+            "public_profile": {"site_type": "platform_root"},
+            "paid_until": None,
+        },
+        {
+            "tenant_id": "whieda",
+            "ref_code": "onlineelena",
+            "public_profile": {"site_type": "ref_query"},
+            "paid_until": None,
+        },
+    ]
+    manifest = build_seed_manifest("whieda", rows, paid_until=cutoff)
+    assert [item["hostname"] for item in manifest["partners"]] == ["elena.wwc.best"]
 
 
 def test_subscription_migration_has_strict_period_rls_and_tenant_idempotency():
