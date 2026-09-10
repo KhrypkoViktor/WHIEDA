@@ -31,7 +31,8 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
         paid_until = partner.get("paid_until")
         if paid_until is None:
             raise RuntimeError("partner has no paid_until date")
-        name = args.name or partner.get("display_name") or partner["ref_code"]
+        display_name = str(partner.get("display_name") or partner["ref_code"]).strip()
+        name = args.name or display_name.split(maxsplit=1)[0]
         text = build_partner_payment_reminder(
             recipient_name=name,
             hostname=partner["hostname"],
