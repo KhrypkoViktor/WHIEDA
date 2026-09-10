@@ -37,13 +37,13 @@ logger = logging.getLogger(__name__)
 MOSCOW = ZoneInfo("Europe/Moscow")
 _IDENTIFIER = r"(?:@[A-Za-z0-9_]{1,32}|ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62})"
 _PAY_RE = re.compile(
-    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|BYN)$",
+    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|W\$)$",
     re.IGNORECASE,
 )
 _STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
 _DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(r"^billing:(confirm|cancel):([0-9a-f]{32})$")
-_PAY_USAGE = "Формат: оплата @username 3000 RUB или оплата ref:code 105,50 BYN"
+_PAY_USAGE = "Формат: оплата @username 3000 RUB или оплата ref:code 30 W$"
 _STATUS_USAGE = "Формат: статус @username или статус ref:code"
 
 
@@ -69,6 +69,8 @@ def parse_billing_command(text: str) -> BillingCommand:
     if pay:
         identifier, raw_amount, currency = pay.groups()
         currency = currency.upper()
+        if currency == "W$":
+            currency = "WUSD"
         if currency == "RUB" and ("." in raw_amount or "," in raw_amount):
             raise SubscriptionError(_PAY_USAGE)
         try:
@@ -108,9 +110,10 @@ def _date(value: datetime | None) -> str:
 def _amount(amount_minor: int, currency: str) -> str:
     major, minor = divmod(int(amount_minor), 100)
     grouped = f"{major:,}".replace(",", " ")
+    display_currency = "W$" if currency == "WUSD" else currency
     if minor:
-        return f"{grouped},{minor:02d} {currency}"
-    return f"{grouped} {currency}"
+        return f"{grouped},{minor:02d} {display_currency}"
+    return f"{grouped} {display_currency}"
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None) -> None:

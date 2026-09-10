@@ -9,6 +9,7 @@ import pytest
 from app.settings import get_settings
 from app.subscriptions.service import SubscriptionError
 from app.telegram.billing import (
+    _amount,
     _intent_keyboard,
     is_billing_command_candidate,
     parse_billing_command,
@@ -59,8 +60,10 @@ def test_parse_billing_commands_and_minor_units():
         300000,
         "RUB",
     )
-    byn = parse_billing_command("/pay ref:fedorov 105,50 byn")
-    assert (byn.amount_minor, byn.currency) == (10550, "BYN")
+    whieda_dollars = parse_billing_command("/pay ref:fedorov 30 W$")
+    assert (whieda_dollars.amount_minor, whieda_dollars.currency) == (3000, "WUSD")
+    canonical_alias = parse_billing_command("/pay ref:fedorov 30,50 wusd")
+    assert (canonical_alias.amount_minor, canonical_alias.currency) == (3050, "WUSD")
     assert parse_billing_command("/status ref:fedorov").kind == "status"
     assert parse_billing_command("/due").kind == "due"
 
@@ -71,7 +74,8 @@ def test_parse_billing_commands_and_minor_units():
         "оплата @name 10,50 RUB",
         "оплата @name 10 USD",
         "оплата @name 0 RUB",
-        "оплата @name 10 BYN extra",
+        "оплата @name 10 BYN",
+        "оплата @name 10 W$ extra",
         "статус",
     ],
 )
@@ -84,6 +88,10 @@ def test_billing_candidate_does_not_capture_free_text():
     assert is_billing_command_candidate("оплата @name 10 RUB")
     assert not is_billing_command_candidate("расскажи про оплату и сайт")
     assert not is_billing_command_candidate("оплатапотом @name 10 RUB")
+
+
+def test_internal_whieda_dollar_code_is_displayed_as_w_dollar():
+    assert _amount(3000, "WUSD") == "30 W$"
 
 
 def test_callback_payload_fits_telegram_limit():
