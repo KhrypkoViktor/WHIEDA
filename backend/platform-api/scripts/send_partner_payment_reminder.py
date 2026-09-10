@@ -53,6 +53,7 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                 chat_id=str(args.chat_id),
                 text=text,
                 bot_token=binding.bot_token,
+                reply_markup={"remove_keyboard": True},
             )
             if not delivery.get("ok"):
                 raise RuntimeError("Telegram rejected the reminder")
