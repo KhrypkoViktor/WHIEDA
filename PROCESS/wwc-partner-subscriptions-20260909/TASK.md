@@ -922,3 +922,18 @@ Shared staging, production webhook, реальные Telegram-сообщения
   коммит `44789f9` добавил его регрессионный тест, `6 passed`.
 - Для полного canary отсутствует один внешний ресурс: приватный S3-compatible
   bucket с credentials. Ни staging, ни production во время preflight не менялись.
+
+### 25.10. Выбор и подготовка S3 2026-09-10
+
+- Провайдер: Contabo Object Storage EU. Endpoint
+  `https://eu2.contabostorage.com`, region `default`, addressing style `path`.
+- Код подключения, env-шаблон, проверка private ACL, write/read/delete probe и
+  загрузчик материалов добавлены коммитом `a243953`.
+- Профильный набор подписок, content access, библиотеки, edge и nginx:
+  `103 passed`; compileall успешен.
+- Реальный bucket и credentials пока отсутствуют. Заказ минимального Object
+  Storage и создание private bucket выполняет владелец Contabo-аккаунта, потому
+  что это платная внешняя операция. После появления ключей исполнитель запускает
+  `check` и `probe`, не выводя ключи в лог.
+- Website не менять до завершения активной параллельной переработки его меню.
+  Backend/S3 разворачивать независимо; UI синхронизировать отдельным срезом.
