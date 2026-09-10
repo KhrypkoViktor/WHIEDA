@@ -110,9 +110,11 @@ class S3StorageBackend:
         bucket: str,
         endpoint_url: str | None,
         region_name: str | None,
+        addressing_style: str = "auto",
     ) -> None:
         try:
             import boto3
+            from botocore.config import Config
         except ImportError as exc:
             raise RuntimeError("boto3 is required for partner library S3 storage") from exc
         self.bucket = bucket
@@ -120,6 +122,10 @@ class S3StorageBackend:
             "s3",
             endpoint_url=endpoint_url,
             region_name=region_name,
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": addressing_style},
+            ),
         )
 
     def exists(self, storage_key: str) -> bool:
@@ -162,6 +168,7 @@ def _build_storage_backend(settings: Settings) -> StorageBackend:
             bucket=settings.platform_partner_library_s3_bucket,
             endpoint_url=settings.platform_partner_library_s3_endpoint_url,
             region_name=settings.platform_partner_library_s3_region,
+            addressing_style=settings.platform_partner_library_s3_addressing_style,
         )
     if settings.environment.lower() not in {"development", "dev", "test", "testing", "local"}:
         raise RuntimeError("local partner library storage is allowed only in dev/test")
