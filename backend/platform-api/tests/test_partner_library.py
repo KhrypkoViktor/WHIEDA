@@ -355,5 +355,7 @@ def test_partner_library_migration_is_registered_after_subscriptions():
         root / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
     ).read_text(encoding="utf-8")
     assert apply_script.index("platform_partner_subscriptions_v1.sql") < apply_script.index(
+        "platform_partner_subscription_currency_v2.sql"
+    ) < apply_script.index(
         "platform_partner_library_v1.sql"
     )

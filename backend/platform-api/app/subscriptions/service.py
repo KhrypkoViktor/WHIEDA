@@ -141,8 +141,8 @@ def _validate_payment_input(
     if isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
         raise SubscriptionError("amount_minor must be a positive integer")
     normalized_currency = str(currency or "").strip().upper()
-    if normalized_currency not in {"RUB", "BYN"}:
-        raise SubscriptionError("currency must be RUB or BYN")
+    if normalized_currency not in {"RUB", "WUSD"}:
+        raise SubscriptionError("currency must be RUB or WUSD")
     for name, value in (
         ("telegram_chat_id", telegram_chat_id),
         ("telegram_message_id", telegram_message_id),
