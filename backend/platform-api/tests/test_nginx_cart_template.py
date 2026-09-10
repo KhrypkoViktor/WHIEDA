@@ -38,6 +38,16 @@ def test_repo_template_has_content_access_location():
     assert ":5678" not in block.split("location", 1)[0]
 
 
+def test_repo_template_has_partner_library_location():
+    text = CONF.read_text(encoding="utf-8")
+    assert text.count("location ^~ /api/v1/partner-library") == 1
+    block = text.split("location ^~ /api/v1/partner-library", 1)[1].split("location", 1)[0]
+    assert "whieda-platform/api/v1/partner-library" in block
+    assert "limit_except GET" in block
+    assert "X-Forwarded-Host wwc.best" in block
+    assert ":5678" not in block
+
+
 def test_repo_template_has_theme_access_location():
     text = CONF.read_text(encoding="utf-8")
     assert text.count("location ^~ /api/v1/theme-access") == 1
