@@ -11,6 +11,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from app.settings import get_settings
+from app.referral_bonus.service import referral_payment_notification_context
 from app.subscriptions.service import (
     GRACE_PERIOD,
     PartnerIdentityAmbiguousError,
@@ -58,6 +59,62 @@ class BillingCommand:
 
 def _first_token(text: str) -> str:
     return str(text or "").strip().split(maxsplit=1)[0].lower()
+
+
+def _points(value: int) -> str:
+    return f"{int(value):,}".replace(",", " ")
+
+
+async def _notify_payment_participants(payment: dict[str, Any]) -> None:
+    bonus = payment.get("referral_bonus") or {}
+    context = await referral_payment_notification_context(
+        str(payment["tenant_id"]),
+        ref_code=str(payment["ref_code"]),
+        inviter_actor_id=str(bonus["actor_id"]) if bonus.get("actor_id") else None,
+    )
+    binding = current_bot_binding()
+    customer = context.get("customer") or {}
+    customer_chat = str(customer.get("telegram_chat_id") or "").strip()
+    if customer_chat:
+        period_end = payment["period_end"]
+        remaining = max(0, (period_end.date() - datetime.now(timezone.utc).date()).days)
+        await send_telegram_text(
+            chat_id=customer_chat,
+            bot_token=binding.bot_token,
+            text="\n".join(
+                [
+                    "Оплата подтверждена.",
+                    f"Сайт: {context.get('site_url') or 'https://wwc.best/'}",
+                    f"Доступ до: {_date(period_end)}. Осталось дней: {remaining}.",
+                    "Личный кабинет: /cabinet",
+                ]
+            ),
+        )
+    inviter = context.get("inviter") or {}
+    inviter_chat = str(inviter.get("telegram_chat_id") or "").strip()
+    if inviter_chat and bonus and not bonus.get("idempotent"):
+        auto = bonus.get("auto_redemption") or {}
+        lines = [
+            f"{customer.get('display_name') or payment['ref_code']} подключился.",
+            f"Начислено: +{_points(int(bonus['amount_minor']))} баллов.",
+        ]
+        balance = bonus.get("balance_points")
+        if balance is not None:
+            lines.append(f"Баланс: {_points(int(balance))} баллов.")
+        if int(auto.get("redeemed_blocks") or 0) > 0:
+            lines.extend(
+                [
+                    f"Автоматически списано: {_points(int(auto['spent_points']))} баллов.",
+                    f"Ваш сайт продлён ещё на {int(auto['access_months'])} мес.",
+                    f"Осталось дней: {int(auto['days_remaining'])}.",
+                ]
+            )
+        lines.append("Личный кабинет: /cabinet")
+        await send_telegram_text(
+            chat_id=inviter_chat,
+            bot_token=binding.bot_token,
+            text="\n".join(lines),
+        )
 
 
 def is_billing_command_candidate(text: str) -> bool:
@@ -304,6 +361,14 @@ async def try_handle_billing_callback(
             telegram_chat_id=callback.chat_id,
             telegram_user_id=callback.user_id,
         )
+        if not payment.get("idempotent"):
+            try:
+                await _notify_payment_participants(payment)
+            except Exception:
+                logger.exception(
+                    "telegram_billing_participant_notification_failed",
+                    extra={"trace_id": trace_id, "payment_id": str(payment.get("payment_id"))},
+                )
         await _deliver(
             callback.chat_id,
             "\n".join(

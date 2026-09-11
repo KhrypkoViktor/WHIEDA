@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import secrets
 import uuid
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from app.db import fetch_one, tenant_connection
+from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
 
 
 REFERRAL_START_PREFIX = "ref_"
@@ -229,7 +231,41 @@ async def referral_dashboard(
             """,
             (tenant_id,),
         )
+        site = await fetch_one(
+            conn,
+            """
+            select rp.ref_code, rp.public_profile, ps.paid_until,
+                   partner_subscription_state(ps.paid_until, now()) as subscription_status,
+                   now() as current_time
+            from referral_profiles rp
+            left join partner_subscriptions ps
+              on ps.tenant_id = rp.tenant_id and ps.ref_code = rp.ref_code
+            where rp.tenant_id = %s and rp.owner_id = %s and rp.enabled = true
+            order by rp.ref_code
+            limit 1
+            """,
+            (tenant_id, actor_id),
+        )
     amount_minor = int((balance or {}).get("amount_minor") or 0)
+    site_info: dict[str, Any] | None = None
+    if site:
+        profile = site.get("public_profile") if isinstance(site.get("public_profile"), dict) else {}
+        ref_code = str(site["ref_code"])
+        subdomain = str(
+            profile.get("subdomain") or REF_TO_ISSUED_SUBDOMAIN.get(ref_code) or ref_code
+        ).strip().lower()
+        paid_until = site.get("paid_until")
+        current_time = site.get("current_time")
+        days_remaining = 0
+        if paid_until and current_time:
+            days_remaining = max(0, math.ceil((paid_until - current_time).total_seconds() / 86_400))
+        site_info = {
+            "ref_code": ref_code,
+            "url": f"https://{subdomain}.wwc.best/",
+            "paid_until": paid_until,
+            "subscription_status": str(site.get("subscription_status") or "no_subscription"),
+            "days_remaining": days_remaining,
+        }
     return {
         "actor_id": actor_id,
         "balance_wusd_minor": amount_minor,
@@ -237,6 +273,168 @@ async def referral_dashboard(
         "paid_count": int((counts or {}).get("paid_count") or 0),
         "history": list((history or {}).get("entries") or []),
         "plans": list((plans or {}).get("items") or []),
+        "site": site_info,
+    }
+
+
+async def referral_payment_notification_context(
+    tenant_id: str,
+    *,
+    ref_code: str,
+    inviter_actor_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve Telegram recipients for post-payment notifications."""
+    async with tenant_connection(tenant_id) as conn:
+        customer = await fetch_one(
+            conn,
+            """
+            select la.actor_id, la.display_name, la.telegram_chat_id, rp.public_profile
+            from referral_profiles rp
+            join lead_actors la
+              on la.tenant_id = rp.tenant_id and la.actor_id = rp.owner_id
+            where rp.tenant_id = %s and rp.ref_code = %s
+            limit 1
+            """,
+            (tenant_id, ref_code),
+        )
+        inviter = None
+        if inviter_actor_id:
+            inviter = await fetch_one(
+                conn,
+                """
+                select actor_id, display_name, telegram_chat_id
+                from lead_actors
+                where tenant_id = %s and actor_id = %s and active = true
+                limit 1
+                """,
+                (tenant_id, inviter_actor_id),
+            )
+    result: dict[str, Any] = {"customer": customer, "inviter": inviter}
+    if customer:
+        profile = customer.get("public_profile") if isinstance(customer.get("public_profile"), dict) else {}
+        subdomain = str(
+            profile.get("subdomain") or REF_TO_ISSUED_SUBDOMAIN.get(ref_code) or ref_code
+        ).strip().lower()
+        result["site_url"] = f"https://{subdomain}.wwc.best/"
+    return result
+
+
+async def _auto_redeem_platform_points(
+    conn: Any,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    source_payment_id: str,
+) -> dict[str, Any] | None:
+    """Spend every complete three-month points block and extend the owner's site."""
+    await fetch_one(
+        conn,
+        "select pg_advisory_xact_lock(hashtext(%s)) as locked",
+        (f"bonus:{tenant_id}:{actor_id}",),
+    )
+    plan = await fetch_one(
+        conn,
+        """
+        select plan_code, access_months, price_wusd_minor
+        from partner_subscription_plans
+        where tenant_id = %s and product_code = 'platform_subscription'
+          and access_months = 3 and active = true
+          and valid_from <= now() and (valid_until is null or valid_until > now())
+        order by valid_from desc limit 1
+        """,
+        (tenant_id,),
+    )
+    profile = await fetch_one(
+        conn,
+        """
+        select ref_code
+        from referral_profiles
+        where tenant_id = %s and owner_id = %s and enabled = true
+        order by ref_code
+        limit 1
+        """,
+        (tenant_id, actor_id),
+    )
+    if not plan or not profile:
+        return None
+    balance_row = await fetch_one(
+        conn,
+        """
+        select coalesce(sum(amount_minor), 0) as amount_minor
+        from partner_bonus_ledger
+        where tenant_id = %s and actor_id = %s and currency = 'WUSD'
+        """,
+        (tenant_id, actor_id),
+    )
+    balance = int((balance_row or {}).get("amount_minor") or 0)
+    cost = int(plan["price_wusd_minor"])
+    blocks = balance // cost
+    if blocks < 1:
+        return {"redeemed_blocks": 0, "balance_points": balance}
+
+    subscription = await fetch_one(
+        conn,
+        """
+        insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+        values (%s, %s, null)
+        on conflict (tenant_id, ref_code) do update
+          set updated_at = partner_subscriptions.updated_at
+        returning paid_until
+        """,
+        (tenant_id, profile["ref_code"]),
+    )
+    from app.subscriptions.service import add_calendar_months, subscription_state
+
+    now = _utc_now()
+    previous = subscription.get("paid_until") if subscription else None
+    period_start = previous if previous and subscription_state(previous, at=now) in {"active", "grace"} else now
+    access_months = int(plan["access_months"]) * blocks
+    period_end = add_calendar_months(period_start, access_months)
+    spent = cost * blocks
+    entry = await fetch_one(
+        conn,
+        """
+        insert into partner_bonus_ledger (
+          tenant_id, actor_id, entry_type, amount_minor, currency, product_code,
+          source_payment_id, idempotency_key, rule_snapshot, description
+        ) values (%s, %s, 'debit', %s, 'WUSD', 'platform_subscription',
+                  %s::uuid, %s, %s::jsonb, %s)
+        on conflict do nothing
+        returning entry_id
+        """,
+        (
+            tenant_id,
+            actor_id,
+            -spent,
+            source_payment_id,
+            f"payment:{source_payment_id}:auto_redeem",
+            json.dumps({
+                "plan_code": str(plan["plan_code"]),
+                "access_months": access_months,
+                "blocks": blocks,
+                "cost_points": spent,
+            }),
+            f"Automatic points redemption: {blocks} x {plan['plan_code']}",
+        ),
+    )
+    if not entry:
+        return None
+    await fetch_one(
+        conn,
+        """
+        update partner_subscriptions set paid_until = %s, updated_at = now()
+        where tenant_id = %s and ref_code = %s
+        returning paid_until
+        """,
+        (period_end, tenant_id, profile["ref_code"]),
+    )
+    return {
+        "redeemed_blocks": blocks,
+        "access_months": access_months,
+        "spent_points": spent,
+        "balance_points": balance - spent,
+        "paid_until": period_end,
+        "days_remaining": max(0, math.ceil((period_end - now).total_seconds() / 86_400)),
     }
 
 
@@ -973,7 +1171,23 @@ async def award_referral_bonus_for_payment(
     )
     kind = "first" if is_first_payment else "renewal"
     if inserted:
-        return {**inserted, "idempotent": False, "payment_kind": kind}
+        auto_redemption = await _auto_redeem_platform_points(
+            conn,
+            tenant_id=tenant_id,
+            actor_id=str(inserted["actor_id"]),
+            source_payment_id=payment_id,
+        )
+        return {
+            **inserted,
+            "idempotent": False,
+            "payment_kind": kind,
+            "balance_points": (
+                int(auto_redemption["balance_points"])
+                if auto_redemption is not None
+                else None
+            ),
+            "auto_redemption": auto_redemption,
+        }
     existing = await fetch_one(
         conn,
         """

@@ -12,6 +12,10 @@ from app.identity.service import exchange_telegram_link_token
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.telegram.referral_bonus import try_handle_referral_callback, try_handle_referral_message
+from app.telegram.site_requests import (
+    try_handle_site_request_callback,
+    try_handle_site_request_message,
+)
 from app.telegram.referral_admin import (
     try_handle_referral_admin_callback,
     try_handle_referral_admin_message,
@@ -232,6 +236,11 @@ async def _process_core_telegram_update_scoped(
     if callback:
         if callback.chat_type != "private":
             return {"ok": True, "route": "ignored_group_callback"}
+        site_request_callback_result = await try_handle_site_request_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if site_request_callback_result is not None:
+            return site_request_callback_result
         referral_callback_result = await try_handle_referral_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -245,6 +254,13 @@ async def _process_core_telegram_update_scoped(
 
     if not should_process_telegram_message(msg, current_bot_binding().bot_username):
         return {"ok": True, "route": "ignored_group_message"}
+
+    site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
+    if site_request_result is not None:
+        return site_request_result
+
+    if not msg.text:
+        return {"ok": True, "route": "ignored_media"}
 
     billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
     if billing_result is not None:

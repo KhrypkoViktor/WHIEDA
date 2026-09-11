@@ -85,6 +85,29 @@ async def send_telegram_photo(
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
+async def copy_telegram_message(
+    *,
+    chat_id: str,
+    from_chat_id: str,
+    message_id: int,
+    bot_token: str,
+    timeout_sec: float = 10.0,
+) -> dict[str, Any]:
+    """Copy a proof message to the administrator without exposing a download URL."""
+    url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
+    payload = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.post(url, json=payload)
+    data = response.json() if response.text else {}
+    if response.status_code >= 400 or not data.get("ok"):
+        logger.warning(
+            "telegram_copy_message_failed",
+            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+        )
+        return {"ok": False, "status_code": response.status_code, "detail": data}
+    return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
 async def answer_callback_query(
     *,
     callback_query_id: str,
