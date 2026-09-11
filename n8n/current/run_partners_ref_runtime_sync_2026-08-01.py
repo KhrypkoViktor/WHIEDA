@@ -1,12 +1,10 @@
-"""Build and apply Partners_Ref sheet -> lead_actors / referral_profiles runtime sync.
+"""Build and apply Partner_Subscriptions -> lead_actors / referral_profiles sync.
 
-LEGACY SOURCE (noted 2026-09-11): the owner now maintains partners on the
-`Partner_Subscriptions` tab (gid 1209283579) and no longer updates
-`Partners_Ref` (gid 1733124410, read below). Partners that exist only on the new
-tab never reach runtime through this script. Re-pointing it is a separate task:
-the columns differ. Do not fill telegram_chat_id by hand here — Core links it
-on the partner's /start (app/leads/actor_link.py); the ON CONFLICT below keeps
-an existing chat id when the sheet cell is empty.
+`Partner_Subscriptions` (gid 1209283579) is the sole operational registry.
+The old `Partners_Ref` tab is historical and must not be read by runtime.
+The sheet stores a Telegram handle, not a durable numeric chat id. Core fills
+the latter after the partner writes to the bot; the SQL below never clears an
+existing bound chat id when the sheet cell is blank.
 """
 
 from __future__ import annotations
@@ -19,11 +17,14 @@ import textwrap
 import uuid
 from pathlib import Path
 
+import paramiko
 import requests
+
+from whieda_runtime_env import ssh_config
 
 BASE = Path(__file__).resolve().parent
 SHEET_ID = "1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4"
-SHEET_GID = 1733124410
+SHEET_GID = 1209283579
 TENANT_ID = "whieda"
 
 
@@ -50,41 +51,57 @@ def display_mode(page_mode: str) -> str:
     return "anonymous" if page_mode.strip().lower() in {"anonymous_ref", "anonymous"} else "named"
 
 
+def country_code(value: str | None) -> str:
+    normalized = str(value or "").strip().upper()
+    return {"РБ": "BY", "BY": "BY", "РФ": "RU", "RU": "RU"}.get(normalized, "GLOBAL")
+
+
+def telegram_handle(value: str | None) -> str | None:
+    handle = str(value or "").strip()
+    if not handle:
+        return None
+    if "t.me/" in handle:
+        handle = handle.split("t.me/", 1)[1].split("?", 1)[0].split("/", 1)[0]
+    return handle.strip().lstrip("@") or None
+
+
 def fetch_partners_rows() -> list[dict[str, str]]:
     url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=tsv&gid={SHEET_GID}"
     text = requests.get(url, timeout=30).content.decode("utf-8")
-    return [row for row in csv.DictReader(io.StringIO(text), delimiter="\t") if (row.get("partner_id") or "").strip()]
+    return [row for row in csv.DictReader(io.StringIO(text), delimiter="\t") if (row.get("ref_code") or "").strip()]
 
 
 def build_sync_sql(rows: list[dict[str, str]]) -> str:
     actor_values: list[str] = []
+    chat_id_values: list[str] = []
     role_values: list[str] = []
     profile_values: list[str] = []
 
     for row in rows:
-        actor_id = (row.get("partner_id") or "").strip()
-        display_name = (row.get("display_name") or actor_id).strip()
-        owner_actor_id = (row.get("owner_actor_id") or actor_id).strip()
-        site_type = (row.get("site_type") or "").strip().lower()
-        if owner_actor_id != actor_id or site_type == "platform_root":
-            telegram_chat_id = None
-            telegram_username = None
-        else:
-            telegram_username = (row.get("telegram_username") or "").strip().lstrip("@") or None
-            telegram_chat_id = (row.get("telegram_chat_id") or "").strip() or None
-        active = sql_bool(row.get("active"))
+        actor_id = (row.get("ref_code") or "").strip()
+        display_name = (row.get("Имя") or actor_id).strip()
+        owner_actor_id = actor_id
+        site_type = "subdomain_site"
+        telegram_username = telegram_handle(row.get("Telegram"))
+        telegram_chat_id = (row.get("telegram_chat_id") or "").strip() or None
+        status = (row.get("Статус") or "").strip().lower()
+        active = "false" if status in {"архив", "отключен", "отключён", "inactive", "disabled"} else "true"
         actor_values.append(
             f"({sql_literal(actor_id)}, {sql_literal(TENANT_ID)}, {sql_literal(display_name)}, "
-            f"{sql_literal(telegram_chat_id)}, {sql_literal(telegram_username)}, {active})"
+            f"NULL, {sql_literal(telegram_username)}, {active})"
         )
+        if telegram_chat_id:
+            chat_id_values.append(
+                f"({sql_literal(actor_id)}, {sql_literal(TENANT_ID)}, {sql_literal(telegram_chat_id)})"
+            )
 
-        ref_code = (row.get("ref_code") or "").strip()
-        page_mode = (row.get("page_mode") or "standard_ref").strip()
-        plan_status = (row.get("plan_status") or "").strip().lower()
-        enabled = active == "true" and plan_status in {"", "active"}
+        ref_code = actor_id
+        page_mode = "subdomain_site"
+        plan_status = "active" if active == "true" else "inactive"
+        enabled = active == "true"
         if ref_code:
             role_actor_id = owner_actor_id if site_type == "platform_root" else actor_id
-            country = (row.get("country") or "GLOBAL").strip() or "GLOBAL"
+            country = country_code(row.get("Страна"))
             if enabled:
                 role_values.append(
                     f"({sql_literal(TENANT_ID)}, {sql_literal(role_actor_id)}, 'referral_owner', "
@@ -94,18 +111,19 @@ def build_sync_sql(rows: list[dict[str, str]]) -> str:
                 "partner_id": actor_id,
                 "display_name": display_name,
                 "page_mode": page_mode,
-                "plan_code": (row.get("plan_code") or "").strip(),
-                "plan_status": (row.get("plan_status") or "").strip(),
-                "leads_access": (row.get("leads_access") or "").strip(),
-                "public_site_url": (row.get("public_site_url") or row.get("ref_url") or "").strip(),
-                "site_type": (row.get("site_type") or "").strip(),
-                "focus_group": str(row.get("focus_group") or "").strip().upper() == "TRUE",
-                "access_tier": (row.get("access_tier") or "").strip(),
-                "watcher_actor_id": (row.get("watcher_actor_id") or "").strip(),
-                "owner_actor_id": (row.get("owner_actor_id") or actor_id).strip(),
+                "plan_code": "partner_subscription",
+                "plan_status": plan_status,
+                "leads_access": "partner",
+                "public_site_url": (row.get("Сайт") or "").strip(),
+                "site_type": site_type,
+                "focus_group": False,
+                "access_tier": "test_pilot",
+                "watcher_actor_id": "",
+                "owner_actor_id": owner_actor_id,
+                "referrer_ref_code": (row.get("Реферер (ref)") or "").strip(),
             }
-            owner_id = (row.get("owner_actor_id") or actor_id).strip()
-            country = (row.get("country") or "").strip() or None
+            owner_id = owner_actor_id
+            country = country_code(row.get("Страна"))
             profile_values.append(
                 "("
                 f"{sql_literal(ref_code)}, {sql_literal(TENANT_ID)}, {sql_literal(owner_id)}, "
@@ -115,7 +133,7 @@ def build_sync_sql(rows: list[dict[str, str]]) -> str:
             )
 
     if not actor_values:
-        raise RuntimeError("Partners_Ref sheet returned no partner rows")
+        raise RuntimeError("Partner_Subscriptions sheet returned no partner rows")
 
     sql = textwrap.dedent(
         f"""
@@ -124,21 +142,32 @@ def build_sync_sql(rows: list[dict[str, str]]) -> str:
           {",\n  ".join(actor_values)}
         ON CONFLICT (actor_id) DO UPDATE
         SET display_name = excluded.display_name,
-            telegram_chat_id = CASE
-              WHEN excluded.telegram_chat_id IS NULL THEN lead_actors.telegram_chat_id
-              WHEN EXISTS (
-                SELECT 1 FROM lead_actors la
-                WHERE la.tenant_id = excluded.tenant_id
-                  AND la.telegram_chat_id = excluded.telegram_chat_id
-                  AND la.actor_id <> excluded.actor_id
-              ) THEN lead_actors.telegram_chat_id
-              ELSE excluded.telegram_chat_id
-            END,
             telegram_username = coalesce(excluded.telegram_username, lead_actors.telegram_username),
             active = excluded.active,
             updated_at = now();
         """
     )
+
+    if chat_id_values:
+        sql += textwrap.dedent(
+            f"""
+            UPDATE lead_actors AS target
+            SET telegram_chat_id = source.telegram_chat_id,
+                updated_at = now()
+            FROM (VALUES
+              {",\n  ".join(chat_id_values)}
+            ) AS source(actor_id, tenant_id, telegram_chat_id)
+            WHERE target.actor_id = source.actor_id
+              AND target.tenant_id = source.tenant_id
+              AND coalesce(target.telegram_chat_id, '') = ''
+              AND NOT EXISTS (
+                SELECT 1 FROM lead_actors other
+                WHERE other.tenant_id = source.tenant_id
+                  AND other.telegram_chat_id = source.telegram_chat_id
+                  AND other.actor_id <> source.actor_id
+              );
+            """
+        )
 
     if role_values:
         sql += textwrap.dedent(
@@ -210,7 +239,11 @@ def apply_sql_via_n8n(helper, session, partners_mod, sql: str) -> dict:
                 "credentials": credential,
             },
             {
-                "parameters": {"respondWith": "firstIncomingItem", "options": {"responseCode": 200}},
+                "parameters": {
+                    "respondWith": "json",
+                    "responseBody": '{"status":"ok"}',
+                    "options": {"responseCode": 200},
+                },
                 "id": "respond",
                 "name": "Respond",
                 "type": "n8n-nodes-base.respondToWebhook",
@@ -232,17 +265,59 @@ def apply_sql_via_n8n(helper, session, partners_mod, sql: str) -> dict:
         return {"raw": response.text[:500]}
 
 
+def apply_sql_via_core(sql: str) -> dict:
+    """Fallback when n8n publishes a webhook but returns an empty response body.
+
+    The Core container already owns the same PostgreSQL connection. SQL is sent
+    over stdin, never interpolated into a remote shell command.
+    """
+    cfg = ssh_config()
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        cfg["host"],
+        username=cfg["user"],
+        password=cfg["password"],
+        look_for_keys=False,
+        allow_agent=False,
+        timeout=30,
+    )
+    code = (
+        "import os,sys,psycopg; "
+        "sql=sys.stdin.read(); "
+        "con=psycopg.connect(os.environ['PLATFORM_DATABASE_URL']); "
+        "con.execute(sql); con.commit(); print('runtime_sync_applied'); con.close()"
+    )
+    try:
+        stdin, stdout, stderr = client.exec_command(
+            "docker exec -i core-api-1 python -c " + repr(code), timeout=90
+        )
+        stdin.channel.sendall(sql.encode("utf-8"))
+        stdin.channel.shutdown_write()
+        status = stdout.channel.recv_exit_status()
+        output = stdout.read().decode("utf-8", errors="replace").strip()
+        error = stderr.read().decode("utf-8", errors="replace").strip()
+        if status != 0:
+            raise RuntimeError(f"Core runtime sync failed ({status}): {error or output}")
+        return {"transport": "core_direct", "result": output}
+    finally:
+        client.close()
+
+
 def main() -> None:
     helper = load_module("whieda_sync", "publish_and_run_whieda_sync_2026-07-13.py")
     partners_mod = load_module("partners_upd", "update_partners_sheet_subdomains_2026-08-01.py")
     session = helper.login_session()
     rows = fetch_partners_rows()
     sql = build_sync_sql(rows)
-    result = apply_sql_via_n8n(helper, session, partners_mod, sql)
+    try:
+        result = {"transport": "n8n", "result": apply_sql_via_n8n(helper, session, partners_mod, sql)}
+    except RuntimeError as exc:
+        result = {"n8n_error": str(exc), "fallback": apply_sql_via_core(sql)}
     print(
         json.dumps(
             {
-                "partners": [row.get("partner_id") for row in rows],
+                "partners": [row.get("ref_code") for row in rows],
                 "refs": [row.get("ref_code") for row in rows if row.get("ref_code")],
                 "result": result,
             },
