@@ -20,6 +20,7 @@ MIGRATIONS = (
     "platform_partner_subscriptions_v1.sql",
     "platform_partner_subscription_currency_v2.sql",
     "platform_referral_bonuses_v1.sql",
+    "platform_referral_bonus_redemptions_v2.sql",
 )
 
 LEADS_PREREQUISITES = """

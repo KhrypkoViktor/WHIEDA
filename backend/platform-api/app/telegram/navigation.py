@@ -116,6 +116,7 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("company", "О компании"),
     ("match", "Подобрать продукты"),
     ("events", "Встречи"),
+    ("referral", "Пригласить"),
 )
 
 NAVIGATION_INTENT_KEYS: frozenset[str] = frozenset(MENU_INTENT_BY_LABEL.values())
