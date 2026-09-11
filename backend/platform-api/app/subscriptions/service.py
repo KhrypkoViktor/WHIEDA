@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from app.db import fetch_all, fetch_one, tenant_connection
+from app.referral_bonus.service import award_referral_bonus_for_payment
 from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF, REF_TO_ISSUED_SUBDOMAIN
 
 SubscriptionState = Literal["no_subscription", "active", "grace", "suspended"]
@@ -202,6 +203,8 @@ async def record_manual_payment(
     telegram_chat_id: int,
     telegram_message_id: int,
     telegram_user_id: int,
+    product_code: str = "platform_subscription",
+    access_months: int = ACCESS_MONTHS,
 ) -> dict[str, Any]:
     normalized_currency = _validate_payment_input(
         amount_minor=amount_minor,
@@ -224,6 +227,8 @@ async def record_manual_payment(
             telegram_chat_id=telegram_chat_id,
             telegram_message_id=telegram_message_id,
             telegram_user_id=telegram_user_id,
+            product_code=product_code,
+            access_months=access_months,
         )
 
 
@@ -237,6 +242,8 @@ async def _record_manual_payment_in_connection(
     telegram_chat_id: int,
     telegram_message_id: int,
     telegram_user_id: int,
+    product_code: str = "platform_subscription",
+    access_months: int = ACCESS_MONTHS,
 ) -> dict[str, Any]:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -306,7 +313,12 @@ async def _record_manual_payment_in_connection(
         if previous_paid_until is not None and current_state in {"active", "grace"}
         else current
     )
-    period_end = add_calendar_months(period_start)
+    if access_months not in {3, 6, 12}:
+        raise SubscriptionError("access_months must be 3, 6 or 12")
+    normalized_product_code = str(product_code or "").strip().lower()
+    if normalized_product_code != "platform_subscription":
+        raise SubscriptionError("unsupported payment product")
+    period_end = add_calendar_months(period_start, access_months)
     payment_id = str(uuid.uuid4())
 
     updated = await fetch_one(
@@ -324,14 +336,14 @@ async def _record_manual_payment_in_connection(
         """
         insert into partner_payment_ledger (
           payment_id, tenant_id, ref_code, amount_minor, currency,
-          access_months, period_start, period_end, previous_paid_until,
+          product_code, access_months, period_start, period_end, previous_paid_until,
           source, telegram_chat_id, telegram_message_id, telegram_user_id
         ) values (
           %s::uuid, %s, %s, %s, %s,
-          3, %s, %s, %s,
+          %s, %s, %s, %s, %s,
           'telegram_manual', %s, %s, %s
         )
-        returning payment_id, tenant_id, ref_code, amount_minor, currency,
+        returning payment_id, tenant_id, ref_code, amount_minor, currency, product_code,
                   period_start, period_end, previous_paid_until, access_months,
                   telegram_user_id, created_at
         """,
@@ -341,6 +353,8 @@ async def _record_manual_payment_in_connection(
             ref_code,
             amount_minor,
             currency,
+            normalized_product_code,
+            access_months,
             period_start,
             period_end,
             previous_paid_until,
@@ -349,7 +363,8 @@ async def _record_manual_payment_in_connection(
             telegram_user_id,
         ),
     )
-    return {**ledger, "paid_until": updated["paid_until"], "idempotent": False}
+    referral_bonus = await award_referral_bonus_for_payment(conn, tenant_id=tenant_id, payment=ledger)
+    return {**ledger, "paid_until": updated["paid_until"], "idempotent": False, "referral_bonus": referral_bonus}
 
 
 def _billing_identifier(identifier: str) -> tuple[str, str]:
