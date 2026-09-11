@@ -1,4 +1,13 @@
-"""Build and apply Partners_Ref sheet -> lead_actors / referral_profiles runtime sync."""
+"""Build and apply Partners_Ref sheet -> lead_actors / referral_profiles runtime sync.
+
+LEGACY SOURCE (noted 2026-09-11): the owner now maintains partners on the
+`Partner_Subscriptions` tab (gid 1209283579) and no longer updates
+`Partners_Ref` (gid 1733124410, read below). Partners that exist only on the new
+tab never reach runtime through this script. Re-pointing it is a separate task:
+the columns differ. Do not fill telegram_chat_id by hand here — Core links it
+on the partner's /start (app/leads/actor_link.py); the ON CONFLICT below keeps
+an existing chat id when the sheet cell is empty.
+"""
 
 from __future__ import annotations
 
