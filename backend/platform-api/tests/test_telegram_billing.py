@@ -62,6 +62,8 @@ def test_parse_billing_commands_and_minor_units():
     )
     whieda_dollars = parse_billing_command("/pay ref:fedorov 30 W$")
     assert (whieda_dollars.amount_minor, whieda_dollars.currency) == (3000, "WUSD")
+    half_year = parse_billing_command("оплата ref:fedorov 54 W$ 6")
+    assert half_year.access_months == 6
     canonical_alias = parse_billing_command("/pay ref:fedorov 30,50 wusd")
     assert (canonical_alias.amount_minor, canonical_alias.currency) == (3050, "WUSD")
     assert parse_billing_command("/status ref:fedorov").kind == "status"
@@ -76,6 +78,7 @@ def test_parse_billing_commands_and_minor_units():
         "оплата @name 0 RUB",
         "оплата @name 10 BYN",
         "оплата @name 10 W$ extra",
+        "оплата @name 10 W$ 5",
         "статус",
     ],
 )
@@ -137,6 +140,7 @@ async def test_payment_command_sends_preview_without_writing_ledger(
         "hostname": "elena.wwc.best",
         "amount_minor": 300000,
         "currency": "RUB",
+        "access_months": 3,
         "paid_until": now,
         "period_end": datetime(2026, 12, 9, 9, tzinfo=UTC),
         "grace_until": datetime(2026, 12, 12, 9, tzinfo=UTC),

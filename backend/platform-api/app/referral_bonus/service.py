@@ -488,6 +488,303 @@ async def cancel_bonus_redemption_intent(
     return "cancelled"
 
 
+async def referral_actor_by_ref(tenant_id: str, ref_code: str) -> dict[str, Any]:
+    normalized_ref = str(ref_code or "").strip().lower()
+    if not normalized_ref:
+        raise BonusRedemptionError("Укажите ref партнёра.")
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select rp.ref_code, rp.owner_id, la.display_name
+            from referral_profiles rp
+            join lead_actors la on la.actor_id = rp.owner_id and la.tenant_id = rp.tenant_id
+            where rp.tenant_id = %s and rp.ref_code = %s and rp.enabled = true
+            limit 1
+            """,
+            (tenant_id, normalized_ref),
+        )
+    if not row:
+        raise BonusRedemptionError("Партнёр не найден.")
+    return row
+
+
+async def create_referral_admin_intent(
+    tenant_id: str,
+    *,
+    operation: Literal["assign_referrer", "adjust_bonus"],
+    payload: dict[str, Any],
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    """Persist an owner-only preview before it can change referrals or money."""
+    intent_id = str(uuid.uuid4())
+    async with tenant_connection(tenant_id) as conn:
+        intent = await fetch_one(
+            conn,
+            """
+            insert into partner_referral_admin_intents (
+              intent_id, tenant_id, operation, payload, telegram_chat_id, telegram_user_id, expires_at
+            ) values (%s::uuid, %s, %s, %s::jsonb, %s, %s, now() + interval '10 minutes')
+            returning intent_id, operation, payload, expires_at
+            """,
+            (
+                intent_id,
+                tenant_id,
+                operation,
+                json.dumps(payload),
+                telegram_chat_id,
+                telegram_user_id,
+            ),
+        )
+    return intent
+
+
+async def _would_create_referral_cycle(
+    conn: Any, *, tenant_id: str, invitee_actor_id: str, inviter_actor_id: str
+) -> bool:
+    row = await fetch_one(
+        conn,
+        """
+        with recursive upstream(actor_id) as (
+          select %s::text
+          union
+          select a.inviter_actor_id
+          from partner_referral_attributions a
+          join upstream u on u.actor_id = a.invitee_actor_id
+          where a.tenant_id = %s
+        )
+        select exists(select 1 from upstream where actor_id = %s) as cycle
+        """,
+        (inviter_actor_id, tenant_id, invitee_actor_id),
+    )
+    return bool((row or {}).get("cycle"))
+
+
+async def _apply_referrer_assignment(
+    conn: Any, *, tenant_id: str, invitee_ref: str, inviter_ref: str
+) -> dict[str, Any]:
+    invitee = await fetch_one(
+        conn,
+        """
+        select ref_code, owner_id from referral_profiles
+        where tenant_id = %s and ref_code = %s and enabled = true
+        limit 1
+        """,
+        (tenant_id, invitee_ref),
+    )
+    inviter = await fetch_one(
+        conn,
+        """
+        select ref_code, owner_id from referral_profiles
+        where tenant_id = %s and ref_code = %s and enabled = true
+        limit 1
+        """,
+        (tenant_id, inviter_ref),
+    )
+    if not invitee or not inviter:
+        raise BonusRedemptionError("Партнёр не найден.")
+    if invitee["owner_id"] == inviter["owner_id"]:
+        raise BonusRedemptionError("Нельзя назначить партнёра своим реферером.")
+    if await _would_create_referral_cycle(
+        conn,
+        tenant_id=tenant_id,
+        invitee_actor_id=str(invitee["owner_id"]),
+        inviter_actor_id=str(inviter["owner_id"]),
+    ):
+        raise BonusRedemptionError("Такое назначение создаст реферальный цикл.")
+    existing = await fetch_one(
+        conn,
+        """
+        select inviter_actor_id from partner_referral_attributions
+        where tenant_id = %s and invitee_actor_id = %s
+        for update
+        """,
+        (tenant_id, invitee["owner_id"]),
+    )
+    old_actor_id = existing.get("inviter_actor_id") if existing else None
+    if old_actor_id == inviter["owner_id"]:
+        return {"idempotent": True, "invitee_ref": invitee["ref_code"], "inviter_ref": inviter["ref_code"]}
+    await fetch_one(
+        conn,
+        """
+        insert into partner_referral_attributions (
+          tenant_id, invitee_actor_id, inviter_actor_id, invite_code, source
+        ) values (%s, %s, %s, null, 'admin_manual')
+        on conflict (tenant_id, invitee_actor_id) do update
+          set inviter_actor_id = excluded.inviter_actor_id,
+              invite_code = null,
+              source = 'admin_manual'
+        returning invitee_actor_id
+        """,
+        (tenant_id, invitee["owner_id"], inviter["owner_id"]),
+    )
+    await fetch_one(
+        conn,
+        """
+        insert into partner_referral_attribution_audit (
+          tenant_id, invitee_actor_id, old_inviter_actor_id, new_inviter_actor_id,
+          action, reason
+        ) values (%s, %s, %s, %s, 'admin_reassigned', 'owner_command')
+        returning audit_id
+        """,
+        (tenant_id, invitee["owner_id"], old_actor_id, inviter["owner_id"]),
+    )
+    return {"idempotent": False, "invitee_ref": invitee["ref_code"], "inviter_ref": inviter["ref_code"]}
+
+
+async def _apply_bonus_adjustment(
+    conn: Any, *, tenant_id: str, ref_code: str, amount_minor: int, reason: str, intent_id: str
+) -> dict[str, Any]:
+    if amount_minor == 0:
+        raise BonusRedemptionError("Сумма корректировки не может быть нулевой.")
+    owner = await fetch_one(
+        conn,
+        """
+        select owner_id from referral_profiles
+        where tenant_id = %s and ref_code = %s and enabled = true
+        limit 1
+        """,
+        (tenant_id, ref_code),
+    )
+    if not owner:
+        raise BonusRedemptionError("Партнёр не найден.")
+    entry_type = "admin_adjustment" if amount_minor > 0 else "reversal"
+    entry = await fetch_one(
+        conn,
+        """
+        insert into partner_bonus_ledger (
+          tenant_id, actor_id, entry_type, amount_minor, currency, product_code,
+          idempotency_key, rule_snapshot, description
+        ) values (%s, %s, %s, %s, 'WUSD', 'platform_subscription', %s, '{}'::jsonb, %s)
+        on conflict do nothing
+        returning entry_id, amount_minor
+        """,
+        (
+            tenant_id,
+            owner["owner_id"],
+            entry_type,
+            amount_minor,
+            f"admin_adjustment:{intent_id}",
+            reason[:500],
+        ),
+    )
+    if entry:
+        return {**entry, "idempotent": False}
+    existing = await fetch_one(
+        conn,
+        """
+        select entry_id, amount_minor from partner_bonus_ledger
+        where tenant_id = %s and idempotency_key = %s
+        limit 1
+        """,
+        (tenant_id, f"admin_adjustment:{intent_id}"),
+    )
+    return {**existing, "idempotent": True} if existing else {"idempotent": True}
+
+
+async def confirm_referral_admin_intent(
+    tenant_id: str,
+    *,
+    intent_id: str,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    try:
+        normalized_intent_id = str(uuid.UUID(str(intent_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise BonusRedemptionForbiddenError("Подтверждение недействительно.") from exc
+    async with tenant_connection(tenant_id) as conn:
+        intent = await fetch_one(
+            conn,
+            """
+            select intent_id, operation, payload, telegram_chat_id, telegram_user_id,
+                   expires_at, consumed_at, cancelled_at
+            from partner_referral_admin_intents
+            where tenant_id = %s and intent_id = %s::uuid
+            for update
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+        if not intent or int(intent["telegram_chat_id"]) != telegram_chat_id or int(intent["telegram_user_id"]) != telegram_user_id:
+            raise BonusRedemptionForbiddenError("Подтверждение недействительно.")
+        if intent.get("cancelled_at") is not None:
+            raise BonusRedemptionError("Это действие отменено.")
+        if intent.get("consumed_at") is not None:
+            return {"operation": intent["operation"], "idempotent": True}
+        if intent["expires_at"] <= _utc_now():
+            raise BonusRedemptionExpiredError("Подтверждение истекло. Отправьте команду ещё раз.")
+        payload = intent["payload"] or {}
+        if intent["operation"] == "assign_referrer":
+            result = await _apply_referrer_assignment(
+                conn,
+                tenant_id=tenant_id,
+                invitee_ref=str(payload.get("invitee_ref") or ""),
+                inviter_ref=str(payload.get("inviter_ref") or ""),
+            )
+        elif intent["operation"] == "adjust_bonus":
+            result = await _apply_bonus_adjustment(
+                conn,
+                tenant_id=tenant_id,
+                ref_code=str(payload.get("ref_code") or ""),
+                amount_minor=int(payload.get("amount_minor") or 0),
+                reason=str(payload.get("reason") or ""),
+                intent_id=normalized_intent_id,
+            )
+        else:
+            raise BonusRedemptionError("Неизвестная операция.")
+        await fetch_one(
+            conn,
+            """
+            update partner_referral_admin_intents set consumed_at = now()
+            where tenant_id = %s and intent_id = %s::uuid
+            returning intent_id
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+    return {"operation": intent["operation"], **result}
+
+
+async def cancel_referral_admin_intent(
+    tenant_id: str,
+    *,
+    intent_id: str,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> str:
+    try:
+        normalized_intent_id = str(uuid.UUID(str(intent_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise BonusRedemptionForbiddenError("Подтверждение недействительно.") from exc
+    async with tenant_connection(tenant_id) as conn:
+        intent = await fetch_one(
+            conn,
+            """
+            select telegram_chat_id, telegram_user_id, consumed_at, cancelled_at
+            from partner_referral_admin_intents
+            where tenant_id = %s and intent_id = %s::uuid
+            for update
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+        if not intent or int(intent["telegram_chat_id"]) != telegram_chat_id or int(intent["telegram_user_id"]) != telegram_user_id:
+            raise BonusRedemptionForbiddenError("Подтверждение недействительно.")
+        if intent.get("consumed_at") is not None:
+            return "confirmed"
+        if intent.get("cancelled_at") is not None:
+            return "cancelled"
+        await fetch_one(
+            conn,
+            """
+            update partner_referral_admin_intents set cancelled_at = now()
+            where tenant_id = %s and intent_id = %s::uuid
+            returning intent_id
+            """,
+            (tenant_id, normalized_intent_id),
+        )
+    return "cancelled"
+
+
 async def accept_referral_start(
     tenant_id: str,
     *,

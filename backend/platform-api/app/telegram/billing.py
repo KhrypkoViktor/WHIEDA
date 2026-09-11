@@ -37,13 +37,13 @@ logger = logging.getLogger(__name__)
 MOSCOW = ZoneInfo("Europe/Moscow")
 _IDENTIFIER = r"(?:@[A-Za-z0-9_]{1,32}|ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62})"
 _PAY_RE = re.compile(
-    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|W\$)$",
+    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|W\$)(?:\s+(3|6|12))?$",
     re.IGNORECASE,
 )
 _STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
 _DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(r"^billing:(confirm|cancel):([0-9a-f]{32})$")
-_PAY_USAGE = "Формат: оплата @username 3000 RUB или оплата ref:code 30 W$"
+_PAY_USAGE = "Формат: оплата ref:code 30 W$ [3|6|12] или оплата @username 3000 RUB [3|6|12]"
 _STATUS_USAGE = "Формат: статус @username или статус ref:code"
 
 
@@ -53,6 +53,7 @@ class BillingCommand:
     identifier: str | None = None
     amount_minor: int | None = None
     currency: str | None = None
+    access_months: int = 3
 
 
 def _first_token(text: str) -> str:
@@ -67,7 +68,7 @@ def parse_billing_command(text: str) -> BillingCommand:
     normalized = str(text or "").strip()
     pay = _PAY_RE.fullmatch(normalized)
     if pay:
-        identifier, raw_amount, currency = pay.groups()
+        identifier, raw_amount, currency, raw_months = pay.groups()
         currency = currency.upper()
         if currency == "W$":
             currency = "WUSD"
@@ -85,6 +86,7 @@ def parse_billing_command(text: str) -> BillingCommand:
             identifier=identifier,
             amount_minor=amount_minor,
             currency=currency,
+            access_months=int(raw_months or 3),
         )
     status = _STATUS_RE.fullmatch(normalized)
     if status:
@@ -141,6 +143,7 @@ def _preview_text(intent: dict[str, Any]) -> str:
             f"Ref: {intent['ref_code']}",
             f"Сайт: {intent['hostname']}",
             f"Платёж: {_amount(intent['amount_minor'], intent['currency'])}",
+            f"Срок: {intent['access_months']} мес.",
             f"Было оплачено до: {_date(previous)}",
             f"Станет оплачено до: {_date(intent['period_end'])}",
             f"Льготный срок до: {_date(intent['grace_until'])}",
@@ -233,6 +236,7 @@ async def try_handle_billing_message(
                 telegram_chat_id=msg.chat_id,
                 telegram_message_id=message_id,
                 telegram_user_id=msg.user_id,
+                access_months=command.access_months,
             )
             await _deliver(
                 msg.chat_id,
