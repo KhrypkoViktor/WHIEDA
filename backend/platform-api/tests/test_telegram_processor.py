@@ -43,6 +43,23 @@ def test_parse_telegram_message():
     assert msg.user_id == 200
 
 
+def test_parse_telegram_photo_message_without_caption():
+    msg = parse_telegram_message(
+        {
+            "message": {
+                "message_id": 15,
+                "photo": [{"file_id": "small"}, {"file_id": "original"}],
+                "chat": {"id": 100, "type": "private"},
+                "from": {"id": 200},
+            }
+        }
+    )
+    assert msg is not None
+    assert msg.message_id == 15
+    assert msg.file_id == "original"
+    assert msg.text == ""
+
+
 def test_group_message_requires_bot_mention_or_reply():
     base = {
         "message": {
@@ -147,6 +164,30 @@ async def test_process_core_routes_onboarding_before_advisor(
                 binding=whieda_bot_binding,
             )
     assert result["route"] == "onboarding"
+    advisor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_active_site_request_routes_before_onboarding_and_advisor(
+    whieda_tenant, whieda_bot_binding
+):
+    update = {
+        "message": {
+            "message_id": 99,
+            "text": "olesya",
+            "chat": {"id": 100, "type": "private"},
+            "from": {"id": 200},
+        }
+    }
+    request = AsyncMock(return_value={"ok": True, "route": "site_request"})
+    with patch("app.telegram.processor.try_handle_site_request_message", request):
+        with patch("app.telegram.processor.handle_onboarding", AsyncMock()) as onboarding:
+            with patch("app.telegram.processor.handle_advisor_query", AsyncMock()) as advisor:
+                result = await process_core_telegram_update(
+                    whieda_tenant, update, "site-request", binding=whieda_bot_binding
+                )
+    assert result["route"] == "site_request"
+    onboarding.assert_not_called()
     advisor.assert_not_called()
 
 

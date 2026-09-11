@@ -1,0 +1,399 @@
+"""Owner-only manual partner subscription commands for Telegram."""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any, Literal
+from zoneinfo import ZoneInfo
+
+from app.settings import get_settings
+from app.referral_bonus.service import referral_payment_notification_context
+from app.subscriptions.service import (
+    GRACE_PERIOD,
+    PartnerIdentityAmbiguousError,
+    PartnerNotFoundError,
+    PaymentIntentCancelledError,
+    PaymentIntentExpiredError,
+    PaymentIntentForbiddenError,
+    PaymentIntentNotFoundError,
+    SubscriptionError,
+    cancel_payment_intent,
+    confirm_payment_intent,
+    create_payment_intent,
+    list_due_subscriptions,
+    resolve_partner_for_billing,
+    subscription_state,
+)
+from app.telegram.bindings import current_bot_binding
+from app.telegram.delivery import answer_callback_query, send_telegram_text
+from app.telegram.update_parser import parse_telegram_callback, parse_telegram_message
+from app.tenancy import TenantContext
+
+logger = logging.getLogger(__name__)
+
+MOSCOW = ZoneInfo("Europe/Moscow")
+_IDENTIFIER = r"(?:@[A-Za-z0-9_]{1,32}|ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62})"
+_PAY_RE = re.compile(
+    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|W\$)(?:\s+(3|6|12))?$",
+    re.IGNORECASE,
+)
+_STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
+_DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
+_CALLBACK_RE = re.compile(r"^billing:(confirm|cancel):([0-9a-f]{32})$")
+_PAY_USAGE = "Формат: оплата ref:code 30 W$ [3|6|12] или оплата @username 3000 RUB [3|6|12]"
+_STATUS_USAGE = "Формат: статус @username или статус ref:code"
+
+
+@dataclass(frozen=True)
+class BillingCommand:
+    kind: Literal["pay", "status", "due"]
+    identifier: str | None = None
+    amount_minor: int | None = None
+    currency: str | None = None
+    access_months: int = 3
+
+
+def _first_token(text: str) -> str:
+    return str(text or "").strip().split(maxsplit=1)[0].lower()
+
+
+def _points(value: int) -> str:
+    return f"{int(value):,}".replace(",", " ")
+
+
+async def _notify_payment_participants(payment: dict[str, Any]) -> None:
+    bonus = payment.get("referral_bonus") or {}
+    context = await referral_payment_notification_context(
+        str(payment["tenant_id"]),
+        ref_code=str(payment["ref_code"]),
+        inviter_actor_id=str(bonus["actor_id"]) if bonus.get("actor_id") else None,
+    )
+    binding = current_bot_binding()
+    customer = context.get("customer") or {}
+    customer_chat = str(customer.get("telegram_chat_id") or "").strip()
+    if customer_chat:
+        period_end = payment["period_end"]
+        remaining = max(0, (period_end.date() - datetime.now(timezone.utc).date()).days)
+        await send_telegram_text(
+            chat_id=customer_chat,
+            bot_token=binding.bot_token,
+            text="\n".join(
+                [
+                    "Оплата подтверждена.",
+                    f"Сайт: {context.get('site_url') or 'https://wwc.best/'}",
+                    f"Доступ до: {_date(period_end)}. Осталось дней: {remaining}.",
+                    "Личный кабинет: /cabinet",
+                ]
+            ),
+        )
+    inviter = context.get("inviter") or {}
+    inviter_chat = str(inviter.get("telegram_chat_id") or "").strip()
+    if inviter_chat and bonus and not bonus.get("idempotent"):
+        auto = bonus.get("auto_redemption") or {}
+        lines = [
+            f"{customer.get('display_name') or payment['ref_code']} подключился.",
+            f"Начислено: +{_points(int(bonus['amount_minor']))} баллов.",
+        ]
+        balance = bonus.get("balance_points")
+        if balance is not None:
+            lines.append(f"Баланс: {_points(int(balance))} баллов.")
+        if int(auto.get("redeemed_blocks") or 0) > 0:
+            lines.extend(
+                [
+                    f"Автоматически списано: {_points(int(auto['spent_points']))} баллов.",
+                    f"Ваш сайт продлён ещё на {int(auto['access_months'])} мес.",
+                    f"Осталось дней: {int(auto['days_remaining'])}.",
+                ]
+            )
+        lines.append("Личный кабинет: /cabinet")
+        await send_telegram_text(
+            chat_id=inviter_chat,
+            bot_token=binding.bot_token,
+            text="\n".join(lines),
+        )
+
+
+def is_billing_command_candidate(text: str) -> bool:
+    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due"}
+
+
+def parse_billing_command(text: str) -> BillingCommand:
+    normalized = str(text or "").strip()
+    pay = _PAY_RE.fullmatch(normalized)
+    if pay:
+        identifier, raw_amount, currency, raw_months = pay.groups()
+        currency = currency.upper()
+        if currency == "W$":
+            currency = "WUSD"
+        if currency == "RUB" and ("." in raw_amount or "," in raw_amount):
+            raise SubscriptionError(_PAY_USAGE)
+        try:
+            amount = Decimal(raw_amount.replace(",", "."))
+        except InvalidOperation as exc:
+            raise SubscriptionError(_PAY_USAGE) from exc
+        amount_minor = int(amount * 100)
+        if amount <= 0 or Decimal(amount_minor) / 100 != amount:
+            raise SubscriptionError(_PAY_USAGE)
+        return BillingCommand(
+            kind="pay",
+            identifier=identifier,
+            amount_minor=amount_minor,
+            currency=currency,
+            access_months=int(raw_months or 3),
+        )
+    status = _STATUS_RE.fullmatch(normalized)
+    if status:
+        return BillingCommand(kind="status", identifier=status.group(1))
+    if _DUE_RE.fullmatch(normalized):
+        return BillingCommand(kind="due")
+    if _first_token(normalized) in {"оплата", "/pay"}:
+        raise SubscriptionError(_PAY_USAGE)
+    raise SubscriptionError(_STATUS_USAGE)
+
+
+def _owner_allowed(user_id: int) -> bool:
+    owner_id = get_settings().platform_billing_owner_telegram_id
+    return owner_id is not None and user_id == owner_id
+
+
+def _date(value: datetime | None) -> str:
+    if value is None:
+        return "нет"
+    return value.astimezone(MOSCOW).strftime("%d.%m.%Y %H:%M МСК")
+
+
+def _amount(amount_minor: int, currency: str) -> str:
+    major, minor = divmod(int(amount_minor), 100)
+    grouped = f"{major:,}".replace(",", " ")
+    display_currency = "W$" if currency == "WUSD" else currency
+    if minor:
+        return f"{grouped},{minor:02d} {display_currency}"
+    return f"{grouped} {display_currency}"
+
+
+async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None) -> None:
+    await send_telegram_text(
+        chat_id=str(chat_id),
+        text=text,
+        bot_token=current_bot_binding().bot_token,
+        reply_markup=reply_markup,
+    )
+
+
+def _message_id(update: dict[str, Any]) -> int | None:
+    raw = ((update or {}).get("message") or {}).get("message_id")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _preview_text(intent: dict[str, Any]) -> str:
+    previous = intent.get("paid_until")
+    return "\n".join(
+        [
+            f"Партнёр: {intent['display_name']}",
+            f"Ref: {intent['ref_code']}",
+            f"Сайт: {intent['hostname']}",
+            f"Платёж: {_amount(intent['amount_minor'], intent['currency'])}",
+            f"Срок: {intent['access_months']} мес.",
+            f"Было оплачено до: {_date(previous)}",
+            f"Станет оплачено до: {_date(intent['period_end'])}",
+            f"Льготный срок до: {_date(intent['grace_until'])}",
+        ]
+    )
+
+
+def _intent_keyboard(intent_id: Any) -> dict[str, Any]:
+    token = str(intent_id).replace("-", "")
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "Подтвердить", "callback_data": f"billing:confirm:{token}"},
+                {"text": "Отмена", "callback_data": f"billing:cancel:{token}"},
+            ]
+        ]
+    }
+
+
+def _status_text(partner: dict[str, Any], *, at: datetime | None = None) -> str:
+    current = at or datetime.now(timezone.utc)
+    paid_until = partner.get("paid_until")
+    state = subscription_state(paid_until, at=current)
+    labels = {
+        "no_subscription": "оплаты нет",
+        "active": "активен",
+        "grace": "льготный срок",
+        "suspended": "приостановлен",
+    }
+    grace_until = paid_until + GRACE_PERIOD if paid_until else None
+    return "\n".join(
+        [
+            f"Партнёр: {partner['display_name']}",
+            f"Ref: {partner['ref_code']}",
+            f"Сайт: {partner['hostname']}",
+            f"Статус: {labels[state]}",
+            f"Оплачено до: {_date(paid_until)}",
+            f"Льготный срок до: {_date(grace_until)}",
+        ]
+    )
+
+
+def _due_text(rows: list[dict[str, Any]], *, at: datetime | None = None) -> str:
+    current = at or datetime.now(timezone.utc)
+    groups: dict[str, list[str]] = {"active": [], "grace": [], "suspended": []}
+    for row in rows:
+        state = subscription_state(row.get("paid_until"), at=current)
+        if state not in groups:
+            continue
+        name = str(row.get("display_name") or row["ref_code"])
+        groups[state].append(f"{name} ({row['ref_code']}) — {_date(row.get('paid_until'))}")
+    sections = [
+        ("Истекают за 7 дней", groups["active"]),
+        ("Льготный срок", groups["grace"]),
+        ("Приостановлены", groups["suspended"]),
+    ]
+    lines: list[str] = []
+    for title, values in sections:
+        lines.append(f"{title}:")
+        lines.extend(values[:20] or ["нет"])
+    return "\n".join(lines)
+
+
+async def try_handle_billing_message(
+    tenant: TenantContext,
+    update: dict[str, Any],
+    *,
+    trace_id: str | None = None,
+) -> dict[str, Any] | None:
+    msg = parse_telegram_message(update)
+    if not msg or not is_billing_command_candidate(msg.text):
+        return None
+    base = {"ok": True, "route": "billing", "trace_id": trace_id}
+    if msg.chat_type != "private":
+        return {**base, "status": "private_chat_required"}
+    if not _owner_allowed(msg.user_id):
+        await _deliver(msg.chat_id, "Команда недоступна.")
+        return {**base, "ok": False, "status": "forbidden"}
+    try:
+        command = parse_billing_command(msg.text)
+        if command.kind == "pay":
+            message_id = _message_id(update)
+            if message_id is None:
+                raise SubscriptionError("Не удалось определить сообщение. Отправьте команду ещё раз.")
+            intent = await create_payment_intent(
+                tenant.tenant_id,
+                identifier=command.identifier or "",
+                amount_minor=command.amount_minor or 0,
+                currency=command.currency or "",
+                telegram_chat_id=msg.chat_id,
+                telegram_message_id=message_id,
+                telegram_user_id=msg.user_id,
+                access_months=command.access_months,
+            )
+            await _deliver(
+                msg.chat_id,
+                _preview_text(intent),
+                reply_markup=_intent_keyboard(intent["intent_id"]),
+            )
+            return {**base, "status": "preview", "intent_id": str(intent["intent_id"])}
+        if command.kind == "status":
+            partner = await resolve_partner_for_billing(
+                tenant.tenant_id, command.identifier or ""
+            )
+            await _deliver(msg.chat_id, _status_text(partner))
+            return {**base, "status": "status"}
+        rows = await list_due_subscriptions(tenant.tenant_id, horizon_days=7)
+        await _deliver(msg.chat_id, _due_text(rows))
+        return {**base, "status": "due", "count": len(rows)}
+    except (PartnerNotFoundError, PartnerIdentityAmbiguousError):
+        await _deliver(msg.chat_id, "Партнёр не найден однозначно. Проверьте @username или ref:code.")
+        return {**base, "ok": False, "status": "partner_not_found"}
+    except SubscriptionError as exc:
+        await _deliver(msg.chat_id, str(exc))
+        return {**base, "ok": False, "status": "invalid_command"}
+
+
+async def try_handle_billing_callback(
+    tenant: TenantContext,
+    update: dict[str, Any],
+    *,
+    trace_id: str | None = None,
+) -> dict[str, Any] | None:
+    callback = parse_telegram_callback(update)
+    if not callback or not callback.data.startswith("billing:"):
+        return None
+    base = {"ok": True, "route": "billing_callback", "trace_id": trace_id}
+    binding = current_bot_binding()
+    await answer_callback_query(
+        callback_query_id=callback.callback_query_id,
+        bot_token=binding.bot_token,
+    )
+    if callback.chat_type != "private":
+        return {**base, "status": "private_chat_required"}
+    if not _owner_allowed(callback.user_id):
+        await _deliver(callback.chat_id, "Команда недоступна.")
+        return {**base, "ok": False, "status": "forbidden"}
+    match = _CALLBACK_RE.fullmatch(callback.data)
+    if not match:
+        await _deliver(callback.chat_id, "Подтверждение недействительно.")
+        return {**base, "ok": False, "status": "invalid_callback"}
+    action, token = match.groups()
+    intent_id = f"{token[0:8]}-{token[8:12]}-{token[12:16]}-{token[16:20]}-{token[20:32]}"
+    try:
+        if action == "cancel":
+            status = await cancel_payment_intent(
+                tenant.tenant_id,
+                intent_id=intent_id,
+                telegram_chat_id=callback.chat_id,
+                telegram_user_id=callback.user_id,
+            )
+            text = "Платёж уже был подтверждён." if status == "confirmed" else "Отменено."
+            await _deliver(callback.chat_id, text)
+            return {**base, "status": status}
+        payment = await confirm_payment_intent(
+            tenant.tenant_id,
+            intent_id=intent_id,
+            telegram_chat_id=callback.chat_id,
+            telegram_user_id=callback.user_id,
+        )
+        if not payment.get("idempotent"):
+            try:
+                await _notify_payment_participants(payment)
+            except Exception:
+                logger.exception(
+                    "telegram_billing_participant_notification_failed",
+                    extra={"trace_id": trace_id, "payment_id": str(payment.get("payment_id"))},
+                )
+        await _deliver(
+            callback.chat_id,
+            "\n".join(
+                [
+                    "Платёж записан." if not payment.get("idempotent") else "Платёж уже был записан.",
+                    f"ID: {str(payment['payment_id'])[:8]}",
+                    f"Доступ до: {_date(payment['period_end'])}",
+                    f"Grace до: {_date(payment['period_end'] + GRACE_PERIOD)}",
+                ]
+            ),
+        )
+        return {
+            **base,
+            "status": "confirmed",
+            "payment_id": str(payment["payment_id"]),
+            "idempotent": bool(payment.get("idempotent")),
+        }
+    except PaymentIntentExpiredError:
+        message, status = "Подтверждение истекло. Отправьте команду оплаты ещё раз.", "expired"
+    except PaymentIntentCancelledError:
+        message, status = "Этот платёж отменён.", "cancelled"
+    except (PaymentIntentForbiddenError, PaymentIntentNotFoundError):
+        message, status = "Подтверждение недействительно.", "invalid_callback"
+    except SubscriptionError:
+        logger.exception("telegram_billing_confirmation_failed", extra={"trace_id": trace_id})
+        message, status = "Платёж не записан. Отправьте команду оплаты ещё раз.", "failed"
+    await _deliver(callback.chat_id, message)
+    return {**base, "ok": False, "status": status}

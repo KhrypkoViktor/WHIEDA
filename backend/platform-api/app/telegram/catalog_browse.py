@@ -69,15 +69,6 @@ async def _deliver_navigation_text(
         bot_token=binding.bot_token,
         reply_markup=reply_markup,
     )
-    if include_main_menu and inline_markup is not None:
-        await send_telegram_text(
-            chat_id=str(chat_id),
-            text="Разделы меню:",
-            bot_token=binding.bot_token,
-            reply_markup=main_menu_reply_keyboard(
-                include_calculator=include_calculator
-            ),
-        )
 
 
 async def _ack_callback(callback_query_id: str) -> None:
@@ -106,9 +97,7 @@ async def _run_advisor_question(
         chat_id,
         core_response,
         bot_token=current_bot_binding().bot_token,
-        reply_markup=main_menu_reply_keyboard(
-            include_calculator=tenant.tenant_id == "whieda"
-        ),
+        reply_markup=main_menu_reply_keyboard(),
     )
     return core_response
 
@@ -261,11 +250,16 @@ async def handle_newcomer_panel(
 ) -> dict[str, Any]:
     await _deliver_navigation_text(
         chat_id,
+        "Главное меню:",
+        include_main_menu=True,
+    )
+    await _deliver_navigation_text(
+        chat_id,
         NEWCOMER_PANEL_TEXT,
         inline_markup=newcomer_inline_keyboard(
             include_calculator=tenant.tenant_id == "whieda"
         ),
-        include_main_menu=True,
+        include_main_menu=False,
     )
     return {"ok": True, "route": "newcomer_panel", "trace_id": trace_id}
 

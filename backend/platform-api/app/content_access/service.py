@@ -401,12 +401,27 @@ async def validate_content_session(tenant_id: str, raw_session: str) -> dict[str
     return row
 
 
-def format_me_payload(session: dict[str, Any]) -> dict[str, Any]:
+def _isoformat(value: Any) -> Any:
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def format_me_payload(
+    session: dict[str, Any],
+    *,
+    partner_subscription: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     expires_at = session.get("expires_at")
+    subscription = partner_subscription or {}
     return {
         "ok": True,
+        "authenticated": True,
+        "telegram_verified": True,
         "scope": session.get("scope") or "telegram_verified",
-        "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else expires_at,
+        "expires_at": _isoformat(expires_at),
+        "partner_paid": bool(subscription.get("partner_paid")),
+        "subscription_status": subscription.get("subscription_status") or "no_subscription",
+        "paid_until": _isoformat(subscription.get("paid_until")),
+        "grace_until": _isoformat(subscription.get("grace_until")),
     }
 
 

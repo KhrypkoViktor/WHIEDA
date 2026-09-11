@@ -19,6 +19,13 @@ EXPECTED_ORDER = [
     "whieda_website_leads_p0_v1.sql",
     "wwc_leads_p01_runtime_migration.sql",
     "platform_tenant_rls_legacy_leads_v1.sql",
+    "platform_partner_subscriptions_v1.sql",
+    "platform_partner_subscription_currency_v2.sql",
+    "platform_referral_bonuses_v1.sql",
+    "platform_referral_bonus_redemptions_v2.sql",
+    "platform_referral_admin_intents_v3.sql",
+    "platform_partner_site_requests_v4.sql",
+    "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
@@ -40,6 +47,22 @@ def test_apply_script_lists_full_order():
     text = APPLY_SCRIPT.read_text(encoding="utf-8")
     positions = [text.index(name) for name in EXPECTED_ORDER]
     assert positions == sorted(positions), "apply_staging_platform_all.ps1 order wrong"
+
+
+def test_partner_subscription_migration_follows_required_schema():
+    text = APPLY_SCRIPT.read_text(encoding="utf-8")
+    required = [
+        "platform_tenant_registry_v1.sql",
+        "platform_tenant_rls_v1.sql",
+        "platform_partner_subscriptions_v1.sql",
+        "platform_partner_subscription_currency_v2.sql",
+        "platform_referral_bonuses_v1.sql",
+        "platform_referral_bonus_redemptions_v2.sql",
+        "platform_referral_admin_intents_v3.sql",
+    ]
+    positions = [text.index(name) for name in required]
+    assert positions == sorted(positions)
+    assert "lead_actors and referral_profiles" in text
 
 
 def test_cabinet_apply_runs_binding_context_before_binding_seeds():

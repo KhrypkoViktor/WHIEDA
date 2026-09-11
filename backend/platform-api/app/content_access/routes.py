@@ -18,6 +18,8 @@ from app.content_access.service import (
     revoke_content_session,
     validate_content_session,
 )
+from app.subscriptions.repeat_prices import load_repeat_price_catalog
+from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
 from app.tenancy import get_request_tenant, require_entitlement
 
 router = APIRouter(tags=["content-access"])
@@ -113,19 +115,54 @@ async def poll_challenge_site(
     return await _poll(challenge_id, response, request, x_browser_nonce)
 
 
-async def _me(request: Request) -> dict:
+async def _me(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "private, no-store"
     session = await _current_session(request)
-    return format_me_payload(session)
+    tenant = get_request_tenant(request)
+    telegram_user_id = session.get("telegram_user_id")
+    subscription = None
+    if telegram_user_id is not None:
+        subscription = await resolve_partner_subscription_by_telegram_user_id(
+            tenant.tenant_id,
+            int(telegram_user_id),
+        )
+    return format_me_payload(session, partner_subscription=subscription)
 
 
 @router.get("/v1/content-access/me")
-async def me_v1(request: Request) -> dict:
-    return await _me(request)
+async def me_v1(request: Request, response: Response) -> dict:
+    return await _me(request, response)
 
 
 @router.get("/api/v1/content-access/me")
-async def me_site(request: Request) -> dict:
-    return await _me(request)
+async def me_site(request: Request, response: Response) -> dict:
+    return await _me(request, response)
+
+
+async def _repeat_prices(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "private, no-store"
+    session = await _current_session(request)
+    tenant = get_request_tenant(request)
+    telegram_user_id = session.get("telegram_user_id")
+    subscription = None
+    if telegram_user_id is not None:
+        subscription = await resolve_partner_subscription_by_telegram_user_id(
+            tenant.tenant_id,
+            int(telegram_user_id),
+        )
+    if not subscription or not subscription.get("partner_paid"):
+        raise HTTPException(status_code=403, detail={"error": "partner_paid_required"})
+    return {"ok": True, "catalog": load_repeat_price_catalog()}
+
+
+@router.get("/v1/content-access/repeat-prices")
+async def repeat_prices_v1(request: Request, response: Response) -> dict:
+    return await _repeat_prices(request, response)
+
+
+@router.get("/api/v1/content-access/repeat-prices")
+async def repeat_prices_site(request: Request, response: Response) -> dict:
+    return await _repeat_prices(request, response)
 
 
 async def _logout(request: Request, response: Response) -> dict:

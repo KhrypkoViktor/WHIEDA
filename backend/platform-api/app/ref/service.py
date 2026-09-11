@@ -43,6 +43,13 @@ async def load_public_ref(tenant_id: str, ref_code: str) -> dict[str, Any] | Non
             where tenant_id = %s
               and ref_code = %s
               and enabled = true
+              and exists (
+                select 1
+                from partner_subscriptions ps
+                where ps.tenant_id = referral_profiles.tenant_id
+                  and ps.ref_code = referral_profiles.ref_code
+                  and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
+              )
             limit 1
             """,
             (tenant_id, normalized),
@@ -79,6 +86,13 @@ async def load_public_ref_by_subdomain(tenant_id: str, subdomain: str) -> dict[s
             from referral_profiles
             where tenant_id = %s
               and enabled = true
+              and exists (
+                select 1
+                from partner_subscriptions ps
+                where ps.tenant_id = referral_profiles.tenant_id
+                  and ps.ref_code = referral_profiles.ref_code
+                  and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
+              )
               and ({subdomain_hit} or ref_code = %s)
             order by ({subdomain_hit}) desc
             limit 1

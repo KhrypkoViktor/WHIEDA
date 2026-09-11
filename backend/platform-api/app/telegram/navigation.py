@@ -99,6 +99,26 @@ MENU_INTENT_BY_LABEL: dict[str, str] = {
     LABEL_EVENTS: "nav_events",
 }
 
+MENU_INTENT_BY_COMMAND: dict[str, str] = {
+    "products": "nav_products",
+    "calculator": "nav_calculator",
+    "business": "nav_business",
+    "company": "nav_company",
+    "match": "nav_basket",
+    "events": "nav_events",
+}
+
+TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("start", "С чего начать"),
+    ("products", "Товары"),
+    ("calculator", "Калькулятор"),
+    ("business", "Бизнес"),
+    ("company", "О компании"),
+    ("match", "Подобрать продукты"),
+    ("events", "Встречи"),
+    ("cabinet", "Личный кабинет"),
+)
+
 NAVIGATION_INTENT_KEYS: frozenset[str] = frozenset(MENU_INTENT_BY_LABEL.values())
 
 CATALOG_LIST_PHRASES: frozenset[str] = frozenset(
@@ -151,6 +171,9 @@ def resolve_menu_text_intent(text: str) -> str | None:
     intent = MENU_INTENT_BY_LABEL.get(stripped)
     if intent:
         return intent
+    command = re.fullmatch(r"/([a-z]+)(?:@\w+)?", stripped.lower())
+    if command:
+        return MENU_INTENT_BY_COMMAND.get(command.group(1))
     normalized = _normalize(stripped)
     if normalized in CATALOG_LIST_PHRASES:
         return "nav_products"
@@ -282,16 +305,18 @@ def parse_callback_data(data: str) -> ParsedCallback | None:
 
 
 def main_menu_reply_keyboard(*, include_calculator: bool = True) -> dict[str, Any]:
-    labels = (
-        MENU_LABELS
-        if include_calculator
-        else tuple(label for label in MENU_LABELS if label != LABEL_CALCULATOR)
-    )
-    return {
-        "keyboard": [[{"text": label}] for label in labels],
-        "resize_keyboard": True,
-        "is_persistent": True,
-    }
+    # Remove the old persistent reply keyboard. Navigation now lives in
+    # Telegram's standard command-menu button beside the message field.
+    _ = include_calculator
+    return {"remove_keyboard": True}
+
+
+def telegram_menu_commands(*, include_calculator: bool = True) -> list[dict[str, str]]:
+    return [
+        {"command": command, "description": description}
+        for command, description in TELEGRAM_MENU_COMMANDS
+        if include_calculator or command != "calculator"
+    ]
 
 
 def _inline_button(text: str, callback_data: str) -> dict[str, str]:

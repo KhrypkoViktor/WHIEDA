@@ -105,6 +105,11 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ADMIN_SUPER_TELEGRAM_IDS",
         description="Comma-separated Telegram user IDs allowed as super_admin bootstrap.",
     )
+    platform_billing_owner_telegram_id: int | None = Field(
+        default=None,
+        validation_alias="PLATFORM_BILLING_OWNER_TELEGRAM_ID",
+        description="Single Telegram user ID allowed to confirm manual partner payments.",
+    )
     platform_admin_confirm_secret: str | None = Field(
         default=None,
         validation_alias="PLATFORM_ADMIN_CONFIRM_SECRET",
@@ -150,6 +155,68 @@ class Settings(BaseSettings):
     platform_content_cookie_samesite: str = Field(
         default="lax",
         validation_alias="PLATFORM_CONTENT_COOKIE_SAMESITE",
+    )
+
+    platform_partner_library_storage_backend: Literal["local", "filesystem", "s3"] = Field(
+        default="local",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_STORAGE_BACKEND",
+    )
+    platform_partner_library_local_root: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_ROOT",
+    )
+    platform_partner_library_local_signing_secret: str = Field(
+        default="development-only-change-me",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET",
+    )
+    platform_partner_library_local_base_url: str = Field(
+        default="/api/v1/partner-library/local-files",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_BASE_URL",
+    )
+    platform_partner_library_filesystem_root: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_ROOT",
+    )
+    platform_partner_library_filesystem_signing_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_SIGNING_SECRET",
+    )
+    platform_partner_library_filesystem_base_url: str = Field(
+        default="/api/v1/partner-library/files",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_FILESYSTEM_BASE_URL",
+    )
+    platform_partner_library_s3_bucket: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_S3_BUCKET",
+    )
+    platform_partner_library_s3_endpoint_url: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_S3_ENDPOINT_URL",
+    )
+    platform_partner_library_s3_region: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_S3_REGION",
+    )
+    platform_partner_library_s3_addressing_style: Literal["auto", "path", "virtual"] = Field(
+        default="auto",
+        validation_alias="PLATFORM_PARTNER_LIBRARY_S3_ADDRESSING_STYLE",
+    )
+    platform_partner_library_signed_url_ttl_seconds: int = Field(
+        default=300,
+        ge=60,
+        le=900,
+        validation_alias="PLATFORM_PARTNER_LIBRARY_SIGNED_URL_TTL_SECONDS",
+    )
+
+    platform_edge_snapshot_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_EDGE_SNAPSHOT_SECRET",
+        description="Shared secret for the private partner-host edge snapshot.",
+    )
+    platform_organic_owner_id: str = Field(
+        default="viktor",
+        validation_alias="PLATFORM_ORGANIC_OWNER_ID",
+        description="Owner for new leads whose referral cannot receive attribution.",
     )
 
     # Theme access: when enabled, every verified Telegram user (valid content

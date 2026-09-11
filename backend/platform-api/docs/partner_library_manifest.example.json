@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "tenant_id": "whieda",
+  "items": [
+    {
+      "slug": "welcome-presentation",
+      "category": "presentations",
+      "title": "Презентация для знакомства с проектом",
+      "description": "Готовый материал для первой встречи.",
+      "kind": "file",
+      "storage_key": "whieda/presentations/welcome.pdf",
+      "mime_type": "application/pdf",
+      "status": "published",
+      "sort_order": 10
+    },
+    {
+      "slug": "first-week-course",
+      "category": "training",
+      "title": "Первые семь дней партнёра",
+      "description": "Вводный курс и последовательность первых действий.",
+      "kind": "course",
+      "storage_key": "whieda/training/first-week.pdf",
+      "mime_type": "application/pdf",
+      "status": "published",
+      "sort_order": 20
+    },
+    {
+      "slug": "business-card-template",
+      "category": "business-cards",
+      "title": "Шаблон визитки",
+      "description": "Макет для персональных контактов партнёра.",
+      "kind": "template",
+      "storage_key": "whieda/business-cards/template.zip",
+      "mime_type": "application/zip",
+      "status": "published",
+      "sort_order": 30
+    },
+    {
+      "slug": "print-catalog",
+      "category": "print-materials",
+      "title": "Каталог для печати",
+      "description": "Версия каталога для встреч и мероприятий.",
+      "kind": "file",
+      "storage_key": "whieda/print/catalog.pdf",
+      "mime_type": "application/pdf",
+      "status": "published",
+      "sort_order": 40
+    },
+    {
+      "slug": "first-contact-checklist",
+      "category": "work-documents",
+      "title": "Чек-лист первого контакта",
+      "description": "Короткая последовательность разговора и следующего шага.",
+      "kind": "file",
+      "storage_key": "whieda/work/first-contact.pdf",
+      "mime_type": "application/pdf",
+      "status": "published",
+      "sort_order": 50
+    },
+    {
+      "slug": "repeat-order-guide",
+      "category": "repeat-prices",
+      "title": "Памятка по повторному заказу",
+      "description": "Как собрать и проверить повторную корзину.",
+      "kind": "file",
+      "storage_key": "whieda/repeat/order-guide.pdf",
+      "mime_type": "application/pdf",
+      "status": "published",
+      "sort_order": 60
+    }
+  ]
+}

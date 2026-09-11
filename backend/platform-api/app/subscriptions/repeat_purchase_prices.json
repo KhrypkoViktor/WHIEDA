@@ -1,0 +1,680 @@
+{
+  "version": 1,
+  "updated_label": "август 2026",
+  "sections": [
+    {
+      "key": "devices",
+      "title": "Приборы и устройства",
+      "nav_label": "Приборы и устройства",
+      "rows": [
+        {
+          "sku": "M015-00",
+          "slug": "aktivator-kletok",
+          "name": "Активатор клеток",
+          "row_id": "M015-00",
+          "rub": 30000,
+          "byn": 1050,
+          "pv": 300,
+          "stock": "available"
+        },
+        {
+          "sku": "EU-N000031-25",
+          "slug": "aktivator-kletok-pro",
+          "name": "Активатор клеток PRO",
+          "row_id": "EU-N000031-25",
+          "rub": 40000,
+          "byn": 1400,
+          "pv": 300,
+          "stock": "available"
+        },
+        {
+          "sku": "EU-N000024-24",
+          "slug": "wentong",
+          "name": "Вентун 1.0",
+          "row_id": "EU-N000024-24",
+          "rub": 150000,
+          "byn": 5250,
+          "pv": 1000,
+          "stock": "available"
+        },
+        {
+          "sku": "EU-N000021-24",
+          "slug": "magic-foherb",
+          "name": "Массажёр Magic FoHerb 3.0",
+          "row_id": "EU-N000021-24",
+          "rub": 50000,
+          "byn": 1750,
+          "pv": 400,
+          "stock": "available"
+        },
+        {
+          "sku": "D014",
+          "slug": "computer-glasses",
+          "name": "Высокотехнологичные компьютерные очки",
+          "row_id": "D014",
+          "rub": 2500,
+          "byn": 87.5,
+          "pv": 25,
+          "stock": "available"
+        },
+        {
+          "sku": "M014-00",
+          "slug": "bagua",
+          "name": "Минисауна «Ба-Гуа»",
+          "row_id": "M014-00",
+          "rub": 45000,
+          "byn": 1575,
+          "pv": 300,
+          "stock": "available"
+        },
+        {
+          "sku": "D017-00",
+          "slug": "hydrogen-stick",
+          "name": "Водородный стержень",
+          "row_id": "D017-00",
+          "title_note": "",
+          "rub": 2500,
+          "byn": 87.5,
+          "pv": 25,
+          "stock": "available"
+        },
+        {
+          "sku": "D059-20",
+          "slug": "photochromic-glasses",
+          "name": "Высокотехнологичные фотохромные очки",
+          "row_id": "D059-20",
+          "title_note": "предпродажа",
+          "rub": 5000,
+          "byn": 175,
+          "pv": 30,
+          "stock": "available"
+        }
+      ]
+    },
+    {
+      "key": "textile",
+      "title": "Функциональный текстиль",
+      "nav_label": "Функциональный текстиль",
+      "sub": "Стельки, наколенники, прокладки, система сна и другой текстиль.",
+      "rows": [
+        {
+          "sku": "D013",
+          "slug": "anion-insoles",
+          "name": "Стельки с анионами",
+          "row_id": "D013",
+          "rub": 6500,
+          "byn": 227.5,
+          "pv": 60,
+          "stock": "available"
+        },
+        {
+          "sku": "D013-06",
+          "slug": "anion-insoles",
+          "name": "Стельки с анионами — 45–46",
+          "row_id": "D013-06",
+          "rub": 7000,
+          "byn": 245,
+          "pv": 60,
+          "stock": "available"
+        },
+        {
+          "sku": "D003-00",
+          "slug": "anion-pads-box",
+          "name": "Анионовые прокладки (бокс 19 шт)",
+          "row_id": "D003-00",
+          "rub": 6000,
+          "byn": 210,
+          "pv": 40,
+          "stock": "available"
+        },
+        {
+          "sku": "D004-00",
+          "slug": "anion-pads-daily",
+          "name": "Анионовые прокладки (ежедневные, 16 уп.)",
+          "row_id": "D004-00",
+          "rub": 6000,
+          "byn": 210,
+          "pv": 40,
+          "stock": "available"
+        },
+        {
+          "sku": "T015",
+          "slug": "palantin",
+          "name": "Палантин",
+          "row_id": "T015",
+          "rub": 10000,
+          "byn": 350,
+          "pv": 80,
+          "stock": "available"
+        },
+        {
+          "sku": "T023",
+          "slug": "socks-health-priority",
+          "name": "Носки Health Priority",
+          "row_id": "T023",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "T003",
+          "slug": "magnetic-belt",
+          "name": "Магнитный пояс",
+          "row_id": "T003",
+          "rub": 15000,
+          "byn": 525,
+          "pv": 100,
+          "stock": "available"
+        },
+        {
+          "sku": "T001",
+          "slug": "knee-pads",
+          "name": "Наколенники",
+          "row_id": "T001",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "T002-00",
+          "slug": "neck-pad",
+          "name": "Шейная накладка",
+          "row_id": "T002-00",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "EU-N000014-24",
+          "slug": "sleep-system-4in1",
+          "name": "Система для здорового сна 4-в-1",
+          "row_id": "EU-N000014-24",
+          "rub": 150000,
+          "byn": 5250,
+          "pv": 1000,
+          "stock": "available"
+        }
+      ]
+    },
+    {
+      "key": "supplements",
+      "title": "БАДы и эликсиры",
+      "nav_label": "БАДы и эликсиры",
+      "sub": "Добавки к пище на основе экстрактов традиционной фитотерапии — не лекарства.",
+      "rows": [
+        {
+          "sku": "F028-00",
+          "slug": "lingzhi",
+          "name": "Капсулы Линчжи Фохоу",
+          "row_id": "F028-00",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 10,
+          "stock": "available"
+        },
+        {
+          "sku": "F038-00",
+          "slug": "soy-peptide",
+          "name": "Низкомолекулярный соевый пептид",
+          "row_id": "F038-00",
+          "rub": 3000,
+          "byn": 105,
+          "pv": 25,
+          "stock": "available"
+        },
+        {
+          "sku": "F001-02",
+          "slug": "elixir-fohou",
+          "name": "Эликсир Фохоу",
+          "row_id": "F001-02",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 15,
+          "stock": "available"
+        },
+        {
+          "sku": "F002-02",
+          "slug": "elixir-3-treasures",
+          "name": "Эликсир «3 Драгоценности»",
+          "row_id": "F002-02",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 15,
+          "stock": "available"
+        },
+        {
+          "sku": "F003-02",
+          "slug": "elixir-sanqing",
+          "name": "Эликсир Саньцин",
+          "row_id": "F003-02",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 15,
+          "stock": "available"
+        },
+        {
+          "sku": "F024-00",
+          "slug": "xueqingfu",
+          "name": "Капсулы Сюэчинфу",
+          "row_id": "F024-00",
+          "rub": 3500,
+          "byn": 122.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "F011-02",
+          "slug": "rose-fohou",
+          "name": "Паста «Роза Фохоу»",
+          "row_id": "F011-02",
+          "rub": 800,
+          "byn": 28,
+          "pv": 5,
+          "stock": "available"
+        },
+        {
+          "sku": "F034-00",
+          "slug": "coffee-cordyceps-collagen",
+          "name": "Кофейный напиток с кордицепсом и коллагеном",
+          "row_id": "F034-00",
+          "rub": 4000,
+          "byn": 140,
+          "pv": 25,
+          "stock": "available"
+        },
+        {
+          "sku": "F036-00",
+          "slug": "spirulina",
+          "name": "Спирулина",
+          "row_id": "F036-00",
+          "rub": 5000,
+          "byn": 175,
+          "pv": 40,
+          "stock": "available"
+        },
+        {
+          "sku": "F031-00",
+          "slug": "liuwei-tea",
+          "name": "Чай Лювэй",
+          "row_id": "F031-00",
+          "rub": 800,
+          "byn": 28,
+          "pv": 5,
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "F071-00",
+          "slug": "qingfeng-paste",
+          "name": "Паста Цинфэн",
+          "row_id": "F071-00",
+          "rub": 7000,
+          "byn": 245,
+          "pv": 50,
+          "stock": "available"
+        },
+        {
+          "sku": "F007-00",
+          "slug": "iron-calcium-zinc-selenium",
+          "name": "Капсулы «Железо, Кальций, Цинк, Селен»",
+          "row_id": "F007-00",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 10,
+          "stock": "available"
+        },
+        {
+          "sku": "F087-00",
+          "slug": "spirulina-candy",
+          "name": "Леденцы со спирулиной (5 шт)",
+          "row_id": "F087-00",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 15,
+          "stock": "available"
+        }
+      ]
+    },
+    {
+      "key": "cosmetics",
+      "title": "Косметика и гигиена",
+      "nav_label": "Косметика и гигиена",
+      "sub": "Ежедневный уход с растительными компонентами.",
+      "rows": [
+        {
+          "sku": "C033-00",
+          "slug": "anti-aging-mask",
+          "name": "Омолаживающая маска с лифтинг-эффектом",
+          "row_id": "C033-00",
+          "rub": 8000,
+          "byn": 280,
+          "pv": 50,
+          "stock": "available"
+        },
+        {
+          "sku": "C006-00",
+          "slug": "anti-aging-spray",
+          "name": "Омолаживающий спрей с лифтинг-эффектом",
+          "row_id": "C006-00",
+          "rub": 3500,
+          "byn": 122.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "C065-00",
+          "slug": "fundesee-gift-set",
+          "name": "Подарочный набор косметики Fundesee",
+          "row_id": "C065-00",
+          "rub": 21000,
+          "byn": 735,
+          "pv": 150,
+          "stock": "available"
+        },
+        {
+          "sku": "C061-00",
+          "slug": "fundesee-oil-essence",
+          "name": "Масло-эссенция Fundesee",
+          "row_id": "C061-00",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "stock": "available"
+        },
+        {
+          "sku": "C002-00",
+          "slug": "moisturizing-gel",
+          "name": "Увлажняющий гель",
+          "row_id": "C002-00",
+          "rub": 800,
+          "byn": 28,
+          "pv": 5,
+          "stock": "available"
+        },
+        {
+          "sku": "D011-00",
+          "slug": "foherb-cleansing-gel",
+          "name": "Гель очищающий Foherb",
+          "row_id": "D011-00",
+          "rub": 2500,
+          "byn": 87.5,
+          "pv": 15,
+          "stock": "available"
+        },
+        {
+          "sku": "EU-N000030-25",
+          "slug": "wormwood-toothpaste",
+          "name": "Зубная паста с экстрактом полыни (×6)",
+          "row_id": "EU-N000030-25",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 10,
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "EU-N000032-25",
+          "slug": "herbal-shampoo-set",
+          "name": "Набор растительного красящего шампуня",
+          "row_id": "EU-N000032-25",
+          "rub": 3500,
+          "byn": 122.5,
+          "pv": 20,
+          "stock": "available"
+        }
+      ]
+    },
+    {
+      "key": "repeat-only",
+      "title": "Товары только для повторной покупки",
+      "nav_label": "Только повторная",
+      "sub": "Эти позиции не выводятся в розничном прайсе.",
+      "rows": [
+        {
+          "sku": "repeat-only-1",
+          "name": "Гель для интимной гигиены (50 ml)",
+          "rub": 1000,
+          "byn": 35,
+          "pv": 5,
+          "row_id": "repeat-only-1",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-2",
+          "name": "AYALA Natural Marine Collagen",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "row_id": "repeat-only-2",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-3",
+          "name": "Энергетический крем (2 шт)",
+          "rub": 3000,
+          "byn": 105,
+          "pv": 15,
+          "row_id": "repeat-only-3",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-4",
+          "name": "Комплект постельного белья из 4 предметов",
+          "rub": 25000,
+          "byn": 875,
+          "pv": 150,
+          "row_id": "repeat-only-4",
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "repeat-only-5",
+          "name": "Массажный крем (6 шт)",
+          "rub": 3500,
+          "byn": 122.5,
+          "pv": 15,
+          "row_id": "repeat-only-5",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-6",
+          "name": "Гель для интимной гигиены (240 ml)",
+          "rub": 3500,
+          "byn": 122.5,
+          "pv": 20,
+          "row_id": "repeat-only-6",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-7",
+          "name": "Подушка с анионами (2 шт)",
+          "rub": 15000,
+          "byn": 525,
+          "pv": 100,
+          "row_id": "repeat-only-7",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-8",
+          "name": "Электродные подушечки (Массажёр Magic Foherb 3.0)",
+          "rub": 100,
+          "byn": 3.5,
+          "pv": 0,
+          "row_id": "repeat-only-8",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-9",
+          "name": "Набор красного блокнота WHIEDA",
+          "rub": 1000,
+          "byn": 35,
+          "pv": 5,
+          "row_id": "repeat-only-9",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-10",
+          "name": "Руководство по эксплуатации активатора клеток",
+          "rub": 200,
+          "byn": 7,
+          "pv": 0,
+          "row_id": "repeat-only-10",
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "repeat-only-11",
+          "name": "Перчатки (M–XL) ×2",
+          "rub": 1200,
+          "byn": 42,
+          "pv": 0,
+          "row_id": "repeat-only-11",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-12",
+          "name": "Футболки",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 5,
+          "row_id": "repeat-only-12",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-13",
+          "name": "Сумка из нетканого материала",
+          "rub": 1000,
+          "byn": 35,
+          "pv": 0,
+          "row_id": "repeat-only-13",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-14",
+          "name": "Двойное одеяло с анионами и ИК-излучением",
+          "rub": 110000,
+          "byn": 3850,
+          "pv": 850,
+          "row_id": "repeat-only-14",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-15",
+          "name": "Чемодан",
+          "rub": 10000,
+          "byn": 350,
+          "pv": 20,
+          "row_id": "repeat-only-15",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-16",
+          "name": "Феникс-подушка для путешествий",
+          "rub": 1200,
+          "byn": 42,
+          "pv": 0,
+          "row_id": "repeat-only-16",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-17",
+          "name": "Арома-подушечки",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 5,
+          "row_id": "repeat-only-17",
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "repeat-only-18",
+          "name": "Лазерный провод 3.0 TUV",
+          "rub": 500,
+          "byn": 17.5,
+          "pv": 0,
+          "row_id": "repeat-only-18",
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "repeat-only-19",
+          "name": "Импульсный провод",
+          "rub": 300,
+          "byn": 10.5,
+          "pv": 0,
+          "row_id": "repeat-only-19",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-20",
+          "name": "Сменный фильтр для устройства очистки воздуха",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 5,
+          "row_id": "repeat-only-20",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-21",
+          "name": "Нагревательный пояс прибора Вэнтун 1.0",
+          "rub": 5000,
+          "byn": 175,
+          "pv": 0,
+          "row_id": "repeat-only-21",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-22",
+          "name": "Хлопковый фильтр",
+          "rub": 200,
+          "byn": 7,
+          "pv": 0,
+          "row_id": "repeat-only-22",
+          "stock": "out_of_stock"
+        },
+        {
+          "sku": "repeat-only-23",
+          "name": "Адаптер",
+          "rub": 500,
+          "byn": 17.5,
+          "pv": 0,
+          "row_id": "repeat-only-23",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-24",
+          "name": "Гель для интимной гигиены (240 ml + 50 ml)",
+          "rub": 4500,
+          "byn": 157.5,
+          "pv": 30,
+          "row_id": "repeat-only-24",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-25",
+          "name": "Растительный красящий шампунь + маска для волос",
+          "rub": 2000,
+          "byn": 70,
+          "pv": 10,
+          "row_id": "repeat-only-25",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-26",
+          "name": "Расчёска с функцией окрашивания волос",
+          "rub": 1500,
+          "byn": 52.5,
+          "pv": 10,
+          "row_id": "repeat-only-26",
+          "stock": "available"
+        },
+        {
+          "sku": "repeat-only-27",
+          "name": "Руководство по использованию массажёра Magic FoHerb",
+          "rub": 200,
+          "byn": 7,
+          "pv": 0,
+          "row_id": "repeat-only-27",
+          "stock": "available"
+        }
+      ]
+    }
+  ]
+}
