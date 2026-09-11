@@ -10,6 +10,7 @@ from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
 from app.onboarding.service import handle_onboarding_text
+from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
@@ -94,6 +95,31 @@ async def handle_start_token(
     lines.append("Напишите вопрос по товару или «начать обучение» для 7-дневного плана.")
     await deliver_text(msg.chat_id, "\n".join(lines))
     return {"ok": True, "route": "start_token", "link_id": result.link_id, "trace_id": trace_id}
+
+
+async def handle_referral_start_token(
+    tenant: TenantContext, msg: TelegramMessage, token: str, trace_id: str
+) -> dict[str, Any]:
+    invite_code = parse_referral_start_token(token)
+    if invite_code is None:
+        raise ValueError("not a referral start token")
+    if msg.chat_type != "private":
+        return {"ok": True, "route": "referral_start", "status": "private_chat_required"}
+    if not invite_code:
+        await deliver_text(msg.chat_id, "Ссылка-приглашение недействительна.")
+        return {"ok": False, "route": "referral_start", "status": "invalid", "trace_id": trace_id}
+    result = await accept_referral_start(
+        tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id,
+        invite_code=invite_code, raw_update=msg.raw,
+    )
+    messages = {
+        "attributed": "Приглашение сохранено. Напишите «с чего начать», чтобы посмотреть возможности бота.",
+        "already_registered": "Вы уже знакомы с ботом. Пригласивший автоматически не меняется.",
+        "invalid": "Ссылка-приглашение недействительна или больше не активна.",
+        "self_referral": "Свою реферальную ссылку нельзя использовать для себя.",
+    }
+    await deliver_text(msg.chat_id, messages[result.status])
+    return {"ok": result.status == "attributed", "route": "referral_start", "status": result.status, "trace_id": trace_id}
 
 
 async def handle_onboarding(
@@ -210,6 +236,8 @@ async def _process_core_telegram_update_scoped(
 
     start_token = parse_start_token(msg.text)
     if start_token:
+        if parse_referral_start_token(start_token) is not None:
+            return await handle_referral_start_token(tenant, msg, start_token, trace_id)
         return await handle_start_token(tenant, msg, start_token, trace_id)
 
     onboarding_result = await handle_onboarding(tenant, msg)

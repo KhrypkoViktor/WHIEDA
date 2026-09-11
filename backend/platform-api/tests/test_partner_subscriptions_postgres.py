@@ -103,8 +103,19 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                 insert into lead_actors (actor_id, tenant_id, display_name)
                 values
                   ('proof-whieda-owner', 'whieda', 'WHIEDA proof owner'),
+                  ('proof-whieda-inviter', 'whieda', 'WHIEDA proof inviter'),
                   ('proof-acme-owner', 'test-acme', 'Acme proof owner')
                 on conflict (actor_id) do nothing;
+
+                insert into referral_invite_codes (tenant_id, invite_code, inviter_actor_id)
+                values ('whieda', 'proofinvite123', 'proof-whieda-inviter');
+
+                insert into partner_referral_attributions (
+                  tenant_id, invitee_actor_id, inviter_actor_id, invite_code, source
+                ) values (
+                  'whieda', 'proof-whieda-owner', 'proof-whieda-inviter',
+                  'proofinvite123', 'telegram_deeplink'
+                );
 
                 insert into referral_profiles (
                   ref_code, tenant_id, owner_id, display_mode, public_profile, enabled
@@ -266,6 +277,16 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                             ("whieda", "proof-whieda"),
                         )
                         assert (await cur.fetchone())["count"] == 3
+                        await cur.execute(
+                            """
+                            select amount_minor
+                            from partner_bonus_ledger
+                            where tenant_id = %s and actor_id = %s
+                            order by created_at, entry_id
+                            """,
+                            ("whieda", "proof-whieda-inviter"),
+                        )
+                        assert [row["amount_minor"] for row in await cur.fetchall()] == [600, 300, 300]
 
                 await close_pool()
                 os.environ["DATABASE_POOL_MIN"] = "1"
