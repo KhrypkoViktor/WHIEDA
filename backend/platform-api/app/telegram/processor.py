@@ -9,6 +9,7 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
+from app.leads.actor_link import link_lead_actor_by_username
 from app.onboarding.service import handle_onboarding_text
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.content_access import try_handle_content_access
@@ -180,6 +181,23 @@ async def process_core_telegram_update(
         return await _process_core_telegram_update_scoped(tenant, update, trace_id)
 
 
+async def _link_partner_chat(tenant: TenantContext, msg: TelegramMessage, trace_id: str) -> None:
+    """Bind a partner's chat to lead_actors by username; the reply must never wait on it."""
+    try:
+        await link_lead_actor_by_username(
+            tenant.tenant_id,
+            username=msg.username,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+        )
+    except Exception:
+        logger.warning(
+            "lead_actor_telegram_link_failed",
+            extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id)},
+            exc_info=True,
+        )
+
+
 async def _process_core_telegram_update_scoped(
     tenant: TenantContext,
     update: dict[str, Any],
@@ -205,6 +223,9 @@ async def _process_core_telegram_update_scoped(
 
     if not should_process_telegram_message(msg, current_bot_binding().bot_username):
         return {"ok": True, "route": "ignored_group_message"}
+
+    if msg.chat_type == "private":
+        await _link_partner_chat(tenant, msg, trace_id)
 
     start_token = parse_start_token(msg.text)
     if start_token:
