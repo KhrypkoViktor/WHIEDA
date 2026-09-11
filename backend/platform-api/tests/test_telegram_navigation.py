@@ -168,7 +168,7 @@ def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
         "company",
         "match",
         "events",
-        "referral",
+        "cabinet",
     }
     nsp_commands = telegram_menu_commands(include_calculator=False)
     assert "calculator" not in {item["command"] for item in nsp_commands}

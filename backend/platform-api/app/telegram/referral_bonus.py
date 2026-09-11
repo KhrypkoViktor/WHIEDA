@@ -24,7 +24,7 @@ from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
 
-_COMMAND_RE = re.compile(r"^/referral(?:@\w+)?$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^/(?:cabinet|referral)(?:@\w+)?$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(
     r"^referral:(history|redeem:platform_(?:3|6|12)m|confirm|cancel)(?::([0-9a-f]{32}))?$"
 )
@@ -38,6 +38,10 @@ def _wusd(amount_minor: int) -> str:
     major, minor = divmod(abs(int(amount_minor)), 100)
     sign = "−" if amount_minor < 0 else ""
     return f"{sign}{major},{minor:02d} W$" if minor else f"{sign}{major} W$"
+
+
+def _points(amount_minor: int) -> str:
+    return f"{int(amount_minor):,}".replace(",", " ") + " баллов"
 
 
 def _token_from_uuid(value: Any) -> str:
@@ -55,7 +59,7 @@ def _history_text(entries: list[dict[str, Any]]) -> str:
         else:
             date = ""
         description = str(entry.get("description") or entry.get("entry_type") or "Операция")
-        lines.append(f"{date}  {_wusd(int(entry['amount_minor']))} — {description}".strip())
+        lines.append(f"{date}  {_points(int(entry['amount_minor']))} — {description}".strip())
     return "\n".join(lines)
 
 
@@ -63,22 +67,19 @@ def _dashboard_keyboard(
     *,
     bot_username: str,
     invite_code: str,
-    balance_wusd_minor: int,
-    plans: list[dict[str, Any]],
+    site_url: str,
+    has_site: bool,
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     share_url = "https://t.me/share/url?url=" + quote(link, safe="")
-    rows: list[list[dict[str, str]]] = [
-        [{"text": "Поделиться ссылкой", "url": share_url}],
+    rows: list[list[dict[str, Any]]] = [
+        [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
+        [{"text": "Скопировать мою ссылку", "copy_text": {"text": link}}],
+        [{"text": "Поделиться", "url": share_url}],
         [{"text": "История бонусов", "callback_data": "referral:history"}],
     ]
-    for plan in plans:
-        price = int(plan["price_wusd_minor"])
-        if balance_wusd_minor >= price:
-            months = int(plan["access_months"])
-            rows.append(
-                [{"text": f"Оплатить {months} мес. за {_wusd(price)}", "callback_data": f"referral:redeem:{plan['plan_code']}"}]
-            )
+    if not has_site:
+        rows.insert(1, [{"text": "Создать свой сайт", "callback_data": "site:create"}])
     return {"inline_keyboard": rows}
 
 
@@ -125,17 +126,35 @@ async def show_referral_dashboard(
         await _deliver(telegram_chat_id, "Реферальная ссылка временно недоступна: бот ещё не настроен.")
         return {"ok": False, "route": "referral", "status": "bot_username_missing", "trace_id": trace_id}
     link = f"https://t.me/{username}?start=ref_{invite_code}"
+    site = dashboard.get("site") or {}
+    site_url = str(site.get("url") or "https://wwc.best/")
+    status = str(site.get("subscription_status") or "no_subscription")
+    days = int(site.get("days_remaining") or 0)
+    if status == "active":
+        access_line = f"Сайт активен: ещё {days} дн."
+    elif status == "grace":
+        access_line = "Оплаченный период завершён. Действует льготный срок."
+    elif site:
+        access_line = "Сайт ожидает продления."
+    else:
+        access_line = "Персональный сайт ещё не создан."
     text = "\n".join(
         [
-            "Ваша ссылка:",
+            "Личный кабинет",
+            "",
+            access_line,
+            f"Сайт: {site_url}",
+            f"Баланс: {_points(dashboard['balance_wusd_minor'])}",
+            "",
+            "Ваша реферальная ссылка:",
             link,
             "",
-            f"Бонусный баланс: {_wusd(dashboard['balance_wusd_minor'])}",
             f"Приглашено: {dashboard['invited_count']}",
             f"Оплатили сайт: {dashboard['paid_count']}",
             "",
             "20% начисляется с первой оплаты платформы и 10% с продлений.",
-            "Бонусами можно полностью оплатить тариф WWC Platform. Вывод деньгами не предусмотрен.",
+            "Каждые 3 000 баллов автоматически продлевают ваш сайт ещё на 3 месяца.",
+            "Баллы нельзя вывести деньгами.",
         ]
     )
     await _deliver(
@@ -144,8 +163,8 @@ async def show_referral_dashboard(
         reply_markup=_dashboard_keyboard(
             bot_username=username,
             invite_code=invite_code,
-            balance_wusd_minor=dashboard["balance_wusd_minor"],
-            plans=dashboard["plans"],
+            site_url=site_url,
+            has_site=bool(site),
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}

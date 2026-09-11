@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "postgres" / "sql" / "platform_referral_bonuses_v1.sql"
 REDEMPTIONS_SQL = ROOT / "postgres" / "sql" / "platform_referral_bonus_redemptions_v2.sql"
 ADMIN_INTENTS_SQL = ROOT / "postgres" / "sql" / "platform_referral_admin_intents_v3.sql"
+SITE_REQUESTS_SQL = ROOT / "postgres" / "sql" / "platform_partner_site_requests_v4.sql"
 APPLY_SCRIPT = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
 
 
@@ -75,3 +76,13 @@ def test_referral_admin_operations_require_an_expiring_confirm_intent():
     assert "telegram_user_id" in text
     assert "alter table partner_referral_admin_intents enable row level security" in text
     assert "platform_referral_admin_intents_v3.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_site_request_queue_is_tenant_scoped_and_registered_for_staging():
+    text = SITE_REQUESTS_SQL.read_text(encoding="utf-8").lower()
+    assert "create table if not exists partner_site_requests" in text
+    assert "pending_confirmation" in text
+    assert "pending_provisioning" in text
+    assert "alter table partner_site_requests enable row level security" in text
+    assert "partner_site_requests_tenant_isolation" in text
+    assert "platform_partner_site_requests_v4.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")

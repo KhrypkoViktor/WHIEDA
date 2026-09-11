@@ -13,8 +13,10 @@ START_TOKEN_RE = re.compile(r"^/start(?:@\w+)?(?:\s+(.+))?$", re.I)
 class TelegramMessage:
     chat_id: int
     user_id: int
+    message_id: int
     text: str
     chat_type: str
+    file_id: str | None
     raw: dict[str, Any]
 
 
@@ -51,18 +53,28 @@ def parse_telegram_callback(update: dict[str, Any]) -> TelegramCallbackQuery | N
 
 def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
     message = (update or {}).get("message") or {}
-    text = str(message.get("text") or "").strip()
+    text = str(message.get("text") or message.get("caption") or "").strip()
     chat = message.get("chat") or {}
     user = message.get("from") or {}
     chat_id = chat.get("id")
     user_id = user.get("id")
-    if not text or chat_id is None or user_id is None:
+    message_id = message.get("message_id")
+    photos = message.get("photo") or []
+    document = message.get("document") or {}
+    file_id = ""
+    if isinstance(photos, list) and photos:
+        file_id = str((photos[-1] or {}).get("file_id") or "").strip()
+    if not file_id and isinstance(document, dict):
+        file_id = str(document.get("file_id") or "").strip()
+    if (not text and not file_id) or chat_id is None or user_id is None:
         return None
     return TelegramMessage(
         chat_id=int(chat_id),
         user_id=int(user_id),
+        message_id=int(message_id or 0),
         text=text,
         chat_type=str(chat.get("type") or "private"),
+        file_id=file_id or None,
         raw=update,
     )
 
