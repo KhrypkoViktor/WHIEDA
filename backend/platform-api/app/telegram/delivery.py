@@ -44,8 +44,13 @@ async def send_telegram_text(
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    if isinstance(reply_markup, dict) and reply_markup:
-        payload["reply_markup"] = reply_markup
+    # The bot uses Telegram's compact command menu. Remove any legacy reply
+    # keyboard whenever a plain response does not need its own inline controls.
+    payload["reply_markup"] = (
+        reply_markup
+        if isinstance(reply_markup, dict) and reply_markup
+        else {"remove_keyboard": True}
+    )
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.post(url, json=payload)
     data = response.json() if response.text else {}

@@ -512,6 +512,7 @@ async def test_send_text_uses_html_parse_mode():
         await send_telegram_text(chat_id="1", text="<b>Сравнение</b>", bot_token="tok")
     assert fake.last_json["parse_mode"] == "HTML"
     assert fake.last_json["text"] == "<b>Сравнение</b>"
+    assert fake.last_json["reply_markup"] == {"remove_keyboard": True}
 
 
 @pytest.mark.asyncio
