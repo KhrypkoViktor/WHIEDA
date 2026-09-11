@@ -172,12 +172,7 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
     ),
     routing as (
       select
-        case
-          when first_profile.ref_code is not null
-           and not (supplied.requested_country <> 'BY' and first_profile.owner_id = 'harold')
-          then supplied.first_ref
-          else null
-        end as first_ref_code,
+        supplied.first_ref as first_ref_code,
         case
           when active_profile.ref_code is not null
            and not (supplied.requested_country <> 'BY' and active_profile.owner_id = 'harold')
@@ -187,26 +182,40 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         case
           when supplied.requested_country <> 'BY'
            and coalesce(active_profile.owner_id, first_profile.owner_id) = 'harold'
-          then 'viktor'
-          else coalesce(active_profile.owner_id, first_profile.owner_id, 'viktor')
+          then %(organic_owner_id)s
+          else coalesce(active_profile.owner_id, first_profile.owner_id, %(organic_owner_id)s)
         end as attributed_owner_id,
         case
           when supplied.requested_country <> 'BY'
            and coalesce(active_profile.owner_id, first_profile.owner_id) = 'harold'
-          then 'viktor'
-          else coalesce(active_profile.owner_id, first_profile.owner_id, 'viktor')
+          then %(organic_owner_id)s
+          else coalesce(active_profile.owner_id, first_profile.owner_id, %(organic_owner_id)s)
         end as assigned_owner_id,
         supplied.requested_country,
-        first_profile.profile_version as ref_profile_version
+        coalesce(active_profile.profile_version, first_profile.profile_version) as ref_profile_version
       from supplied
       left join referral_profiles first_profile
         on first_profile.ref_code = supplied.first_ref
        and first_profile.tenant_id = %(tenant_id)s
        and first_profile.enabled = true
+       and exists (
+         select 1
+         from partner_subscriptions first_subscription
+         where first_subscription.tenant_id = first_profile.tenant_id
+           and first_subscription.ref_code = first_profile.ref_code
+           and partner_subscription_state(first_subscription.paid_until, now()) in ('active', 'grace')
+       )
       left join referral_profiles active_profile
         on active_profile.ref_code = supplied.active_ref
        and active_profile.tenant_id = %(tenant_id)s
        and active_profile.enabled = true
+       and exists (
+         select 1
+         from partner_subscriptions active_subscription
+         where active_subscription.tenant_id = active_profile.tenant_id
+           and active_subscription.ref_code = active_profile.ref_code
+           and partner_subscription_state(active_subscription.paid_until, now()) in ('active', 'grace')
+       )
     ),
     service_route as (
       select sl.service_location_id, sl.country_code, sl.city
@@ -234,7 +243,7 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         %(product_sku)s,
         %(product_variant)s,
         %(page_url)s,
-        routing.first_ref_code,
+        %(first_ref)s,
         routing.first_ref_code,
         routing.active_ref_code,
         routing.attributed_owner_id,
@@ -286,6 +295,7 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         "first_ref": lead.first_ref_code,
         "active_ref": lead.active_ref_code,
         "requested_country": lead.country_code,
+        "organic_owner_id": get_settings().platform_organic_owner_id,
         "idempotency_key": lead.idempotency_key,
         "consent_version": lead.consent_version,
         "metadata": json.dumps(lead.metadata),
@@ -336,6 +346,7 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
 
 
 async def validate_lead_shadow(lead: LeadInput) -> dict[str, Any]:
+    organic_owner_id = get_settings().platform_organic_owner_id
     async with tenant_connection(lead.tenant_id) as conn:
         row = await fetch_one(
             conn,
@@ -343,6 +354,13 @@ async def validate_lead_shadow(lead: LeadInput) -> dict[str, Any]:
             select ref_code, owner_id
             from referral_profiles
             where tenant_id = %s and ref_code = %s and enabled = true
+              and exists (
+                select 1
+                from partner_subscriptions ps
+                where ps.tenant_id = referral_profiles.tenant_id
+                  and ps.ref_code = referral_profiles.ref_code
+                  and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
+              )
             limit 1
             """,
             (lead.tenant_id, lead.first_ref_code or lead.active_ref_code),
@@ -350,5 +368,5 @@ async def validate_lead_shadow(lead: LeadInput) -> dict[str, Any]:
     return {
         "valid": True,
         "ref_found": bool(row),
-        "would_assign_owner": row["owner_id"] if row else "viktor",
+        "would_assign_owner": row["owner_id"] if row else organic_owner_id,
     }

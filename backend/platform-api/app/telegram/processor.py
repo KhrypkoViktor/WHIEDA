@@ -11,7 +11,18 @@ from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
 from app.leads.actor_link import link_lead_actor_by_username
 from app.onboarding.service import handle_onboarding_text
+from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
+from app.telegram.referral_bonus import try_handle_referral_callback, try_handle_referral_message
+from app.telegram.site_requests import (
+    try_handle_site_request_callback,
+    try_handle_site_request_message,
+)
+from app.telegram.referral_admin import (
+    try_handle_referral_admin_callback,
+    try_handle_referral_admin_message,
+)
 from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.bindings import (
     BotBindingContext,
@@ -96,6 +107,31 @@ async def handle_start_token(
     return {"ok": True, "route": "start_token", "link_id": result.link_id, "trace_id": trace_id}
 
 
+async def handle_referral_start_token(
+    tenant: TenantContext, msg: TelegramMessage, token: str, trace_id: str
+) -> dict[str, Any]:
+    invite_code = parse_referral_start_token(token)
+    if invite_code is None:
+        raise ValueError("not a referral start token")
+    if msg.chat_type != "private":
+        return {"ok": True, "route": "referral_start", "status": "private_chat_required"}
+    if not invite_code:
+        await deliver_text(msg.chat_id, "Ссылка-приглашение недействительна.")
+        return {"ok": False, "route": "referral_start", "status": "invalid", "trace_id": trace_id}
+    result = await accept_referral_start(
+        tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id,
+        invite_code=invite_code, raw_update=msg.raw,
+    )
+    messages = {
+        "attributed": "Приглашение сохранено. Напишите «с чего начать», чтобы посмотреть возможности бота.",
+        "already_registered": "Вы уже знакомы с ботом. Пригласивший автоматически не меняется.",
+        "invalid": "Ссылка-приглашение недействительна или больше не активна.",
+        "self_referral": "Свою реферальную ссылку нельзя использовать для себя.",
+    }
+    await deliver_text(msg.chat_id, messages[result.status])
+    return {"ok": result.status == "attributed", "route": "referral_start", "status": result.status, "trace_id": trace_id}
+
+
 async def handle_onboarding(
     tenant: TenantContext,
     msg: TelegramMessage,
@@ -152,15 +188,6 @@ async def handle_advisor_query(
             reply_markup=inline
             or main_menu_reply_keyboard(include_calculator=include_calculator),
         )
-        if inline:
-            await send_telegram_text(
-                chat_id=str(msg.chat_id),
-                text="Разделы меню:",
-                bot_token=current_bot_binding().bot_token,
-                reply_markup=main_menu_reply_keyboard(
-                    include_calculator=include_calculator
-                ),
-            )
     elif mode and str(mode) not in {"", "fallback", "error"}:
         logger.warning(
             "telegram_response_not_delivered",
@@ -176,7 +203,7 @@ async def process_core_telegram_update(
     *,
     binding: BotBindingContext,
 ) -> dict[str, Any]:
-    """Full Core path: admin login → content access → callback → start token → onboarding → navigation → SQL advisor."""
+    """Full Core path with owner billing before generic callbacks and advisor routes."""
     with binding_context_scope(binding):
         return await _process_core_telegram_update_scoped(tenant, update, trace_id)
 
@@ -211,10 +238,32 @@ async def _process_core_telegram_update_scoped(
     if content_result is not None:
         return content_result
 
+    billing_callback_result = await try_handle_billing_callback(
+        tenant, update, trace_id=trace_id
+    )
+    if billing_callback_result is not None:
+        return billing_callback_result
+
+    referral_admin_callback_result = await try_handle_referral_admin_callback(
+        tenant, update, trace_id=trace_id
+    )
+    if referral_admin_callback_result is not None:
+        return referral_admin_callback_result
+
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
             return {"ok": True, "route": "ignored_group_callback"}
+        site_request_callback_result = await try_handle_site_request_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if site_request_callback_result is not None:
+            return site_request_callback_result
+        referral_callback_result = await try_handle_referral_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if referral_callback_result is not None:
+            return referral_callback_result
         return await handle_callback_query(tenant, callback, trace_id)
 
     msg = parse_telegram_message(update)
@@ -227,8 +276,31 @@ async def _process_core_telegram_update_scoped(
     if msg.chat_type == "private":
         await _link_partner_chat(tenant, msg, trace_id)
 
+    site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
+    if site_request_result is not None:
+        return site_request_result
+
+    if not msg.text:
+        return {"ok": True, "route": "ignored_media"}
+
+    billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
+    if billing_result is not None:
+        return billing_result
+
+    referral_admin_result = await try_handle_referral_admin_message(
+        tenant, update, trace_id=trace_id
+    )
+    if referral_admin_result is not None:
+        return referral_admin_result
+
+    referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
+    if referral_result is not None:
+        return referral_result
+
     start_token = parse_start_token(msg.text)
     if start_token:
+        if parse_referral_start_token(start_token) is not None:
+            return await handle_referral_start_token(tenant, msg, start_token, trace_id)
         return await handle_start_token(tenant, msg, start_token, trace_id)
 
     onboarding_result = await handle_onboarding(tenant, msg)

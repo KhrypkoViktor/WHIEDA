@@ -1,0 +1,6 @@
+# Include once in nginx http {}. The sync service writes the live copy atomically.
+map $host $wwc_partner_access_allowed {
+    hostnames;
+    default 0;
+    example-paid.wwc.best 1;
+}

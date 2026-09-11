@@ -116,7 +116,7 @@ async def test_product_detail_triggers_delivery():
 
 
 @pytest.mark.asyncio
-async def test_advisor_delivery_keeps_persistent_main_menu():
+async def test_advisor_delivery_removes_legacy_persistent_menu():
     tenant = type("T", (), {"tenant_id": "whieda"})()
     msg = type("M", (), {"chat_id": 99, "text": "активатор", "user_id": 1})()
     core = {"answer_text": "Карточка", "answer_mode": "structured_card", "media": {}}
@@ -125,8 +125,7 @@ async def test_advisor_delivery_keeps_persistent_main_menu():
     ) as deliver:
         await handle_advisor_query(tenant, msg, "trace-menu")
 
-    assert deliver.await_args.kwargs["reply_markup"]["is_persistent"] is True
-    assert len(deliver.await_args.kwargs["reply_markup"]["keyboard"]) == 6
+    assert deliver.await_args.kwargs["reply_markup"] == {"remove_keyboard": True}
 
 
 @pytest.mark.asyncio

@@ -44,8 +44,13 @@ async def send_telegram_text(
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-    if isinstance(reply_markup, dict) and reply_markup:
-        payload["reply_markup"] = reply_markup
+    # The bot uses Telegram's compact command menu. Remove any legacy reply
+    # keyboard whenever a plain response does not need its own inline controls.
+    payload["reply_markup"] = (
+        reply_markup
+        if isinstance(reply_markup, dict) and reply_markup
+        else {"remove_keyboard": True}
+    )
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.post(url, json=payload)
     data = response.json() if response.text else {}
@@ -85,6 +90,29 @@ async def send_telegram_photo(
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
+async def copy_telegram_message(
+    *,
+    chat_id: str,
+    from_chat_id: str,
+    message_id: int,
+    bot_token: str,
+    timeout_sec: float = 10.0,
+) -> dict[str, Any]:
+    """Copy a proof message to the administrator without exposing a download URL."""
+    url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
+    payload = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.post(url, json=payload)
+    data = response.json() if response.text else {}
+    if response.status_code >= 400 or not data.get("ok"):
+        logger.warning(
+            "telegram_copy_message_failed",
+            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+        )
+        return {"ok": False, "status_code": response.status_code, "detail": data}
+    return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
 async def answer_callback_query(
     *,
     callback_query_id: str,
@@ -111,6 +139,37 @@ async def answer_callback_query(
         )
         return {"ok": False, "status_code": response.status_code, "detail": data}
     return {"ok": True}
+
+
+async def configure_telegram_command_menu(
+    *,
+    bot_token: str,
+    commands: list[dict[str, str]],
+    timeout_sec: float = 10.0,
+) -> dict[str, Any]:
+    """Install Telegram's compact command menu without exposing the bot token."""
+    requests = (
+        ("setMyCommands", {"commands": commands}),
+        ("setChatMenuButton", {"menu_button": {"type": "commands"}}),
+    )
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        for method, payload in requests:
+            response = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/{method}",
+                json=payload,
+            )
+            data = response.json() if response.text else {}
+            if response.status_code >= 400 or not data.get("ok"):
+                logger.warning(
+                    "telegram_menu_configuration_failed",
+                    extra={"method": method, "status": response.status_code},
+                )
+                return {
+                    "ok": False,
+                    "method": method,
+                    "status_code": response.status_code,
+                }
+    return {"ok": True, "command_count": len(commands)}
 
 
 def extract_photo_url(media: Any) -> str | None:

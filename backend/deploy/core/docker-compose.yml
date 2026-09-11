@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    volumes:
+      - ${PLATFORM_PARTNER_LIBRARY_HOST_ROOT:-/var/lib/wwc-partner-library}:/var/lib/wwc-partner-library:ro
     ports:
       - "8080:8080"
     depends_on:

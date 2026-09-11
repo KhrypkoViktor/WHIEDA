@@ -29,23 +29,18 @@ async def public_ref_site_alias(ref_code: str, request: Request) -> dict:
 
 @router.get("/v1/public/ref/by-subdomain/{subdomain}")
 async def public_ref_by_subdomain_v1(subdomain: str, request: Request) -> dict:
-    return await _public_ref(
-        subdomain, request, load_public_ref_by_subdomain, not_found_error="subdomain_not_found"
-    )
+    return await _public_ref(subdomain, request, load_public_ref_by_subdomain)
 
 
 @router.get("/api/v1/public/ref/by-subdomain/{subdomain}")
 async def public_ref_by_subdomain_site_alias(subdomain: str, request: Request) -> dict:
-    return await _public_ref(
-        subdomain, request, load_public_ref_by_subdomain, not_found_error="subdomain_not_found"
-    )
+    return await _public_ref(subdomain, request, load_public_ref_by_subdomain)
 
 
 async def _public_ref(
     ref_code: str,
     request: Request,
     loader: RefLoader,
-    not_found_error: str = "ref_not_found",
 ) -> dict:
     settings = get_settings()
     tenant = get_request_tenant(request)
@@ -61,7 +56,7 @@ async def _public_ref(
     if not row:
         raise HTTPException(
             status_code=404,
-            detail={"ok": False, "error": not_found_error},
+            detail={"ok": False, "error": "referral_not_available"},
         )
 
     payload = format_public_ref(row)

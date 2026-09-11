@@ -18,6 +18,8 @@ from app.identity.routes import router as identity_router
 from app.journey.routes import router as journey_router
 from app.leads.routes import router as leads_router
 from app.markets.routes import router as markets_router
+from app.partner_library.routes import router as partner_library_router
+from app.subscriptions.edge_routes import router as subscription_edge_router
 from app.memory.routes import router as memory_router
 from app.onboarding.routes import router as onboarding_router
 from app.pilot.routes import router as pilot_router
@@ -78,6 +80,8 @@ def create_app() -> FastAPI:
     app.include_router(cart_router)
     app.include_router(markets_router)
     app.include_router(content_access_router)
+    app.include_router(partner_library_router)
+    app.include_router(subscription_edge_router)
     app.include_router(theme_access_router)
     app.include_router(admin_router)
     app.include_router(telegram_router)
