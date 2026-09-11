@@ -16,6 +16,7 @@ class TelegramMessage:
     text: str
     chat_type: str
     raw: dict[str, Any]
+    username: str | None = None
 
 
 @dataclass
@@ -58,12 +59,14 @@ def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
     user_id = user.get("id")
     if not text or chat_id is None or user_id is None:
         return None
+    username = str(user.get("username") or "").strip() or None
     return TelegramMessage(
         chat_id=int(chat_id),
         user_id=int(user_id),
         text=text,
         chat_type=str(chat.get("type") or "private"),
         raw=update,
+        username=username,
     )
 
 
