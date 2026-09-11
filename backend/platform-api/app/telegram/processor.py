@@ -12,6 +12,10 @@ from app.identity.service import exchange_telegram_link_token
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.telegram.referral_bonus import try_handle_referral_callback, try_handle_referral_message
+from app.telegram.referral_admin import (
+    try_handle_referral_admin_callback,
+    try_handle_referral_admin_message,
+)
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
@@ -218,6 +222,12 @@ async def _process_core_telegram_update_scoped(
     if billing_callback_result is not None:
         return billing_callback_result
 
+    referral_admin_callback_result = await try_handle_referral_admin_callback(
+        tenant, update, trace_id=trace_id
+    )
+    if referral_admin_callback_result is not None:
+        return referral_admin_callback_result
+
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
@@ -239,6 +249,12 @@ async def _process_core_telegram_update_scoped(
     billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
     if billing_result is not None:
         return billing_result
+
+    referral_admin_result = await try_handle_referral_admin_message(
+        tenant, update, trace_id=trace_id
+    )
+    if referral_admin_result is not None:
+        return referral_admin_result
 
     referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
     if referral_result is not None:

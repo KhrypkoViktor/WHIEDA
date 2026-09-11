@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "postgres" / "sql" / "platform_referral_bonuses_v1.sql"
 REDEMPTIONS_SQL = ROOT / "postgres" / "sql" / "platform_referral_bonus_redemptions_v2.sql"
+ADMIN_INTENTS_SQL = ROOT / "postgres" / "sql" / "platform_referral_admin_intents_v3.sql"
 APPLY_SCRIPT = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
 
 
@@ -62,3 +63,15 @@ def test_bonus_redemption_has_user_bound_single_use_intent_and_rls():
     assert "alter table partner_bonus_redemption_intents enable row level security" in text
     assert "partner_bonus_redemption_intents_tenant_isolation" in text
     assert "platform_referral_bonus_redemptions_v2.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_referral_admin_operations_require_an_expiring_confirm_intent():
+    text = ADMIN_INTENTS_SQL.read_text(encoding="utf-8").lower()
+    assert "create table if not exists partner_referral_admin_intents" in text
+    assert "assign_referrer" in text
+    assert "adjust_bonus" in text
+    assert "consumed_at" in text
+    assert "cancelled_at" in text
+    assert "telegram_user_id" in text
+    assert "alter table partner_referral_admin_intents enable row level security" in text
+    assert "platform_referral_admin_intents_v3.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")

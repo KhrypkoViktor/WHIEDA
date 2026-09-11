@@ -427,6 +427,8 @@ async def create_payment_intent(
     telegram_chat_id: int,
     telegram_message_id: int,
     telegram_user_id: int,
+    product_code: str = "platform_subscription",
+    access_months: int = ACCESS_MONTHS,
 ) -> dict[str, Any]:
     normalized_currency = _validate_payment_input(
         amount_minor=amount_minor,
@@ -435,8 +437,32 @@ async def create_payment_intent(
         telegram_message_id=telegram_message_id,
         telegram_user_id=telegram_user_id,
     )
+    if access_months not in {3, 6, 12}:
+        raise SubscriptionError("access_months must be 3, 6 or 12")
+    normalized_product_code = str(product_code or "").strip().lower()
+    if normalized_product_code != "platform_subscription":
+        raise SubscriptionError("unsupported payment product")
     partner = await resolve_partner_for_billing(tenant_id, identifier)
     async with tenant_connection(tenant_id) as conn:
+        plan = await fetch_one(
+            conn,
+            """
+            select price_wusd_minor, price_rub_minor
+            from partner_subscription_plans
+            where tenant_id = %s and product_code = %s and access_months = %s
+              and active = true and valid_from <= now()
+              and (valid_until is null or valid_until > now())
+            limit 1
+            """,
+            (tenant_id, normalized_product_code, access_months),
+        )
+        if not plan:
+            raise SubscriptionError("Тариф сейчас недоступен")
+        expected_amount = int(
+            plan["price_wusd_minor"] if normalized_currency == "WUSD" else plan["price_rub_minor"]
+        )
+        if amount_minor != expected_amount:
+            raise SubscriptionError("Сумма не соответствует выбранному тарифу")
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -453,9 +479,9 @@ async def create_payment_intent(
             conn,
             """
             insert into partner_payment_intents (
-              intent_id, tenant_id, ref_code, amount_minor, currency,
+              intent_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
               telegram_chat_id, telegram_message_id, telegram_user_id, expires_at
-            ) values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             on conflict (tenant_id, telegram_chat_id, telegram_message_id) do nothing
             returning intent_id
             """,
@@ -465,6 +491,8 @@ async def create_payment_intent(
                 partner["ref_code"],
                 amount_minor,
                 normalized_currency,
+                normalized_product_code,
+                access_months,
                 telegram_chat_id,
                 telegram_message_id,
                 telegram_user_id,
@@ -474,7 +502,7 @@ async def create_payment_intent(
         intent = await fetch_one(
             conn,
             """
-            select intent_id, tenant_id, ref_code, amount_minor, currency,
+            select intent_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
                    telegram_chat_id, telegram_message_id, telegram_user_id,
                    expires_at, consumed_payment_id, cancelled_at, created_at
             from partner_payment_intents
@@ -489,6 +517,8 @@ async def create_payment_intent(
         and int(intent["amount_minor"]) == amount_minor
         and intent["currency"] == normalized_currency
         and int(intent["telegram_user_id"]) == telegram_user_id
+        and str(intent["product_code"]) == normalized_product_code
+        and int(intent["access_months"]) == access_months
     )
     if not same_input:
         raise PaymentIdempotencyConflictError(
@@ -505,8 +535,8 @@ async def create_payment_intent(
         **intent,
         **partner,
         "period_start": period_start,
-        "period_end": add_calendar_months(period_start),
-        "grace_until": add_calendar_months(period_start) + GRACE_PERIOD,
+        "period_end": add_calendar_months(period_start, access_months),
+        "grace_until": add_calendar_months(period_start, access_months) + GRACE_PERIOD,
     }
 
 
@@ -526,7 +556,7 @@ async def confirm_payment_intent(
         intent = await fetch_one(
             conn,
             """
-            select intent_id, ref_code, amount_minor, currency,
+            select intent_id, ref_code, amount_minor, currency, product_code, access_months,
                    telegram_chat_id, telegram_message_id, telegram_user_id,
                    expires_at, consumed_payment_id, cancelled_at
             from partner_payment_intents
@@ -548,7 +578,7 @@ async def confirm_payment_intent(
             payment = await fetch_one(
                 conn,
                 """
-                select payment_id, tenant_id, ref_code, amount_minor, currency,
+                select payment_id, tenant_id, ref_code, amount_minor, currency, product_code,
                        period_start, period_end, previous_paid_until, access_months,
                        telegram_user_id, created_at
                 from partner_payment_ledger
@@ -570,6 +600,8 @@ async def confirm_payment_intent(
             telegram_chat_id=int(intent["telegram_chat_id"]),
             telegram_message_id=int(intent["telegram_message_id"]),
             telegram_user_id=int(intent["telegram_user_id"]),
+            product_code=intent["product_code"],
+            access_months=int(intent["access_months"]),
         )
         async with conn.cursor() as cur:
             await cur.execute(
