@@ -8,6 +8,7 @@ import pytest
 
 from app.referral_bonus.service import parse_referral_start_token, telegram_actor_id
 from app.telegram.processor import process_core_telegram_update
+from app.telegram.referral_bonus import is_referral_command
 
 
 def test_referral_start_token_accepts_only_opaque_codes():
@@ -20,6 +21,13 @@ def test_referral_start_token_accepts_only_opaque_codes():
 def test_telegram_actor_id_is_tenant_scoped_and_stable():
     assert telegram_actor_id("whieda", 123) == "telegram:whieda:123"
     assert telegram_actor_id("nsp", 123) == "telegram:nsp:123"
+
+
+def test_referral_command_is_exact_and_does_not_capture_normal_text():
+    assert is_referral_command("/referral")
+    assert is_referral_command("/referral@WHIEDA_bot")
+    assert not is_referral_command("referral")
+    assert not is_referral_command("/referral now")
 
 
 @pytest.mark.asyncio
@@ -42,3 +50,27 @@ async def test_referral_start_routes_before_generic_site_token(whieda_tenant, wh
     assert result["route"] == "referral_start"
     referral.assert_awaited_once()
     site_token.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_referral_command_routes_before_onboarding_and_advisor(whieda_tenant, whieda_bot_binding):
+    update = {
+        "message": {
+            "text": "/referral",
+            "chat": {"id": 101, "type": "private"},
+            "from": {"id": 201},
+        }
+    }
+    with patch(
+        "app.telegram.processor.try_handle_referral_message",
+        AsyncMock(return_value={"ok": True, "route": "referral"}),
+    ) as referral:
+        with patch("app.telegram.processor.handle_onboarding", AsyncMock()) as onboarding:
+            with patch("app.telegram.processor.handle_advisor_query", AsyncMock()) as advisor:
+                result = await process_core_telegram_update(
+                    whieda_tenant, update, "referral-command", binding=whieda_bot_binding
+                )
+    assert result["route"] == "referral"
+    referral.assert_awaited_once()
+    onboarding.assert_not_called()
+    advisor.assert_not_called()
