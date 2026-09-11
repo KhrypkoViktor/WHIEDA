@@ -21,6 +21,7 @@ EXPECTED_ORDER = [
     "platform_tenant_rls_legacy_leads_v1.sql",
     "platform_partner_subscriptions_v1.sql",
     "platform_partner_subscription_currency_v2.sql",
+    "platform_referral_bonuses_v1.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_identity_journey_v1.sql",
@@ -52,6 +53,7 @@ def test_partner_subscription_migration_follows_required_schema():
         "platform_tenant_rls_v1.sql",
         "platform_partner_subscriptions_v1.sql",
         "platform_partner_subscription_currency_v2.sql",
+        "platform_referral_bonuses_v1.sql",
     ]
     positions = [text.index(name) for name in required]
     assert positions == sorted(positions)

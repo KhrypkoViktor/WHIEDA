@@ -18,6 +18,8 @@ MIGRATIONS = (
     "platform_tenant_registry_v1.sql",
     "platform_tenant_rls_v1.sql",
     "platform_partner_subscriptions_v1.sql",
+    "platform_partner_subscription_currency_v2.sql",
+    "platform_referral_bonuses_v1.sql",
 )
 
 LEADS_PREREQUISITES = """
@@ -123,6 +125,25 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                 );
                 """
             )
+            whieda_plan = conn.execute(
+                """
+                select access_months, price_wusd_minor, price_rub_minor
+                from partner_subscription_plans
+                where tenant_id = 'whieda' and plan_code = 'platform_6m'
+                """
+            ).fetchone()
+            assert whieda_plan == (6, 5400, 540000)
+            rule = conn.execute(
+                """
+                select first_payment_bps, renewal_payment_bps, reward_currency
+                from referral_reward_rules
+                where tenant_id = 'whieda'
+                  and product_code = 'platform_subscription'
+                  and active = true
+                  and valid_until is null
+                """
+            ).fetchone()
+            assert rule == (2000, 1000, "WUSD")
             conn.execute(
                 sql.SQL("grant connect on database {} to {}").format(
                     sql.Identifier(dbname), sql.Identifier(role)
@@ -165,6 +186,10 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                 "select count(*) from partner_payment_intents where tenant_id = 'test-acme'"
             ).fetchone()[0]
             assert foreign_intents == 0
+            foreign_plans = conn.execute(
+                "select count(*) from partner_subscription_plans where tenant_id = 'test-acme'"
+            ).fetchone()[0]
+            assert foreign_plans == 0
 
         with psycopg.connect(api_dsn) as conn:
             conn.execute("select platform_set_tenant_context('whieda')")
