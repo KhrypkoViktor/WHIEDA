@@ -5,7 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.referral_bonus.service import ensure_telegram_actor
+from app.referral_bonus.service import (
+    ensure_telegram_actor,
+    referral_payment_notification_context,
+)
 from app.settings import get_settings
 from app.site_requests.service import (
     SiteRequestError,
@@ -41,6 +44,34 @@ def _owner_allowed(user_id: int) -> bool:
 
 def _request_token(request_id: Any) -> str:
     return str(request_id).replace("-", "")
+
+
+def _points(value: int) -> str:
+    return f"{int(value):,}".replace(",", " ")
+
+
+async def _notify_referrer(request: dict[str, Any]) -> None:
+    payment = request.get("payment") or {}
+    bonus = payment.get("referral_bonus") or {}
+    if not bonus or bonus.get("idempotent") or not bonus.get("actor_id"):
+        return
+    context = await referral_payment_notification_context(
+        str(payment["tenant_id"]),
+        ref_code=str(payment["ref_code"]),
+        inviter_actor_id=str(bonus["actor_id"]),
+    )
+    inviter = context.get("inviter") or {}
+    chat_id = str(inviter.get("telegram_chat_id") or "").strip()
+    if not chat_id:
+        return
+    lines = [
+        f"{request['requested_subdomain']} подключился к платформе.",
+        f"Начислено: +{_points(int(bonus['amount_minor']))} баллов.",
+    ]
+    if bonus.get("balance_points") is not None:
+        lines.append(f"Баланс: {_points(int(bonus['balance_points']))} баллов.")
+    lines.append("Личный кабинет: /cabinet")
+    await _deliver(int(chat_id), "\n".join(lines))
 
 
 def _payment_text(request: dict[str, Any]) -> str:
@@ -138,6 +169,12 @@ async def try_handle_site_request_callback(
                 tenant.tenant_id, request_id=request_id, admin_telegram_user_id=callback.user_id
             )
             if not request.get("idempotent"):
+                try:
+                    await _notify_referrer(request)
+                except Exception:
+                    # The ledger transaction is already committed. A Telegram
+                    # delivery failure must not roll the payment back.
+                    pass
                 await _deliver(
                     int(request["proof_chat_id"]),
                     "Оплата подтверждена. Данные приняты в работу. Напишем, когда "
