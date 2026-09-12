@@ -1,0 +1,15 @@
+[Unit]
+Description=Send due WWC partner subscription reminders
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec core-api-1 python scripts/send_due_partner_reminders.py --binding-id whieda-advisor-bot --send --confirm-send SEND-DUE
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

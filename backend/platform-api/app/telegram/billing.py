@@ -65,7 +65,7 @@ def _points(value: int) -> str:
     return f"{int(value):,}".replace(",", " ")
 
 
-async def _notify_payment_participants(payment: dict[str, Any]) -> None:
+async def notify_payment_participants(payment: dict[str, Any]) -> None:
     bonus = payment.get("referral_bonus") or {}
     context = await referral_payment_notification_context(
         str(payment["tenant_id"]),
@@ -363,7 +363,7 @@ async def try_handle_billing_callback(
         )
         if not payment.get("idempotent"):
             try:
-                await _notify_payment_participants(payment)
+                await notify_payment_participants(payment)
             except Exception:
                 logger.exception(
                     "telegram_billing_participant_notification_failed",

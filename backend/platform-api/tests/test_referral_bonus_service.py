@@ -14,7 +14,12 @@ from app.referral_bonus.service import (
     telegram_actor_id,
 )
 from app.telegram.processor import process_core_telegram_update
-from app.telegram.referral_bonus import _dashboard_keyboard, is_referral_command
+from app.telegram.referral_bonus import (
+    SUPPORT_URL,
+    _dashboard_keyboard,
+    invitation_text,
+    is_referral_command,
+)
 
 
 def test_referral_start_token_accepts_only_opaque_codes():
@@ -32,12 +37,14 @@ def test_telegram_actor_id_is_tenant_scoped_and_stable():
 def test_referral_command_is_exact_and_does_not_capture_normal_text():
     assert is_referral_command("/referral")
     assert is_referral_command("/cabinet")
+    assert is_referral_command("/invite")
+    assert is_referral_command("/support")
     assert is_referral_command("/referral@WHIEDA_bot")
     assert not is_referral_command("referral")
     assert not is_referral_command("/referral now")
 
 
-def test_cabinet_keyboard_opens_site_and_copies_invite_link():
+def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     markup = _dashboard_keyboard(
         bot_username="WHIEDA_bot",
         invite_code="invite-code-123",
@@ -46,9 +53,13 @@ def test_cabinet_keyboard_opens_site_and_copies_invite_link():
     )
     rows = markup["inline_keyboard"]
     assert rows[0][0] == {"text": "Мой сайт", "url": "https://dev.wwc.best/"}
-    assert rows[1][0]["copy_text"]["text"] == (
-        "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
-    )
+    assert rows[1][0] == {"text": "Продлить платформу", "callback_data": "renew:start"}
+    link = "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
+    assert rows[2][0]["copy_text"]["text"] == invitation_text(link)
+    assert rows[3][0]["text"] == "Отправить приглашение"
+    assert rows[4][0]["callback_data"] == "referral:list"
+    assert rows[6][0] == {"text": "Поддержка", "url": SUPPORT_URL}
+    assert len(invitation_text(link)) <= 256
 
 
 @pytest.mark.asyncio
@@ -147,3 +158,23 @@ async def test_referral_command_routes_before_onboarding_and_advisor(whieda_tena
     referral.assert_awaited_once()
     onboarding.assert_not_called()
     advisor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_platform_command_routes_before_open_site_request(whieda_tenant, whieda_bot_binding):
+    update = {
+        "message": {
+            "text": "/support",
+            "chat": {"id": 101, "type": "private"},
+            "from": {"id": 201},
+        }
+    }
+    referral = AsyncMock(return_value={"ok": True, "route": "support"})
+    with patch("app.telegram.processor.try_handle_referral_message", referral):
+        with patch("app.telegram.processor.try_handle_site_request_message", AsyncMock()) as request:
+            result = await process_core_telegram_update(
+                whieda_tenant, update, "support-route", binding=whieda_bot_binding
+            )
+    assert result["route"] == "support"
+    referral.assert_awaited_once()
+    request.assert_not_called()

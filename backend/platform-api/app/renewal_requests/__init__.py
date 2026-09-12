@@ -1,0 +1,1 @@
+"""Partner subscription renewal requests."""
