@@ -16,9 +16,10 @@ case "$destination_name" in
   *.conf) ;;
   *) echo "Destination must be a .conf filename" >&2; exit 2 ;;
 esac
-case "$destination_name" in
-  */*|*\\*) echo "Destination must not contain a path" >&2; exit 2 ;;
-esac
+if printf '%s' "$destination_name" | grep -q '[\\/]'; then
+  echo "Destination must not contain a path" >&2
+  exit 2
+fi
 
 test -f "$source_file"
 test -d "$conf_root"
