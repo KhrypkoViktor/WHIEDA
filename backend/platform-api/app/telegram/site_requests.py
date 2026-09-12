@@ -202,6 +202,8 @@ async def try_handle_site_request_message(
 ) -> dict[str, Any] | None:
     if msg.chat_type != "private":
         return None
+    if (msg.text or "").strip().startswith("/"):
+        return None
     try:
         actor_id = await _actor(tenant, msg)
         request = await get_open_site_request(tenant.tenant_id, actor_id)
