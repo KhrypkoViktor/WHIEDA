@@ -60,6 +60,45 @@ async def test_start_callback_begins_renewal(whieda_tenant, whieda_bot_binding):
 
 
 @pytest.mark.asyncio
+async def test_cancel_callback_closes_open_renewal(whieda_tenant, whieda_bot_binding):
+    with patch("app.telegram.renewal_requests.answer_callback_query", AsyncMock()):
+        with patch("app.telegram.renewal_requests._actor", AsyncMock(return_value="actor-1")):
+            with patch(
+                "app.telegram.renewal_requests.cancel_renewal_request",
+                AsyncMock(return_value={"status": "cancelled"}),
+            ) as cancelled:
+                with patch("app.telegram.renewal_requests._deliver", AsyncMock()) as deliver:
+                    with binding_context_scope(whieda_bot_binding):
+                        result = await try_handle_renewal_callback(
+                            whieda_tenant, _callback("renew:cancel"), trace_id="renew-cancel"
+                        )
+    assert result and result["status"] == "cancelled"
+    cancelled.assert_awaited_once_with(whieda_tenant.tenant_id, "actor-1")
+    assert "Продление отменено" in deliver.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_slash_command_is_not_captured_by_open_renewal(whieda_tenant):
+    message = parse_telegram_message(
+        {
+            "message": {
+                "message_id": 52,
+                "text": "/products",
+                "chat": {"id": 8001, "type": "private"},
+                "from": {"id": 8001},
+            }
+        }
+    )
+    assert message is not None
+    with patch("app.telegram.renewal_requests._actor", AsyncMock()) as actor:
+        result = await try_handle_renewal_message(
+            whieda_tenant, message, trace_id="renew-command-bypass"
+        )
+    assert result is None
+    actor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_payment_proof_is_forwarded_for_owner_confirmation(
     whieda_tenant, whieda_bot_binding
 ):

@@ -10,6 +10,7 @@ from app.referral_bonus.service import ensure_telegram_actor
 from app.renewal_requests.service import (
     RenewalRequestError,
     begin_renewal_request,
+    cancel_renewal_request,
     confirm_renewal_request,
     get_open_renewal_request,
     reject_renewal_request,
@@ -27,8 +28,12 @@ from app.tenancy import TenantContext
 logger = logging.getLogger(__name__)
 
 _CALLBACK_RE = re.compile(
-    r"^renew:(start|months:(?:3|6|12)|country:(?:BY|RU)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^renew:(start|cancel|months:(?:3|6|12)|country:(?:BY|RU)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
+
+
+def _cancel_row() -> list[dict[str, str]]:
+    return [{"text": "Отменить", "callback_data": "renew:cancel"}]
 
 
 def _owner_allowed(user_id: int) -> bool:
@@ -98,6 +103,7 @@ async def _prompt(chat_id: int, request: dict[str, Any]) -> None:
                     [{"text": "3 месяца", "callback_data": "renew:months:3"}],
                     [{"text": "6 месяцев", "callback_data": "renew:months:6"}],
                     [{"text": "12 месяцев", "callback_data": "renew:months:12"}],
+                    _cancel_row(),
                 ]
             },
         )
@@ -109,11 +115,15 @@ async def _prompt(chat_id: int, request: dict[str, Any]) -> None:
                 "inline_keyboard": [[
                     {"text": "Беларусь", "callback_data": "renew:country:BY"},
                     {"text": "Россия", "callback_data": "renew:country:RU"},
-                ]]
+                ], _cancel_row()]
             },
         )
     elif status == "awaiting_payment":
-        await _deliver(chat_id, _payment_text(request))
+        await _deliver(
+            chat_id,
+            _payment_text(request),
+            reply_markup={"inline_keyboard": [_cancel_row()]},
+        )
     elif status == "pending_confirmation":
         await _deliver(chat_id, "Чек получен. Виктор проверит оплату и подтвердит продление.")
 
@@ -173,6 +183,10 @@ async def try_handle_renewal_callback(
         actor_id = await _actor(tenant, callback)
         if action == "start":
             request = await begin_renewal_request(tenant.tenant_id, actor_id)
+        elif action == "cancel":
+            await cancel_renewal_request(tenant.tenant_id, actor_id)
+            await _deliver(callback.chat_id, "Продление отменено. Вернуться можно через личный кабинет.")
+            return {"ok": True, "route": "renewal_cancel", "status": "cancelled", "trace_id": trace_id}
         elif action.startswith("months:"):
             request = await set_renewal_period(
                 tenant.tenant_id, actor_id, int(action.rsplit(":", 1)[1])
@@ -192,6 +206,8 @@ async def try_handle_renewal_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
 ) -> dict[str, Any] | None:
     if msg.chat_type != "private":
+        return None
+    if (msg.text or "").strip().startswith("/"):
         return None
     try:
         actor_id = await _actor(tenant, msg)
