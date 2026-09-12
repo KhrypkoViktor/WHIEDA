@@ -246,6 +246,52 @@ async def referral_dashboard(
             """,
             (tenant_id, actor_id),
         )
+        referrals = await fetch_one(
+            conn,
+            """
+            select coalesce(json_agg(rows order by attributed_at desc), '[]'::json) as entries
+            from (
+              select
+                a.invitee_actor_id,
+                la.display_name,
+                la.telegram_username,
+                a.created_at as attributed_at,
+                rp.ref_code,
+                ps.paid_until,
+                case
+                  when rp.ref_code is null then 'no_site'
+                  else partner_subscription_state(ps.paid_until, now())
+                end as subscription_status,
+                sr.status as site_request_status
+              from partner_referral_attributions a
+              join lead_actors la
+                on la.tenant_id = a.tenant_id and la.actor_id = a.invitee_actor_id
+              left join lateral (
+                select profile.ref_code
+                from referral_profiles profile
+                where profile.tenant_id = a.tenant_id
+                  and profile.owner_id = a.invitee_actor_id
+                  and profile.enabled = true
+                order by profile.ref_code
+                limit 1
+              ) rp on true
+              left join partner_subscriptions ps
+                on ps.tenant_id = a.tenant_id and ps.ref_code = rp.ref_code
+              left join lateral (
+                select request.status
+                from partner_site_requests request
+                where request.tenant_id = a.tenant_id
+                  and request.actor_id = a.invitee_actor_id
+                order by request.created_at desc
+                limit 1
+              ) sr on true
+              where a.tenant_id = %s and a.inviter_actor_id = %s
+              order by a.created_at desc
+              limit 20
+            ) rows
+            """,
+            (tenant_id, actor_id),
+        )
     amount_minor = int((balance or {}).get("amount_minor") or 0)
     site_info: dict[str, Any] | None = None
     if site:
@@ -274,6 +320,7 @@ async def referral_dashboard(
         "history": list((history or {}).get("entries") or []),
         "plans": list((plans or {}).get("items") or []),
         "site": site_info,
+        "referrals": list((referrals or {}).get("entries") or []),
     }
 
 

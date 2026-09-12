@@ -10,6 +10,8 @@ SQL = ROOT / "postgres" / "sql" / "platform_referral_bonuses_v1.sql"
 REDEMPTIONS_SQL = ROOT / "postgres" / "sql" / "platform_referral_bonus_redemptions_v2.sql"
 ADMIN_INTENTS_SQL = ROOT / "postgres" / "sql" / "platform_referral_admin_intents_v3.sql"
 SITE_REQUESTS_SQL = ROOT / "postgres" / "sql" / "platform_partner_site_requests_v4.sql"
+RENEWAL_REQUESTS_SQL = ROOT / "postgres" / "sql" / "platform_partner_renewal_requests_v5.sql"
+REMINDERS_SQL = ROOT / "postgres" / "sql" / "platform_partner_subscription_reminders_v6.sql"
 APPLY_SCRIPT = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
 
 
@@ -86,3 +88,19 @@ def test_site_request_queue_is_tenant_scoped_and_registered_for_staging():
     assert "alter table partner_site_requests enable row level security" in text
     assert "partner_site_requests_tenant_isolation" in text
     assert "platform_partner_site_requests_v4.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_renewal_request_queue_is_tenant_scoped_and_registered_for_staging():
+    text = RENEWAL_REQUESTS_SQL.read_text(encoding="utf-8").lower()
+    assert "create table if not exists partner_renewal_requests" in text
+    assert "alter table partner_renewal_requests enable row level security" in text
+    assert "partner_renewal_requests_tenant_isolation" in text
+    assert "platform_partner_renewal_requests_v5.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")
+
+
+def test_subscription_reminders_are_idempotent_and_tenant_scoped():
+    text = REMINDERS_SQL.read_text(encoding="utf-8").lower()
+    assert "unique (tenant_id, ref_code, event_type, paid_until)" in text
+    assert "alter table partner_subscription_reminder_log enable row level security" in text
+    assert "partner_subscription_reminder_log_tenant_isolation" in text
+    assert "platform_partner_subscription_reminders_v6.sql" in APPLY_SCRIPT.read_text(encoding="utf-8")

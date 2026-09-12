@@ -110,13 +110,15 @@ MENU_INTENT_BY_COMMAND: dict[str, str] = {
 
 TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("start", "С чего начать"),
+    ("cabinet", "Личный кабинет"),
+    ("invite", "Пригласить партнёра"),
     ("products", "Товары"),
+    ("match", "Подобрать продукты"),
     ("calculator", "Калькулятор"),
     ("business", "Бизнес"),
-    ("company", "О компании"),
-    ("match", "Подобрать продукты"),
     ("events", "Встречи"),
-    ("cabinet", "Личный кабинет"),
+    ("company", "О компании"),
+    ("support", "Поддержка"),
 )
 
 NAVIGATION_INTENT_KEYS: frozenset[str] = frozenset(MENU_INTENT_BY_LABEL.values())

@@ -13,6 +13,10 @@ from app.leads.actor_link import link_lead_actor_by_username
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.telegram.referral_bonus import try_handle_referral_callback, try_handle_referral_message
+from app.telegram.renewal_requests import (
+    try_handle_renewal_callback,
+    try_handle_renewal_message,
+)
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
     try_handle_site_request_message,
@@ -254,6 +258,11 @@ async def _process_core_telegram_update_scoped(
     if callback:
         if callback.chat_type != "private":
             return {"ok": True, "route": "ignored_group_callback"}
+        renewal_callback_result = await try_handle_renewal_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if renewal_callback_result is not None:
+            return renewal_callback_result
         site_request_callback_result = await try_handle_site_request_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -276,6 +285,14 @@ async def _process_core_telegram_update_scoped(
     if msg.chat_type == "private":
         await _link_partner_chat(tenant, msg, trace_id)
 
+    referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
+    if referral_result is not None:
+        return referral_result
+
+    renewal_result = await try_handle_renewal_message(tenant, msg, trace_id=trace_id)
+    if renewal_result is not None:
+        return renewal_result
+
     site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
     if site_request_result is not None:
         return site_request_result
@@ -292,10 +309,6 @@ async def _process_core_telegram_update_scoped(
     )
     if referral_admin_result is not None:
         return referral_admin_result
-
-    referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
-    if referral_result is not None:
-        return referral_result
 
     start_token = parse_start_token(msg.text)
     if start_token:
