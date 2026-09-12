@@ -1,8 +1,19 @@
 # Состояние работ: реферальные бонусы
 
-Дата: 2026-09-11
-Ветка: `core/partner-subscriptions-20260909`
-Среды: без изменений; staging и production не затрагивались.
+Дата: 2026-09-12
+Ветка выпуска: `release/partner-subscriptions-20260911`, ревизия `9504441`
+Среды: staging и production развёрнуты.
+
+## Выпуск 2026-09-12
+
+- В одну ревизию собраны доставка заявок `0eee524`, подписки, заявки на сайт,
+  бонусы и Telegram-меню.
+- На staging и production применены аддитивные миграции для WUSD, бонусов,
+  списаний, owner-only intent и очереди заявок. На production заранее создан и
+  проверен полный логический backup PostgreSQL.
+- На обеих средах API и worker прошли `/health/live` и `/health/ready`.
+- Для production binding `whieda-advisor-bot` установлено компактное Telegram
+  command menu. Обычный следующий ответ бота снимает старую reply-клавиатуру.
 
 ## Блоки 1-2: выполнено
 

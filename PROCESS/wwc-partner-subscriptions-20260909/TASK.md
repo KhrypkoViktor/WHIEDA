@@ -986,3 +986,10 @@ Shared staging, production webhook, реальные Telegram-сообщения
 
 Реализация Telegram-меню: `53db8ad`. Финальный профиль: `151 passed`, compileall
 и `git diff --check` успешны. Production и staging не изменялись.
+
+## Выпуск 2026-09-12
+
+Ограничение последней строки выше было снято прямым разрешением владельца.
+Интеграционная ревизия `9504441` объединяет delivery заявок `0eee524` с этим
+срезом. Её миграции и код развёрнуты на Core staging и production; health-check
+обеих сред прошёл. Website и nginx сайта не менялись.
