@@ -50,6 +50,24 @@ async def begin_renewal_request(tenant_id: str, actor_id: str) -> dict[str, Any]
     return row
 
 
+async def cancel_renewal_request(tenant_id: str, actor_id: str) -> dict[str, Any]:
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update partner_renewal_requests
+            set status = 'cancelled', updated_at = now()
+            where tenant_id = %s and actor_id = %s
+              and status not in ('confirmed', 'rejected', 'cancelled')
+            returning *
+            """,
+            (tenant_id, actor_id),
+        )
+    if not row:
+        raise RenewalRequestError("Активной заявки на продление нет.")
+    return row
+
+
 async def set_renewal_period(
     tenant_id: str, actor_id: str, access_months: int
 ) -> dict[str, Any]:
