@@ -11,6 +11,7 @@ from app.telegram.renewal_requests import (
     try_handle_renewal_callback,
     try_handle_renewal_message,
 )
+from app.telegram.bindings import binding_context_scope
 from app.telegram.update_parser import parse_telegram_callback, parse_telegram_message
 
 
@@ -50,9 +51,10 @@ async def test_start_callback_begins_renewal(whieda_tenant, whieda_bot_binding):
                 AsyncMock(return_value=request),
             ):
                 with patch("app.telegram.renewal_requests._prompt", AsyncMock()) as prompt:
-                    result = await try_handle_renewal_callback(
-                        whieda_tenant, _callback("renew:start"), trace_id="renew-start"
-                    )
+                    with binding_context_scope(whieda_bot_binding):
+                        result = await try_handle_renewal_callback(
+                            whieda_tenant, _callback("renew:start"), trace_id="renew-start"
+                        )
     assert result and result["status"] == "awaiting_period"
     prompt.assert_awaited_once_with(7001, request)
 
@@ -98,9 +100,10 @@ async def test_payment_proof_is_forwarded_for_owner_confirmation(
                         "app.telegram.renewal_requests.copy_telegram_message", AsyncMock()
                     ) as copied:
                         with patch("app.telegram.renewal_requests._deliver", AsyncMock()) as deliver:
-                            result = await try_handle_renewal_message(
-                                whieda_tenant, message, trace_id="renew-proof"
-                            )
+                            with binding_context_scope(whieda_bot_binding):
+                                result = await try_handle_renewal_message(
+                                    whieda_tenant, message, trace_id="renew-proof"
+                                )
     assert result and result["status"] == "pending_confirmation"
     copied.assert_awaited_once()
     owner_markup = deliver.await_args_list[0].kwargs["reply_markup"]
