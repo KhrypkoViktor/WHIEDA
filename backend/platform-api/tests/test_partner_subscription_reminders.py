@@ -37,3 +37,4 @@ def test_operational_reminder_scripts_are_copied_into_image():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "scripts/send_due_partner_reminders.py" in dockerfile
     assert "scripts/check_telegram_webhook_health.py" in dockerfile
+    assert "scripts/send_telegram_command_canary.py" in dockerfile
