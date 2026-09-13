@@ -28,6 +28,7 @@ from app.telegram.referral_admin import (
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
+from app.telegram.pro_start import handle_pro_start, is_pro_start_token
 from app.telegram.bindings import (
     BotBindingContext,
     binding_context_scope,
@@ -320,6 +321,8 @@ async def _process_core_telegram_update_scoped(
     if start_token:
         if parse_referral_start_token(start_token) is not None:
             return await handle_referral_start_token(tenant, msg, start_token, trace_id)
+        if is_pro_start_token(start_token):
+            return await handle_pro_start(tenant, msg, trace_id)
         return await handle_start_token(tenant, msg, start_token, trace_id)
 
     onboarding_result = await handle_onboarding(tenant, msg)
