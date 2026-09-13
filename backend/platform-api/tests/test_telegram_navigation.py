@@ -174,6 +174,13 @@ def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
     }
     nsp_commands = telegram_menu_commands(include_calculator=False)
     assert "calculator" not in {item["command"] for item in nsp_commands}
+    minimal_commands = telegram_menu_commands(minimal=True)
+    assert {item["command"] for item in minimal_commands} == {
+        "cabinet",
+        "invite",
+        "calculator",
+        "support",
+    }
 
 
 def test_standard_menu_commands_resolve_without_entering_advisor():

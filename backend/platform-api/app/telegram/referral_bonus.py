@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlencode
 
+from app.cart.web_links import CALCULATOR_WEB_URL
 from app.referral_bonus.service import (
     BonusRedemptionError,
     BonusRedemptionExpiredError,
@@ -18,6 +19,7 @@ from app.referral_bonus.service import (
     get_or_create_invite_code,
     referral_dashboard,
 )
+from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -122,12 +124,24 @@ def _dashboard_keyboard(
     invite_code: str,
     site_url: str,
     has_site: bool,
+    minimal: bool,
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
     share_url = "https://t.me/share/url?" + urlencode(
         {"url": link, "text": invitation_text("")}
     )
+    if minimal:
+        return {
+            "inline_keyboard": [
+                [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
+                [{"text": "Скопировать реферальную ссылку", "copy_text": {"text": link}}],
+                [{"text": "Отправить приглашение", "url": share_url}],
+                [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
+                [{"text": "Поддержка", "url": SUPPORT_URL}],
+            ]
+        }
+
     rows: list[list[dict[str, Any]]] = [
         [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
         [{"text": "Скопировать приглашение", "copy_text": {"text": invite}}],
@@ -200,6 +214,7 @@ async def show_referral_dashboard(
         return {"ok": False, "route": "referral", "status": "bot_username_missing", "trace_id": trace_id}
     link = f"https://t.me/{username}?start=ref_{invite_code}"
     site = dashboard.get("site") or {}
+    minimal = get_settings().telegram_ui_profile == "minimal"
     site_url = str(site.get("url") or "https://wwc.best/")
     status = str(site.get("subscription_status") or "no_subscription")
     days = int(site.get("days_remaining") or 0)
@@ -213,8 +228,7 @@ async def show_referral_dashboard(
         access_line = "Сайт ожидает продления."
     else:
         access_line = "Персональный сайт ещё не создан."
-    text = "\n".join(
-        [
+    lines = [
             "Личный кабинет",
             "",
             access_line,
@@ -227,12 +241,17 @@ async def show_referral_dashboard(
             "",
             f"Приглашено: {dashboard['invited_count']}",
             f"Оплатили сайт: {dashboard['paid_count']}",
-            "",
-            "20% начисляется с первой оплаты платформы и 10% с продлений.",
-            "Каждые 3 000 баллов автоматически продлевают ваш сайт ещё на 3 месяца.",
-            "Баллы нельзя вывести деньгами.",
-        ]
-    )
+    ]
+    if not minimal:
+        lines.extend(
+            [
+                "",
+                "20% начисляется с первой оплаты платформы и 10% с продлений.",
+                "Каждые 3 000 баллов автоматически продлевают ваш сайт ещё на 3 месяца.",
+                "Баллы нельзя вывести деньгами.",
+            ]
+        )
+    text = "\n".join(lines)
     await _deliver(
         telegram_chat_id,
         text,
@@ -241,6 +260,7 @@ async def show_referral_dashboard(
             invite_code=invite_code,
             site_url=site_url,
             has_site=bool(site),
+            minimal=minimal,
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}

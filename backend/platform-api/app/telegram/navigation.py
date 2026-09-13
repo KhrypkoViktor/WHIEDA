@@ -121,6 +121,15 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("support", "Поддержка"),
 )
 
+# Production currently accepts site setup and payment confirmation manually through
+# Viktor. Keep the public bot focused on the few actions that are dependable.
+MINIMAL_TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("cabinet", "Личный кабинет"),
+    ("invite", "Пригласить партнёра"),
+    ("calculator", "Калькулятор"),
+    ("support", "Поддержка"),
+)
+
 NAVIGATION_INTENT_KEYS: frozenset[str] = frozenset(MENU_INTENT_BY_LABEL.values())
 
 CATALOG_LIST_PHRASES: frozenset[str] = frozenset(
@@ -313,10 +322,15 @@ def main_menu_reply_keyboard(*, include_calculator: bool = True) -> dict[str, An
     return {"remove_keyboard": True}
 
 
-def telegram_menu_commands(*, include_calculator: bool = True) -> list[dict[str, str]]:
+def telegram_menu_commands(
+    *,
+    include_calculator: bool = True,
+    minimal: bool = False,
+) -> list[dict[str, str]]:
+    commands = MINIMAL_TELEGRAM_MENU_COMMANDS if minimal else TELEGRAM_MENU_COMMANDS
     return [
         {"command": command, "description": description}
-        for command, description in TELEGRAM_MENU_COMMANDS
+        for command, description in commands
         if include_calculator or command != "calculator"
     ]
 

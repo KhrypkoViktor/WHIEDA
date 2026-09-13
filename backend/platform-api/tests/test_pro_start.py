@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from types import SimpleNamespace
 
 from app.telegram.processor import process_core_telegram_update
 
@@ -69,3 +70,54 @@ async def test_start_pro_in_group_is_ignored(whieda_tenant, whieda_bot_binding):
         result = await process_core_telegram_update(whieda_tenant, update, "t-pro3", binding=whieda_bot_binding)
     assert result["route"] != "pro_start"
     send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_pro_is_manual_on_minimal_profile(whieda_tenant, whieda_bot_binding):
+    link, fill = _quiet_linking()
+    with link, fill, patch(
+        "app.telegram.processor.get_settings",
+        return_value=SimpleNamespace(telegram_ui_profile="minimal"),
+    ), patch(
+        "app.telegram.processor._manual_operation_notice", AsyncMock()
+    ) as notice, patch(
+        "app.telegram.processor.handle_pro_start", AsyncMock()
+    ) as pro_start:
+        result = await process_core_telegram_update(
+            whieda_tenant, _update("/start pro"), "t-pro-manual", binding=whieda_bot_binding
+        )
+    assert result["route"] == "manual_partner_operation"
+    notice.assert_awaited_once_with(300)
+    pro_start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_old_renewal_button_is_blocked_on_minimal_profile(whieda_tenant, whieda_bot_binding):
+    update = {
+        "callback_query": {
+            "id": "old-renewal-button",
+            "data": "renew:start",
+            "from": {"id": 300},
+            "message": {"chat": {"id": 300, "type": "private"}},
+        }
+    }
+    with patch(
+        "app.telegram.processor.get_settings",
+        return_value=SimpleNamespace(telegram_ui_profile="minimal"),
+    ), patch(
+        "app.telegram.processor.try_handle_admin_login", AsyncMock(return_value=None)
+    ), patch(
+        "app.telegram.processor.try_handle_content_access", AsyncMock(return_value=None)
+    ), patch(
+        "app.telegram.processor.try_handle_referral_admin_callback", AsyncMock(return_value=None)
+    ), patch(
+        "app.telegram.processor._manual_operation_notice", AsyncMock()
+    ) as notice, patch(
+        "app.telegram.processor.try_handle_renewal_callback", AsyncMock()
+    ) as renewal:
+        result = await process_core_telegram_update(
+            whieda_tenant, update, "t-old-renewal", binding=whieda_bot_binding
+        )
+    assert result["route"] == "manual_partner_operation"
+    notice.assert_awaited_once_with(300, "old-renewal-button")
+    renewal.assert_not_awaited()

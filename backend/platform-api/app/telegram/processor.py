@@ -12,7 +12,12 @@ from app.identity.service import exchange_telegram_link_token
 from app.leads.actor_link import fill_lead_actor_user_id, link_lead_actor_by_username
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
-from app.telegram.referral_bonus import try_handle_referral_callback, try_handle_referral_message
+from app.settings import get_settings
+from app.telegram.referral_bonus import (
+    show_referral_dashboard,
+    try_handle_referral_callback,
+    try_handle_referral_message,
+)
 from app.telegram.renewal_requests import (
     try_handle_renewal_callback,
     try_handle_renewal_message,
@@ -40,7 +45,11 @@ from app.telegram.catalog_browse import (
     handle_navigation_text,
     handle_newcomer_panel,
 )
-from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
+from app.telegram.delivery import (
+    answer_callback_query,
+    deliver_structured_advisor_response,
+    send_telegram_text,
+)
 from app.telegram.modes import should_deliver_telegram_response
 from app.telegram.navigation import (
     advisor_followup_inline_keyboard,
@@ -57,6 +66,32 @@ from app.telegram.update_parser import (
 from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
+
+_MANUAL_OPERATION_CALLBACK_PREFIXES = (
+    "billing:",
+    "renew:",
+    "site:",
+    "referral:redeem:",
+    "referral:confirm:",
+    "referral:cancel:",
+)
+
+
+def _manual_partner_operations_only() -> bool:
+    return get_settings().telegram_ui_profile == "minimal"
+
+
+async def _manual_operation_notice(chat_id: int, callback_query_id: str | None = None) -> None:
+    binding = current_bot_binding()
+    if callback_query_id:
+        await answer_callback_query(
+            callback_query_id=callback_query_id,
+            bot_token=binding.bot_token,
+        )
+    await deliver_text(
+        chat_id,
+        "Подключение сайта, продление и оплата сейчас оформляются вручную. Напишите Виктору: @sunraysword.",
+    )
 
 
 async def deliver_text(chat_id: int | str, text: str) -> None:
@@ -241,6 +276,7 @@ async def _process_core_telegram_update_scoped(
     update: dict[str, Any],
     trace_id: str,
 ) -> dict[str, Any]:
+    manual_operations = _manual_partner_operations_only()
     admin_result = await try_handle_admin_login(update, trace_id=trace_id)
     if admin_result is not None:
         return admin_result
@@ -249,11 +285,12 @@ async def _process_core_telegram_update_scoped(
     if content_result is not None:
         return content_result
 
-    billing_callback_result = await try_handle_billing_callback(
-        tenant, update, trace_id=trace_id
-    )
-    if billing_callback_result is not None:
-        return billing_callback_result
+    if not manual_operations:
+        billing_callback_result = await try_handle_billing_callback(
+            tenant, update, trace_id=trace_id
+        )
+        if billing_callback_result is not None:
+            return billing_callback_result
 
     referral_admin_callback_result = await try_handle_referral_admin_callback(
         tenant, update, trace_id=trace_id
@@ -265,6 +302,9 @@ async def _process_core_telegram_update_scoped(
     if callback:
         if callback.chat_type != "private":
             return {"ok": True, "route": "ignored_group_callback"}
+        if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
+            await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
+            return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
         renewal_callback_result = await try_handle_renewal_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -296,20 +336,22 @@ async def _process_core_telegram_update_scoped(
     if referral_result is not None:
         return referral_result
 
-    renewal_result = await try_handle_renewal_message(tenant, msg, trace_id=trace_id)
-    if renewal_result is not None:
-        return renewal_result
+    if not manual_operations:
+        renewal_result = await try_handle_renewal_message(tenant, msg, trace_id=trace_id)
+        if renewal_result is not None:
+            return renewal_result
 
-    site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
-    if site_request_result is not None:
-        return site_request_result
+        site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
+        if site_request_result is not None:
+            return site_request_result
 
     if not msg.text:
         return {"ok": True, "route": "ignored_media"}
 
-    billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
-    if billing_result is not None:
-        return billing_result
+    if not manual_operations:
+        billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
+        if billing_result is not None:
+            return billing_result
 
     referral_admin_result = await try_handle_referral_admin_message(
         tenant, update, trace_id=trace_id
@@ -322,6 +364,9 @@ async def _process_core_telegram_update_scoped(
         if parse_referral_start_token(start_token) is not None:
             return await handle_referral_start_token(tenant, msg, start_token, trace_id)
         if is_pro_start_token(start_token):
+            if manual_operations:
+                await _manual_operation_notice(msg.chat_id)
+                return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
             return await handle_pro_start(tenant, msg, trace_id)
         return await handle_start_token(tenant, msg, start_token, trace_id)
 
@@ -330,6 +375,14 @@ async def _process_core_telegram_update_scoped(
         return onboarding_result
 
     if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
+        if manual_operations:
+            return await show_referral_dashboard(
+                tenant,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+                raw_update=msg.raw,
+                trace_id=trace_id,
+            )
         return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
 
     navigation_result = await handle_navigation_text(tenant, msg, trace_id)

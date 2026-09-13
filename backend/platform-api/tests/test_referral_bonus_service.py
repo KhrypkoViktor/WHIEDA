@@ -60,6 +60,7 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
         invite_code="invite-code-123",
         site_url="https://dev.wwc.best/",
         has_site=True,
+        minimal=False,
     )
     rows = markup["inline_keyboard"]
     assert rows[0][0] == {"text": "Мой сайт", "url": "https://dev.wwc.best/"}
@@ -70,6 +71,28 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     assert rows[4][0]["callback_data"] == "referral:list"
     assert rows[6][0] == {"text": "Поддержка", "url": SUPPORT_URL}
     assert len(invitation_text(link)) <= 256
+
+
+def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
+    markup = _dashboard_keyboard(
+        bot_username="WHIEDA_bot",
+        invite_code="invite-code-123",
+        site_url="https://dev.wwc.best/",
+        has_site=True,
+        minimal=True,
+    )
+    rows = markup["inline_keyboard"]
+    assert [row[0]["text"] for row in rows] == [
+        "Мой сайт",
+        "Скопировать реферальную ссылку",
+        "Отправить приглашение",
+        "Калькулятор",
+        "Поддержка",
+    ]
+    assert rows[1][0]["copy_text"]["text"] == (
+        "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
+    )
+    assert all("callback_data" not in row[0] for row in rows)
 
 
 @pytest.mark.asyncio
