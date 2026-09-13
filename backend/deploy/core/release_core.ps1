@@ -27,7 +27,9 @@ $apiRoot = Join-Path $repoRoot 'backend/platform-api'
 $sha = (git -C $repoRoot rev-parse --short $Revision).Trim()
 if (-not $sha) { throw "unknown revision $Revision" }
 if ($Revision -eq 'HEAD') {
-    $dirty = git -C $repoRoot status --porcelain -- backend/platform-api
+    # git archive ships the commit, so only modified tracked files can make the
+    # release differ from what was tested; untracked noise (pycache) is ignored.
+    $dirty = git -C $repoRoot status --porcelain --untracked-files=no -- backend/platform-api
     if ($dirty) { throw "backend/platform-api has uncommitted changes; commit or pass -Revision" }
 }
 Write-Host "== releasing $Target <- $sha"
