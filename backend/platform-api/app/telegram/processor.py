@@ -94,6 +94,17 @@ async def _manual_operation_notice(chat_id: int, callback_query_id: str | None =
     )
 
 
+async def _remove_legacy_reply_keyboard(chat_id: int) -> None:
+    """Telegram keeps an old reply keyboard until a later message removes it."""
+    binding = current_bot_binding()
+    await send_telegram_text(
+        chat_id=str(chat_id),
+        text="Меню обновлено. Открываю личный кабинет.",
+        bot_token=binding.bot_token,
+        reply_markup=main_menu_reply_keyboard(),
+    )
+
+
 async def deliver_text(chat_id: int | str, text: str) -> None:
     if not text.strip():
         return
@@ -376,6 +387,7 @@ async def _process_core_telegram_update_scoped(
 
     if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
         if manual_operations:
+            await _remove_legacy_reply_keyboard(msg.chat_id)
             return await show_referral_dashboard(
                 tenant,
                 telegram_user_id=msg.user_id,

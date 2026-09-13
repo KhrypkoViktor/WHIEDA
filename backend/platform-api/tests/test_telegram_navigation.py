@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -594,6 +595,34 @@ async def test_bare_start_opens_newcomer_panel(tenant, whieda_bot_binding):
                 )
     panel.assert_awaited_once()
     assert result["route"] == "newcomer_panel"
+
+
+@pytest.mark.asyncio
+async def test_bare_start_removes_old_keyboard_on_minimal_profile(tenant, whieda_bot_binding):
+    update = {
+        "message": {
+            "text": "/start",
+            "chat": {"id": 55, "type": "private"},
+            "from": {"id": 9},
+        }
+    }
+    with patch(
+        "app.telegram.processor.get_settings",
+        return_value=SimpleNamespace(telegram_ui_profile="minimal"),
+    ), patch(
+        "app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)
+    ), patch(
+        "app.telegram.processor.send_telegram_text", AsyncMock()
+    ) as remove_keyboard, patch(
+        "app.telegram.processor.show_referral_dashboard",
+        AsyncMock(return_value={"ok": True, "route": "referral"}),
+    ) as dashboard:
+        result = await process_core_telegram_update(
+            tenant, update, "trace-minimal-start", binding=whieda_bot_binding
+        )
+    assert result["route"] == "referral"
+    assert remove_keyboard.await_args.kwargs["reply_markup"] == {"remove_keyboard": True}
+    dashboard.assert_awaited_once()
 
 
 @pytest.mark.asyncio
