@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db import close_pool, init_pool
+from app.settings import get_settings
 from app.telegram.bindings import resolve_bot_binding_context
 from app.telegram.delivery import configure_telegram_command_menu
 from app.telegram.log_safe import redact_telegram_secrets
@@ -25,7 +26,8 @@ async def configure(binding_id: str, *, dry_run: bool) -> dict[str, object]:
         if binding is None:
             raise RuntimeError("active bot binding not found")
         commands = telegram_menu_commands(
-            include_calculator=binding.tenant.tenant_id == "whieda"
+            include_calculator=binding.tenant.tenant_id == "whieda",
+            minimal=get_settings().telegram_ui_profile == "minimal",
         )
         if not dry_run:
             result = await configure_telegram_command_menu(

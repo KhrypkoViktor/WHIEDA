@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 RouteMode = Literal["legacy", "shadow", "core"]
 DeepRouteMode = Literal["off", "shadow", "core"]
+TelegramUiProfile = Literal["full", "minimal"]
 
 
 class Settings(BaseSettings):
@@ -75,6 +76,14 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",
         description="Public @username for deep links (no @ prefix). Staging/dev only until cutover.",
+    )
+    telegram_ui_profile: TelegramUiProfile = Field(
+        default="full",
+        validation_alias="PLATFORM_TELEGRAM_UI_PROFILE",
+        description=(
+            "Telegram interface profile for this Core process. Use full on staging and "
+            "minimal on production while payments and site creation stay manual."
+        ),
     )
     tenant_media_base_url: str | None = Field(
         default=None,
