@@ -42,7 +42,8 @@ try {
             tests/test_referral_bonus_service.py tests/test_referral_bonus_schema.py `
             tests/test_partner_subscriptions.py tests/test_telegram_processor.py `
             tests/test_telegram_referral_admin.py tests/test_lead_actor_telegram_link.py `
-            tests/test_schema_requirements.py tests/test_identity_exchange_memory_best_effort.py
+            tests/test_schema_requirements.py tests/test_identity_exchange_memory_best_effort.py `
+            tests/test_site_account.py tests/test_pro_start.py tests/test_telegram_support_tunnel.py
         if ($LASTEXITCODE -ne 0) { throw 'unit gate failed' }
     }
     Write-Host '== gate: PostgreSQL integration tests'

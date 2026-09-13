@@ -72,6 +72,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "partner_bonus_redemption_intents",
             "partner_site_requests",
             "partner_renewal_requests",
+            # support tunnel (subscriber <-> service administrator via the bot)
+            "support_tickets",
+            "support_messages",
             # advisor
             "platform_session_context",
             "advisor_structured_products",
