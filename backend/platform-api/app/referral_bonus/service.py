@@ -138,7 +138,9 @@ async def ensure_telegram_actor(
             insert into lead_actors (
               actor_id, tenant_id, display_name, telegram_chat_id, telegram_user_id
             ) values (%s, %s, %s, %s, %s)
-            on conflict (tenant_id, telegram_user_id) do nothing
+            on conflict (tenant_id, telegram_user_id)
+              where telegram_user_id is not null
+            do nothing
             returning actor_id
             """,
             (
@@ -1083,7 +1085,9 @@ async def accept_referral_start(
             insert into lead_actors (
               actor_id, tenant_id, display_name, telegram_chat_id, telegram_user_id
             ) values (%s, %s, %s, %s, %s)
-            on conflict (tenant_id, telegram_user_id) do nothing
+            on conflict (tenant_id, telegram_user_id)
+              where telegram_user_id is not null
+            do nothing
             returning actor_id
             """,
             (
