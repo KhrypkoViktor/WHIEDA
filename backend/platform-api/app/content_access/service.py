@@ -409,10 +409,11 @@ def format_me_payload(
     session: dict[str, Any],
     *,
     partner_subscription: dict[str, Any] | None = None,
+    account: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     expires_at = session.get("expires_at")
     subscription = partner_subscription or {}
-    return {
+    payload: dict[str, Any] = {
         "ok": True,
         "authenticated": True,
         "telegram_verified": True,
@@ -422,7 +423,16 @@ def format_me_payload(
         "subscription_status": subscription.get("subscription_status") or "no_subscription",
         "paid_until": _isoformat(subscription.get("paid_until")),
         "grace_until": _isoformat(subscription.get("grace_until")),
+        # What the site menu shows: balance in WWC$, PRO and CLUB terms.
+        "account": None,
     }
+    if account:
+        payload["account"] = {
+            **account,
+            "pro": {**account["pro"], "paid_until": _isoformat(account["pro"]["paid_until"])},
+            "club": {**account["club"], "paid_until": _isoformat(account["club"]["paid_until"])},
+        }
+    return payload
 
 
 async def revoke_content_session(tenant_id: str, raw_session: str) -> bool:

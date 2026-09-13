@@ -293,6 +293,13 @@ async def test_me_computes_live_partner_access(
     ), patch(
         "app.content_access.routes.resolve_partner_subscription_by_telegram_user_id",
         AsyncMock(return_value=subscription),
+    ), patch(
+        "app.content_access.routes.load_site_account",
+        AsyncMock(return_value={
+            "actor_id": "proof", "balance": {"currency": "WWC$", "amount_minor": 600},
+            "pro": {"status": subscription_status, "paid_until": subscription["paid_until"], "days_left": 8, "ref_code": "proof"},
+            "club": {"status": "none", "paid_until": None, "days_left": None},
+        }),
     ):
         response = await content_client.get("/api/v1/content-access/me", headers=HOST)
     assert response.status_code == 200
@@ -300,6 +307,11 @@ async def test_me_computes_live_partner_access(
     assert response.json()["subscription_status"] == subscription_status
     assert response.headers["cache-control"] == "private, no-store"
     assert "telegram_user_id" not in response.json()
+    # The site menu reads its card from here: balance in WWC$, PRO and CLUB terms.
+    account = response.json()["account"]
+    assert account["balance"] == {"currency": "WWC$", "amount_minor": 600}
+    assert account["pro"]["status"] == subscription_status
+    assert account["club"]["status"] == "none"
 
 
 @pytest.mark.asyncio

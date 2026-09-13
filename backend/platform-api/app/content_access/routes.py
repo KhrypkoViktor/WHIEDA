@@ -19,6 +19,7 @@ from app.content_access.service import (
     validate_content_session,
 )
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
+from app.content_access.account import load_site_account
 from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
 from app.tenancy import get_request_tenant, require_entitlement
 
@@ -121,12 +122,14 @@ async def _me(request: Request, response: Response) -> dict:
     tenant = get_request_tenant(request)
     telegram_user_id = session.get("telegram_user_id")
     subscription = None
+    account = None
     if telegram_user_id is not None:
         subscription = await resolve_partner_subscription_by_telegram_user_id(
             tenant.tenant_id,
             int(telegram_user_id),
         )
-    return format_me_payload(session, partner_subscription=subscription)
+        account = await load_site_account(tenant.tenant_id, int(telegram_user_id))
+    return format_me_payload(session, partner_subscription=subscription, account=account)
 
 
 @router.get("/v1/content-access/me")
