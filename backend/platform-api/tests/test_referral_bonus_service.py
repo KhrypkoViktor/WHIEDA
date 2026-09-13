@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -10,6 +11,8 @@ import pytest
 
 from app.referral_bonus.service import (
     _auto_redeem_platform_points,
+    accept_referral_start,
+    ensure_telegram_actor,
     parse_referral_start_token,
     telegram_actor_id,
 )
@@ -27,6 +30,13 @@ def test_referral_start_token_accepts_only_opaque_codes():
     assert parse_referral_start_token("opaque-site-token") is None
     assert parse_referral_start_token("ref_short") == ""
     assert parse_referral_start_token("ref_code with spaces") == ""
+
+
+def test_new_telegram_actor_inserts_match_partial_unique_index():
+    """The live unique index excludes NULL Telegram IDs, so conflict needs its predicate."""
+    expected = "on conflict (tenant_id, telegram_user_id)\n              where telegram_user_id is not null"
+    assert expected in inspect.getsource(ensure_telegram_actor).lower()
+    assert expected in inspect.getsource(accept_referral_start).lower()
 
 
 def test_telegram_actor_id_is_tenant_scoped_and_stable():
