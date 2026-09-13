@@ -129,6 +129,15 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_BILLING_OWNER_TELEGRAM_ID",
         description="Single Telegram user ID allowed to confirm manual partner payments.",
     )
+    platform_support_admin_telegram_id: int | None = Field(
+        default=None,
+        validation_alias="PLATFORM_SUPPORT_ADMIN_TELEGRAM_ID",
+        description=(
+            "Telegram user ID of the service administrator who receives support "
+            "tickets (Gemini orders). Staging routes to the owner, production to "
+            "the real administrator; never hard-coded because both share one DB."
+        ),
+    )
     platform_admin_confirm_secret: str | None = Field(
         default=None,
         validation_alias="PLATFORM_ADMIN_CONFIRM_SECRET",

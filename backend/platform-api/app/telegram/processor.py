@@ -34,6 +34,11 @@ from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.pro_start import handle_pro_start, is_pro_start_token
+from app.telegram.support import (
+    try_handle_support_callback,
+    try_handle_support_message,
+    try_relay_user_message,
+)
 from app.telegram.bindings import (
     BotBindingContext,
     binding_context_scope,
@@ -316,6 +321,11 @@ async def _process_core_telegram_update_scoped(
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
             return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
+        support_callback_result = await try_handle_support_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if support_callback_result is not None:
+            return support_callback_result
         renewal_callback_result = await try_handle_renewal_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -342,6 +352,12 @@ async def _process_core_telegram_update_scoped(
 
     if msg.chat_type == "private":
         await _link_partner_chat(tenant, msg, trace_id)
+
+    # Services card, the support administrator's replies, and attachments from
+    # a subscriber inside an open support ticket.
+    support_result = await try_handle_support_message(tenant, msg, trace_id=trace_id)
+    if support_result is not None:
+        return support_result
 
     referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
     if referral_result is not None:
@@ -400,5 +416,11 @@ async def _process_core_telegram_update_scoped(
     navigation_result = await handle_navigation_text(tenant, msg, trace_id)
     if navigation_result:
         return navigation_result
+
+    # Inside an open support ticket, free text goes to the administrator, not
+    # to the advisor. Commands and menu buttons above still work as usual.
+    relay_result = await try_relay_user_message(tenant, msg, trace_id=trace_id)
+    if relay_result is not None:
+        return relay_result
 
     return await handle_advisor_query(tenant, msg, trace_id)

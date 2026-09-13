@@ -24,6 +24,7 @@ $Files = @(
     "platform_partner_site_requests_v4.sql",
     "platform_partner_renewal_requests_v5.sql",
     "platform_partner_subscription_reminders_v6.sql",
+    "platform_support_tickets_v8.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_identity_journey_v1.sql",
