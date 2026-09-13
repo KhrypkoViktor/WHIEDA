@@ -31,6 +31,16 @@ class Settings(BaseSettings):
 
     redis_url: str | None = Field(default=None, validation_alias="PLATFORM_REDIS_URL")
 
+    disabled_features: str = Field(
+        default="",
+        validation_alias="PLATFORM_DISABLED_FEATURES",
+        description=(
+            "Comma-separated optional features to leave unmounted (memory, pilot, "
+            "retention, partner_library). Their tables are then not required by "
+            "scripts/check_schema_compatibility.py."
+        ),
+    )
+
     default_host_tenant: str | None = Field(
         default=None,
         validation_alias="PLATFORM_DEFAULT_HOST_TENANT",

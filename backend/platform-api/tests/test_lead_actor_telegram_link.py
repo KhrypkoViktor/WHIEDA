@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.leads.actor_link import link_lead_actor_by_username
+from app.leads.actor_link import fill_lead_actor_user_id, link_lead_actor_by_username
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.update_parser import parse_telegram_message
 
@@ -75,6 +75,32 @@ async def test_link_fills_empty_chat_id_by_username(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.anyio
+async def test_fill_user_id_only_where_chat_matches_and_id_is_empty(monkeypatch: pytest.MonkeyPatch):
+    captured: dict = {}
+
+    async def fake_fetch_one(conn, sql, params=None):
+        captured["sql"] = " ".join(sql.split()).lower()
+        captured["params"] = params
+        return {"actor_id": "harold"}
+
+    @asynccontextmanager
+    async def fake_conn(tenant_id: str):
+        yield object()
+
+    monkeypatch.setattr("app.leads.actor_link.tenant_connection", fake_conn)
+    monkeypatch.setattr("app.leads.actor_link.fetch_one", fake_fetch_one)
+
+    assert await fill_lead_actor_user_id("whieda", telegram_user_id=393702442, telegram_chat_id=393702442) == "harold"
+    assert captured["params"] == {"tenant_id": "whieda", "chat_id": "393702442", "user_id": 393702442}
+    sql = captured["sql"]
+    assert "set telegram_user_id = %(user_id)s" in sql
+    assert "telegram_chat_id = %(chat_id)s" in sql
+    assert "telegram_user_id is null" in sql
+    # Never claim a user id another row already owns.
+    assert "other.telegram_user_id = %(user_id)s" in sql
+
+
+@pytest.mark.anyio
 async def test_link_without_username_does_not_touch_db(monkeypatch: pytest.MonkeyPatch):
     fetch = AsyncMock()
     monkeypatch.setattr("app.leads.actor_link.fetch_one", fetch)
@@ -98,7 +124,10 @@ async def test_private_start_links_actor_before_routing(whieda_tenant, whieda_bo
         }
     }
     link = AsyncMock(return_value="igoref")
-    with patch("app.telegram.processor.link_lead_actor_by_username", link):
+    fill = AsyncMock(return_value=None)
+    with patch("app.telegram.processor.link_lead_actor_by_username", link), patch(
+        "app.telegram.processor.fill_lead_actor_user_id", fill
+    ):
         with patch(
             "app.telegram.processor.handle_newcomer_panel",
             AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
@@ -110,6 +139,8 @@ async def test_private_start_links_actor_before_routing(whieda_tenant, whieda_bo
     link.assert_awaited_once_with(
         "whieda", username="IgorYefimenko", telegram_user_id=200, telegram_chat_id=100
     )
+    # Every private message may complete a chat-only partner row with the user id.
+    fill.assert_awaited_once_with("whieda", telegram_user_id=200, telegram_chat_id=100)
 
 
 @pytest.mark.asyncio

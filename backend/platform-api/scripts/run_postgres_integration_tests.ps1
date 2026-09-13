@@ -8,10 +8,14 @@
 #
 #   pwsh backend/platform-api/scripts/run_postgres_integration_tests.ps1
 #   pwsh backend/platform-api/scripts/run_postgres_integration_tests.ps1 -Port 55433 -PytestArgs @('-k','referral')
+#
+# The port is chosen free at run time (or verified free when given), so the tests
+# can never connect to somebody else's already-running PostgreSQL and report a
+# result that has nothing to do with the cluster we just created.
 
 [CmdletBinding()]
 param(
-    [int]$Port = 55432,
+    [int]$Port = 0,
     [string]$PgBin = $env:PG_BIN,
     [string[]]$PytestArgs = @()
 )
@@ -32,6 +36,20 @@ if (-not $PgBin) {
         throw 'PostgreSQL binaries not found. Install postgresql (scoop install postgresql) or set PG_BIN.'
     }
     $PgBin = $candidates[0]
+}
+
+function Test-PortFree([int]$candidate) {
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidate)
+        $listener.Start(); $listener.Stop(); return $true
+    } catch { return $false }
+}
+
+if ($Port -eq 0) {
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    $probe.Start(); $Port = $probe.LocalEndpoint.Port; $probe.Stop()
+} elseif (-not (Test-PortFree $Port)) {
+    throw "port $Port is already in use on 127.0.0.1; refusing to run against a foreign PostgreSQL"
 }
 
 $stamp = Get-Date -Format 'yyyyMMddTHHmmss'

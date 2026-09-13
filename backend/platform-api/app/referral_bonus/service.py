@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import secrets
@@ -11,9 +12,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from app.db import fetch_one, tenant_connection
+from app.db import fetch_all, fetch_one, tenant_connection
 from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
 
+
+logger = logging.getLogger(__name__)
 
 REFERRAL_START_PREFIX = "ref_"
 _INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -23,6 +26,14 @@ _INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 class ReferralStartResult:
     status: Literal["attributed", "already_registered", "invalid", "self_referral"]
     inviter_actor_id: str | None = None
+
+
+class TelegramIdentityConflictError(RuntimeError):
+    """The Telegram user id Telegram just sent already belongs to another actor.
+
+    Never merged automatically: two lead_actors rows for one person is a data
+    problem an operator has to look at, not something a /start may paper over.
+    """
 
 
 class BonusRedemptionError(ValueError):
@@ -110,6 +121,104 @@ async def get_or_create_invite_code(tenant_id: str, inviter_actor_id: str) -> st
     raise RuntimeError("could not create referral invite code")
 
 
+async def _find_telegram_actor(
+    conn: Any,
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+    lock: bool = False,
+) -> dict[str, Any] | None:
+    """The actor row this Telegram person already has, by user id or chat id.
+
+    One person must map to one row. If the user id and the chat id point at two
+    different rows, somebody was registered twice; refuse instead of picking one.
+    """
+    rows = await fetch_all(
+        conn,
+        f"""
+        select actor_id, telegram_user_id from lead_actors
+        where tenant_id = %s
+          and (telegram_user_id = %s or telegram_chat_id = %s)
+        order by actor_id
+        limit 2
+        {"for update" if lock else ""}
+        """,
+        (tenant_id, telegram_user_id, str(telegram_chat_id)),
+    )
+    if len(rows) > 1:
+        logger.error(
+            "telegram_actor_duplicate_rows",
+            extra={
+                "tenant_id": tenant_id,
+                "actor_ids": [str(row["actor_id"]) for row in rows],
+            },
+        )
+        raise TelegramIdentityConflictError(
+            "telegram user id and chat id belong to different actors: "
+            + ", ".join(str(row["actor_id"]) for row in rows)
+        )
+    return rows[0] if rows else None
+
+
+async def _claim_telegram_user_id(
+    conn: Any,
+    tenant_id: str,
+    *,
+    actor: dict[str, Any],
+    telegram_user_id: int,
+) -> str:
+    """Complete a chat-matched actor with the user id Telegram just revealed.
+
+    Partners are seeded with a chat id only (Partners_Ref sync, manual linking);
+    the numeric user id must be filled by the first /start, never typed by hand.
+    Only an empty user id is written, and only when no other row owns that id.
+    """
+    actor_id = str(actor["actor_id"])
+    current = actor.get("telegram_user_id")
+    if current is not None:
+        if int(current) == int(telegram_user_id):
+            return actor_id
+        logger.error(
+            "telegram_actor_user_id_mismatch",
+            extra={"tenant_id": tenant_id, "actor_id": actor_id},
+        )
+        raise TelegramIdentityConflictError(
+            f"{actor_id} already has a different telegram_user_id"
+        )
+    claimed = await fetch_one(
+        conn,
+        """
+        update lead_actors
+           set telegram_user_id = %(user_id)s, updated_at = now()
+         where tenant_id = %(tenant_id)s
+           and actor_id = %(actor_id)s
+           and telegram_user_id is null
+           and not exists (
+               select 1 from lead_actors other
+                where other.tenant_id = %(tenant_id)s
+                  and other.telegram_user_id = %(user_id)s
+                  and other.actor_id <> %(actor_id)s
+           )
+        returning actor_id
+        """,
+        {"tenant_id": tenant_id, "actor_id": actor_id, "user_id": int(telegram_user_id)},
+    )
+    if claimed:
+        logger.info(
+            "telegram_actor_user_id_backfilled",
+            extra={"tenant_id": tenant_id, "actor_id": actor_id},
+        )
+        return actor_id
+    logger.error(
+        "telegram_actor_user_id_conflict",
+        extra={"tenant_id": tenant_id, "actor_id": actor_id},
+    )
+    raise TelegramIdentityConflictError(
+        f"telegram_user_id already belongs to another actor; {actor_id} left unlinked"
+    )
+
+
 async def ensure_telegram_actor(
     tenant_id: str,
     *,
@@ -119,18 +228,13 @@ async def ensure_telegram_actor(
 ) -> str:
     """Register a bot user as an actor without assigning an inviter."""
     async with tenant_connection(tenant_id) as conn:
-        existing = await fetch_one(
-            conn,
-            """
-            select actor_id from lead_actors
-            where tenant_id = %s
-              and (telegram_user_id = %s or telegram_chat_id = %s)
-            limit 1
-            """,
-            (tenant_id, telegram_user_id, str(telegram_chat_id)),
+        existing = await _find_telegram_actor(
+            conn, tenant_id, telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id
         )
         if existing:
-            return str(existing["actor_id"])
+            return await _claim_telegram_user_id(
+                conn, tenant_id, actor=existing, telegram_user_id=telegram_user_id
+            )
         actor_id = telegram_actor_id(tenant_id, telegram_user_id)
         created = await fetch_one(
             conn,
@@ -1058,19 +1162,13 @@ async def accept_referral_start(
         if not invite:
             return ReferralStartResult(status="invalid")
 
-        actor = await fetch_one(
-            conn,
-            """
-            select actor_id
-            from lead_actors
-            where tenant_id = %s
-              and (telegram_user_id = %s or telegram_chat_id = %s)
-            limit 1
-            for update
-            """,
-            (tenant_id, telegram_user_id, str(telegram_chat_id)),
+        actor = await _find_telegram_actor(
+            conn, tenant_id, telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id, lock=True
         )
         if actor:
+            # Known person: the inviter stays as is, but this /start still completes
+            # a chat-only partner row with their Telegram user id.
+            await _claim_telegram_user_id(conn, tenant_id, actor=actor, telegram_user_id=telegram_user_id)
             return ReferralStartResult(status="already_registered")
 
         inviter_actor_id = str(invite["inviter_actor_id"])

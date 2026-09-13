@@ -8,6 +8,11 @@ the bot. Nobody has to look it up or send it by hand.
 Only an empty chat id is filled. An existing link is never overwritten, and a
 chat that is already bound to another actor is left alone so the unique
 ``(tenant_id, telegram_chat_id)`` constraint can never fire.
+
+The numeric user id is completed the same way: a row that already carries this
+chat id but no ``telegram_user_id`` gets it from the first message the partner
+sends, unless another row already owns that user id — then nothing is merged
+and the conflict is logged for an operator.
 """
 
 from __future__ import annotations
@@ -40,6 +45,23 @@ update lead_actors
        select 1 from lead_actors c
         where c.tenant_id = %(tenant_id)s
           and c.telegram_chat_id = %(chat_id)s
+   )
+returning actor_id
+"""
+
+
+_FILL_USER_ID_SQL = """
+update lead_actors
+   set telegram_user_id = %(user_id)s,
+       updated_at = now()
+ where tenant_id = %(tenant_id)s
+   and active
+   and telegram_chat_id = %(chat_id)s
+   and telegram_user_id is null
+   and not exists (
+       select 1 from lead_actors other
+        where other.tenant_id = %(tenant_id)s
+          and other.telegram_user_id = %(user_id)s
    )
 returning actor_id
 """
@@ -80,3 +102,47 @@ async def link_lead_actor_by_username(
         },
     )
     return actor_id or None
+
+
+async def fill_lead_actor_user_id(
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+) -> str | None:
+    """Return the actor whose empty telegram_user_id was just filled, else None."""
+    params = {
+        "tenant_id": tenant_id,
+        "chat_id": str(telegram_chat_id),
+        "user_id": int(telegram_user_id),
+    }
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(conn, _FILL_USER_ID_SQL, params)
+        if row:
+            actor_id = str(row.get("actor_id") or "")
+            logger.info(
+                "lead_actor_telegram_user_id_filled",
+                extra={"tenant_id": tenant_id, "actor_id": actor_id, "chat_id": chat_ref(telegram_chat_id)},
+            )
+            return actor_id or None
+        pending = await fetch_one(
+            conn,
+            """
+            select actor_id from lead_actors
+             where tenant_id = %(tenant_id)s and active
+               and telegram_chat_id = %(chat_id)s and telegram_user_id is null
+            """,
+            params,
+        )
+    if pending:
+        # The chat matches this row but the user id is owned by another actor:
+        # one person, two rows. Never merged here; an operator has to decide.
+        logger.error(
+            "lead_actor_telegram_user_id_conflict",
+            extra={
+                "tenant_id": tenant_id,
+                "actor_id": str(pending.get("actor_id") or ""),
+                "chat_id": chat_ref(telegram_chat_id),
+            },
+        )
+    return None

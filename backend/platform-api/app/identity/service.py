@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from fastapi import HTTPException
 
 from app.db import fetch_one, tenant_connection
 from app.ref.service import load_public_ref
+
+logger = logging.getLogger(__name__)
 
 TOKEN_TTL_DAYS = 7
 JOURNEY_TYPES = frozenset({"product", "business", "organic", "direct"})
@@ -419,14 +422,23 @@ async def exchange_telegram_link_token(
         if public:
             mentor_name = (public.get("public_profile") or {}).get("display_name")
 
-    await _persist_exchange_memory(
-        tenant_id,
-        session_id=session_id,
-        telegram_user_id=telegram_user_id,
-        context=context if isinstance(context, dict) else {},
-        first_ref=str(first_ref) if first_ref else None,
-        journey_type=row.get("journey_type"),
-    )
+    # The token is already used and the link committed above. Memory facts are an
+    # add-on: their failure must never turn a successful link into a burnt token.
+    try:
+        await _persist_exchange_memory(
+            tenant_id,
+            session_id=session_id,
+            telegram_user_id=telegram_user_id,
+            context=context if isinstance(context, dict) else {},
+            first_ref=str(first_ref) if first_ref else None,
+            journey_type=row.get("journey_type"),
+        )
+    except Exception:
+        logger.warning(
+            "identity_exchange_memory_failed",
+            extra={"tenant_id": tenant_id, "session_id": session_id, "link_id": link_id},
+            exc_info=True,
+        )
 
     return LinkTokenExchangeResult(
         link_id=link_id,
