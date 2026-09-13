@@ -300,7 +300,7 @@ def test_partner_subscription_postgres_rls_idempotency_and_concurrency():
                 intent = await create_payment_intent(
                     "whieda",
                     identifier="ref:proof-whieda",
-                    amount_minor=10500,
+                    amount_minor=3000,
                     currency="WUSD",
                     telegram_chat_id=81001,
                     telegram_message_id=92001,
