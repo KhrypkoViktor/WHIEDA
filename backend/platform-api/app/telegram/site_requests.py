@@ -23,6 +23,7 @@ from app.site_requests.service import (
     submit_site_payment_proof,
 )
 from app.telegram.bindings import current_bot_binding
+from app.telegram.money import wwc, wwc_signed
 from app.telegram.delivery import (
     answer_callback_query,
     copy_telegram_message,
@@ -46,8 +47,6 @@ def _request_token(request_id: Any) -> str:
     return str(request_id).replace("-", "")
 
 
-def _points(value: int) -> str:
-    return f"{int(value):,}".replace(",", " ")
 
 
 async def _notify_referrer(request: dict[str, Any]) -> None:
@@ -66,10 +65,10 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
         return
     lines = [
         f"{request['requested_subdomain']} подключился к платформе.",
-        f"Начислено: +{_points(int(bonus['amount_minor']))} баллов.",
+        f"Начислено: {wwc_signed(int(bonus['amount_minor']))}.",
     ]
     if bonus.get("balance_points") is not None:
-        lines.append(f"Баланс: {_points(int(bonus['balance_points']))} баллов.")
+        lines.append(f"Баланс: {wwc(int(bonus['balance_points']))}.")
     lines.append("Личный кабинет: /cabinet")
     await _deliver(int(chat_id), "\n".join(lines))
 

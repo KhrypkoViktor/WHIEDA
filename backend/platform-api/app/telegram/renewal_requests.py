@@ -21,6 +21,7 @@ from app.renewal_requests.service import (
 from app.settings import get_settings
 from app.telegram.billing import notify_payment_participants
 from app.telegram.bindings import current_bot_binding
+from app.telegram.money import money
 from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -50,11 +51,7 @@ def _request_id(token: str) -> str:
 
 
 def _amount(amount_minor: int, currency: str) -> str:
-    major, minor = divmod(int(amount_minor), 100)
-    value = f"{major:,}".replace(",", " ")
-    if minor:
-        value += f",{minor:02d}"
-    return f"{value} {'W$' if currency == 'WUSD' else currency}"
+    return money(amount_minor, currency)
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None) -> None:

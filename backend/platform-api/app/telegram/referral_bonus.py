@@ -21,6 +21,7 @@ from app.referral_bonus.service import (
 )
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
+from app.telegram.money import wwc, wwc_signed
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -53,13 +54,11 @@ def invitation_text(link: str) -> str:
 
 
 def _wusd(amount_minor: int) -> str:
-    major, minor = divmod(abs(int(amount_minor)), 100)
-    sign = "−" if amount_minor < 0 else ""
-    return f"{sign}{major},{minor:02d} W$" if minor else f"{sign}{major} W$"
+    return wwc(amount_minor)
 
 
 def _points(amount_minor: int) -> str:
-    return f"{int(amount_minor):,}".replace(",", " ") + " баллов"
+    return wwc_signed(amount_minor)
 
 
 def _token_from_uuid(value: Any) -> str:
@@ -147,7 +146,7 @@ def _dashboard_keyboard(
         [{"text": "Скопировать приглашение", "copy_text": {"text": invite}}],
         [{"text": "Отправить приглашение", "url": share_url}],
         [{"text": "Мои рефералы", "callback_data": "referral:list"}],
-        [{"text": "История баллов", "callback_data": "referral:history"}],
+        [{"text": "История WWC$", "callback_data": "referral:history"}],
         [{"text": "Поддержка", "url": SUPPORT_URL}],
     ]
     if has_site:
@@ -234,7 +233,7 @@ async def show_referral_dashboard(
             access_line,
             f"Оплачено до: {paid_until_text}",
             f"Сайт: {site_url}",
-            f"Баланс: {_points(dashboard['balance_wusd_minor'])}",
+            f"Баланс: {wwc(int(dashboard['balance_wusd_minor']))}",
             "",
             "Ваша реферальная ссылка:",
             link,
@@ -247,8 +246,8 @@ async def show_referral_dashboard(
             [
                 "",
                 "20% начисляется с первой оплаты платформы и 10% с продлений.",
-                "Каждые 3 000 баллов автоматически продлевают ваш сайт ещё на 3 месяца.",
-                "Баллы нельзя вывести деньгами.",
+                "Каждые 30 WWC$ автоматически продлевают ваш сайт ещё на 3 месяца.",
+                "WWC$ — внутренняя валюта: ими оплачиваются платформа, клуб и курсы, вывести деньгами нельзя.",
             ]
         )
     text = "\n".join(lines)

@@ -16,7 +16,7 @@ def test_initial_belarus_reminder_has_exact_boundaries_and_one_payment_method():
     assert "до 21 сентября включительно" in text
     assert "22-24 сентября сайт продолжит работать" in text
     assert "с 25 сентября адрес будет временно вести" in text
-    assert "Беларусь: 30 W$ : SUNRAYSWORD" in text
+    assert "Беларусь: 30 WWC$ : SUNRAYSWORD" in text
     assert "Россия:" not in text
     assert "https://t.me/sunraysword" in text
 

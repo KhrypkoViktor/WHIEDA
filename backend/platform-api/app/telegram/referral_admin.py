@@ -18,6 +18,7 @@ from app.referral_bonus.service import (
 )
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
+from app.telegram.money import wwc, wwc_signed
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import parse_telegram_callback, parse_telegram_message
 from app.tenancy import TenantContext
@@ -27,7 +28,7 @@ _REF = r"ref:([A-Za-z0-9][A-Za-z0-9_-]{0,62})"
 _BALANCE_RE = re.compile(rf"^(?:бонусы|/bonuses)\s+{_REF}$", re.IGNORECASE)
 _ASSIGN_RE = re.compile(rf"^(?:реферер|/referrer)\s+{_REF}\s+{_REF}$", re.IGNORECASE)
 _ADJUST_RE = re.compile(
-    rf"^(?:корректировка-бонусов|/bonus-adjust)\s+{_REF}\s+([+-][0-9]+(?:[.,][0-9]{{1,2}})?)\s+(?:WUSD|W\$)\s+(.+)$",
+    rf"^(?:корректировка-бонусов|/bonus-adjust)\s+{_REF}\s+([+-][0-9]+(?:[.,][0-9]{{1,2}})?)\s+(?:WUSD|WWC\$|W\$)\s+(.+)$",
     re.IGNORECASE,
 )
 _CALLBACK_RE = re.compile(r"^refadmin:(confirm|cancel):([0-9a-f]{32})$")
@@ -35,7 +36,7 @@ _USAGE = (
     "Команды:\n"
     "бонусы ref:code\n"
     "реферер ref:кого ref:кто-пригласил\n"
-    "корректировка-бонусов ref:code +10 W$ причина"
+    "корректировка-бонусов ref:code +10 WWC$ причина"
 )
 
 
@@ -67,9 +68,9 @@ def _minor_wusd(raw_amount: str) -> int:
 
 
 def _wusd(amount_minor: int) -> str:
-    major, minor = divmod(abs(int(amount_minor)), 100)
-    sign = "-" if amount_minor < 0 else "+" if amount_minor > 0 else ""
-    return f"{sign}{major},{minor:02d} W$" if minor else f"{sign}{major} W$"
+    return wwc_signed(amount_minor) if amount_minor > 0 else wwc(amount_minor)
+
+
 
 
 def _compact_id(intent_id: Any) -> str:

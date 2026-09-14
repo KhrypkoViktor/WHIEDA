@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from app.settings import get_settings
 from app.referral_bonus.service import referral_payment_notification_context
+from app.telegram.money import money, wwc, wwc_signed
 from app.subscriptions.service import (
     GRACE_PERIOD,
     PartnerIdentityAmbiguousError,
@@ -38,13 +39,13 @@ logger = logging.getLogger(__name__)
 MOSCOW = ZoneInfo("Europe/Moscow")
 _IDENTIFIER = r"(?:@[A-Za-z0-9_]{1,32}|ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62})"
 _PAY_RE = re.compile(
-    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|W\$)(?:\s+(3|6|12))?$",
+    rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|WWC\$|W\$)(?:\s+(3|6|12))?$",
     re.IGNORECASE,
 )
 _STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
 _DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(r"^billing:(confirm|cancel):([0-9a-f]{32})$")
-_PAY_USAGE = "Формат: оплата ref:code 30 W$ [3|6|12] или оплата @username 3000 RUB [3|6|12]"
+_PAY_USAGE = "Формат: оплата ref:code 30 WWC$ [3|6|12] или оплата @username 3000 RUB [3|6|12]"
 _STATUS_USAGE = "Формат: статус @username или статус ref:code"
 
 
@@ -61,8 +62,6 @@ def _first_token(text: str) -> str:
     return str(text or "").strip().split(maxsplit=1)[0].lower()
 
 
-def _points(value: int) -> str:
-    return f"{int(value):,}".replace(",", " ")
 
 
 async def notify_payment_participants(payment: dict[str, Any]) -> None:
@@ -96,15 +95,15 @@ async def notify_payment_participants(payment: dict[str, Any]) -> None:
         auto = bonus.get("auto_redemption") or {}
         lines = [
             f"{customer.get('display_name') or payment['ref_code']} подключился.",
-            f"Начислено: +{_points(int(bonus['amount_minor']))} баллов.",
+            f"Начислено: {wwc_signed(int(bonus['amount_minor']))}.",
         ]
         balance = bonus.get("balance_points")
         if balance is not None:
-            lines.append(f"Баланс: {_points(int(balance))} баллов.")
+            lines.append(f"Баланс: {wwc(int(balance))}.")
         if int(auto.get("redeemed_blocks") or 0) > 0:
             lines.extend(
                 [
-                    f"Автоматически списано: {_points(int(auto['spent_points']))} баллов.",
+                    f"Автоматически списано: {wwc(int(auto['spent_points']))}.",
                     f"Ваш сайт продлён ещё на {int(auto['access_months'])} мес.",
                     f"Осталось дней: {int(auto['days_remaining'])}.",
                 ]
@@ -167,12 +166,9 @@ def _date(value: datetime | None) -> str:
 
 
 def _amount(amount_minor: int, currency: str) -> str:
-    major, minor = divmod(int(amount_minor), 100)
-    grouped = f"{major:,}".replace(",", " ")
-    display_currency = "W$" if currency == "WUSD" else currency
-    if minor:
-        return f"{grouped},{minor:02d} {display_currency}"
-    return f"{grouped} {display_currency}"
+    return money(amount_minor, currency)
+
+
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None) -> None:
