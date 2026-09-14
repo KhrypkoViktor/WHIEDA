@@ -1,7 +1,7 @@
 # WHIEDA Product and Architecture Canon
 
 Дата фиксации: 2026-07-14  
-Последнее обновление: 2026-09-05
+Последнее обновление: 2026-09-11
 Владелец продукта и продающего языка: Виктор Хрипко  
 Статус: главный входной документ разработки. Решения этого документа обязательны до следующего прямого решения Виктора.
 
@@ -14,12 +14,23 @@
 - Мастер цен WHIEDA: Google Sheet WHIEDA Structured Layer - Products Prices
   V01, вкладка Products_Prices, gid 1035748906. Зафиксированные снимки и
   SHA хранятся в WORK/data-contracts/.
+- Реестр партнёров: та же таблица, вкладка `Partner_Subscriptions`,
+  gid 1209283579 (переезд зафиксирован 2026-09-11). Старая вкладка
+  `Partners_Ref` (gid 1733124410) больше не ведётся, но синхронизация
+  `n8n/current/run_partners_ref_runtime_sync_2026-08-01.py` пока читает её —
+  перевод на новую вкладку открыт. Chat id партнёра в реестр руками не
+  вписывается: Core привязывает его сам, когда партнёр нажимает `/start`.
 - Официальные сайты являются источником проверки состава каталога, фото и новых
   цен, но не меняют WORK автоматически. Любое изменение WORK требует прямого
   запроса владельца, отчета о разнице и нового SHA.
 - Агент обязан сначала искать существующий принятый компонент, реестр или
   артефакт. Если не нашел, он немедленно эскалирует это владельцу и не создает
   замену молча.
+
+- **Доступы агента** — что уже есть, где лежит, что устарело:
+  [`WHIEDA_AGENT_ACCESS_V1_2026-09-14.md`](WHIEDA_AGENT_ACCESS_V1_2026-09-14.md).
+  Читать **до** первого вопроса владельцу «а есть ли у меня доступ к …».
+  Значений секретов там нет; агент ключи не создаёт и не пересылает.
 
 ## 1. Как пользоваться документами
 
@@ -55,10 +66,13 @@
 8f. `WHIEDA_CORE_TELEGRAM_DURABLE_OUTBOX_TZ_V1_2026-08-25.md` — текущий Core-slice после Gate J: durable outgoing delivery, порядок photo-first и recovery без ложного exactly-once обещания.
 8g. `WHIEDA_CORE_TENANT_TELEGRAM_LOCAL_CANARY_E2E_TZ_V1_2026-08-25.md` — финальный локальный Core gate после durable outbox: реальный API + PostgreSQL + worker + capture delivery для двух tenant. После него только controlled shared staging, не ещё один локальный лаб.
 8h. `WHIEDA_CORE_SHARED_STAGING_TENANT_CANARY_TZ_V1_2026-08-25.md` — единственный следующий Core-slice: target-guarded apply/verify первого tenant package в отдельной shared staging базе. Он не разрешает production, webhook или publish.
-8i. `WWC_PERSONAL_SITE_SUBSCRIPTION_AND_ACCESS_TZ_V1_2026-08-29.md` —
-    новый коммерческий приоритет WWC: персональный сайт по подписке, Telegram
-    login, закрытая библиотека, учет оплаты, design-token темы, staging и
-    российский mirror. Документ не отменяет оплаченный NSP canary.
+8i. `PROCESS/wwc-partner-subscriptions-20260909/TASK.md` — действующее ТЗ
+    коммерческого контура WWC: ручная фиксация оплаты через Telegram, подписка
+    партнёра на три месяца, grace три дня, закрытая библиотека, повторные цены,
+    маршрутизация заявок и redirect просроченного субдомена. Оно заменяет
+    физически отсутствующий исторический файл
+    `WWC_PERSONAL_SITE_SUBSCRIPTION_AND_ACCESS_TZ_V1_2026-08-29.md` для этого
+    среза и не разрешает production deploy.
 8j. `WWC_PLATFORM_CLUB_PROMPT_CONTEXT_V1_2026-09-04.md` — канонический
     продуктовый контекст для промтов по стартовому пакету, платформе, клубу,
     PRO, обучению, кураторам, мини-курсам и партнерским программам. Рабочие
@@ -159,7 +173,10 @@ SQL_ADVISOR_PARITY_DEVELOPER_PLAN, ADVISOR_EXPERIENCE_CONTRACT, часть Gate 
 ### Партнёр, ref и поддомен
 
 Новый партнёр не создаётся только правкой сайта. Каноническая цепочка одна:
-`анкета → Partners_Ref → штатная синхронизация → runtime/админка → сайт → browser smoke`.
+`анкета → реестр Partner_Subscriptions → штатная синхронизация → runtime/админка → партнёр нажал /start → сайт → browser smoke`.
+Реестр переехал с вкладки `Partners_Ref` на `Partner_Subscriptions`; синхронизация
+пока читает старую вкладку (см. раздел 0). Инцидент 2026-09-11 с недоставкой
+заявок в бота — `PROCESS/lead-delivery-chat-id-20260911/REPORT.md`.
 Анкета и критерии готовности лежат в
 `03_Website/wwc-best/docs/PARTNER_ONBOARDING_STANDARD_V1.md`; короткая форма для
 партнёра — в `03_Website/wwc-best/docs/PARTNER_INFORMATION_REQUEST_TEMPLATE.md`.
@@ -276,8 +293,8 @@ WHIEDA остается товарным знаком и интеллектуа�
 до появления массового использования; минимальные identity, billing,
 entitlement и пользовательский доступ продолжают развиваться.
 
-Исполняемая очередность этого коммерческого поворота определена в
-`WWC_PERSONAL_SITE_SUBSCRIPTION_AND_ACCESS_TZ_V1_2026-08-29.md`.
+Исполняемая очередность подписки, ручного учёта платежей и закрытого доступа
+определена в `PROCESS/wwc-partner-subscriptions-20260909/TASK.md`.
 
 Текущий исполняемый цикл посвящен доведению Structure Basic до самостоятельного продаваемого продукта и связыванию сайта с Telegram. Единственное исполняемое ТЗ: `WHIEDA_CURRENT_BUILD_PLAN_SITE_TELEGRAM_ONBOARDING_V1_2026-08-07.md`. Июльский SQL-план остается справочником требований, но не задает очередность работ.
 
