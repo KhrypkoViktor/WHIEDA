@@ -19,7 +19,7 @@
 | Google Sheet `Partner_Subscriptions` | только через n8n Google Sheets-узел | не проверено; строки вставляет владелец |
 | GitHub push | `git push` | **заблокирован** для агента классификатором; пушит владелец |
 | Публичный API партнёров | `GET https://wwc.best/api/v1/public/ref/<code>` | без авторизации |
-| Фото от владельца | `C:\Users\srs\Downloads\Telegram Desktop\photo_*.jpg` | автосохранение Telegram Desktop |
+| Фото от владельца | картинка из чата Claude → транскрипт сессии (base64), см. п. 8; либо `Downloads\Telegram Desktop\photo_*.jpg` | **работает** оба пути |
 
 ## 1. Сайт
 
@@ -110,3 +110,23 @@ python n8n/current/read_lead_execution.py                       # после т�
 ```
 
 Все три доступны агенту без единого вопроса владельцу.
+
+## 8. Картинки, вставленные в чат Claude
+
+На диск они не сохраняются, но лежат в транскрипте сессии
+`C:\Users\srs\.claude\projects\D--Projects-WHIEDA\<session>.jsonl` как блоки
+`{"type":"image","source":{"type":"base64",...}}` внутри сообщений `type: user`.
+Достать последнюю:
+
+```python
+import json, base64
+rows = [json.loads(l) for l in open(PATH, encoding='utf-8')]
+imgs = [b for r in rows if r.get('type') == 'user' and isinstance(r.get('message', {}).get('content'), list)
+        for b in r['message']['content'] if b.get('type') == 'image']
+open('photo.jpg', 'wb').write(base64.b64decode(imgs[-1]['source']['data']))
+```
+
+Дальше как с любым фото партнёра: 4:5, 640×800, webp quality 82 →
+`public/media/partners/<ref>.webp`, `photoUrl` в `src/data/referrals.js`,
+`node scripts/sync-runtime-assets.mjs` (иначе падает юнит-тест на
+`public/wwc-api/referral-registry.js`), `npm test`, deploy.
