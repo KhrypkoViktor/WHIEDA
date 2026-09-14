@@ -37,8 +37,8 @@ def test_payment_text_is_country_specific():
     ru = _payment_text(
         {"amount_minor": 540000, "currency": "RUB", "country_code": "RU", "access_months": 6}
     )
-    assert "54 W$" in by and "SUNRAYSWORD" in by and "Т-Банк" not in by
-    assert "5 400 RUB" in ru and "Т-Банк" in ru and "SUNRAYSWORD" not in ru
+    assert "54 WWC$" in by and "SUNRAYSWORD" in by and "Т-Банк" not in by
+    assert "5 400 ₽" in ru and "Т-Банк" in ru and "SUNRAYSWORD" not in ru
 
 
 @pytest.mark.asyncio

@@ -120,7 +120,8 @@ async def test_admin_adjustment_requires_reason_and_confirms_once(monkeypatch, w
         telegram_user_id=7001,
     )
     ack.assert_awaited_once()
-    assert "-10,50 W$" in deliver.await_args.kwargs["text"]
+    # People read WWC$; the owner may still type W$ or WWC$ in the command.
+    assert "−10,50 WWC$" in deliver.await_args.kwargs["text"]
 
 
 @pytest.mark.asyncio

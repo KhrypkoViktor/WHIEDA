@@ -27,7 +27,7 @@ _MONTHS = (
 )
 
 _PAYMENT_LINES = {
-    "BY": "Беларусь: 30 W$ : SUNRAYSWORD",
+    "BY": "Беларусь: 30 WWC$ : SUNRAYSWORD",
     "RU": "Россия: 3 000 RUB по номеру +79282372677 Т-Банк",
 }
 
