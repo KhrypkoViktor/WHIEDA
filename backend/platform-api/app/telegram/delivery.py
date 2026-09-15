@@ -125,8 +125,11 @@ async def _call_telegram(method: str, payload: dict[str, Any], *, bot_token: str
         response = await client.post(f"https://api.telegram.org/bot{bot_token}/{method}", json=payload)
     data = response.json() if response.text else {}
     if response.status_code >= 400 or not data.get("ok"):
-        logger.warning("telegram_call_failed", extra={"method": method, "status": response.status_code})
-        return {"ok": False, "status_code": response.status_code, "detail": data}
+        logger.warning(
+            "telegram_call_failed",
+            extra={"method": method, "status": response.status_code, "description": str(data.get("description") or "")[:200]},
+        )
+        return {"ok": False, "status_code": response.status_code, "detail": data, "description": data.get("description")}
     return {"ok": True, "result": data.get("result")}
 
 
