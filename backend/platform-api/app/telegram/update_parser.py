@@ -19,6 +19,10 @@ class TelegramMessage:
     file_id: str | None
     raw: dict[str, Any]
     username: str | None = None
+    # Forum groups: the topic the message was posted in (None outside topics).
+    thread_id: int | None = None
+    is_forum: bool = False
+    from_bot: bool = False
 
 
 @dataclass
@@ -29,6 +33,7 @@ class TelegramCallbackQuery:
     data: str
     chat_type: str
     raw: dict[str, Any]
+    thread_id: int | None = None
 
 
 def parse_telegram_callback(update: dict[str, Any]) -> TelegramCallbackQuery | None:
@@ -49,7 +54,16 @@ def parse_telegram_callback(update: dict[str, Any]) -> TelegramCallbackQuery | N
         data=data,
         chat_type=str(chat.get("type") or "private"),
         raw=update,
+        thread_id=_thread_id(message),
     )
+
+
+def _thread_id(message: dict[str, Any]) -> int | None:
+    """Topic id of a forum message; Telegram sets it only for topic messages."""
+    if not message.get("is_topic_message"):
+        return None
+    value = message.get("message_thread_id")
+    return int(value) if value is not None else None
 
 
 def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
@@ -79,6 +93,9 @@ def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
         file_id=file_id or None,
         raw=update,
         username=username,
+        thread_id=_thread_id(message),
+        is_forum=bool(chat.get("is_forum")),
+        from_bot=bool(user.get("is_bot")),
     )
 
 

@@ -7,7 +7,7 @@ import pytest
 
 from tests.postgres_testkit import MIGRATIONS, temporary_database
 
-SUPPORT_MIGRATIONS = (*MIGRATIONS, "platform_support_tickets_v8.sql")
+SUPPORT_MIGRATIONS = (*MIGRATIONS, "platform_support_tickets_v8.sql", "platform_support_forum_v9.sql")
 
 
 @pytest.mark.integration
@@ -80,5 +80,24 @@ def test_ticket_lifecycle_and_reply_routing():
             )
             assert fresh["created"] is True and fresh["ticket_id"] != first["ticket_id"]
             assert int(fresh["ticket_no"]) > int(first["ticket_no"])
+
+            # 6. Forum group: registered per bot binding; a ticket bound to a topic
+            #    is found by (chat, thread) and leaves the private-chat routing.
+            from app.support.service import attach_forum_topic, find_ticket_by_forum_thread, get_forum, register_forum
+
+            assert await get_forum("whieda", binding_id="whieda-advisor-bot") is None
+            await register_forum("whieda", binding_id="whieda-advisor-bot", chat_id=-1001234567890, title="WWC поддержка", registered_by=688931415)
+            await register_forum("whieda", binding_id="whieda-advisor-bot", chat_id=-1009876543210, title="WWC поддержка 2", registered_by=688931415)
+            forum = await get_forum("whieda", binding_id="whieda-advisor-bot")
+            assert int(forum["chat_id"]) == -1009876543210  # the later registration wins
+            assert await get_forum("whieda", binding_id="wwc-cabinet-staging-bot") is None
+
+            bound = await attach_forum_topic("whieda", ticket_id=fresh["ticket_id"], forum_chat_id=-1009876543210, forum_thread_id=77)
+            assert int(bound["forum_thread_id"]) == 77
+            by_thread = await find_ticket_by_forum_thread("whieda", forum_chat_id=-1009876543210, forum_thread_id=77)
+            assert by_thread["ticket_id"] == fresh["ticket_id"]
+            assert await find_ticket_by_forum_thread("whieda", forum_chat_id=-1009876543210, forum_thread_id=78) is None
+            private_only = await list_open_tickets_for_admin("whieda", admin_telegram_user_id=688931415)
+            assert [t["user_telegram_user_id"] for t in private_only] == [60002]
 
         db.run_with_app(proof)

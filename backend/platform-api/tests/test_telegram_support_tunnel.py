@@ -66,6 +66,12 @@ def support_env(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def no_forum():
+    with patch("app.telegram.support.get_forum", AsyncMock(return_value=None)):
+        yield
+
+
 @pytest.fixture
 def quiet_linking():
     with patch("app.telegram.processor.link_lead_actor_by_username", AsyncMock(return_value=None)), patch(
@@ -212,7 +218,9 @@ async def test_admin_closes_ticket_and_user_is_told(whieda_tenant, whieda_bot_bi
     closed = AsyncMock(return_value=_ticket(status="closed"))
     with patch("app.telegram.support.send_telegram_text", send), patch(
         "app.telegram.support.answer_callback_query", AsyncMock()
-    ), patch("app.telegram.support.close_ticket", closed):
+    ), patch("app.telegram.support.close_ticket", closed), patch(
+        "app.telegram.support.get_ticket", AsyncMock(return_value=_ticket())
+    ):
         result = await process_core_telegram_update(
             whieda_tenant, _callback("svc:close:11111111-1111-1111-1111-111111111111", user=ADMIN), "t9", binding=whieda_bot_binding
         )
@@ -225,7 +233,9 @@ async def test_admin_closes_ticket_and_user_is_told(whieda_tenant, whieda_bot_bi
 @pytest.mark.asyncio
 async def test_only_the_admin_can_close(whieda_tenant, whieda_bot_binding, support_env):
     closed = AsyncMock()
-    with patch("app.telegram.support.answer_callback_query", AsyncMock()), patch("app.telegram.support.close_ticket", closed):
+    with patch("app.telegram.support.answer_callback_query", AsyncMock()), patch(
+        "app.telegram.support.close_ticket", closed
+    ), patch("app.telegram.support.get_ticket", AsyncMock(return_value=_ticket())):
         result = await process_core_telegram_update(
             whieda_tenant, _callback("svc:close:11111111-1111-1111-1111-111111111111", user=USER), "t10", binding=whieda_bot_binding
         )
@@ -259,3 +269,191 @@ def test_services_command_works_on_the_production_minimal_profile(monkeypatch: p
         assert not is_services_request("оплата")
     finally:
         get_settings.cache_clear()
+
+
+# ----------------------------------------------------------------------------
+# Forum group: one topic per ticket (owner, 15.09.2026)
+# ----------------------------------------------------------------------------
+
+FORUM = -1001234567890
+KARINA = 2101187096
+
+
+def _forum_message(text: str, *, user: int = KARINA, thread_id: int | None = 77, message_id: int = 300, is_forum: bool = True, is_bot: bool = False) -> dict:
+    message = {
+        "message_id": message_id,
+        "text": text,
+        "chat": {"id": FORUM, "type": "supergroup", "title": "WWC поддержка", "is_forum": is_forum},
+        "from": {"id": user, "first_name": "Карина", "is_bot": is_bot},
+    }
+    if thread_id is not None:
+        message["is_topic_message"] = True
+        message["message_thread_id"] = thread_id
+    return {"message": message}
+
+
+def _forum_ticket(**over) -> dict:
+    return _ticket(forum_chat_id=FORUM, forum_thread_id=77, **over)
+
+
+@pytest.fixture
+def forum_env(monkeypatch: pytest.MonkeyPatch):
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_SUPPORT_ADMIN_TELEGRAM_ID", str(KARINA))
+    monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", str(ADMIN))
+    get_settings.cache_clear()
+    with patch("app.telegram.support.get_forum", AsyncMock(return_value={"chat_id": FORUM, "binding_id": "whieda-test-binding"})):
+        yield
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_owner_registers_the_forum_group_with_slash_forum(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    register = AsyncMock(return_value={"chat_id": FORUM})
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.register_forum", register):
+        result = await process_core_telegram_update(
+            whieda_tenant, _forum_message("/forum", user=ADMIN, thread_id=None), "f1", binding=whieda_bot_binding
+        )
+    assert result["status"] == "registered"
+    assert register.await_args.kwargs["chat_id"] == FORUM and register.await_args.kwargs["binding_id"] == "whieda-test-binding"
+    assert "подключена" in send.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_stranger_cannot_register_the_forum(whieda_tenant, whieda_bot_binding, forum_env):
+    register = AsyncMock()
+    with patch("app.telegram.support.register_forum", register):
+        result = await process_core_telegram_update(
+            whieda_tenant, _forum_message("/forum", user=USER, thread_id=None), "f2", binding=whieda_bot_binding
+        )
+    assert result["status"] == "forbidden"
+    register.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_new_ticket_opens_a_topic_and_header_goes_into_it(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 501})
+    create_topic = AsyncMock(return_value={"ok": True, "message_thread_id": 77})
+    attach = AsyncMock(return_value=_forum_ticket())
+    record = AsyncMock(return_value={"duplicate": False, "message_id": "m"})
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.answer_callback_query", AsyncMock()
+    ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=_ticket())), patch(
+        "app.telegram.support.create_forum_topic", create_topic
+    ), patch("app.telegram.support.attach_forum_topic", attach), patch("app.telegram.support.record_relayed_message", record):
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "f3", binding=whieda_bot_binding)
+    assert result["status"] == "ticket_opened"
+    assert create_topic.await_args.kwargs["chat_id"] == str(FORUM)
+    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    assert attach.await_args.kwargs == {"ticket_id": "11111111-1111-1111-1111-111111111111", "forum_chat_id": FORUM, "forum_thread_id": 77}
+    to_forum = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(FORUM)]
+    assert len(to_forum) == 1 and to_forum[0]["message_thread_id"] == 77
+    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев — 4 490 ₽")
+    assert "Пишите в эту тему" in to_forum[0]["text"] and "Ольга" not in to_forum[0]["text"]
+    # Nothing goes to the administrator's private chat.
+    assert not [c for c in send.await_args_list if c.kwargs["chat_id"] == str(KARINA)]
+    assert record.await_args.kwargs["delivered_chat_id"] == FORUM
+
+
+@pytest.mark.asyncio
+async def test_topic_failure_falls_back_to_private_admin_chat(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 501})
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.answer_callback_query", AsyncMock()
+    ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=_ticket(admin_telegram_user_id=KARINA))), patch(
+        "app.telegram.support.create_forum_topic", AsyncMock(return_value={"ok": False, "status_code": 400})
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "f4", binding=whieda_bot_binding)
+    assert result["status"] == "ticket_opened"
+    to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(KARINA)]
+    assert len(to_admin) == 1 and "Reply" in to_admin[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_client_text_lands_in_the_ticket_topic(whieda_tenant, whieda_bot_binding, forum_env, quiet_linking):
+    send = AsyncMock(return_value={"ok": True, "message_id": 601})
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=_forum_ticket())
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})), patch(
+        "app.telegram.processor.handle_advisor_query", AsyncMock()
+    ), patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.handle_navigation_text", AsyncMock(return_value=None)
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _message("Когда активируете?"), "f5", binding=whieda_bot_binding)
+    assert result["direction"] == "user_to_admin"
+    kwargs = send.await_args.kwargs
+    assert kwargs["chat_id"] == str(FORUM) and kwargs["message_thread_id"] == 77
+    assert kwargs["text"] == "Клиент WWC · Заявка #S-1042\nКогда активируете?"
+
+
+@pytest.mark.asyncio
+async def test_admin_text_in_the_topic_goes_to_the_client_with_a_reaction_receipt(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 701})
+    react = AsyncMock(return_value={"ok": True})
+    find = AsyncMock(return_value=_forum_ticket())
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.find_ticket_by_forum_thread", find
+    ), patch("app.telegram.support.set_message_reaction", react), patch(
+        "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _forum_message("Активирую сегодня"), "f6", binding=whieda_bot_binding)
+    assert result["direction"] == "admin_to_user"
+    find.assert_awaited_once_with("whieda", forum_chat_id=FORUM, forum_thread_id=77)
+    to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
+    assert to_user[0]["text"] == "Ответ администратора по заявке #S-1042:\nАктивирую сегодня"
+    # No «→ отправлено» line in the topic — the 👍 reaction is the receipt.
+    assert not [c for c in send.await_args_list if c.kwargs["chat_id"] == str(FORUM)]
+    assert react.await_args.kwargs["message_id"] == 300 and react.await_args.kwargs["chat_id"] == str(FORUM)
+
+
+@pytest.mark.asyncio
+async def test_messages_outside_ticket_topics_and_from_bots_are_ignored(whieda_tenant, whieda_bot_binding, forum_env):
+    find = AsyncMock(return_value=None)
+    with patch("app.telegram.support.find_ticket_by_forum_thread", find), patch("app.telegram.support.send_telegram_text", AsyncMock()):
+        general = await process_core_telegram_update(whieda_tenant, _forum_message("привет всем", thread_id=None), "f7", binding=whieda_bot_binding)
+        unknown = await process_core_telegram_update(whieda_tenant, _forum_message("что-то", thread_id=5), "f8", binding=whieda_bot_binding)
+        from_bot = await process_core_telegram_update(whieda_tenant, _forum_message("эхо", is_bot=True), "f9", binding=whieda_bot_binding)
+    assert general["route"] == "ignored_group_message"
+    assert unknown["route"] == "ignored_group_message"
+    assert from_bot["route"] == "ignored_group_message"
+
+
+@pytest.mark.asyncio
+async def test_closing_from_the_topic_closes_the_ticket_and_the_topic(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    closed = AsyncMock(return_value=_forum_ticket(status="closed"))
+    edit_topic, close_topic = AsyncMock(return_value={"ok": True}), AsyncMock(return_value={"ok": True})
+    callback = _callback("svc:close:11111111-1111-1111-1111-111111111111", user=KARINA)
+    callback["callback_query"]["message"]["chat"] = {"id": FORUM, "type": "supergroup"}
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.answer_callback_query", AsyncMock()
+    ), patch("app.telegram.support.get_ticket", AsyncMock(return_value=_forum_ticket())), patch(
+        "app.telegram.support.close_ticket", closed
+    ), patch("app.telegram.support.edit_forum_topic", edit_topic), patch("app.telegram.support.close_forum_topic", close_topic):
+        result = await process_core_telegram_update(whieda_tenant, callback, "f10", binding=whieda_bot_binding)
+    assert result["status"] == "closed"
+    to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
+    assert "Обращение #S-1042 закрыто" in to_user[0]["text"]
+    assert edit_topic.await_args.kwargs["name"] == "✅ #S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    assert close_topic.await_args.kwargs == {"chat_id": str(FORUM), "message_thread_id": 77, "bot_token": close_topic.await_args.kwargs["bot_token"]}
+
+
+@pytest.mark.asyncio
+async def test_admin_private_message_never_reaches_a_forum_ticket(whieda_tenant, whieda_bot_binding, forum_env, quiet_linking):
+    """Forum tickets are excluded from the private-chat «only open ticket» routing
+    (the storage filter), so a stray private note from the administrator is
+    not relayed to anyone."""
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    advisor = AsyncMock(return_value={"ok": True, "route": "advisor"})
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.list_open_tickets_for_admin", AsyncMock(return_value=[])
+    ), patch("app.telegram.processor.handle_advisor_query", advisor), patch(
+        "app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.handle_navigation_text", AsyncMock(return_value=None)), patch(
+        "app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=None)
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _message("сколько стоит лицензия", user=KARINA), "f11", binding=whieda_bot_binding)
+    assert result["route"] == "advisor"
+    assert not [c for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]

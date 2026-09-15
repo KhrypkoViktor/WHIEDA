@@ -17,7 +17,8 @@ Direction = Literal["user_to_admin", "admin_to_user", "system"]
 _TICKET_COLUMNS = """
 ticket_id, ticket_no, tenant_id, channel_code, offer_code, offer_title,
 user_telegram_user_id, user_chat_id, user_display, admin_telegram_user_id,
-status, created_at, last_message_at, closed_at, closed_by
+status, created_at, last_message_at, closed_at, closed_by,
+forum_chat_id, forum_thread_id
 """
 
 
@@ -128,6 +129,7 @@ async def list_open_tickets_for_admin(
             f"""
             select {_TICKET_COLUMNS} from support_tickets
             where tenant_id = %s and admin_telegram_user_id = %s and status = 'open'
+              and forum_thread_id is null
             order by last_message_at desc
             limit %s
             """,
@@ -216,4 +218,70 @@ async def close_ticket(
             returning {_TICKET_COLUMNS}
             """,
             (closed_by, tenant_id, str(ticket_id)),
+        )
+
+
+# ----------------------------------------------------------------------------
+# Forum group: one topic per ticket (owner, 15.09.2026)
+# ----------------------------------------------------------------------------
+
+async def register_forum(
+    tenant_id: str, *, binding_id: str, chat_id: int, title: str | None, registered_by: int
+) -> dict[str, Any]:
+    """Remember the forum group for this bot; a later registration replaces it."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            insert into support_forums (tenant_id, binding_id, chat_id, title, registered_by_telegram_user_id)
+            values (%s, %s, %s, %s, %s)
+            on conflict (tenant_id, binding_id) do update
+              set chat_id = excluded.chat_id, title = excluded.title,
+                  registered_by_telegram_user_id = excluded.registered_by_telegram_user_id,
+                  updated_at = now()
+            returning tenant_id, binding_id, chat_id, title
+            """,
+            (tenant_id, binding_id, int(chat_id), (title or "")[:200] or None, int(registered_by)),
+        )
+    return dict(row)
+
+
+async def get_forum(tenant_id: str, *, binding_id: str) -> dict[str, Any] | None:
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            "select tenant_id, binding_id, chat_id, title from support_forums where tenant_id = %s and binding_id = %s",
+            (tenant_id, binding_id),
+        )
+
+
+async def attach_forum_topic(
+    tenant_id: str, *, ticket_id: str, forum_chat_id: int, forum_thread_id: int
+) -> dict[str, Any] | None:
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            f"""
+            update support_tickets set forum_chat_id = %s, forum_thread_id = %s
+             where tenant_id = %s and ticket_id = %s::uuid
+            returning {_TICKET_COLUMNS}
+            """,
+            (int(forum_chat_id), int(forum_thread_id), tenant_id, str(ticket_id)),
+        )
+
+
+async def find_ticket_by_forum_thread(
+    tenant_id: str, *, forum_chat_id: int, forum_thread_id: int
+) -> dict[str, Any] | None:
+    """The ticket whose topic the administrator just wrote in (open or closed)."""
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            f"""
+            select {_TICKET_COLUMNS} from support_tickets
+            where tenant_id = %s and forum_chat_id = %s and forum_thread_id = %s
+            order by created_at desc
+            limit 1
+            """,
+            (tenant_id, int(forum_chat_id), int(forum_thread_id)),
         )
