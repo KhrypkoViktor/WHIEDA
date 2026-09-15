@@ -9,7 +9,11 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
 from app.identity.service import exchange_telegram_link_token
-from app.leads.actor_link import fill_lead_actor_user_id, link_lead_actor_by_username
+from app.leads.actor_link import (
+    fill_lead_actor_user_id,
+    link_lead_actor_by_username,
+    merge_anonymous_actor_into_partner,
+)
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.settings import get_settings
@@ -268,12 +272,21 @@ async def _link_partner_chat(tenant: TenantContext, msg: TelegramMessage, trace_
     """Bind a partner's chat to lead_actors by username and complete a chat-only
     row with the numeric user id; the reply must never wait on either."""
     try:
-        await link_lead_actor_by_username(
+        linked = await link_lead_actor_by_username(
             tenant.tenant_id,
             username=msg.username,
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
         )
+        if linked is None:
+            # The person may have written to the bot before being registered:
+            # then a telegram:* row owns this chat and must fold into the partner.
+            await merge_anonymous_actor_into_partner(
+                tenant.tenant_id,
+                username=msg.username,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+            )
         await fill_lead_actor_user_id(
             tenant.tenant_id,
             telegram_user_id=msg.user_id,

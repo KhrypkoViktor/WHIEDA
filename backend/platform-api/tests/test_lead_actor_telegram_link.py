@@ -125,9 +125,10 @@ async def test_private_start_links_actor_before_routing(whieda_tenant, whieda_bo
     }
     link = AsyncMock(return_value="igoref")
     fill = AsyncMock(return_value=None)
+    merge = AsyncMock(return_value=None)
     with patch("app.telegram.processor.link_lead_actor_by_username", link), patch(
         "app.telegram.processor.fill_lead_actor_user_id", fill
-    ):
+    ), patch("app.telegram.processor.merge_anonymous_actor_into_partner", merge):
         with patch(
             "app.telegram.processor.handle_newcomer_panel",
             AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
@@ -141,6 +142,32 @@ async def test_private_start_links_actor_before_routing(whieda_tenant, whieda_bo
     )
     # Every private message may complete a chat-only partner row with the user id.
     fill.assert_awaited_once_with("whieda", telegram_user_id=200, telegram_chat_id=100)
+    # Linked by username — no anonymous row to fold in.
+    merge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_private_message_merges_anonymous_row_when_username_link_is_blocked(whieda_tenant, whieda_bot_binding):
+    """Kira, 2026-09-14: she wrote to the bot before registration, so the chat was
+    owned by telegram:whieda:<id> and the username link refused; the next message
+    must merge that row into her partner row."""
+    update = {
+        "message": {
+            "text": "привет",
+            "chat": {"id": 6261, "type": "private"},
+            "from": {"id": 6261, "username": "Kira_tg"},
+        }
+    }
+    merge = AsyncMock(return_value={"partner_actor_id": "kira", "anonymous_actor_id": "telegram:whieda:6261"})
+    with patch("app.telegram.processor.link_lead_actor_by_username", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.fill_lead_actor_user_id", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.merge_anonymous_actor_into_partner", merge), patch(
+        "app.telegram.processor.handle_advisor_query", AsyncMock(return_value={"ok": True, "route": "advisor"})
+    ), patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.handle_navigation_text", AsyncMock(return_value=None)
+    ), patch("app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=None)):
+        await process_core_telegram_update(whieda_tenant, update, "t-merge", binding=whieda_bot_binding)
+    merge.assert_awaited_once_with("whieda", username="Kira_tg", telegram_user_id=6261, telegram_chat_id=6261)
 
 
 @pytest.mark.asyncio
