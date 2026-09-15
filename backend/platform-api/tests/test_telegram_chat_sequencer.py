@@ -13,6 +13,22 @@ from app.advisor.sql.engine import SERVICE_FALLBACKS
 from app.advisor.sql.text import detect_service_intent, is_unsupported_topic
 from app.telegram.routes import _process_telegram_update
 from app.telegram.sequencer import ChatUpdateSequencer, reset_chat_sequencer_for_tests
+from app.telegram.bindings import BotBindingContext
+
+
+@pytest.fixture
+def whieda_bot_binding(whieda_tenant):
+    return BotBindingContext(
+        binding_id="whieda-test-binding",
+        tenant=whieda_tenant,
+        bot_token_ref="env:TEST_WHIEDA_BOT_TOKEN",
+        webhook_secret_ref="env:TEST_WHIEDA_WEBHOOK_SECRET",
+        bot_username="WHIEDA_Advisor_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="whieda-test-token",
+        webhook_secret="whieda-test-secret",
+    )
 
 
 @pytest.fixture(autouse=True)

@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-001",
+    "resource_type": "image",
+    "url": "https://cdn.example.test/tenant-alpha/A-001.jpg",
+    "title": "photo A-001"
+  }
+]

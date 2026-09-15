@@ -219,14 +219,14 @@ set display_name = excluded.display_name,
     telegram_username = coalesce(lead_actors.telegram_username, excluded.telegram_username),
     updated_at = now();
 
-insert into lead_actor_roles (tenant_id, actor_id, role)
+insert into lead_actor_roles (tenant_id, actor_id, role, country_code, region_code)
 values
-  ('whieda', 'viktor', 'platform_owner'),
-  ('whieda', 'viktor', 'tenant_admin'),
-  ('whieda', 'viktor', 'referral_owner'),
-  ('whieda', 'ladnaya', 'referral_owner'),
-  ('whieda', 'mariam', 'referral_owner'),
-  ('whieda', 'onlineelena', 'referral_owner')
+  ('whieda', 'viktor', 'platform_owner', '', ''),
+  ('whieda', 'viktor', 'tenant_admin', '', ''),
+  ('whieda', 'viktor', 'referral_owner', '', ''),
+  ('whieda', 'ladnaya', 'referral_owner', '', ''),
+  ('whieda', 'mariam', 'referral_owner', '', ''),
+  ('whieda', 'onlineelena', 'referral_owner', '', '')
 on conflict do nothing;
 
 insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode, enabled)

@@ -1,0 +1,22 @@
+[
+  {
+    "tenant_id": "tenant-north",
+    "sku": "SHARE-01",
+    "canonical_name": "North Capsule",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-north:SHARE-01"
+    },
+    "prices": [
+      {
+        "kind": "retail",
+        "amount": "37.13",
+        "currency": "USD",
+        "source": "catalogue_2026"
+      }
+    ]
+  }
+]

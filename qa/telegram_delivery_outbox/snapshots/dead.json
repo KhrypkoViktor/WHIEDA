@@ -1,0 +1,16 @@
+{
+  "rows": [
+    {
+      "outbox_id": "44444444-4444-4444-8444-444444444444",
+      "binding_id": "south-advisor-bot",
+      "telegram_update_id": 9103,
+      "sequence_no": 1,
+      "kind": "text",
+      "status": "dead",
+      "attempt_count": 8,
+      "last_error_code": "telegram_send_failed:403",
+      "payload": {"chat_id": "200", "text": "Временный ответ."},
+      "created_at": "2026-08-25T09:02:00+00:00"
+    }
+  ]
+}

@@ -99,6 +99,7 @@ def build_starter_basket(
     target_pv: float | None,
     goal: str = "balanced",
     templates: list[dict[str, Any]] | None = None,
+    tenant_id: str = "whieda",
 ) -> tuple[str, list[str]]:
     if not catalog:
         return (
@@ -165,7 +166,9 @@ def build_starter_basket(
             [str(cheapest["sku"])],
         )
 
-    heading = template.get("title") if template and goal != "balanced" else "Стартовая корзина WHIEDA"
+    heading = template.get("title") if template and goal != "balanced" else (
+        "Стартовая корзина WHIEDA" if tenant_id == "whieda" else "Стартовая корзина"
+    )
     lines = []
     for index, row in enumerate(selected, start=1):
         reason = str(row.get("reason_short") or "Подходит под выбранную цель.").strip()

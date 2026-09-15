@@ -35,6 +35,7 @@ class E2EReport:
     failure_message: str | None = None
     container_logs: dict[str, str] = field(default_factory=dict)
     report_paths: dict[str, str] = field(default_factory=dict)
+    telegram_canary: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -147,6 +148,17 @@ def render_markdown(report: E2EReport) -> str:
         lines.append(f"- status: `{nbz_db.get('status', 'NOT_RUN')}`")
         if nbz_db.get("summary"):
             lines.append(f"- summary: {nbz_db['summary']}")
+
+    if report.telegram_canary:
+        lines.extend(["", "## Tenant Telegram canary", ""])
+        lines.append(f"- status: `{report.telegram_canary.get('status', 'NOT_RUN')}`")
+        lines.append(f"- checks: {report.telegram_canary.get('checks', 'n/a')}")
+        for case in report.telegram_canary.get("cases") or []:
+            lines.append(
+                f"  - `{case.get('case_id')}`: {case.get('status')} "
+                f"inbox={case.get('inbox_actual', 'n/a')} "
+                f"outbox={case.get('outbox_actual', 'n/a')}"
+            )
 
     lines.extend(["", "## Cleanup", ""])
     lines.append(f"- status: `{report.cleanup_status}`")

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whieda.tenant-release-package.v1",
+  "title": "Tenant release package v1",
+  "description": "Generic tenant catalog package. Not bound to NSP file names. Runtime never reads this package directly.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "package_id",
+    "package_version",
+    "tenant_id",
+    "release_status",
+    "display",
+    "files",
+    "source"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "tenant-release-package.v1"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+    },
+    "package_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    },
+    "release_status": {
+      "enum": ["candidate", "approved", "review", "blocked"]
+    },
+    "display": {
+      "type": "object",
+      "required": ["display_name"],
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "advisor_signature": { "type": "string" }
+      }
+    },
+    "files": {
+      "type": "object",
+      "required": ["products", "aliases", "cards", "media", "faq"],
+      "additionalProperties": false,
+      "properties": {
+        "products": { "$ref": "#/$defs/fileRef" },
+        "aliases": { "$ref": "#/$defs/fileRef" },
+        "cards": { "$ref": "#/$defs/fileRef" },
+        "media": { "$ref": "#/$defs/fileRef" },
+        "faq": { "$ref": "#/$defs/fileRef" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["kind", "ref"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "ref": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "priceEntry": {
+      "type": "object",
+      "required": ["kind", "amount", "currency", "source"],
+      "properties": {
+        "kind": { "enum": ["retail", "partner"] },
+        "amount": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "source": { "type": "string", "minLength": 1 },
+        "source_version": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "fileRef": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "pattern": "^[A-Za-z0-9._-]+\\.json$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

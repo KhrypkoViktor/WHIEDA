@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-alpha-mixed",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-alpha",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "Tenant Alpha",
+    "advisor_signature": "советник tenant-alpha"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "ae4dec277397d6cd5757c74d0a74ffca98194527b30eb1bbb77cf1dd48511514"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "8d262f47d599e7566749ac0c2c61b8324424817744ade6e9c55ad38929d3c763"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "06ff4d6ee25162d84f77dbb301a19a1bb11cdd56bb5107c6e093aa3bc26c1ab9"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "89c7f2d836f4308bcdd263896efcca7833775e51e1bf7cbbb7ff4eb1672084b5"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "f0c61cafca9fe41287943da8063ab2ff9907499a67f14bfd534e0d5d79b213ac"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_release_package/fixtures/mixed-tenant"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "ok": false,
+  "state": "degraded",
+  "mode": "offline-manifest",
+  "features": [
+    {
+      "feature": "onboarding",
+      "state": "degraded",
+      "tables": [
+        "onboarding_programs",
+        "onboarding_steps",
+        "onboarding_enrollments",
+        "onboarding_progress",
+        "onboarding_reminders",
+        "mentor_escalations"
+      ],
+      "missing_tables": [
+        "onboarding_enrollments"
+      ],
+      "migration": "platform_onboarding_v1.sql"
+    },
+    {
+      "feature": "telegram_durable_inbox",
+      "state": "ready",
+      "tables": [
+        "telegram_update_inbox"
+      ],
+      "missing_tables": [],
+      "migration": "platform_telegram_durable_inbox_v1.sql"
+    },
+    {
+      "feature": "telegram_durable_outbox",
+      "state": "ready",
+      "tables": [
+        "telegram_delivery_outbox"
+      ],
+      "missing_tables": [],
+      "migration": "platform_telegram_durable_outbox_v1.sql"
+    }
+  ]
+}

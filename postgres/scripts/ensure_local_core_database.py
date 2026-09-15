@@ -24,7 +24,6 @@ LOCAL_CORE_DB = "whieda_platform_local_core"
 INIT_MARKER_TABLE = "tenants"
 LOCAL_CORE_API_ROLE = "whieda_platform_api_local"
 LOCAL_CORE_API_PASSWORD = "local_core_api_only"
-LOCAL_ADVISOR_SCHEMA = SQL_DIR / "platform_advisor_structured_local_v1.sql"
 LOCAL_ADVISOR_SEED = _SCRIPT_DIR / "staging_seed_whieda_advisor_local_v1.sql"
 
 
@@ -154,8 +153,7 @@ def main() -> int:
     else:
         print(f"OK: {LOCAL_CORE_DB} already initialized; refreshing local API role grants")
 
-    # These two files are idempotent local-only fixtures for the Core HTTP lab.
-    _psql_file(LOCAL_CORE_DB, LOCAL_ADVISOR_SCHEMA)
+    # This seed is an idempotent local-only fixture for the Core HTTP lab.
     _psql_file(LOCAL_CORE_DB, LOCAL_ADVISOR_SEED)
 
     _ensure_api_role()

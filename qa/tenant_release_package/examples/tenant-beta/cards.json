@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-beta",
+    "sku": "B-001",
+    "canonical_name": "Beta Spirulina",
+    "what_it_is": "Card for Beta Spirulina",
+    "primary_image_url": "https://cdn.example.test/tenant-beta/B-001.jpg"
+  }
+]

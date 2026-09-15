@@ -92,6 +92,8 @@ create table if not exists advisor_whieda_events (
   status text not null default 'draft', owner text, updated_at text, recurrence_rule text,
   primary key (client_id, event_id)
 );
+alter table advisor_structured_products
+  add column if not exists retail_prices jsonb;
 create table if not exists advisor_whieda_community_resources (
   client_id text not null, resource_id text not null, tenant_id text not null default 'by',
   leader_id text, title text not null, category text, description text, url text not null,

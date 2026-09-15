@@ -8,12 +8,18 @@ from typing import Any
 
 from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
+from app.db_feature_readiness import (
+    ONBOARDING_UNAVAILABLE_TEXT,
+    get_feature_status,
+    log_feature_unavailable,
+)
 from app.identity.service import exchange_telegram_link_token
 from app.leads.actor_link import (
     fill_lead_actor_user_id,
     link_lead_actor_by_username,
     merge_anonymous_actor_into_partner,
 )
+from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
 from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
 from app.settings import get_settings
@@ -50,6 +56,7 @@ from app.telegram.bindings import (
     BotBindingContext,
     binding_context_scope,
     current_bot_binding,
+    tenant_from_binding,
 )
 from app.telegram.log_safe import chat_ref
 from app.telegram.catalog_browse import (
@@ -117,6 +124,10 @@ async def _remove_legacy_reply_keyboard(chat_id: int) -> None:
     )
 
 
+def _include_calculator(tenant: TenantContext) -> bool:
+    return tenant.tenant_id == "whieda"
+
+
 async def deliver_text(chat_id: int | str, text: str) -> None:
     if not text.strip():
         return
@@ -139,6 +150,8 @@ async def deliver_advisor_response(
         chat_id,
         core_response,
         bot_token=binding.bot_token,
+        tenant_id=binding.tenant.tenant_id,
+        binding_status=binding.status,
         reply_markup=reply_markup,
     )
 
@@ -210,6 +223,13 @@ async def handle_onboarding(
     *,
     first_ref: str | None = None,
 ) -> dict[str, Any] | None:
+    if not parse_onboarding_command(msg.text):
+        return None
+    status = await get_feature_status("onboarding")
+    if not status.ready:
+        log_feature_unavailable(status)
+        await deliver_text(msg.chat_id, ONBOARDING_UNAVAILABLE_TEXT)
+        return {"ok": True, "route": "onboarding_unavailable", "feature": "onboarding"}
     result = await handle_onboarding_text(
         tenant.tenant_id,
         telegram_user_id=msg.user_id,
@@ -229,6 +249,7 @@ async def handle_advisor_query(
     msg: TelegramMessage,
     trace_id: str,
 ) -> dict[str, Any]:
+    tenant = tenant_from_binding(tenant)
     body: dict[str, Any] = {
         "session": f"telegram:{msg.chat_id}",
         "question": msg.text,
@@ -249,7 +270,7 @@ async def handle_advisor_query(
         },
     )
     if should_deliver_telegram_response(core_response):
-        include_calculator = tenant.tenant_id == "whieda"
+        include_calculator = _include_calculator(tenant)
         inline = advisor_followup_inline_keyboard(
             core_response,
             include_calculator=include_calculator,

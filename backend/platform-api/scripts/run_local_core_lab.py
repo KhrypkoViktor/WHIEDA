@@ -12,6 +12,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from local_core_lab.orchestrator import OrchestratorConfig, run_lab  # noqa: E402
+from local_core_lab.refuse import refuse_lab_flags  # noqa: E402
 
 
 def _print_step_output(state) -> None:
@@ -57,7 +58,27 @@ def main() -> int:
         help="Run Telegram experience HTTP corpus (requires --e2e)",
     )
     parser.add_argument("--health-timeout", type=int, default=120)
+    parser.add_argument(
+        "--tenant-telegram-canary",
+        action="store_true",
+        help="Live local Telegram canary: two tenants, inbox/outbox/capture (requires --e2e)",
+    )
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--dsn", default=None)
+    parser.add_argument("--base-url", default=None)
     args = parser.parse_args()
+    refused = refuse_lab_flags(
+        apply=args.apply,
+        publish=args.publish,
+        dsn=args.dsn,
+        base_url=args.base_url,
+    )
+    if refused:
+        print(refused)
+        return 1
+    if args.tenant_telegram_canary and not args.e2e:
+        parser.error("--tenant-telegram-canary requires --e2e")
     if args.parity and not args.e2e:
         parser.error("--parity requires --e2e")
     if args.no_blind_zone and not args.e2e:
@@ -79,6 +100,7 @@ def main() -> int:
         gap_operator_mode=args.gap_operator,
         conversation_reliability_mode=args.conversation_reliability,
         telegram_experience_mode=args.telegram_experience,
+        tenant_telegram_canary=args.tenant_telegram_canary,
     )
     code, state = run_lab(config)
     _print_step_output(state)

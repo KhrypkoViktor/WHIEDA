@@ -1,0 +1,16 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-010",
+    "canonical_name": "Alpha One",
+    "what_it_is": "Card for Alpha One",
+    "primary_image_url": "https://cdn.example.test/tenant-alpha/A-010.jpg"
+  },
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-011",
+    "canonical_name": "Alpha Two",
+    "what_it_is": "Card for Alpha Two",
+    "primary_image_url": "https://cdn.example.test/tenant-alpha/A-011.jpg"
+  }
+]

@@ -12,8 +12,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "n8n" / "current"))
 sys.path.insert(0, str(ROOT / "qa" / "master_integrity"))
+# qa/tenant_canary_preflight ships a build_fixtures module too; drop its cached copy
+sys.modules.pop("build_fixtures", None)
 
-from build_fixtures import build_valid_snapshot  # noqa: E402
+from build_fixtures import (  # noqa: E402
+    build_collapsed_products_snapshot,
+    build_header_mutation_snapshot,
+    build_valid_snapshot,
+)
 from whieda_master_integrity_lib import (  # noqa: E402
     compare_master_to_runtime,
     compare_snapshots,
@@ -52,16 +58,12 @@ def test_redact_dsn() -> None:
 
 
 def test_compare_detects_header_mutation(valid_snapshot: Path, tmp_path: Path) -> None:
-    from build_fixtures import build_header_mutation_snapshot
-
     mutated = build_header_mutation_snapshot(tmp_path / "mutated")
     report = compare_snapshots(valid_snapshot, mutated)
     assert report["layers"]["aliases"]["classification"] == "review_required"
 
 
 def test_compare_detects_critical_collapse(valid_snapshot: Path, tmp_path: Path) -> None:
-    from build_fixtures import build_collapsed_products_snapshot
-
     collapsed = build_collapsed_products_snapshot(tmp_path / "collapsed")
     report = compare_snapshots(valid_snapshot, collapsed)
     assert report["layers"]["products"]["classification"] == "blocking"

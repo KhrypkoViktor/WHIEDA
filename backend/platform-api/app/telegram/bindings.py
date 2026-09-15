@@ -150,3 +150,11 @@ def current_bot_binding() -> BotBindingContext:
     if context is None:
         raise RuntimeError("Telegram bot binding context is not set")
     return context
+
+
+def tenant_from_binding(fallback: TenantContext) -> TenantContext:
+    """Telegram advisor tenant comes from the active binding when one is set."""
+    context = _current_binding.get()
+    if context is None:
+        return fallback
+    return context.tenant

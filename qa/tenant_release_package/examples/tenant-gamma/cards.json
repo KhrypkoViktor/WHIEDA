@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-gamma",
+    "sku": "G-001",
+    "canonical_name": "Gamma Capsule",
+    "what_it_is": "Card for Gamma Capsule",
+    "primary_image_url": "https://cdn.example.test/tenant-gamma/G-001.jpg"
+  }
+]

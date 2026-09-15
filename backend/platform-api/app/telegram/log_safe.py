@@ -50,3 +50,6 @@ def install_telegram_log_filter() -> None:
     if any(isinstance(item, TelegramSecretFilter) for item in root.filters):
         return
     root.addFilter(TelegramSecretFilter())
+
+
+install_telegram_log_filter()

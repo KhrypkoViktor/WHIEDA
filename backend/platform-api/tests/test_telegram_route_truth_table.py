@@ -8,6 +8,22 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.telegram.routes import _process_telegram_update_body
+from app.telegram.bindings import BotBindingContext
+
+
+@pytest.fixture
+def whieda_bot_binding(whieda_tenant):
+    return BotBindingContext(
+        binding_id="whieda-test-binding",
+        tenant=whieda_tenant,
+        bot_token_ref="env:TEST_WHIEDA_BOT_TOKEN",
+        webhook_secret_ref="env:TEST_WHIEDA_WEBHOOK_SECRET",
+        bot_username="WHIEDA_Advisor_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="whieda-test-token",
+        webhook_secret="whieda-test-secret",
+    )
 
 
 def _private_chat_update(text: str = "что можешь", *, chat_id: int = 501) -> dict:

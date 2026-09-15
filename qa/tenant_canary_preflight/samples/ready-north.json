@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "state": "ready_for_shared_staging",
+  "mode": "plan",
+  "tenant_id": "tenant-north",
+  "counts": {
+    "products": 1,
+    "approved": 1,
+    "eligible": 1,
+    "review_required": 0,
+    "blocked": 0,
+    "price_covered": 1,
+    "approved_rows": 1
+  },
+  "findings": [],
+  "package": {
+    "package_id": "tenant-north-canary",
+    "package_sha256": "e3ead28fc7474565bebc603194d6e5d3433ff9cf0b256e1bbf6cb49a6ef86943",
+    "tenant_id": "tenant-north",
+    "eligible_skus": [
+      "SHARE-01"
+    ],
+    "validate_ok": true
+  },
+  "binding": {
+    "tenant_status": "active",
+    "active_bindings": 1,
+    "binding_ids": [
+      "north-advisor-bot"
+    ]
+  },
+  "runtime": {
+    "candidate_skus": [
+      "SHARE-01"
+    ],
+    "candidate_count": 1
+  },
+  "media": {
+    "media_base_url": "https://media.example.org/media",
+    "manifest_rows": 1,
+    "ready": 1,
+    "missing": 0,
+    "required_photo_gaps": 0
+  }
+}
