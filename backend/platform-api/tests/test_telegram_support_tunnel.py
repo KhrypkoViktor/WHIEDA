@@ -89,7 +89,22 @@ async def test_services_word_shows_gemini_card_with_three_buttons(whieda_tenant,
     kwargs = send.await_args.kwargs
     assert kwargs["text"] == SERVICES_TEXT
     buttons = [row[0]["text"] for row in kwargs["reply_markup"]["inline_keyboard"]]
-    assert buttons == ["Gemini Pro 4 490 ₽", "Gemini Pro 3 990 ₽", "Поддержка"]
+    assert buttons == ["Gemini Pro 4 490 ₽", "Gemini Pro 3 990 ₽", "Поддержка", "Как это работает?"]
+
+
+@pytest.mark.asyncio
+async def test_cabinet_button_opens_the_card_and_how_it_works_explains_without_names(whieda_tenant, whieda_bot_binding, support_env):
+    from app.telegram.support import HOW_IT_WORKS_TEXT
+
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()):
+        card = await process_core_telegram_update(whieda_tenant, _callback("svc:card:gemini"), "t1c", binding=whieda_bot_binding)
+        how = await process_core_telegram_update(whieda_tenant, _callback("svc:how:gemini"), "t1d", binding=whieda_bot_binding)
+    assert card["route"] == "services" and send.await_args_list[0].kwargs["text"] == SERVICES_TEXT
+    assert how["status"] == "how_it_works"
+    text = send.await_args_list[1].kwargs["text"]
+    assert text == HOW_IT_WORKS_TEXT and "Карина" not in text and "@" not in text
+    assert "номер заявки" in text and "закрывает заявку" in text
 
 
 @pytest.mark.asyncio

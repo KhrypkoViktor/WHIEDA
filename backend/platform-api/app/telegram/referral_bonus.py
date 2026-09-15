@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from app.cart.web_links import CALCULATOR_WEB_URL
 from app.referral_bonus.service import (
@@ -22,6 +22,7 @@ from app.referral_bonus.service import (
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import wwc, wwc_signed
+from app.telegram.support import SERVICES_CARD_CALLBACK
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -117,6 +118,17 @@ def _referrals_text(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Google-форма «Данные для вашего сайта WWC»; ref_code подставляется ссылкой.
+# Из бота уходит «новый сайт · бот · <telegram user id>» — без имени, но
+# владелец находит человека по id (владелец, 15.09.2026).
+SITE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScu0yDkGGw5uKjRoNDUvzTA6lQBCZywnjSGFmhLv_zcHXPnGw/viewform?usp=pp_url&entry.1166182770="
+
+
+def site_form_url(telegram_user_id: int | None) -> str:
+    tail = f"новый сайт · бот · {int(telegram_user_id)}" if telegram_user_id else "новый сайт · бот"
+    return SITE_FORM_URL + quote(tail, safe="")
+
+
 def _dashboard_keyboard(
     *,
     bot_username: str,
@@ -124,22 +136,29 @@ def _dashboard_keyboard(
     site_url: str,
     has_site: bool,
     minimal: bool,
+    telegram_user_id: int | None = None,
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
     share_url = "https://t.me/share/url?" + urlencode(
         {"url": link, "text": invitation_text("")}
     )
+    # Сайт заказывается через Google-форму (владелец, 15.09.2026), а не диалогом
+    # в боте; Gemini — карточка сервисов (тоннель к администратору).
+    order_site = [{"text": "Заказать сайт WWC", "url": site_form_url(telegram_user_id)}]
+    gemini = [{"text": "Подключить Gemini Pro", "callback_data": SERVICES_CARD_CALLBACK}]
     if minimal:
-        return {
-            "inline_keyboard": [
-                [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
-                [{"text": "Скопировать реферальную ссылку", "copy_text": {"text": link}}],
-                [{"text": "Отправить приглашение", "url": share_url}],
-                [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
-                [{"text": "Поддержка", "url": SUPPORT_URL}],
-            ]
-        }
+        rows = [
+            [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
+            [{"text": "Скопировать реферальную ссылку", "copy_text": {"text": link}}],
+            [{"text": "Отправить приглашение", "url": share_url}],
+            [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
+            gemini,
+            [{"text": "Поддержка", "url": SUPPORT_URL}],
+        ]
+        if not has_site:
+            rows.insert(1, order_site)
+        return {"inline_keyboard": rows}
 
     rows: list[list[dict[str, Any]]] = [
         [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
@@ -147,12 +166,10 @@ def _dashboard_keyboard(
         [{"text": "Отправить приглашение", "url": share_url}],
         [{"text": "Мои рефералы", "callback_data": "referral:list"}],
         [{"text": "История WWC$", "callback_data": "referral:history"}],
+        gemini,
         [{"text": "Поддержка", "url": SUPPORT_URL}],
     ]
-    if has_site:
-        rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}])
-    else:
-        rows.insert(1, [{"text": "Создать свой сайт", "callback_data": "site:create"}])
+    rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)
     return {"inline_keyboard": rows}
 
 
@@ -260,6 +277,7 @@ async def show_referral_dashboard(
             site_url=site_url,
             has_site=bool(site),
             minimal=minimal,
+            telegram_user_id=telegram_user_id,
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}

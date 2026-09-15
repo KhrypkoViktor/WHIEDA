@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 CHANNEL_GEMINI = "gemini"
 _SERVICES_RE = re.compile(r"^(?:сервисы|/services|gemini|джемини)$", re.IGNORECASE)
-_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close):([A-Za-z0-9_-]+)$")
+_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how):([A-Za-z0-9_-]+)$")
 # Owner (or the administrator) sends this inside the forum group once.
 _FORUM_REGISTER_RE = re.compile(r"^/forum(?:@\w+)?$", re.IGNORECASE)
 # Owner commands the support admin may also use on staging; never relayed.
@@ -125,14 +125,34 @@ SERVICES_TEXT = (
 )
 
 
+HOW_IT_WORKS_TEXT = "\n".join(
+    [
+        "Как работает связь с администратором сервиса",
+        "",
+        "1. Выбираете вариант и нажимаете «Заказать» — или «Поддержка», если есть вопрос. Открывается заявка с номером, например #S-7.",
+        "2. Пока заявка открыта, всё, что вы пишете боту обычным текстом (и фото), уходит администратору сервиса. Команды и кнопки меню работают как обычно.",
+        "3. Ответы приходят сюда же: «Ответ администратора по заявке #S-7».",
+        "4. Администратор не видит ваше имя и контакты — только номер заявки. Вы не видите его. Всё общение идёт через бота.",
+        "5. Оплату и подключение администратор согласует с вами в заявке.",
+        "6. Когда вопрос решён, администратор закрывает заявку — вам придёт сообщение. Обычный чат с ботом снова работает как раньше.",
+        "7. Новый вопрос позже — «Сервисы» → «Поддержка»: откроется новая заявка.",
+    ]
+)
+
+
 def services_keyboard() -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [{"text": OFFERS["gemini_18m"].button, "callback_data": "svc:order:gemini_18m"}],
             [{"text": OFFERS["gemini_6m"].button, "callback_data": "svc:order:gemini_6m"}],
             [{"text": "Поддержка", "callback_data": f"svc:support:{CHANNEL_GEMINI}"}],
+            [{"text": "Как это работает?", "callback_data": f"svc:how:{CHANNEL_GEMINI}"}],
         ]
     }
+
+
+# The cabinet button «Подключить Gemini Pro» (app/telegram/referral_bonus.py).
+SERVICES_CARD_CALLBACK = f"svc:card:{CHANNEL_GEMINI}"
 
 
 def services_enabled() -> bool:
@@ -340,6 +360,13 @@ async def try_handle_support_callback(
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=current_bot_binding().bot_token)
     if callback.chat_type != "private" and action != "close":
         return {"ok": True, "route": "services", "status": "private_chat_required", "trace_id": trace_id}
+
+    if action == "card":
+        return await show_services(callback.chat_id, trace_id=trace_id)
+
+    if action == "how":
+        await _send(callback.chat_id, HOW_IT_WORKS_TEXT, reply_markup=services_keyboard())
+        return {"ok": True, "route": "services", "status": "how_it_works", "trace_id": trace_id}
 
     if action == "order":
         offer = OFFERS.get(arg)
