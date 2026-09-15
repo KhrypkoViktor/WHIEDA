@@ -21,7 +21,7 @@ from app.renewal_requests.service import (
 from app.settings import get_settings
 from app.telegram.billing import notify_payment_participants
 from app.telegram.bindings import current_bot_binding
-from app.telegram.money import money
+from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money
 from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -75,11 +75,8 @@ async def _actor(
 
 
 def _payment_text(request: dict[str, Any]) -> str:
-    amount = _amount(int(request["amount_minor"]), str(request["currency"]))
-    if request["country_code"] == "RU":
-        details = "Переведите оплату по номеру +7 928 237-26-77, Т-Банк."
-    else:
-        details = "Переведите оплату на аккаунт SUNRAYSWORD."
+    amount = both(int(request["amount_minor"]), str(request["currency"]))
+    details = PAYMENT_RU if request["country_code"] == "RU" else PAYMENT_BY
     return "\n".join(
         [
             f"Продление платформы на {request['access_months']} мес.: {amount}.",
