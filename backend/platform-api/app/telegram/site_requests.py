@@ -23,7 +23,7 @@ from app.site_requests.service import (
     submit_site_payment_proof,
 )
 from app.telegram.bindings import current_bot_binding
-from app.telegram.money import wwc, wwc_signed
+from app.telegram.money import money, wwc, wwc_signed
 from app.telegram.delivery import (
     answer_callback_query,
     copy_telegram_message,
@@ -64,7 +64,7 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
     if not chat_id:
         return
     lines = [
-        f"{request['requested_subdomain']} подключился к платформе.",
+        f"{request['requested_subdomain']}.wwc.best подключился к платформе.",
         f"Начислено: {wwc_signed(int(bonus['amount_minor']))}.",
     ]
     if bonus.get("balance_points") is not None:
@@ -74,14 +74,16 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
 
 
 def _payment_text(request: dict[str, Any]) -> str:
+    # PRO 3 мес + настройка сайта; суммы приходят из site_requests.service.
+    total = money(int(request["total_amount_minor"]), str(request["currency"]))
     if request["currency"] == "RUB":
         return (
-            "Вступление и первые 90 дней: 4 000 RUB.\n"
+            f"Сайт на 3 месяца (PRO 3 000 ₽) и его настройка (2 000 ₽): {total}.\n"
             "Переведите оплату на +7 928 237-26-77, Т-Банк.\n"
             "После перевода пришлите сюда скриншот чека."
         )
     return (
-        "Вступление и первые 90 дней: 40 W$.\n"
+        f"Сайт на 3 месяца (PRO 30 WWC$) и его настройка (20 WWC$): {total}.\n"
         "Переведите оплату на SUNRAYSWORD.\n"
         "После перевода пришлите сюда скриншот чека."
     )
@@ -245,7 +247,7 @@ async def try_handle_site_request_message(
                             "Новая заявка на сайт.",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
                             f"Страна: {request['country_code']}",
-                            f"Оплата: {request['total_amount_minor']} {request['currency']}",
+                            f"Оплата: {money(int(request['total_amount_minor']), str(request['currency']))}",
                             "Чек выше.",
                         ]
                     ),

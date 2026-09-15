@@ -110,8 +110,14 @@ def services_keyboard() -> dict[str, Any]:
     }
 
 
+def services_enabled() -> bool:
+    """Staging feature until the owner signs it off for the production `minimal`
+    profile (AGENTS.md: production shows only ready partner actions)."""
+    return get_settings().telegram_ui_profile != "minimal"
+
+
 def is_services_request(text: str) -> bool:
-    return bool(_SERVICES_RE.fullmatch(str(text or "").strip()))
+    return services_enabled() and bool(_SERVICES_RE.fullmatch(str(text or "").strip()))
 
 
 def support_admin_id() -> int | None:
@@ -227,6 +233,8 @@ async def try_handle_support_callback(
     if not match:
         return None
     action, arg = match.group(1), match.group(2)
+    if not services_enabled() and action in {"order", "confirm", "support"}:
+        return None
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=current_bot_binding().bot_token)
     if callback.chat_type != "private":
         return {"ok": True, "route": "services", "status": "private_chat_required", "trace_id": trace_id}
