@@ -4,7 +4,7 @@
     {
       "name": "wwc-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "03_Website/wwc-best"],
+      "runtimeArgs": ["run", "dev", "--prefix", "D:/Projects/_worktrees/wwc-staging-referral-isolation"],
       "port": 4321
     }
   ]
