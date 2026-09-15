@@ -11,7 +11,7 @@ from app.telegram.log_safe import chat_ref
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_HTML_TAGS = ("b", "strong", "i", "em")
+_ALLOWED_HTML_TAGS = ("b", "strong", "i", "em", "code")
 
 
 def format_telegram_html(text: str) -> str:

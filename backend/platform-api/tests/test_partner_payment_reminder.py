@@ -16,7 +16,8 @@ def test_initial_belarus_reminder_has_exact_boundaries_and_one_payment_method():
     assert "до 21 сентября включительно" in text
     assert "22-24 сентября сайт продолжит работать" in text
     assert "с 25 сентября адрес будет временно вести" in text
-    assert "Беларусь: 30 WWC$ : SUNRAYSWORD" in text
+    # Both currencies (owner, 15.09) and a tap-to-copy account.
+    assert "Беларусь: 30 WWC$ (3 000 ₽) на аккаунт <code>SUNRAYSWORD</code>" in text
     assert "Россия:" not in text
     assert "https://t.me/sunraysword" in text
 
@@ -28,7 +29,7 @@ def test_russia_reminder_has_only_russia_payment_method():
         country="РФ",
         paid_until=datetime(2026, 9, 21, 21, tzinfo=timezone.utc),
     )
-    assert "Россия: 3 000 RUB по номеру +79282372677 Т-Банк" in text
+    assert "Россия: 3 000 ₽ (30 WWC$) по номеру <code>+79282372677</code>, Т-Банк" in text
     assert "Беларусь:" not in text
 
 

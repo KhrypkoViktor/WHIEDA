@@ -183,12 +183,21 @@ async def handle_referral_start_token(
         invite_code=invite_code, raw_update=msg.raw,
     )
     messages = {
-        "attributed": "Приглашение сохранено. Напишите «с чего начать», чтобы посмотреть возможности бота.",
+        "attributed": "Приглашение сохранено.",
         "already_registered": "Вы уже знакомы с ботом. Пригласивший автоматически не меняется.",
         "invalid": "Ссылка-приглашение недействительна или больше не активна.",
         "self_referral": "Свою реферальную ссылку нельзя использовать для себя.",
     }
     await deliver_text(msg.chat_id, messages[result.status])
+    if result.status in {"attributed", "already_registered"}:
+        # Owner's rule (15.09): no extra step — the cabinet opens right away.
+        await show_referral_dashboard(
+            tenant,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+            raw_update=msg.raw,
+            trace_id=trace_id,
+        )
     return {"ok": result.status == "attributed", "route": "referral_start", "status": result.status, "trace_id": trace_id}
 
 

@@ -23,7 +23,7 @@ from app.site_requests.service import (
     submit_site_payment_proof,
 )
 from app.telegram.bindings import current_bot_binding
-from app.telegram.money import money, wwc, wwc_signed
+from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc, wwc_signed
 from app.telegram.delivery import (
     answer_callback_query,
     copy_telegram_message,
@@ -75,16 +75,16 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
 
 def _payment_text(request: dict[str, Any]) -> str:
     # PRO 3 мес + настройка сайта; суммы приходят из site_requests.service.
-    total = money(int(request["total_amount_minor"]), str(request["currency"]))
+    total = both(int(request["total_amount_minor"]), str(request["currency"]))
     if request["currency"] == "RUB":
         return (
             f"Сайт на 3 месяца (PRO 3 000 ₽) и его настройка (2 000 ₽): {total}.\n"
-            "Переведите оплату на +7 928 237-26-77, Т-Банк.\n"
+            f"{PAYMENT_RU}\n"
             "После перевода пришлите сюда скриншот чека."
         )
     return (
         f"Сайт на 3 месяца (PRO 30 WWC$) и его настройка (20 WWC$): {total}.\n"
-        "Переведите оплату на SUNRAYSWORD.\n"
+        f"{PAYMENT_BY}\n"
         "После перевода пришлите сюда скриншот чека."
     )
 
