@@ -93,6 +93,15 @@ async def test_services_word_shows_gemini_card_with_three_buttons(whieda_tenant,
 
 
 @pytest.mark.asyncio
+async def test_start_gemini_from_the_site_button_shows_the_card(whieda_tenant, whieda_bot_binding, support_env, quiet_linking):
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    with patch("app.telegram.support.send_telegram_text", send):
+        result = await process_core_telegram_update(whieda_tenant, _message("/start gemini"), "t1b", binding=whieda_bot_binding)
+    assert result["route"] == "services"
+    assert send.await_args.kwargs["text"] == SERVICES_TEXT
+
+
+@pytest.mark.asyncio
 async def test_order_asks_for_confirmation_with_the_offer_card(whieda_tenant, whieda_bot_binding, support_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
     with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()):
