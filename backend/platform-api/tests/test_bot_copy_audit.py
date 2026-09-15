@@ -10,7 +10,7 @@ from app.telegram.money import format_minor, money, wwc, wwc_signed
 APP = Path(__file__).resolve().parents[1] / "app"
 USER_FACING = ("telegram", "subscriptions", "referral_bonus", "renewal_requests", "site_requests", "support")
 # String literals that contain Cyrillic: that is what a person can read.
-_RU_LITERAL = re.compile(r"(?:\"|')([^\"'\\\n]*[А-Яа-яЁё][^\"'\\\n]*)(?:\"|')")
+_RU_LITERAL = re.compile(r"""(?:"|')((?:[^"'\n\\]|\\.)*?[А-Яа-яЁё](?:[^"'\n\\]|\\.)*?)(?:"|')""")
 
 
 def _literals():

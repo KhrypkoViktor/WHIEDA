@@ -151,9 +151,11 @@ async def set_site_request_intro(
         if not request:
             raise SiteRequestError("Сейчас текст не ожидается.")
         if request["country_code"] == "RU":
-            currency, total, subscription = "RUB", 400_000, 300_000
+            # PRO 3 мес 3 000 ₽ + настройка сайта 2 000 ₽ (владелец, 14.09.2026)
+            currency, total, subscription = "RUB", 500_000, 300_000
         else:
-            currency, total, subscription = "WUSD", 4_000, 3_000
+            # PRO 3 мес 30 WWC$ + настройка сайта 20 WWC$
+            currency, total, subscription = "WUSD", 5_000, 3_000
         row = await fetch_one(
             conn,
             """
