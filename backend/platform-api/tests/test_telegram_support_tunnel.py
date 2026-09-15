@@ -354,6 +354,22 @@ async def test_registration_moves_open_tickets_into_topics_with_history(whieda_t
 
 
 @pytest.mark.asyncio
+async def test_registration_explains_missing_manage_topics_right(whieda_tenant, whieda_bot_binding, forum_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.register_forum", AsyncMock(return_value={"chat_id": FORUM})
+    ), patch("app.telegram.support.list_open_tickets_for_admin", AsyncMock(return_value=[_ticket(admin_telegram_user_id=KARINA)])), patch(
+        "app.telegram.support.create_forum_topic", AsyncMock(return_value={"ok": False, "description": "Bad Request: not enough rights to create a topic"})
+    ):
+        result = await process_core_telegram_update(
+            whieda_tenant, _forum_message("/forum", user=ADMIN, thread_id=None), "f1c", binding=whieda_bot_binding
+        )
+    assert result["status"] == "registered" and result["moved"] == 0
+    text = send.await_args_list[-1].kwargs["text"]
+    assert "Управление темами" in text and "/forum ещё раз" in text
+
+
+@pytest.mark.asyncio
 async def test_stranger_cannot_register_the_forum(whieda_tenant, whieda_bot_binding, forum_env):
     register = AsyncMock()
     with patch("app.telegram.support.register_forum", register):

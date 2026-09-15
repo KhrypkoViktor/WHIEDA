@@ -484,17 +484,19 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
 # Forum group (one topic per ticket)
 # ----------------------------------------------------------------------------
 
-async def _move_open_tickets_to_forum(tenant: TenantContext) -> int:
+async def _move_open_tickets_to_forum(tenant: TenantContext) -> tuple[int, int]:
     """Tickets opened before the group existed get their topics now, with the
     conversation so far replayed, so the administrator continues in one place.
-    Only this environment's tickets (its admin id) — the database is shared."""
+    Only this environment's tickets (its admin id) — the database is shared.
+    Returns (moved, failed)."""
     admin = support_admin_id()
     if admin is None:
-        return 0
-    moved = 0
+        return 0, 0
+    moved = failed = 0
     for ticket in await list_open_tickets_for_admin(tenant.tenant_id, admin_telegram_user_id=admin, limit=50):
         bound = await _open_forum_topic(tenant, ticket)
         if not _in_forum(bound):
+            failed += 1
             continue
         what = f"Заказ: {bound['offer_title']}" if bound.get("offer_title") else "Вопрос по Gemini"
         lines = [f"{_client_label(bound)} · {what}", ""]
@@ -510,7 +512,7 @@ async def _move_open_tickets_to_forum(tenant: TenantContext) -> int:
             delivered_chat_id=int(bound["forum_chat_id"]), delivered_message_id=delivered.get("message_id"),
         )
         moved += 1
-    return moved
+    return moved, failed
 
 async def try_handle_support_forum_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
@@ -530,8 +532,13 @@ async def try_handle_support_forum_message(
             tenant.tenant_id, binding_id=current_bot_binding().binding_id, chat_id=msg.chat_id,
             title=title, registered_by=msg.user_id,
         )
-        moved = await _move_open_tickets_to_forum(tenant)
+        moved, failed = await _move_open_tickets_to_forum(tenant)
         note = f" Открытые заявки перенесены в темы: {moved}." if moved else ""
+        if failed:
+            note += (
+                f" Не удалось создать темы для {failed} заявок: дайте боту право «Управление темами» "
+                "(Manage topics) в правах администратора и отправьте /forum ещё раз."
+            )
         await _send(msg.chat_id, "Группа поддержки подключена: каждая новая заявка будет открываться отдельной темой." + note, thread_id=msg.thread_id)
         logger.info("support_forum_registered", extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id), "moved": moved})
         return {"ok": True, "route": "support_forum", "status": "registered", "moved": moved, "trace_id": trace_id}
