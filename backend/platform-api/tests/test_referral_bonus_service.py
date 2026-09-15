@@ -69,8 +69,23 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     assert rows[2][0]["copy_text"]["text"] == invitation_text(link)
     assert rows[3][0]["text"] == "Отправить приглашение"
     assert rows[4][0]["callback_data"] == "referral:list"
-    assert rows[6][0] == {"text": "Поддержка", "url": SUPPORT_URL}
+    assert rows[6][0] == {"text": "Подключить Gemini Pro", "callback_data": "svc:card:gemini"}
+    assert rows[7][0] == {"text": "Поддержка", "url": SUPPORT_URL}
     assert len(invitation_text(link)) <= 256
+
+
+def test_cabinet_without_site_offers_the_google_form_not_the_bot_dialog():
+    """Owner, 15.09.2026: a new site is ordered through the Google form; the
+    old country/subdomain/photo dialog in the bot is not offered any more."""
+    markup = _dashboard_keyboard(
+        bot_username="WHIEDA_bot", invite_code="c", site_url="https://wwc.best/", has_site=False, minimal=False,
+        telegram_user_id=525317405,
+    )
+    row = markup["inline_keyboard"][1][0]
+    assert row["text"] == "Заказать сайт WWC"
+    assert row["url"].startswith("https://docs.google.com/forms/d/e/1FAIpQLScu0yDkGGw5uKjRoNDUvzTA6lQBCZywnjSGFmhLv_zcHXPnGw/viewform?usp=pp_url&entry.1166182770=")
+    assert row["url"].endswith("525317405")
+    assert not any(b.get("callback_data") == "site:create" for r in markup["inline_keyboard"] for b in r)
 
 
 def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
@@ -87,12 +102,14 @@ def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
         "Скопировать реферальную ссылку",
         "Отправить приглашение",
         "Калькулятор",
+        "Подключить Gemini Pro",
         "Поддержка",
     ]
     assert rows[1][0]["copy_text"]["text"] == (
         "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
     )
-    assert all("callback_data" not in row[0] for row in rows)
+    # The only callback on production is the services card (owner signed it off 15.09.2026).
+    assert [row[0]["callback_data"] for row in rows if "callback_data" in row[0]] == ["svc:card:gemini"]
 
 
 @pytest.mark.asyncio
