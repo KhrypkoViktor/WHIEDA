@@ -1,0 +1,18 @@
+{
+  "version": "V1",
+  "fact_ids": [
+    "CK-OV-001", "CK-OV-002", "CK-OV-003", "CK-OV-004",
+    "CK-LD-005", "CK-LD-006", "CK-LD-007",
+    "CK-HIS-008",
+    "CK-BUS-009", "CK-BUS-010", "CK-BUS-011", "CK-BUS-012", "CK-BUS-013",
+    "CK-BUS-014", "CK-BUS-015", "CK-BUS-016", "CK-BUS-017", "CK-BUS-018",
+    "CK-BUS-019", "CK-BUS-020", "CK-BUS-021", "CK-BUS-022",
+    "CK-TEC-023", "CK-TEC-024", "CK-TEC-025",
+    "CK-EVT-026", "CK-EVT-027",
+    "CK-CON-028", "CK-CON-029", "CK-CON-030", "CK-CON-031", "CK-CON-032",
+    "CK-CON-033", "CK-CON-034", "CK-CON-035", "CK-CON-036",
+    "CK-PRD-037",
+    "CK-PK9-038", "CK-PK9-039", "CK-PK9-040", "CK-PK9-041", "CK-PK9-042",
+    "CK-PK9-043", "CK-PK9-044"
+  ]
+}

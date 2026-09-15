@@ -1,0 +1,3243 @@
+{
+  "source_file": "D:\\Obsidian\\WHIEDA\\05_WHIEDA_RAG\\Отзывы\\отзывы для сайта_19_08.md",
+  "public_cards": 156,
+  "source_blocks": 156,
+  "mapped_keys": 156,
+  "unlinked_source_blocks": [
+    {
+      "source_index": 149,
+      "section": "Малые категории",
+      "heading": "#586 — Анна Д.",
+      "name": "",
+      "site": "Чувствительна к кондиционерам — летом часто воспалялось горло. Раньше полоскания, йод, мази, шарф. В этот раз — только экстракт Пихты. Использовала по приходу с улицы и перед сном. Утром — никаких симптомов! Раньше уходило несколько дней. Также использую как тоник для лица на ночь — кожа увлажнённая, мягкая, упругая. Анна Д.",
+      "original": "",
+      "status": "no_public_card",
+      "note": "Блок есть в 19_08.md, публичной карточки на /reviews/ нет. В базу не грузим."
+    },
+    {
+      "source_index": 150,
+      "section": "Малые категории",
+      "heading": "#587 — Маргарита П.",
+      "name": "",
+      "site": "Когда от недосыпания появляются язвочки во рту — дискомфорт и резкая боль при еде. Обычно проходит за 5 дней. Обработала рот экстрактом пихты перед сном — наутро и след простыл! Маргарита П.",
+      "original": "",
+      "status": "no_public_card",
+      "note": "Блок есть в 19_08.md, публичной карточки на /reviews/ нет. В базу не грузим."
+    },
+    {
+      "source_index": 151,
+      "section": "Малые категории",
+      "heading": "#588 — Юлия Д.",
+      "name": "",
+      "site": "Кожа склонна к высыпаниям — прыщи долго заживали, оставались пятна. Перепробовала кучу средств. Тоник Антиакне — мой фаворит. Прыщи подсыхают за ночь, ранки затягиваются моментально, пигментные пятна стали светлее. Не сушит кожу! За месяц новых высыпаний не было. Ещё отлично заживляет ссадины у ребёнка. Юлия Д.",
+      "original": "",
+      "status": "no_public_card",
+      "note": "Блок есть в 19_08.md, публичной карточки на /reviews/ нет. В базу не грузим."
+    },
+    {
+      "source_index": 152,
+      "section": "Малые категории",
+      "heading": "#589 — Анна Д.",
+      "name": "",
+      "site": "Просыпалась ночью, сон неглубокий, утром тяжело вставала. Попробовала Антистресс. Со второй ночи — заснула через 30 минут и проспала до утра глубоким сном! Две недели курсом — каждую ночь потрясающий результат. Просыпаюсь с рассветом бодрая, ясный ум. После курса качество сна улучшилось надолго. Продукта хватает очень надолго. Анна Д.",
+      "original": "",
+      "status": "no_public_card",
+      "note": "Блок есть в 19_08.md, публичной карточки на /reviews/ нет. В базу не грузим."
+    },
+    {
+      "source_index": 154,
+      "section": "Малые категории",
+      "heading": "#591 — Долгор",
+      "name": "",
+      "site": "Двухнедельные боли прошли за один сеанс с Золотой эссенцией. А знакомая-массажист теперь закрывает ею каждый сеанс массажа — клиенты довольны. Долгор",
+      "original": "",
+      "status": "no_public_card",
+      "note": "Блок есть в 19_08.md, публичной карточки на /reviews/ нет. В базу не грузим."
+    }
+  ],
+  "overrides": {
+    "insoles-2": {
+      "source_index": 2,
+      "status": "verified_wording_drift",
+      "note": "Та же Баярма С.: 15 минут и отёки за 3 дня. В карточке в первой фразе добавлено «судорогами»; в «Для сайта» этого слова нет."
+    },
+    "pads-8": {
+      "source_index": 84,
+      "status": "verified_punctuation_and_name_suffix",
+      "note": "Тот же Валентин. Расхождение: «смачивал, чип носил» vs «смачивал чип, носил»; суффикс имени в «Для сайта» не снялся, потому что в поле Имя стоит «Валентин (мужской отзыв!)». Оригинал в файле пустой — в ключ идёт текст «Для сайта»."
+    },
+    "socks-1": {
+      "source_index": 153,
+      "status": "verified_product_name_drift",
+      "note": "Та же Клавдия, Якутск: трёхдневные носки без запаха. Карточка: «Health Priority»; «Для сайта»: «носки с графеном». Оригинал в файле пустой — в ключ идёт текст «Для сайта»."
+    },
+    "sanqing-5": {
+      "share_card_id": "palantin-4",
+      "status": "shared_cross_category",
+      "note": "Та же история Игоря Б. (Саньцин + палантин), укороченная карточка в категории Саньцин. RAW берётся из блока, уже сверенного с palantin-4."
+    },
+    "liuwei-4": {
+      "share_card_id": "bem-6",
+      "status": "shared_cross_category",
+      "note": "Та же Оюна Г. / мама 69 лет / БЭМ + Линчжи + Лювей + Спирулина. Укороченная карточка в чае Лювей. RAW из блока bem-6."
+    },
+    "liuwei-5": {
+      "share_card_id": "peptide-3",
+      "status": "shared_cross_category",
+      "note": "Тот же отзыв про сына и пептиды («волшебный напиток»). Карточка Лювей добавляет «и чай»; исходный блок — про пептиды. RAW из блока peptide-3."
+    }
+  },
+  "rows": [
+    {
+      "id": "insoles-1",
+      "content_key": "review/insoles-1/original",
+      "public_title": "Боль в пятке прошла за неделю",
+      "public_body": "Долго мучила боль в пятке — больно было наступать. Надела стельки, начала ходить. Через неделю боль полностью прошла.",
+      "public_author": "Эльмира",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 1,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#1",
+      "source_name": "Эльмира",
+      "site_text": "Долго мучила боль в пятке — больно было наступать. Надела стельки, начала ходить. Через неделю боль полностью прошла",
+      "raw": "У меня была пяточная шпора... Стельки надела и начала ходить, через неделю шпора рассосалась",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-2",
+      "content_key": "review/insoles-2/original",
+      "public_title": "Судороги прекратились за 15 минут",
+      "public_body": "Стопы сводило судорогами, ноги отекали. Вложила стельки — через 15 минут судороги прекратились. Отёки ушли за 3 дня.",
+      "public_author": "Баярма С.",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 2,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#2",
+      "source_name": "Баярма С.",
+      "site_text": "Стопы сводило, ноги отекали. Вложила стельки — через 15 минут судороги прекратились. Отёки ушли за 3 дня",
+      "raw": "Мои стопы сводило судорогами... стельки вложила и через 15 мин судороги прекратились... отёки ушли за 3 дня",
+      "raw_field": "original",
+      "status": "verified_wording_drift",
+      "note": "Та же Баярма С.: 15 минут и отёки за 3 дня. В карточке в первой фразе добавлено «судорогами»; в «Для сайта» этого слова нет."
+    },
+    {
+      "id": "insoles-3",
+      "content_key": "review/insoles-3/original",
+      "public_title": "Колени перестали болеть",
+      "public_body": "Колени болели долго. За несколько дней в стельках — перестали.",
+      "public_author": "Жанна Г.",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 3,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#3",
+      "source_name": "Жанна Г.",
+      "site_text": "Колени болели долго. За несколько дней в стельках — перестали",
+      "raw": "Колени перестали болеть за несколько дней",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-4",
+      "content_key": "review/insoles-4/original",
+      "public_title": "Единственные стельки, в которых комфортно",
+      "public_body": "Знакомый ходит на протезах 30 лет, перепробовал множество стелек. Говорит: наши — единственные, в которых ему комфортно.",
+      "public_author": "Гена",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 4,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#8",
+      "source_name": "Гена (со слов знакомой)",
+      "site_text": "Знакомый ходит на протезах 30 лет, перепробовал множество стелек. Говорит: наши — единственные, в которых ему комфортно.",
+      "raw": "У него протезы ног, он на протезах ходит 30 лет и перепробовал кучу стелек... наши стельки единственные, в которых ему комфортно",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-5",
+      "content_key": "review/insoles-5/original",
+      "public_title": "Колени не болят на протезах",
+      "public_body": "Ношу протезы — в этих стельках колени перестали болеть. Это единственные стельки, в которых мне удобно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 5,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#11",
+      "source_name": "",
+      "site_text": "Ношу протезы — в этих стельках колени перестали болеть. Это единственные стельки, в которых мне удобно.",
+      "raw": "Человек на протезах, колени не болят в наших стельках",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-6",
+      "content_key": "review/insoles-6/original",
+      "public_title": "Спина перестала болеть",
+      "public_body": "Спина болела постоянно. Стала носить стельки, добавила Активатор клеток. Боль ушла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles",
+        "aktivator-kletok"
+      ],
+      "source_index": 6,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#36",
+      "source_name": "",
+      "site_text": "Спина болела постоянно. Стала носить стельки, добавила Активатор клеток. Боль ушла.",
+      "raw": "Спина болела, стельки+активатор — боль ушла",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-7",
+      "content_key": "review/insoles-7/original",
+      "public_title": "Стройка, колени и стельки",
+      "public_body": "Работаю на стройке, ноги убивались к концу дня. Колени постоянно ныли. Начал носить стельки — колени перестали беспокоить. Теперь не снимаю.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 7,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#37",
+      "source_name": "строитель",
+      "site_text": "Работаю на стройке, ноги убивались к концу дня. Колени постоянно ныли. Начал носить стельки — колени перестали беспокоить. Теперь не снимаю.",
+      "raw": "Работаю на стройке, колени убиты были. Стельки спасли",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-8",
+      "content_key": "review/insoles-8/original",
+      "public_title": "Ходить стало легче",
+      "public_body": "Больно было наступать на пятку — каждый шаг через боль. Начала носить стельки — ходить стало легче, боль постепенно ушла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 8,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#41",
+      "source_name": "",
+      "site_text": "Больно было наступать на пятку — каждый шаг через боль. Начала носить стельки — ходить стало легче, боль постепенно ушла.",
+      "raw": "Подошвенный фасциит... ходить стало легче",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-9",
+      "content_key": "review/insoles-9/original",
+      "public_title": "Ноги не устают и не отекают",
+      "public_body": "Ноги сильно уставали и отекали к вечеру. Начала носить стельки — ноги не устают, отёки ушли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 9,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#43",
+      "source_name": "",
+      "site_text": "Ноги сильно уставали и отекали к вечеру. Начала носить стельки — ноги не устают, отёки ушли.",
+      "raw": "Варикоз, ноги не устают в стельках",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-10",
+      "content_key": "review/insoles-10/original",
+      "public_title": "Мозоли исчезли",
+      "public_body": "Много лет мучили мозоли на ногах. Начала носить стельки — мозоли исчезли. Не ожидала такого эффекта.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 10,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#48",
+      "source_name": "",
+      "site_text": "Много лет мучили мозоли на ногах. Начала носить стельки — мозоли исчезли. Не ожидала такого эффекта.",
+      "raw": "Мозоли исчезли",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-11",
+      "content_key": "review/insoles-11/original",
+      "public_title": "Отёки после травмы ушли",
+      "public_body": "После травмы ноги долго мучили отёки. Стала носить стельки — отёки ушли. Ходить стало намного легче.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 11,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#51",
+      "source_name": "",
+      "site_text": "После травмы ноги долго мучили отёки. Стала носить стельки — отёки ушли. Ходить стало намного легче.",
+      "raw": "Штифт в ноге, отёки ушли со стельками",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-12",
+      "content_key": "review/insoles-12/original",
+      "public_title": "Снова ношу каблуки",
+      "public_body": "Стопы болели, не могла носить обувь на каблуках. С этими стельками — снова ношу каблуки без боли!",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 12,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#59",
+      "source_name": "",
+      "site_text": "Стопы болели, не могла носить обувь на каблуках. С этими стельками — снова ношу каблуки без боли!",
+      "raw": "Деформация стопы, теперь могу носить каблуки",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-13",
+      "content_key": "review/insoles-13/original",
+      "public_title": "Судороги и отёчность прошли",
+      "public_body": "Ноги сводило судорогами, отекали. Начала носить стельки — судороги и отёчность прошли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 13,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#74",
+      "source_name": "",
+      "site_text": "Ноги сводило судорогами, отекали. Начала носить стельки — судороги и отёчность прошли.",
+      "raw": "Судороги и отёчность прошли",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-14",
+      "content_key": "review/insoles-14/original",
+      "public_title": "Холка на шее уменьшилась",
+      "public_body": "Заметила, что холка на шее стала уменьшаться после того, как начала носить стельки. Через пару месяцев — практически исчезла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 14,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#79",
+      "source_name": "",
+      "site_text": "Заметила, что холка на шее стала уменьшаться после того, как начала носить стельки. Через пару месяцев — практически исчезла.",
+      "raw": "Холка на шее исчезла",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-15",
+      "content_key": "review/insoles-15/original",
+      "public_title": "Судороги прекратились, спине легче",
+      "public_body": "Ноги сводило судорогами, спина постоянно ныла. Стала носить стельки — судороги прекратились, спине стало значительно легче.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 15,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#83",
+      "source_name": "",
+      "site_text": "Ноги сводило судорогами, спина постоянно ныла. Стала носить стельки — судороги прекратились, спине стало значительно легче.",
+      "raw": "Судороги в ногах, проблемы с позвоночником — всё ушло",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-16",
+      "content_key": "review/insoles-16/original",
+      "public_title": "14 часов на ногах — и не устаю",
+      "public_body": "Работаю по 14 часов на ногах. Раньше к концу дня ног не чувствовала. Со стельками — не устаю, ноги лёгкие.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 16,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#89",
+      "source_name": "",
+      "site_text": "Работаю по 14 часов на ногах. Раньше к концу дня ног не чувствовала. Со стельками — не устаю, ноги лёгкие.",
+      "raw": "14 часов на ногах — и не устаю в стельках",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-17",
+      "content_key": "review/insoles-17/original",
+      "public_title": "Полгода в стельках — самочувствие лучше",
+      "public_body": "Ношу стельки уже полгода. За это время ушли 6 кг, стал лучше спать, общее самочувствие заметно улучшилось. Стал активнее двигаться и больше ходить.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 17,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#100",
+      "source_name": "",
+      "site_text": "Ношу стельки уже полгода. За это время ушли 6 кг, стал лучше спать, общее самочувствие заметно улучшилось. Стал активнее двигаться и больше ходить.",
+      "raw": "Скинул 6 кг, давление нормализовалось, сон улучшился",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-18",
+      "content_key": "review/insoles-18/original",
+      "public_title": "Ноги не устают, колени не беспокоят",
+      "public_body": "Стопы быстро уставали, колени болели при ходьбе. Начал носить стельки — ноги перестали уставать, колени не беспокоят.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 18,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#101",
+      "source_name": "",
+      "site_text": "Стопы быстро уставали, колени болели при ходьбе. Начал носить стельки — ноги перестали уставать, колени не беспокоят.",
+      "raw": "Плоскостопие, колени болели — стельки помогли",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-19",
+      "content_key": "review/insoles-19/original",
+      "public_title": "Через месяц хожу свободно",
+      "public_body": "Несколько месяцев мучила боль в пятке — не мог нормально ходить. Перепробовал разное. Надел стельки — боль стала уходить. Через месяц — хожу свободно, без боли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 19,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#121",
+      "source_name": "",
+      "site_text": "Несколько месяцев мучила боль в пятке — не мог нормально ходить. Перепробовал разное. Надел стельки — боль стала уходить. Через месяц — хожу свободно, без боли.",
+      "raw": "Подробный отзыв о шпоре, несколько месяцев",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-20",
+      "content_key": "review/insoles-20/original",
+      "public_title": "Боль в пятке прошла, отёки ушли",
+      "public_body": "Пятка болела, ноги отекали к вечеру. Носить стельки начала без особых надежд. Через 2 недели боль в пятке прошла, отёки ушли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 20,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#124",
+      "source_name": "",
+      "site_text": "Пятка болела, ноги отекали к вечеру. Носить стельки начала без особых надежд. Через 2 недели боль в пятке прошла, отёки ушли.",
+      "raw": "Шпора и отёки — ушло со стельками",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-21",
+      "content_key": "review/insoles-21/original",
+      "public_title": "Стельки и паста с полынью",
+      "public_body": "После травмы ноги восстановление шло тяжело. Стельки помогли вернуться к нормальной ходьбе. А зубная паста с полынью приятно удивила — свежесть на весь день.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles",
+        "wormwood-toothpaste"
+      ],
+      "source_index": 21,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#125",
+      "source_name": "",
+      "site_text": "После травмы ноги восстановление шло тяжело. Стельки помогли вернуться к нормальной ходьбе. А зубная паста с полынью приятно удивила — свежесть на весь день.",
+      "raw": "После перелома + зубная паста помогла",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-22",
+      "content_key": "review/insoles-22/original",
+      "public_title": "Костыли стали не нужны",
+      "public_body": "Ходила на костылях, думала — навсегда. Начала носить стельки. Постепенно костыли стали не нужны. Сейчас хожу сама.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 22,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#128",
+      "source_name": "",
+      "site_text": "Ходила на костылях, думала — навсегда. Начала носить стельки. Постепенно костыли стали не нужны. Сейчас хожу сама.",
+      "raw": "На костылях ходила — теперь без них",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-23",
+      "content_key": "review/insoles-23/original",
+      "public_title": "Ноги лёгкие по вечерам",
+      "public_body": "Раньше ноги ныли каждый вечер — ложилась с тяжестью. С тех пор как ношу стельки — вечером ноги лёгкие, не ноют.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 23,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#129",
+      "source_name": "",
+      "site_text": "Раньше ноги ныли каждый вечер — ложилась с тяжестью. С тех пор как ношу стельки — вечером ноги лёгкие, не ноют.",
+      "raw": "Ноги не ноют по вечерам",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-24",
+      "content_key": "review/insoles-24/original",
+      "public_title": "Походка выровнялась у ребёнка",
+      "public_body": "Ребёнок ходил неровно, стопы заворачивались. Купила стельки — походка выровнялась. Себе тоже взяла — спина перестала болеть.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 24,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#130",
+      "source_name": "",
+      "site_text": "Ребёнок ходил неровно, стопы заворачивались. Купила стельки — походка выровнялась. Себе тоже взяла — спина перестала болеть.",
+      "raw": "Косолапость у ребёнка, спина у мамы",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-25",
+      "content_key": "review/insoles-25/original",
+      "public_title": "Маме 83 года — ходит без тросточек",
+      "public_body": "Маме 83 года. Ходила только с тросточками. Купила ей стельки. Через месяц — ходит без тросточек. Сама не верила, пока не увидела.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 25,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#132",
+      "source_name": "",
+      "site_text": "Маме 83 года. Ходила только с тросточками. Купила ей стельки. Через месяц — ходит без тросточек. Сама не верила, пока не увидела.",
+      "raw": "Маме 83 года, ходила с тросточками — теперь без них",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-26",
+      "content_key": "review/insoles-26/original",
+      "public_title": "Тяжесть и отёки ушли за неделю",
+      "public_body": "Ношу стельки с января. Раньше быстро уставала, ноги отекали, было тяжело ходить. Через неделю в стельках — тяжесть ушла, отёки прошли. Чувствую себя хорошо.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 26,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#429 → Стельки (кросс-продукт)",
+      "source_name": "",
+      "site_text": "Ношу стельки с января. Раньше быстро уставала, ноги отекали, было тяжело ходить. Через неделю в стельках — тяжесть ушла, отёки прошли. Чувствую себя хорошо.",
+      "raw": "Ношу стельки с января, прошло чувство тяжести на ногах, отёки прошли",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-27",
+      "content_key": "review/insoles-27/original",
+      "public_title": "30 лет — и копчик перестал болеть",
+      "public_body": "30 лет после давней травмы болел копчик. Сидеть было больно. Купила стельки от боли в ступнях — стопы прошли сразу. А через два месяца заметила: копчик тоже не болит! Не ожидала.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-insoles"
+      ],
+      "source_index": 27,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#444 → Стельки (кросс-продукт)",
+      "source_name": "",
+      "site_text": "30 лет после давней травмы болел копчик. Сидеть было больно. Купила стельки от боли в ступнях — стопы прошли сразу. А через два месяца заметила: копчик тоже не болит! Не ожидала.",
+      "raw": "30 лет копчик болел — стельки от боли в ступнях, а копчик прошёл сам",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "insoles-28",
+      "content_key": "review/insoles-28/original",
+      "public_title": "Сил стало намного больше",
+      "public_body": "Мне 18 лет, учусь в Иркутске, после обеда работаю до полуночи. Когда начала носить стельки — поняла, что не устаю совсем. Сил стало намного больше.",
+      "public_author": "Жаргалма",
+      "public_city": "Загустай",
+      "public_tags": [
+        "anion-insoles",
+        "anion-pads",
+        "spirulina"
+      ],
+      "source_index": 28,
+      "source_section": "Стельки с анионами",
+      "source_heading": "#409 → Стельки (кросс-продукт)",
+      "source_name": "Жаргалма, 18 лет, Загустай",
+      "site_text": "Мне 18 лет, учусь в Иркутске, после обеда работаю до полуночи. Когда начала носить стельки — поняла, что не устаю совсем. Сил стало намного больше",
+      "raw": "Со стельками я не устаю совсем, у меня много сил",
+      "raw_field": "original",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-1",
+      "content_key": "review/activator-1/original",
+      "public_title": "Скованность по утрам прошла",
+      "public_body": "Суставы болели — особенно по утрам, скованность была. Начала пользоваться Активатором клеток. Боль прошла, двигаюсь свободно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 29,
+      "source_section": "Активатор клеток",
+      "source_heading": "#140",
+      "source_name": "",
+      "site_text": "Суставы болели — особенно по утрам, скованность была. Начала пользоваться Активатором клеток. Боль прошла, двигаюсь свободно.",
+      "raw": "Суставы болели — особенно по утрам, скованность была. Начала пользоваться Активатором клеток. Боль прошла, двигаюсь свободно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-2",
+      "content_key": "review/activator-2/original",
+      "public_title": "Уплотнения под кожей уменьшились",
+      "public_body": "Были неприятные уплотнения под кожей. После курса Активатора — заметно уменьшились. Косметический эффект порадовал.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 30,
+      "source_section": "Активатор клеток",
+      "source_heading": "#149",
+      "source_name": "",
+      "site_text": "Были неприятные уплотнения под кожей. После курса Активатора — заметно уменьшились. Косметический эффект порадовал.",
+      "raw": "Были неприятные уплотнения под кожей. После курса Активатора — заметно уменьшились. Косметический эффект порадовал.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-3",
+      "content_key": "review/activator-3/original",
+      "public_title": "Контур лица подтянулся",
+      "public_body": "После Активатора на лице ушла неприятная бородавка, а контур лица подтянулся. Приятный бонус к основному эффекту.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 31,
+      "source_section": "Активатор клеток",
+      "source_heading": "#152",
+      "source_name": "",
+      "site_text": "После Активатора на лице ушла неприятная бородавка, а контур лица подтянулся. Приятный бонус к основному эффекту.",
+      "raw": "После Активатора на лице ушла неприятная бородавка, а контур лица подтянулся. Приятный бонус к основному эффекту.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-4",
+      "content_key": "review/activator-4/original",
+      "public_title": "Появилось больше энергии",
+      "public_body": "После Активатора появилось больше энергии. Стала больше ходить, легче двигаюсь. Общее самочувствие улучшилось.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 32,
+      "source_section": "Активатор клеток",
+      "source_heading": "#160",
+      "source_name": "",
+      "site_text": "После Активатора появилось больше энергии. Стала больше ходить, легче двигаюсь. Общее самочувствие улучшилось.",
+      "raw": "После Активатора появилось больше энергии. Стала больше ходить, легче двигаюсь. Общее самочувствие улучшилось.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-5",
+      "content_key": "review/activator-5/original",
+      "public_title": "Герпес прошёл и не возвращается",
+      "public_body": "Замучил герпес на губах — появлялся постоянно. После курса Активатора — прошёл и больше не возвращается.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 33,
+      "source_section": "Активатор клеток",
+      "source_heading": "#167",
+      "source_name": "",
+      "site_text": "Замучил герпес на губах — появлялся постоянно. После курса Активатора — прошёл и больше не возвращается.",
+      "raw": "Замучил герпес на губах — появлялся постоянно. После курса Активатора — прошёл и больше не возвращается.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-6",
+      "content_key": "review/activator-6/original",
+      "public_title": "Кожа чистая",
+      "public_body": "На шее были мелкие бородавки — портили вид. После Активатора — исчезли. Кожа чистая.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 34,
+      "source_section": "Активатор клеток",
+      "source_heading": "#168",
+      "source_name": "",
+      "site_text": "На шее были мелкие бородавки — портили вид. После Активатора — исчезли. Кожа чистая.",
+      "raw": "На шее были мелкие бородавки — портили вид. После Активатора — исчезли. Кожа чистая.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-7",
+      "content_key": "review/activator-7/original",
+      "public_title": "Рука двигается свободно за три дня",
+      "public_body": "Рука сильно болела — кружку тяжело было держать, запястье не сгибалось. Три дня с Активатором — боль ушла, рука двигается свободно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 35,
+      "source_section": "Активатор клеток",
+      "source_heading": "#174",
+      "source_name": "",
+      "site_text": "Рука сильно болела — кружку тяжело было держать, запястье не сгибалось. Три дня с Активатором — боль ушла, рука двигается свободно.",
+      "raw": "Рука сильно болела — кружку тяжело было держать, запястье не сгибалось. Три дня с Активатором — боль ушла, рука двигается свободно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-8",
+      "content_key": "review/activator-8/original",
+      "public_title": "Обезболивающие больше не нужны",
+      "public_body": "Боль была такая, что без таблеток не обходилась. Попробовала Активатор клеток — боль ушла. Обезболивающие больше не нужны.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 36,
+      "source_section": "Активатор клеток",
+      "source_heading": "#181",
+      "source_name": "",
+      "site_text": "Боль была такая, что без таблеток не обходилась. Попробовала Активатор клеток — боль ушла. Обезболивающие больше не нужны.",
+      "raw": "Боль была такая, что без таблеток не обходилась. Попробовала Активатор клеток — боль ушла. Обезболивающие больше не нужны.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-9",
+      "content_key": "review/activator-9/original",
+      "public_title": "Рука восстановилась за несколько дней",
+      "public_body": "Потянула руку на работе — болело, не могла поднять. Подула Активатором несколько дней — рука восстановилась, боль ушла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 37,
+      "source_section": "Активатор клеток",
+      "source_heading": "#197",
+      "source_name": "",
+      "site_text": "Потянула руку на работе — болело, не могла поднять. Подула Активатором несколько дней — рука восстановилась, боль ушла.",
+      "raw": "Потянула руку на работе — болело, не могла поднять. Подула Активатором несколько дней — рука восстановилась, боль ушла.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-10",
+      "content_key": "review/activator-10/original",
+      "public_title": "Спина, шея и заодно лицо",
+      "public_body": "Пользовалась Активатором для спины и шеи — боль ушла. А приятный бонус: лицо подтянулось, контур стал чётче.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 38,
+      "source_section": "Активатор клеток",
+      "source_heading": "#206",
+      "source_name": "",
+      "site_text": "Пользовалась Активатором для спины и шеи — боль ушла. А приятный бонус: лицо подтянулось, контур стал чётче.",
+      "raw": "Пользовалась Активатором для спины и шеи — боль ушла. А приятный бонус: лицо подтянулось, контур стал чётче.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-11",
+      "content_key": "review/activator-11/original",
+      "public_title": "Боль ушла за один вечер",
+      "public_body": "Один вечер с Активатором — и боль, которая мучила несколько дней, полностью ушла. Теперь он всегда под рукой.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 39,
+      "source_section": "Активатор клеток",
+      "source_heading": "#211",
+      "source_name": "",
+      "site_text": "Один вечер с Активатором — и боль, которая мучила несколько дней, полностью ушла. Теперь он всегда под рукой.",
+      "raw": "Один вечер с Активатором — и боль, которая мучила несколько дней, полностью ушла. Теперь он всегда под рукой.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-12",
+      "content_key": "review/activator-12/original",
+      "public_title": "Дыхание открылось",
+      "public_body": "Горло болело, дышать было тяжело. Подула Активатором — дыхание открылось, горло перестало болеть.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 40,
+      "source_section": "Активатор клеток",
+      "source_heading": "#212",
+      "source_name": "",
+      "site_text": "Горло болело, дышать было тяжело. Подула Активатором — дыхание открылось, горло перестало болеть.",
+      "raw": "Горло болело, дышать было тяжело. Подула Активатором — дыхание открылось, горло перестало болеть.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-13",
+      "content_key": "review/activator-13/original",
+      "public_title": "Боль между лопатками ушла за три раза",
+      "public_body": "Между лопатками тянуло и болело. Три раза подула Активатором — боль ушла. Быстрый результат.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 41,
+      "source_section": "Активатор клеток",
+      "source_heading": "#220",
+      "source_name": "",
+      "site_text": "Между лопатками тянуло и болело. Три раза подула Активатором — боль ушла. Быстрый результат.",
+      "raw": "Между лопатками тянуло и болело. Три раза подула Активатором — боль ушла. Быстрый результат.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-14",
+      "content_key": "review/activator-14/original",
+      "public_title": "Танцевала весь выпускной",
+      "public_body": "Носила корсет, ноги сводило судорогами. После Активатора клеток — корсет больше не нужен, судороги прошли. На выпускном танцевала весь вечер!",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 42,
+      "source_section": "Активатор клеток",
+      "source_heading": "#225",
+      "source_name": "",
+      "site_text": "Носила корсет, ноги сводило судорогами. После Активатора клеток — корсет больше не нужен, судороги прошли. На выпускном танцевала весь вечер!",
+      "raw": "Носила корсет, ноги сводило судорогами. После Активатора клеток — корсет больше не нужен, судороги прошли. На выпускном танцевала весь вечер!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-15",
+      "content_key": "review/activator-15/original",
+      "public_title": "Кожа на шее очистилась",
+      "public_body": "На шее были мелкие наросты — неприятно выглядело. После Активатора — кожа очистилась.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 43,
+      "source_section": "Активатор клеток",
+      "source_heading": "#228",
+      "source_name": "",
+      "site_text": "На шее были мелкие наросты — неприятно выглядело. После Активатора — кожа очистилась.",
+      "raw": "На шее были мелкие наросты — неприятно выглядело. После Активатора — кожа очистилась.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-16",
+      "content_key": "review/activator-16/original",
+      "public_title": "Простуда прошла за 4 дня",
+      "public_body": "Простыла — горло, нос. Подула Активатором. Через 4 дня — полностью здорова. Обычно болею неделю-две.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 44,
+      "source_section": "Активатор клеток",
+      "source_heading": "#229",
+      "source_name": "",
+      "site_text": "Простыла — горло, нос. Подула Активатором. Через 4 дня — полностью здорова. Обычно болею неделю-две.",
+      "raw": "Простыла — горло, нос. Подула Активатором. Через 4 дня — полностью здорова. Обычно болею неделю-две.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "activator-17",
+      "content_key": "review/activator-17/original",
+      "public_title": "В 71 год колени не болят",
+      "public_body": "Мне 71 год. Колени болели, сон был плохой. Начала пользоваться Активатором — колени перестали болеть, стала крепко спать. Самочувствие заметно улучшилось.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "aktivator-kletok"
+      ],
+      "source_index": 45,
+      "source_section": "Активатор клеток",
+      "source_heading": "#230",
+      "source_name": "",
+      "site_text": "Мне 71 год. Колени болели, сон был плохой. Начала пользоваться Активатором — колени перестали болеть, стала крепко спать. Самочувствие заметно улучшилось.",
+      "raw": "Мне 71 год. Колени болели, сон был плохой. Начала пользоваться Активатором — колени перестали болеть, стала крепко спать. Самочувствие заметно улучшилось.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-1",
+      "content_key": "review/glasses-1/original",
+      "public_title": "Глаза не устают после долгого экрана",
+      "public_body": "Весь день за компьютером. Раньше к вечеру глаза краснели и слезились. В графеновых очках — глаза не устают, даже после долгого экрана.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 46,
+      "source_section": "Графеновые очки",
+      "source_heading": "#239",
+      "source_name": "",
+      "site_text": "Весь день за компьютером. Раньше к вечеру глаза краснели и слезились. В графеновых очках — глаза не устают, даже после долгого экрана.",
+      "raw": "Весь день за компьютером. Раньше к вечеру глаза краснели и слезились. В графеновых очках — глаза не устают, даже после долгого экрана.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-2",
+      "content_key": "review/glasses-2/original",
+      "public_title": "Головные боли прошли",
+      "public_body": "Мучили частые головные боли. Стала носить графеновые очки — головные боли прошли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 47,
+      "source_section": "Графеновые очки",
+      "source_heading": "#245",
+      "source_name": "",
+      "site_text": "Мучили частые головные боли. Стала носить графеновые очки — головные боли прошли.",
+      "raw": "Мучили частые головные боли. Стала носить графеновые очки — головные боли прошли.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-3",
+      "content_key": "review/glasses-3/original",
+      "public_title": "С +3.5 до +3 за полгода",
+      "public_body": "Носила очки +3.5, часто болела голова. Полгода в графеновых очках — головные боли прошли, а на проверке у окулиста — уже +3. Маленькое, но заметное улучшение.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 48,
+      "source_section": "Графеновые очки",
+      "source_heading": "#251",
+      "source_name": "",
+      "site_text": "Носила очки +3.5, часто болела голова. Полгода в графеновых очках — головные боли прошли, а на проверке у окулиста — уже +3. Маленькое, но заметное улучшение.",
+      "raw": "Носила очки +3.5, часто болела голова. Полгода в графеновых очках — головные боли прошли, а на проверке у окулиста — уже +3. Маленькое, но заметное улучшение.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-4",
+      "content_key": "review/glasses-4/original",
+      "public_title": "Отёк у ребёнка ушёл за пару часов",
+      "public_body": "У ребёнка каждый сезон краснели и отекали глаза. Надели графеновые очки — отёк ушёл за пару часов. Теперь носит постоянно в сезон.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 49,
+      "source_section": "Графеновые очки",
+      "source_heading": "#254",
+      "source_name": "",
+      "site_text": "У ребёнка каждый сезон краснели и отекали глаза. Надели графеновые очки — отёк ушёл за пару часов. Теперь носит постоянно в сезон.",
+      "raw": "У ребёнка каждый сезон краснели и отекали глаза. Надели графеновые очки — отёк ушёл за пару часов. Теперь носит постоянно в сезон.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-5",
+      "content_key": "review/glasses-5/original",
+      "public_title": "Зрение немного улучшилось",
+      "public_body": "Зрение было -2.75. Полгода ношу графеновые очки — на проверке зрение немного улучшилось. Глаза меньше устают.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 50,
+      "source_section": "Графеновые очки",
+      "source_heading": "#258",
+      "source_name": "",
+      "site_text": "Зрение было -2.75. Полгода ношу графеновые очки — на проверке зрение немного улучшилось. Глаза меньше устают.",
+      "raw": "Зрение было -2.75. Полгода ношу графеновые очки — на проверке зрение немного улучшилось. Глаза меньше устают.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-6",
+      "content_key": "review/glasses-6/original",
+      "public_title": "Работают как волшебный ободок",
+      "public_body": "Когда начинается головная боль — надеваю графеновые очки. Через полчаса боль уходит. Работают как волшебный ободок.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 51,
+      "source_section": "Графеновые очки",
+      "source_heading": "#260",
+      "source_name": "",
+      "site_text": "Когда начинается головная боль — надеваю графеновые очки. Через полчаса боль уходит. Работают как волшебный ободок.",
+      "raw": "Когда начинается головная боль — надеваю графеновые очки. Через полчаса боль уходит. Работают как волшебный ободок.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-7",
+      "content_key": "review/glasses-7/original",
+      "public_title": "Двоение прошло, вижу чётче",
+      "public_body": "В глазах двоилось, номер автобуса издалека не видела. Стала носить графеновые очки — двоение прошло, стала видеть чётче. Теперь автобус вижу издалека.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 52,
+      "source_section": "Графеновые очки",
+      "source_heading": "#265",
+      "source_name": "",
+      "site_text": "В глазах двоилось, номер автобуса издалека не видела. Стала носить графеновые очки — двоение прошло, стала видеть чётче. Теперь автобус вижу издалека.",
+      "raw": "В глазах двоилось, номер автобуса издалека не видела. Стала носить графеновые очки — двоение прошло, стала видеть чётче. Теперь автобус вижу издалека.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-8",
+      "content_key": "review/glasses-8/original",
+      "public_title": "Слезотечение проходит за 15 минут",
+      "public_body": "В сезон цветения глаза слезились и чесались. Надеваю графеновые очки — через 15 минут всё проходит.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 53,
+      "source_section": "Графеновые очки",
+      "source_heading": "#267",
+      "source_name": "",
+      "site_text": "В сезон цветения глаза слезились и чесались. Надеваю графеновые очки — через 15 минут всё проходит.",
+      "raw": "В сезон цветения глаза слезились и чесались. Надеваю графеновые очки — через 15 минут всё проходит.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-9",
+      "content_key": "review/glasses-9/original",
+      "public_title": "Головная боль стала редкостью",
+      "public_body": "Головная боль стала редкостью с тех пор, как ношу очки. А если появляется — надеваю на полчаса, и проходит.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 54,
+      "source_section": "Графеновые очки",
+      "source_heading": "#271",
+      "source_name": "",
+      "site_text": "Головная боль стала редкостью с тех пор, как ношу очки. А если появляется — надеваю на полчаса, и проходит.",
+      "raw": "Головная боль стала редкостью с тех пор, как ношу очки. А если появляется — надеваю на полчаса, и проходит.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-10",
+      "content_key": "review/glasses-10/original",
+      "public_title": "Маме 78 — слезотечение прошло",
+      "public_body": "Маме 78 лет. Глаза постоянно слезились — салфетки всегда при себе. Подарила ей графеновые очки. Через 2 недели — слезотечение прошло. Мама довольна.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 55,
+      "source_section": "Графеновые очки",
+      "source_heading": "#278",
+      "source_name": "",
+      "site_text": "Маме 78 лет. Глаза постоянно слезились — салфетки всегда при себе. Подарила ей графеновые очки. Через 2 недели — слезотечение прошло. Мама довольна.",
+      "raw": "Маме 78 лет. Глаза постоянно слезились — салфетки всегда при себе. Подарила ей графеновые очки. Через 2 недели — слезотечение прошло. Мама довольна.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-11",
+      "content_key": "review/glasses-11/original",
+      "public_title": "С +2 до +1.5 за полгода",
+      "public_body": "Носила очки +2, часто болела голова. Полгода в графеновых очках — зрение проверила: +1.5. Головные боли ушли полностью.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 56,
+      "source_section": "Графеновые очки",
+      "source_heading": "#283",
+      "source_name": "",
+      "site_text": "Носила очки +2, часто болела голова. Полгода в графеновых очках — зрение проверила: +1.5. Головные боли ушли полностью.",
+      "raw": "Носила очки +2, часто болела голова. Полгода в графеновых очках — зрение проверила: +1.5. Головные боли ушли полностью.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-12",
+      "content_key": "review/glasses-12/original",
+      "public_title": "Головокружения прошли в 65 лет",
+      "public_body": "Мне 65 лет. Голова кружилась постоянно. Стала носить графеновые очки — головокружения прошли. Чувствую себя увереннее.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 57,
+      "source_section": "Графеновые очки",
+      "source_heading": "#290",
+      "source_name": "",
+      "site_text": "Мне 65 лет. Голова кружилась постоянно. Стала носить графеновые очки — головокружения прошли. Чувствую себя увереннее.",
+      "raw": "Мне 65 лет. Голова кружилась постоянно. Стала носить графеновые очки — головокружения прошли. Чувствую себя увереннее.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-13",
+      "content_key": "review/glasses-13/original",
+      "public_title": "Мушки перед глазами прошли",
+      "public_body": "Перед глазами мелькали мушки. Стала носить графеновые очки — мушки прошли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 58,
+      "source_section": "Графеновые очки",
+      "source_heading": "#293",
+      "source_name": "",
+      "site_text": "Перед глазами мелькали мушки. Стала носить графеновые очки — мушки прошли.",
+      "raw": "Перед глазами мелькали мушки. Стала носить графеновые очки — мушки прошли.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-14",
+      "content_key": "review/glasses-14/original",
+      "public_title": "Сухость глаз прошла",
+      "public_body": "Глаза постоянно сохли, приходилось капать увлажняющие капли. Начала носить графеновые очки — сухость прошла, каплями больше не пользуюсь.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 59,
+      "source_section": "Графеновые очки",
+      "source_heading": "#294",
+      "source_name": "",
+      "site_text": "Глаза постоянно сохли, приходилось капать увлажняющие капли. Начала носить графеновые очки — сухость прошла, каплями больше не пользуюсь.",
+      "raw": "Глаза постоянно сохли, приходилось капать увлажняющие капли. Начала носить графеновые очки — сухость прошла, каплями больше не пользуюсь.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-15",
+      "content_key": "review/glasses-15/original",
+      "public_title": "Насморк и горло прошли за 3 дня",
+      "public_body": "Нос заложило, горло болело. Носила графеновые очки — через 3 дня и насморк, и горло прошли. Быстрее, чем обычно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 60,
+      "source_section": "Графеновые очки",
+      "source_heading": "#295",
+      "source_name": "",
+      "site_text": "Нос заложило, горло болело. Носила графеновые очки — через 3 дня и насморк, и горло прошли. Быстрее, чем обычно.",
+      "raw": "Нос заложило, горло болело. Носила графеновые очки — через 3 дня и насморк, и горло прошли. Быстрее, чем обычно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-16",
+      "content_key": "review/glasses-16/original",
+      "public_title": "Краснота глаз у сына прошла",
+      "public_body": "Сын много сидит в телефоне — глаза были постоянно красные. Купила ему графеновые очки. Краснота прошла, глаза отдыхают.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 61,
+      "source_section": "Графеновые очки",
+      "source_heading": "#300",
+      "source_name": "",
+      "site_text": "Сын много сидит в телефоне — глаза были постоянно красные. Купила ему графеновые очки. Краснота прошла, глаза отдыхают.",
+      "raw": "Сын много сидит в телефоне — глаза были постоянно красные. Купила ему графеновые очки. Краснота прошла, глаза отдыхают.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-17",
+      "content_key": "review/glasses-17/original",
+      "public_title": "Капли и спрей убрала",
+      "public_body": "Постоянно пользовалась каплями для глаз и спреем для носа. С графеновыми очками — капли убрала, нос дышит свободно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 62,
+      "source_section": "Графеновые очки",
+      "source_heading": "#306",
+      "source_name": "",
+      "site_text": "Постоянно пользовалась каплями для глаз и спреем для носа. С графеновыми очками — капли убрала, нос дышит свободно.",
+      "raw": "Постоянно пользовалась каплями для глаз и спреем для носа. С графеновыми очками — капли убрала, нос дышит свободно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-18",
+      "content_key": "review/glasses-18/original",
+      "public_title": "Врач: впечатлена результатом",
+      "public_body": "Я врач. Зрение было +2. Ношу графеновые очки полгода — проверила: +1.5. Как профессионал, впечатлена результатом.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 63,
+      "source_section": "Графеновые очки",
+      "source_heading": "#312",
+      "source_name": "врач",
+      "site_text": "Я врач. Зрение было +2. Ношу графеновые очки полгода — проверила: +1.5. Как профессионал, впечатлена результатом.",
+      "raw": "Я врач. Зрение было +2. Ношу графеновые очки полгода — проверила: +1.5. Как профессионал, впечатлена результатом.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-19",
+      "content_key": "review/glasses-19/original",
+      "public_title": "Головные боли прошли годами мучившие",
+      "public_body": "Сильные головные боли мучили годами. Начала носить графеновые очки — приступы прошли. Живу без боли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 64,
+      "source_section": "Графеновые очки",
+      "source_heading": "#319",
+      "source_name": "",
+      "site_text": "Сильные головные боли мучили годами. Начала носить графеновые очки — приступы прошли. Живу без боли.",
+      "raw": "Сильные головные боли мучили годами. Начала носить графеновые очки — приступы прошли. Живу без боли.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-20",
+      "content_key": "review/glasses-20/original",
+      "public_title": "Ребёнок стал дышать свободно",
+      "public_body": "У ребёнка нос не дышал постоянно. Начали надевать графеновые очки — насморк прошёл, дышит свободно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 65,
+      "source_section": "Графеновые очки",
+      "source_heading": "#320",
+      "source_name": "",
+      "site_text": "У ребёнка нос не дышал постоянно. Начали надевать графеновые очки — насморк прошёл, дышит свободно.",
+      "raw": "У ребёнка нос не дышал постоянно. Начали надевать графеновые очки — насморк прошёл, дышит свободно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-21",
+      "content_key": "review/glasses-21/original",
+      "public_title": "Слёзы прошли, зрение чётче",
+      "public_body": "Глаза слезились, зрение ухудшалось. С графеновыми очками — слёзы прошли, зрение стало чётче.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 66,
+      "source_section": "Графеновые очки",
+      "source_heading": "#321",
+      "source_name": "",
+      "site_text": "Глаза слезились, зрение ухудшалось. С графеновыми очками — слёзы прошли, зрение стало чётче.",
+      "raw": "Глаза слезились, зрение ухудшалось. С графеновыми очками — слёзы прошли, зрение стало чётче.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "glasses-22",
+      "content_key": "review/glasses-22/original",
+      "public_title": "Зрение заметно улучшилось за 4 месяца",
+      "public_body": "Ношу графеновые очки 4 месяца. Зрение заметно улучшилось — вижу чётче, глаза не устают.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "computer-glasses"
+      ],
+      "source_index": 67,
+      "source_section": "Графеновые очки",
+      "source_heading": "#324",
+      "source_name": "",
+      "site_text": "Ношу графеновые очки 4 месяца. Зрение заметно улучшилось — вижу чётче, глаза не устают.",
+      "raw": "Ношу графеновые очки 4 месяца. Зрение заметно улучшилось — вижу чётче, глаза не устают.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-1",
+      "content_key": "review/wentong-1/original",
+      "public_title": "Боль в бедре прошла, дышать легче",
+      "public_body": "Бедро болело при ходьбе, одышка мучила. После курса Вентуна — боль в бедре прошла, дышать стало легче.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 68,
+      "source_section": "Вентун",
+      "source_heading": "#325",
+      "source_name": "",
+      "site_text": "Бедро болело при ходьбе, одышка мучила. После курса Вентуна — боль в бедре прошла, дышать стало легче.",
+      "raw": "Бедро болело при ходьбе, одышка мучила. После курса Вентуна — боль в бедре прошла, дышать стало легче.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-2",
+      "content_key": "review/wentong-2/original",
+      "public_title": "Сон стал крепче",
+      "public_body": "Пользуюсь Вентуном перед сном. Расслабляет, сон стал крепче. Просыпаюсь отдохнувшей.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 69,
+      "source_section": "Вентун",
+      "source_heading": "#339",
+      "source_name": "",
+      "site_text": "Пользуюсь Вентуном перед сном. Расслабляет, сон стал крепче. Просыпаюсь отдохнувшей.",
+      "raw": "Пользуюсь Вентуном перед сном. Расслабляет, сон стал крепче. Просыпаюсь отдохнувшей.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-3",
+      "content_key": "review/wentong-3/original",
+      "public_title": "Стопы и спина перестали болеть",
+      "public_body": "Стопы болели, спина не давала покоя. После курса Вентуна — всё прошло. Двигаюсь свободно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 70,
+      "source_section": "Вентун",
+      "source_heading": "#344",
+      "source_name": "",
+      "site_text": "Стопы болели, спина не давала покоя. После курса Вентуна — всё прошло. Двигаюсь свободно.",
+      "raw": "Стопы болели, спина не давала покоя. После курса Вентуна — всё прошло. Двигаюсь свободно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-4",
+      "content_key": "review/wentong-4/original",
+      "public_title": "Рука двигается на 90%",
+      "public_body": "Рука плохо двигалась — кружку тяжело было держать. 3 месяца процедур на Вентуне — рука двигается на 90%. Могу поднимать, сгибать, всё делаю сама.",
+      "public_author": "Анна А.",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 71,
+      "source_section": "Вентун",
+      "source_heading": "#346",
+      "source_name": "",
+      "site_text": "Рука плохо двигалась — кружку тяжело было держать. 3 месяца процедур на Вентуне — рука двигается на 90%. Могу поднимать, сгибать, всё делаю сама.",
+      "raw": "Рука плохо двигалась — кружку тяжело было держать. 3 месяца процедур на Вентуне — рука двигается на 90%. Могу поднимать, сгибать, всё делаю сама.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-5",
+      "content_key": "review/wentong-5/original",
+      "public_title": "Снова хожу в бассейн",
+      "public_body": "Суставы болели так, что ничего не могла делать. После Вентуна — появилась энергия, снова шью кукол, хожу в бассейн. Жизнь вернулась.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 72,
+      "source_section": "Вентун",
+      "source_heading": "#348",
+      "source_name": "",
+      "site_text": "Суставы болели так, что ничего не могла делать. После Вентуна — появилась энергия, снова шью кукол, хожу в бассейн. Жизнь вернулась.",
+      "raw": "Суставы болели так, что ничего не могла делать. После Вентуна — появилась энергия, снова шью кукол, хожу в бассейн. Жизнь вернулась.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-6",
+      "content_key": "review/wentong-6/original",
+      "public_title": "В 53 года жизнь изменилась",
+      "public_body": "Мне 53 года. После курса Вентуна жизнь изменилась — больше энергии, лучше сплю, боли в теле ушли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 73,
+      "source_section": "Вентун",
+      "source_heading": "#369",
+      "source_name": "",
+      "site_text": "Мне 53 года. После курса Вентуна жизнь изменилась — больше энергии, лучше сплю, боли в теле ушли.",
+      "raw": "Мне 53 года. После курса Вентуна жизнь изменилась — больше энергии, лучше сплю, боли в теле ушли.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-7",
+      "content_key": "review/wentong-7/original",
+      "public_title": "Ушли 7 кг, одышка пропала",
+      "public_body": "Дочь прошла курс Вентуна. Ушли 7 кг, одышка пропала. Стала активнее, легче двигается.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 74,
+      "source_section": "Вентун",
+      "source_heading": "#370",
+      "source_name": "",
+      "site_text": "Дочь прошла курс Вентуна. Ушли 7 кг, одышка пропала. Стала активнее, легче двигается.",
+      "raw": "Дочь прошла курс Вентуна. Ушли 7 кг, одышка пропала. Стала активнее, легче двигается.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-8",
+      "content_key": "review/wentong-8/original",
+      "public_title": "Настроение улучшилось за 5 сеансов",
+      "public_body": "Всего 5 сеансов Вентуна — и настроение заметно улучшилось. Стало легче на душе, больше сил.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 75,
+      "source_section": "Вентун",
+      "source_heading": "#374",
+      "source_name": "",
+      "site_text": "Всего 5 сеансов Вентуна — и настроение заметно улучшилось. Стало легче на душе, больше сил.",
+      "raw": "Всего 5 сеансов Вентуна — и настроение заметно улучшилось. Стало легче на душе, больше сил.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "wentong-9",
+      "content_key": "review/wentong-9/original",
+      "public_title": "Волосы стали гуще и потемнели",
+      "public_body": "Волосы сильно выпадали, появились проплешины. После курса Вентуна — выпадение остановилось, волосы стали гуще и даже потемнели.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "wentong"
+      ],
+      "source_index": 76,
+      "source_section": "Вентун",
+      "source_heading": "#375",
+      "source_name": "",
+      "site_text": "Волосы сильно выпадали, появились проплешины. После курса Вентуна — выпадение остановилось, волосы стали гуще и даже потемнели.",
+      "raw": "Волосы сильно выпадали, появились проплешины. После курса Вентуна — выпадение остановилось, волосы стали гуще и даже потемнели.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-1",
+      "content_key": "review/pads-1/original",
+      "public_title": "Синяк прошёл быстрее обычного",
+      "public_body": "Ударила колено — огромный синяк, болело. Приложила чип из прокладки. Синяк прошёл быстрее, чем обычно, боль ушла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 77,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#379",
+      "source_name": "",
+      "site_text": "Ударила колено — огромный синяк, болело. Приложила чип из прокладки. Синяк прошёл быстрее, чем обычно, боль ушла.",
+      "raw": "Ударила колено — огромный синяк, болело. Приложила чип из прокладки. Синяк прошёл быстрее, чем обычно, боль ушла.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-2",
+      "content_key": "review/pads-2/original",
+      "public_title": "Цикл стал ровнее, нет запаха",
+      "public_body": "С этими прокладками цикл стал более ровным. Нет неприятного запаха, нет дискомфорта. Комфортнее, чем обычные из магазина.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 78,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#382",
+      "source_name": "",
+      "site_text": "С этими прокладками цикл стал более ровным. Нет неприятного запаха, нет дискомфорта. Комфортнее, чем обычные из магазина.",
+      "raw": "С этими прокладками цикл стал более ровным. Нет неприятного запаха, нет дискомфорта. Комфортнее, чем обычные из магазина.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-3",
+      "content_key": "review/pads-3/original",
+      "public_title": "Бородавка исчезла за 2 недели",
+      "public_body": "Была неприятная бородавка. 2 недели носила чип из прокладки — бородавка исчезла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 79,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#388",
+      "source_name": "",
+      "site_text": "Была неприятная бородавка. 2 недели носила чип из прокладки — бородавка исчезла.",
+      "raw": "Была неприятная бородавка. 2 недели носила чип из прокладки — бородавка исчезла.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-4",
+      "content_key": "review/pads-4/original",
+      "public_title": "Обошлись без операции",
+      "public_body": "У сына ноготь врос, палец болел и распух. 9 дней прикладывали чип из прокладки. Всё подсохло, боль ушла, ноготь отрастает нормально. У старшего 13 лет назад с той же проблемой делали операцию — а тут обошлись без вмешательства.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 80,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#394",
+      "source_name": "",
+      "site_text": "У сына ноготь врос, палец болел и распух. 9 дней прикладывали чип из прокладки. Всё подсохло, боль ушла, ноготь отрастает нормально. У старшего 13 лет назад с той же проблемой делали операцию — а тут обошлись без вмешательства.",
+      "raw": "У сына ноготь врос, палец болел и распух. 9 дней прикладывали чип из прокладки. Всё подсохло, боль ушла, ноготь отрастает нормально. У старшего 13 лет назад с той же проблемой делали операцию — а тут обошлись без вмешательства.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-5",
+      "content_key": "review/pads-5/original",
+      "public_title": "Мозоль ушла за 2 дня",
+      "public_body": "Стержневую мозоль убрала за 2 дня чипом из прокладки. Просто привязала на сутки, сняла, новый чип — и мозоль ушла.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 81,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#396",
+      "source_name": "",
+      "site_text": "Стержневую мозоль убрала за 2 дня чипом из прокладки. Просто привязала на сутки, сняла, новый чип — и мозоль ушла.",
+      "raw": "Стержневую мозоль убрала за 2 дня чипом из прокладки. Просто привязала на сутки, сняла, новый чип — и мозоль ушла.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-6",
+      "content_key": "review/pads-6/original",
+      "public_title": "Дочь и мама — обе довольны",
+      "public_body": "Дочь год носит эти прокладки. Цикл нормализовался, болезненные ощущения прошли. Я тоже пользуюсь — самочувствие заметно улучшилось.",
+      "public_author": "Салтанат С.",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 82,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#397",
+      "source_name": "Салтанат С.",
+      "site_text": "Дочь год носит эти прокладки. Цикл нормализовался, болезненные ощущения прошли. Я тоже пользуюсь — самочувствие заметно улучшилось",
+      "raw": "Дочь год носит эти прокладки. Цикл нормализовался, болезненные ощущения прошли. Я тоже пользуюсь — самочувствие заметно улучшилось",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-7",
+      "content_key": "review/pads-7/original",
+      "public_title": "Рассечённая бровь зажила без врача",
+      "public_body": "Летом упала, рассекла бровь. Кровь, испуг. Приложила сердцевину из прокладки, смочив водой. Несколько процедур — всё зажило быстро и без визита к врачу.",
+      "public_author": "Анжелика",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 83,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#399",
+      "source_name": "Анжелика",
+      "site_text": "Летом упала, рассекла бровь. Кровь, испуг. Приложила сердцевину из прокладки, смочив водой. Несколько процедур — всё зажило быстро и без визита к врачу",
+      "raw": "Летом упала, рассекла бровь. Кровь, испуг. Приложила сердцевину из прокладки, смочив водой. Несколько процедур — всё зажило быстро и без визита к врачу",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-8",
+      "content_key": "review/pads-8/original",
+      "public_title": "Мужской отзыв: результат держится полгода",
+      "public_body": "Из личного опыта: прокладку смачивал, чип носил днём. Через 2-3 недели все неприятные ощущения полностью прошли и уже полгода не возвращаются.",
+      "public_author": "Валентин",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 84,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#403",
+      "source_name": "Валентин (мужской отзыв!)",
+      "site_text": "Из личного опыта: прокладку смачивал чип, носил днём. Через 2-3 недели все неприятные ощущения полностью прошли и уже полгода не возвращаются. Валентин",
+      "raw": "Из личного опыта: прокладку смачивал чип, носил днём. Через 2-3 недели все неприятные ощущения полностью прошли и уже полгода не возвращаются. Валентин",
+      "raw_field": "site_fallback",
+      "status": "verified_punctuation_and_name_suffix",
+      "note": "Тот же Валентин. Расхождение: «смачивал, чип носил» vs «смачивал чип, носил»; суффикс имени в «Для сайта» не снялся, потому что в поле Имя стоит «Валентин (мужской отзыв!)». Оригинал в файле пустой — в ключ идёт текст «Для сайта»."
+    },
+    {
+      "id": "pads-9",
+      "content_key": "review/pads-9/original",
+      "public_title": "«Волшебные наколенники»",
+      "public_body": "Соседка сильно хромала, колено болело. Предложила привязать прокладку к коленке. Два дня проносила — неделю уже не хромает. Теперь называет их «волшебные наколенники».",
+      "public_author": "Татьяна",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 85,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#404",
+      "source_name": "Татьяна",
+      "site_text": "Соседка сильно хромала, колено болело. Предложила привязать прокладку к коленке. Два дня проносила — неделю уже не хромает. Теперь называет их \"волшебные наколенники\"",
+      "raw": "Соседка сильно хромала, колено болело. Предложила привязать прокладку к коленке. Два дня проносила — неделю уже не хромает. Теперь называет их \"волшебные наколенники\"",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-10",
+      "content_key": "review/pads-10/original",
+      "public_title": "Через месяц боли нигде нет",
+      "public_body": "Поясница, низ живота болели — месяц не могла даже сапоги застегнуть сидя. Начала носить прокладки. Через месяц — боли нигде нет, сапоги застёгиваю не замечая.",
+      "public_author": "Нина Д.",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 86,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#411",
+      "source_name": "Нина Д.",
+      "site_text": "Поясница, низ живота болели — месяц не могла даже сапоги застегнуть сидя. Начала носить прокладки. Через месяц — боли нигде нет, сапоги застёгиваю не замечая",
+      "raw": "Поясница, низ живота болели — месяц не могла даже сапоги застегнуть сидя. Начала носить прокладки. Через месяц — боли нигде нет, сапоги застёгиваю не замечая",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-11",
+      "content_key": "review/pads-11/original",
+      "public_title": "Тепло помогло уснуть",
+      "public_body": "Острая боль в боку не давала уснуть. Приложила дневную прокладку — пошло тепло, смогла заснуть. Утром острая боль прошла.",
+      "public_author": "Долгор",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 87,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#413",
+      "source_name": "Долгор",
+      "site_text": "Острая боль в боку не давала уснуть. Приложила дневную прокладку — пошло тепло, смогла заснуть. Утром острая боль прошла",
+      "raw": "Острая боль в боку не давала уснуть. Приложила дневную прокладку — пошло тепло, смогла заснуть. Утром острая боль прошла",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-12",
+      "content_key": "review/pads-12/original",
+      "public_title": "Живу нормально уже 8 месяцев",
+      "public_body": "С юности каждый месяц ждала критических дней как судного дня — запасалась обезболивающим, доходило до полуобморочного состояния. Ничего не помогало. После первого месяца анионовых прокладок — боли прошли! Уже 8 месяцев живу нормально. Комфортные, нет запаха.",
+      "public_author": "Милана",
+      "public_city": "",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 88,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#414",
+      "source_name": "Милана, студентка",
+      "site_text": "С юности каждый месяц ждала критических дней как судного дня — запасалась обезболивающим, доходило до полуобморочного состояния. Ничего не помогало. После первого месяца анионовых прокладок — боли прошли! Уже 8 месяцев живу нормально. Комфортные, нет запаха",
+      "raw": "С юности каждый месяц ждала критических дней как судного дня — запасалась обезболивающим, доходило до полуобморочного состояния. Ничего не помогало. После первого месяца анионовых прокладок — боли прошли! Уже 8 месяцев живу нормально. Комфортные, нет запаха",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "pads-13",
+      "content_key": "review/pads-13/original",
+      "public_title": "После 3 родов — наконец комфортно",
+      "public_body": "После 3 родов магазинные прокладки вызывали раздражение и зуд. Попробовала анионовые — нам с дочкой очень нравится. Дочь говорит: «Комфортно, не пахнет, не мокнет». В магазине на прокладки больше не смотрим.",
+      "public_author": "Жаргалма Ц.",
+      "public_city": "Загустай",
+      "public_tags": [
+        "anion-pads"
+      ],
+      "source_index": 89,
+      "source_section": "Анионные прокладки",
+      "source_heading": "#415",
+      "source_name": "Жаргалма Ц., Загустай",
+      "site_text": "После 3 родов магазинные прокладки вызывали раздражение и зуд. Попробовала анионовые — нам с дочкой очень нравится. Дочь говорит: \"Комфортно, не пахнет, не мокнет.\" В магазине на прокладки больше не смотрим. Жаргалма, Загустай",
+      "raw": "После 3 родов магазинные прокладки вызывали раздражение и зуд. Попробовала анионовые — нам с дочкой очень нравится. Дочь говорит: \"Комфортно, не пахнет, не мокнет.\" В магазине на прокладки больше не смотрим. Жаргалма, Загустай",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "bem-1",
+      "content_key": "review/bem-1/original",
+      "public_title": "Лёгкость с одного сеанса",
+      "public_body": "Спина болела, было ощущение тяжести — хотелось, чтобы кто-нибудь постучал. Один сеанс БЭМ — и лёгкость, тяжесть ушла. С одного раза результат!",
+      "public_author": "Динара",
+      "public_city": "Астана",
+      "public_tags": [
+        "magic-foherb"
+      ],
+      "source_index": 90,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#421",
+      "source_name": "Динара, Астана",
+      "site_text": "Спина болела, было ощущение тяжести — хотелось, чтобы кто-нибудь постучал. Один сеанс БЭМ — и лёгкость, тяжесть ушла. С одного раза результат!",
+      "raw": "Спина болела, было ощущение тяжести — хотелось, чтобы кто-нибудь постучал. Один сеанс БЭМ — и лёгкость, тяжесть ушла. С одного раза результат!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "bem-2",
+      "content_key": "review/bem-2/original",
+      "public_title": "Утром бодрячком, ничего не болит",
+      "public_body": "4 часа за рулём с открытыми окнами — продуло шею и плечо, больно было даже трогать. Вечером поставила банки массажером, утром — бодрячком, нигде не болит.",
+      "public_author": "Оюна Г.",
+      "public_city": "",
+      "public_tags": [
+        "magic-foherb"
+      ],
+      "source_index": 91,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#422",
+      "source_name": "Оюна Г.",
+      "site_text": "4 часа за рулём с открытыми окнами — продуло шею и плечо, больно было даже трогать. Вечером поставила банки массажером, утром — бодрячком, нигде не болит",
+      "raw": "4 часа за рулём с открытыми окнами — продуло шею и плечо, больно было даже трогать. Вечером поставила банки массажером, утром — бодрячком, нигде не болит",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "bem-3",
+      "content_key": "review/bem-3/original",
+      "public_title": "То, чего не могла 30 лет",
+      "public_body": "Рука не поднималась — если поднимала, выходила из сустава. Более 30 лет с этим жила. 5 дней БЭМ и Активатор — спокойно поднимаю руку, отвожу в стороны, назад. То, чего не могла 30 лет.",
+      "public_author": "Анна А.",
+      "public_city": "",
+      "public_tags": [
+        "magic-foherb",
+        "aktivator-kletok"
+      ],
+      "source_index": 92,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#430",
+      "source_name": "Анна А.",
+      "site_text": "Рука не поднималась — если поднимала, выходила из сустава. Более 30 лет с этим жила. 5 дней БЭМ и Активатор — спокойно поднимаю руку, отвожу в стороны, назад. То, чего не могла 30 лет",
+      "raw": "Рука не поднималась — если поднимала, выходила из сустава. Более 30 лет с этим жила. 5 дней БЭМ и Активатор — спокойно поднимаю руку, отвожу в стороны, назад. То, чего не могла 30 лет",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "bem-4",
+      "content_key": "review/bem-4/original",
+      "public_title": "Родственники не поверили",
+      "public_body": "Мужчина, пенсионного возраста — перестарался в гараже, обострение боли в пояснице. Долго лечился — без результата. Один сеанс импульсного массажа БЭМ — «всё прошло, как не болело». Родственники не поверили.",
+      "public_author": "Светлана С.",
+      "public_city": "",
+      "public_tags": [
+        "magic-foherb"
+      ],
+      "source_index": 93,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#439",
+      "source_name": "Светлана С.",
+      "site_text": "Мужчина, пенсионного возраста — перестарался в гараже, обострение боли в пояснице. Долго лечился — без результата. Один сеанс импульсного массажа БЭМ — \"всё прошло, как не болело\". Родственники не поверили",
+      "raw": "Мужчина, пенсионного возраста — перестарался в гараже, обострение боли в пояснице. Долго лечился — без результата. Один сеанс импульсного массажа БЭМ — \"всё прошло, как не болело\". Родственники не поверили",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "bem-5",
+      "content_key": "review/bem-5/original",
+      "public_title": "Боли, отёки, головные боли — всё ушло",
+      "public_body": "Долго мучили боли в суставах, отёки ног, головные боли. Купила стельки, активатор, очки, стала делать массаж БЭМ. Боли ушли, отёки прошли, головные боли — тоже.",
+      "public_author": "Ильмира",
+      "public_city": "",
+      "public_tags": [
+        "magic-foherb",
+        "anion-insoles",
+        "aktivator-kletok",
+        "computer-glasses"
+      ],
+      "source_index": 94,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#450",
+      "source_name": "Ильмира",
+      "site_text": "Долго мучили боли в суставах, отёки ног, головные боли. Купила стельки, активатор, очки, стала делать массаж БЭМ. Боли ушли, отёки прошли, головные боли — тоже. Продукции WHIEDA — спасибо!",
+      "raw": "Долго мучили боли в суставах, отёки ног, головные боли. Купила стельки, активатор, очки, стала делать массаж БЭМ. Боли ушли, отёки прошли, головные боли — тоже. Продукции WHIEDA — спасибо!",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "bem-6",
+      "content_key": "review/bem-6/original",
+      "public_title": "Про операцию забыли",
+      "public_body": "Маме 69 лет, колени сильно болели. Уже готовилась к серьёзной процедуре. Решили попробовать массаж БЭМ. Один раз сделали — мама стала легко ходить, нога не болит. Продолжили массаж, добавили Линчжи, чай Лювей, Спирулину. Через 5 месяцев — про процедуру забыли.",
+      "public_author": "Оюна Гаврилова",
+      "public_city": "Загустай",
+      "public_tags": [
+        "magic-foherb",
+        "lingzhi",
+        "liuwei-tea",
+        "spirulina"
+      ],
+      "source_index": 95,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#451",
+      "source_name": "Оюна Гаврилова, Загустай",
+      "site_text": "Маме 69 лет, колени сильно болели. Уже готовилась к серьёзной процедуре. Решили попробовать массаж БЭМ. Один раз сделали — мама стала легко ходить, нога не болит. Продолжили массаж, добавили Линчжи, чай Лювей, Спирулину. Через 5 месяцев — про процедуру забыли. Результат отличный! Оюна Г., Загустай",
+      "raw": "Маме 69 лет, колени сильно болели. Уже готовилась к серьёзной процедуре. Решили попробовать массаж БЭМ. Один раз сделали — мама стала легко ходить, нога не болит. Продолжили массаж, добавили Линчжи, чай Лювей, Спирулину. Через 5 месяцев — про процедуру забыли. Результат отличный! Оюна Г., Загустай",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "bem-7",
+      "content_key": "review/bem-7/original",
+      "public_title": "Дёсны перестали кровоточить",
+      "public_body": "Делаю мужу массаж БЭМ, пользуемся зубной пастой с полынью. Муж сбросил 3 кг, дыхание нормализовалось, отёчность с ног ушла. У стоматолога отметили отличное состояние полости рта — а раньше дёсны кровоточили постоянно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "magic-foherb",
+        "wormwood-toothpaste"
+      ],
+      "source_index": 96,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#452",
+      "source_name": "",
+      "site_text": "Делаю мужу массаж БЭМ, пользуемся зубной пастой с полынью. Муж сбросил 3 кг, дыхание нормализовалось, отёчность с ног ушла. У стоматолога отметили отличное состояние полости рта — а раньше дёсны кровоточили постоянно.",
+      "raw": "Делаю мужу массаж БЭМ, пользуемся зубной пастой с полынью. Муж сбросил 3 кг, дыхание нормализовалось, отёчность с ног ушла. У стоматолога отметили отличное состояние полости рта — а раньше дёсны кровоточили постоянно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "bem-8",
+      "content_key": "review/bem-8/original",
+      "public_title": "Бабушке 88 — спала крепким сном",
+      "public_body": "Бабушке 88 лет. Месяц мучили ноющие боли в плече — ни сна, ни покоя. Каждое движение отдавало болью до кончиков пальцев. Два сеанса БЭМ — боль прошла, мышцы расслабились, спала крепким сном. Настроение улучшилось.",
+      "public_author": "Наталья",
+      "public_city": "Якутск",
+      "public_tags": [
+        "magic-foherb"
+      ],
+      "source_index": 97,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#453",
+      "source_name": "Наталья, Якутск",
+      "site_text": "Бабушке 88 лет. Месяц мучили ноющие боли в плече — ни сна, ни покоя. Каждое движение отдавало болью до кончиков пальцев. Два сеанса БЭМ — боль прошла, мышцы расслабились, спала крепким сном. Настроение улучшилось",
+      "raw": "Бабушке 88 лет. Месяц мучили ноющие боли в плече — ни сна, ни покоя. Каждое движение отдавало болью до кончиков пальцев. Два сеанса БЭМ — боль прошла, мышцы расслабились, спала крепким сном. Настроение улучшилось",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-1",
+      "content_key": "review/toothpaste-1/original",
+      "public_title": "Кашель прошёл почти сразу",
+      "public_body": "Был сильный сухой кашель — мучил, не могла уснуть. Взяла горошину зубной пасты, размазала по горлу. Кашель прошёл почти сразу, приступы не повторялись, ночь спала спокойно.",
+      "public_author": "Элина",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 98,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#454",
+      "source_name": "Элина",
+      "site_text": "Был сильный сухой кашель — мучил, не могла уснуть. Взяла горошину зубной пасты, размазала по горлу. Кашель прошёл почти сразу, приступы не повторялись, ночь спала спокойно. С тех пор в пасту влюбилась!",
+      "raw": "Был сильный сухой кашель — мучил, не могла уснуть. Взяла горошину зубной пасты, размазала по горлу. Кашель прошёл почти сразу, приступы не повторялись, ночь спала спокойно. С тех пор в пасту влюбилась!",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-2",
+      "content_key": "review/toothpaste-2/original",
+      "public_title": "Горло перестало беспокоить в 73 года",
+      "public_body": "Горло мучило всю жизнь — постоянный дискомфорт. Стала полоскать горло зубной пастой после чистки зубов. Горло перестало беспокоить. Мне 73 года.",
+      "public_author": "Агигат С.",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 99,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#456",
+      "source_name": "Агигат С., 73 года",
+      "site_text": "Горло мучило всю жизнь — постоянный дискомфорт. Стала полоскать горло зубной пастой после чистки зубов. Горло перестало беспокоить. Мне 73 года. Агигат С.",
+      "raw": "Горло мучило всю жизнь — постоянный дискомфорт. Стала полоскать горло зубной пастой после чистки зубов. Горло перестало беспокоить. Мне 73 года. Агигат С.",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-3",
+      "content_key": "review/toothpaste-3/original",
+      "public_title": "Приятный вкус, экономная",
+      "public_body": "Паста с нежным ароматом, приятная на вкус. Очищает отлично, пенится хорошо — очень экономная. Послевкусие приятное.",
+      "public_author": "Евгения К.",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 100,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#458",
+      "source_name": "Евгения К.",
+      "site_text": "Паста с нежным ароматом, приятная на вкус. Очищает отлично, пенится хорошо — очень экономная. Послевкусие приятное",
+      "raw": "Паста с нежным ароматом, приятная на вкус. Очищает отлично, пенится хорошо — очень экономная. Послевкусие приятное",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-4",
+      "content_key": "review/toothpaste-4/original",
+      "public_title": "Весь день без налёта",
+      "public_body": "Пользуюсь пастой WHIEDA — до конца дня хожу без налёта на зубах. С магазинной — полдня, и как будто не чистила. Вся семья пользуется, очень довольны.",
+      "public_author": "Лана Р.",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 101,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#464",
+      "source_name": "Лана Р.",
+      "site_text": "Пользуюсь пастой WHIEDA — до конца дня хожу без налёта на зубах. С магазинной — полдня, и как будто не чистила. Вся семья пользуется, очень довольны",
+      "raw": "Пользуюсь пастой WHIEDA — до конца дня хожу без налёта на зубах. С магазинной — полдня, и как будто не чистила. Вся семья пользуется, очень довольны",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-5",
+      "content_key": "review/toothpaste-5/original",
+      "public_title": "Десна пришла в норму",
+      "public_body": "Десна распухла, болела. Чистила зубы нашей пастой — десна пришла в норму. Зубы чистить — одно удовольствие!",
+      "public_author": "Анжелика",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 102,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#465",
+      "source_name": "Анжелика",
+      "site_text": "Десна распухла, болела. Чистила зубы нашей пастой — десна пришла в норму. Зубы чистить — одно удовольствие!",
+      "raw": "Десна распухла, болела. Чистила зубы нашей пастой — десна пришла в норму. Зубы чистить — одно удовольствие!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-6",
+      "content_key": "review/toothpaste-6/original",
+      "public_title": "Все знакомые теперь заказывают сами",
+      "public_body": "Всем знакомым просто дарила тюбик пасты. Теперь все сами заказывают — в восторге!",
+      "public_author": "Лариса Т.",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 103,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#468",
+      "source_name": "Лариса Т.",
+      "site_text": "Всем знакомым просто дарила тюбик пасты. Теперь все сами заказывают — в восторге!",
+      "raw": "Всем знакомым просто дарила тюбик пасты. Теперь все сами заказывают — в восторге!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-7",
+      "content_key": "review/toothpaste-7/original",
+      "public_title": "Дёсны закрыли зубы за месяц",
+      "public_body": "Дёсны кровоточили, зубы были оголены — 6 зубов внизу полностью. Чистила нашей пастой утром и вечером, щёткой проходила и по дёснам. Через месяц — дёсны закрыли зубы, 5 полностью восстановились. Зубной камень тоже ушёл.",
+      "public_author": "Эмма",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 104,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#471",
+      "source_name": "Эмма",
+      "site_text": "Дёсны кровоточили, зубы были оголены — 6 зубов внизу полностью. Чистила нашей пастой утром и вечером, щёткой проходила и по дёснам. Через месяц — дёсны закрыли зубы, 5 полностью восстановились. Зубной камень тоже ушёл",
+      "raw": "Дёсны кровоточили, зубы были оголены — 6 зубов внизу полностью. Чистила нашей пастой утром и вечером, щёткой проходила и по дёснам. Через месяц — дёсны закрыли зубы, 5 полностью восстановились. Зубной камень тоже ушёл",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "toothpaste-8",
+      "content_key": "review/toothpaste-8/original",
+      "public_title": "Результат на 100%",
+      "public_body": "Пастой пользуется вся семья, очень довольны. У меня были проблемы с дёснами — ушли. Результат на 100%.",
+      "public_author": "Nadya",
+      "public_city": "",
+      "public_tags": [
+        "wormwood-toothpaste"
+      ],
+      "source_index": 105,
+      "source_section": "Зубная паста с полынью",
+      "source_heading": "#476",
+      "source_name": "Nadya",
+      "site_text": "Пастой пользуется вся семья, очень довольны. У меня были проблемы с дёснами — ушли. Результат на 100%",
+      "raw": "Пастой пользуется вся семья, очень довольны. У меня были проблемы с дёснами — ушли. Результат на 100%",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "lingzhi-1",
+      "content_key": "review/lingzhi-1/original",
+      "public_title": "Раздражительность ушла, силы появились",
+      "public_body": "Сон был нарушен, раздражительность зашкаливала. Начала принимать капсулы Линчжи. Через месяц — стала легко засыпать и просыпаться, раздражительность ушла, появились силы и энергия. Кожа стала более упругой. Настроение и работоспособность заметно улучшились.",
+      "public_author": "Жанара А.",
+      "public_city": "",
+      "public_tags": [
+        "lingzhi"
+      ],
+      "source_index": 106,
+      "source_section": "Линчжи",
+      "source_heading": "#480",
+      "source_name": "Жанара А.",
+      "site_text": "Сон был нарушен, раздражительность зашкаливала. Начала принимать капсулы Линчжи. Через месяц — стала легко засыпать и просыпаться, раздражительность ушла, появились силы и энергия. Кожа стала более упругой. Настроение и работоспособность заметно улучшились",
+      "raw": "Сон был нарушен, раздражительность зашкаливала. Начала принимать капсулы Линчжи. Через месяц — стала легко засыпать и просыпаться, раздражительность ушла, появились силы и энергия. Кожа стала более упругой. Настроение и работоспособность заметно улучшились",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "lingzhi-2",
+      "content_key": "review/lingzhi-2/original",
+      "public_title": "Волосы начали расти гуще",
+      "public_body": "Дочь 6 месяцев принимает Линчжи. Перестала жаловаться на головные боли. Стала более усидчивой, внимательной. Речь стала чётче. Волосы начали расти гуще. Изменения налицо.",
+      "public_author": "",
+      "public_city": "Германия",
+      "public_tags": [
+        "lingzhi"
+      ],
+      "source_index": 107,
+      "source_section": "Линчжи",
+      "source_heading": "#486",
+      "source_name": "мама из Германии",
+      "site_text": "Дочь 6 месяцев принимает Линчжи. Перестала жаловаться на головные боли. Стала более усидчивой, внимательной. Речь стала чётче. Волосы начали расти гуще. Изменения налицо.",
+      "raw": "Дочь 6 месяцев принимает Линчжи. Перестала жаловаться на головные боли. Стала более усидчивой, внимательной. Речь стала чётче. Волосы начали расти гуще. Изменения налицо.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "lingzhi-3",
+      "content_key": "review/lingzhi-3/original",
+      "public_title": "Пищеварение восстановилось само",
+      "public_body": "Начала пить Линчжи от одного — а прошло совсем другое. Проблемы с пищеварением, которые мучили годами, ушли полностью. Организм сам решил, что восстанавливать первым.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "lingzhi"
+      ],
+      "source_index": 108,
+      "source_section": "Линчжи",
+      "source_heading": "#489",
+      "source_name": "",
+      "site_text": "Начала пить Линчжи от одного — а прошло совсем другое. Проблемы с пищеварением, которые мучили годами, ушли полностью. Организм сам решил, что восстанавливать первым. Продолжаю пить дальше.",
+      "raw": "Начала пить Линчжи от одного — а прошло совсем другое. Проблемы с пищеварением, которые мучили годами, ушли полностью. Организм сам решил, что восстанавливать первым. Продолжаю пить дальше.",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "lingzhi-4",
+      "content_key": "review/lingzhi-4/original",
+      "public_title": "Показатели пришли в норму за 3 месяца",
+      "public_body": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму.",
+      "public_author": "Таисия С.",
+      "public_city": "",
+      "public_tags": [
+        "lingzhi",
+        "xueqingfu",
+        "spirulina"
+      ],
+      "source_index": 109,
+      "source_section": "Линчжи",
+      "source_heading": "#516 → Линчжи (кросс-продукт)",
+      "source_name": "Таисия С.",
+      "site_text": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму",
+      "raw": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "lingzhi-5",
+      "content_key": "review/lingzhi-5/original",
+      "public_title": "В 80 лет стал есть самостоятельно",
+      "public_body": "Мужчина, 80 лет. Координация была нарушена, руки дрожали — жена кормила с ложечки. Две недели приёма Линчжи — самочувствие улучшилось, стал кушать самостоятельно.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "lingzhi"
+      ],
+      "source_index": 110,
+      "source_section": "Линчжи",
+      "source_heading": "#477 (тяжёлая редактура)",
+      "source_name": "",
+      "site_text": "Мужчина, 80 лет. Координация была нарушена, руки дрожали — жена кормила с ложечки. Две недели приёма Линчжи — самочувствие улучшилось, стал кушать самостоятельно.",
+      "raw": "Мужчина, 80 лет. Координация была нарушена, руки дрожали — жена кормила с ложечки. Две недели приёма Линчжи — самочувствие улучшилось, стал кушать самостоятельно.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "spirulina-1",
+      "content_key": "review/spirulina-1/original",
+      "public_title": "С 118 до 88 кг за 7 месяцев",
+      "public_body": "Мой вес был 118 кг при росте 183 см. Изменил питание, начал ходить по утрам и принимать Спирулину 3 раза в день. За 7 месяцев — 88 кг. Тяга к вредным привычкам ушла сама. Спина перестала болеть. Энергии стало в разы больше.",
+      "public_author": "Семён О.",
+      "public_city": "Якутия",
+      "public_tags": [
+        "spirulina"
+      ],
+      "source_index": 111,
+      "source_section": "Спирулина",
+      "source_heading": "#500",
+      "source_name": "Семён О., Якутия",
+      "site_text": "Мой вес был 118 кг при росте 183 см. Изменил питание, начал ходить по утрам и принимать Спирулину 3 раза в день. За 7 месяцев — 88 кг. Тяга к вредным привычкам ушла сама. Спина перестала болеть. Энергии стало в разы больше",
+      "raw": "Мой вес был 118 кг при росте 183 см. Изменил питание, начал ходить по утрам и принимать Спирулину 3 раза в день. За 7 месяцев — 88 кг. Тяга к вредным привычкам ушла сама. Спина перестала болеть. Энергии стало в разы больше",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "spirulina-2",
+      "content_key": "review/spirulina-2/original",
+      "public_title": "Похудела только от Спирулины",
+      "public_body": "Похудела только от одной Спирулины. Принимала месяц. Дозировку подбирала сама — организм подсказал.",
+      "public_author": "Анжелика",
+      "public_city": "",
+      "public_tags": [
+        "spirulina"
+      ],
+      "source_index": 112,
+      "source_section": "Спирулина",
+      "source_heading": "#504",
+      "source_name": "Анжелика",
+      "site_text": "Похудела только от одной Спирулины. Принимала месяц. Дозировку подбирала сама — организм подсказал",
+      "raw": "Похудела только от одной Спирулины. Принимала месяц. Дозировку подбирала сама — организм подсказал",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "spirulina-3",
+      "content_key": "review/spirulina-3/original",
+      "public_title": "-3 кг за первый месяц",
+      "public_body": "Принимаю Спирулину за 30 минут до еды, 3 раза в день. Похудела на 3 кг за первый месяц. Продолжаю.",
+      "public_author": "Агигат С.",
+      "public_city": "",
+      "public_tags": [
+        "spirulina"
+      ],
+      "source_index": 113,
+      "source_section": "Спирулина",
+      "source_heading": "#505",
+      "source_name": "Агигат С.",
+      "site_text": "Принимаю Спирулину за 30 минут до еды, 3 раза в день. Похудела на 3 кг за первый месяц. Продолжаю",
+      "raw": "Принимаю Спирулину за 30 минут до еды, 3 раза в день. Похудела на 3 кг за первый месяц. Продолжаю",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "spirulina-4",
+      "content_key": "review/spirulina-4/original",
+      "public_title": "Горло прошло без таблеток",
+      "public_body": "Простыла, горло сильно болело — глотать не могла. Попробовала леденцы со спирулиной + Активатор клеток. Горло прошло! Без таблеток!",
+      "public_author": "Марина А.",
+      "public_city": "",
+      "public_tags": [
+        "spirulina",
+        "spirulina-candy",
+        "aktivator-kletok"
+      ],
+      "source_index": 114,
+      "source_section": "Спирулина",
+      "source_heading": "#506",
+      "source_name": "Марина А.",
+      "site_text": "Простыла, горло сильно болело — глотать не могла. Попробовала леденцы со спирулиной + Активатор клеток. Горло прошло! Без таблеток!",
+      "raw": "Простыла, горло сильно болело — глотать не могла. Попробовала леденцы со спирулиной + Активатор клеток. Горло прошло! Без таблеток!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "spirulina-5",
+      "content_key": "review/spirulina-5/original",
+      "public_title": "Бодрость весь день",
+      "public_body": "Пью Спирулину совсем недавно. Бодрость весь день! Утром встаю выспавшись, сразу энергия и план в голове. Раньше после обеда клонило в сон — сейчас бодрость до вечера.",
+      "public_author": "Валентина",
+      "public_city": "Кижинга",
+      "public_tags": [
+        "spirulina"
+      ],
+      "source_index": 115,
+      "source_section": "Спирулина",
+      "source_heading": "#520",
+      "source_name": "Валентина, Кижинга",
+      "site_text": "Пью Спирулину совсем недавно. Бодрость весь день! Утром встаю выспавшись, сразу энергия и план в голове. Раньше после обеда клонило в сон — сейчас бодрость до вечера",
+      "raw": "Пью Спирулину совсем недавно. Бодрость весь день! Утром встаю выспавшись, сразу энергия и план в голове. Раньше после обеда клонило в сон — сейчас бодрость до вечера",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-1",
+      "content_key": "review/sauna-1/original",
+      "public_title": "Выводит 300 граммов влаги за 20 минут",
+      "public_body": "Какая крутая штука эта сауна! Занимает всего 1 квадратный метр — а за 20 минут выводит 300 граммов лишней влаги из организма. Космос просто!",
+      "public_author": "Анастасия А.",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 116,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#521",
+      "source_name": "Анастасия А.",
+      "site_text": "Какая крутая штука эта сауна! Занимает всего 1 квадратный метр — а за 20 минут выводит 300 граммов лишней влаги из организма. Космос просто!",
+      "raw": "Какая крутая штука эта сауна! Занимает всего 1 квадратный метр — а за 20 минут выводит 300 граммов лишней влаги из организма. Космос просто!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-2",
+      "content_key": "review/sauna-2/original",
+      "public_title": "Бородавки прошли за 2 подхода",
+      "public_body": "От бородавок нас избавила сауна за 2 подхода. До этого пытались прижигать дважды — не помогло. А после сауны — исчезли.",
+      "public_author": "Елена У.",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 117,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#523",
+      "source_name": "Елена У.",
+      "site_text": "От бородавок нас избавила сауна за 2 подхода. До этого пытались прижигать дважды — не помогло. А после сауны — исчезли",
+      "raw": "От бородавок нас избавила сауна за 2 подхода. До этого пытались прижигать дважды — не помогло. А после сауны — исчезли",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-3",
+      "content_key": "review/sauna-3/original",
+      "public_title": "Ушли буквально через день",
+      "public_body": "У ребёнка были бородавки, пытались выжигать — мучение. 2 бородавки остались, ничем не убрать. Посидели в сауне пару раз — бородавки ушли буквально через день. Не ожидали такого.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 118,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#527",
+      "source_name": "",
+      "site_text": "У ребёнка были бородавки, пытались выжигать — мучение. 2 бородавки остались, ничем не убрать. Посидели в сауне пару раз — бородавки ушли буквально через день. Не ожидали такого.",
+      "raw": "У ребёнка были бородавки, пытались выжигать — мучение. 2 бородавки остались, ничем не убрать. Посидели в сауне пару раз — бородавки ушли буквально через день. Не ожидали такого.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-4",
+      "content_key": "review/sauna-4/original",
+      "public_title": "Ладони стали нормальные",
+      "public_body": "Парень, 30 лет. Ладони всегда были влажные и холодные — неудобно при рукопожатии. Сауна помогла — ладони стали нормальные.",
+      "public_author": "Екатерина Г.",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 119,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#531",
+      "source_name": "Екатерина Г.",
+      "site_text": "Парень, 30 лет. Ладони всегда были влажные и холодные — неудобно при рукопожатии. Сауна помогла — ладони стали нормальные",
+      "raw": "Парень, 30 лет. Ладони всегда были влажные и холодные — неудобно при рукопожатии. Сауна помогла — ладони стали нормальные",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-5",
+      "content_key": "review/sauna-5/original",
+      "public_title": "Сон крепче, кожа лучше, вес ушёл",
+      "public_body": "Сон стал крепким, перестала простужаться как раньше. Кожа стала лучше — косметологический эффект. И вес сбросила! Не нарадуюсь.",
+      "public_author": "Асия",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 120,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#534",
+      "source_name": "Асия",
+      "site_text": "Сон стал крепким, перестала простужаться как раньше. Кожа стала лучше — косметологический эффект. И вес сбросила! Не нарадуюсь",
+      "raw": "Сон стал крепким, перестала простужаться как раньше. Кожа стала лучше — косметологический эффект. И вес сбросила! Не нарадуюсь",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sauna-6",
+      "content_key": "review/sauna-6/original",
+      "public_title": "Мой целитель",
+      "public_body": "Просто села в сауну... И всё куда-то исчезло, как будто ничего и не было — сразу после одного сеанса. Это мой целитель, и я её обожаю.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "bagua"
+      ],
+      "source_index": 121,
+      "source_section": "Сауна БА-ГУА",
+      "source_heading": "#538",
+      "source_name": "аноним",
+      "site_text": "Просто села в сауну... И всё куда-то исчезло, как будто ничего и не было — сразу после одного сеанса. Это мой целитель, и я её обожаю.",
+      "raw": "Просто села в сауну... И всё куда-то исчезло, как будто ничего и не было — сразу после одного сеанса. Это мой целитель, и я её обожаю.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-1",
+      "content_key": "review/peptide-1/original",
+      "public_title": "Прилив сил через 30 минут",
+      "public_body": "Попробовала пептиды — через 30 минут почувствовала прилив сил и энергию. От усталости и желания прилечь не осталось и следа. Появился тонус и свежесть, как после душа. Это просто космос!",
+      "public_author": "Нина Д.",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide"
+      ],
+      "source_index": 122,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#540",
+      "source_name": "Нина Д.",
+      "site_text": "Попробовала пептиды — через 30 минут почувствовала прилив сил и энергию. От усталости и желания прилечь не осталось и следа. Появился тонус и свежесть, как после душа. Это просто космос!",
+      "raw": "Попробовала пептиды — через 30 минут почувствовала прилив сил и энергию. От усталости и желания прилечь не осталось и следа. Появился тонус и свежесть, как после душа. Это просто космос!",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-2",
+      "content_key": "review/peptide-2/original",
+      "public_title": "Покраснения прошли за 3 сеанса",
+      "public_body": "У нас в семье чувствительная кожа — покраснения, дискомфорт. Пили соевый пептид + прогревание. За 3 сеанса всё прошло.",
+      "public_author": "Надежда Н.",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide"
+      ],
+      "source_index": 123,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#541",
+      "source_name": "Надежда Н.",
+      "site_text": "У нас в семье чувствительная кожа — покраснения, дискомфорт. Пили соевый пептид + прогревание. За 3 сеанса всё прошло",
+      "raw": "У нас в семье чувствительная кожа — покраснения, дискомфорт. Пили соевый пептид + прогревание. За 3 сеанса всё прошло",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-3",
+      "content_key": "review/peptide-3/original",
+      "public_title": "Наш волшебный напиток",
+      "public_body": "Сын приехал на выходные, начались сильные боли в животе. Весь день лежал. Вечером дала наши пептиды. Не прошло и 5 минут — встал и начал ходить, боли прошли. Через 5 минут появился аппетит. Теперь пептиды — наш волшебный напиток.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide",
+        "liuwei-tea"
+      ],
+      "source_index": 124,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#542",
+      "source_name": "",
+      "site_text": "Сын приехал на выходные, начались сильные боли в животе. Весь день лежал. Вечером дала наши пептиды. Не прошло и 5 минут — встал и начал ходить, боли прошли. Через 5 минут появился аппетит. Теперь пептиды — наш волшебный напиток.",
+      "raw": "Сын приехал на выходные, начались сильные боли в животе. Весь день лежал. Вечером дала наши пептиды. Не прошло и 5 минут — встал и начал ходить, боли прошли. Через 5 минут появился аппетит. Теперь пептиды — наш волшебный напиток.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-4",
+      "content_key": "review/peptide-4/original",
+      "public_title": "Рука восстановилась полностью",
+      "public_body": "Муж на работе повредил руку. Два месяца терпел — мази, пластыри, обезболивающие. Рука начала отекать, однажды утром не смог сжать кулак. 5 дней: Активатор перед сном + пептиды после. Рука восстановилась полностью.",
+      "public_author": "Анна О.",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide",
+        "aktivator-kletok"
+      ],
+      "source_index": 125,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#544",
+      "source_name": "Анна О.",
+      "site_text": "Муж на работе повредил руку. Два месяца терпел — мази, пластыри, обезболивающие. Рука начала отекать, однажды утром не смог сжать кулак. 5 дней: Активатор перед сном + пептиды после. Рука восстановилась полностью",
+      "raw": "Муж на работе повредил руку. Два месяца терпел — мази, пластыри, обезболивающие. Рука начала отекать, однажды утром не смог сжать кулак. 5 дней: Активатор перед сном + пептиды после. Рука восстановилась полностью",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-5",
+      "content_key": "review/peptide-5/original",
+      "public_title": "Герпес прошёл",
+      "public_body": "Замучил герпес. Стала принимать пептиды — помогло, герпес прошёл.",
+      "public_author": "Гульнара",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide"
+      ],
+      "source_index": 126,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#548",
+      "source_name": "Гульнара",
+      "site_text": "Замучил герпес. Стала принимать пептиды — помогло, герпес прошёл",
+      "raw": "Замучил герпес. Стала принимать пептиды — помогло, герпес прошёл",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "peptide-6",
+      "content_key": "review/peptide-6/original",
+      "public_title": "Дискомфорт в груди прошёл",
+      "public_body": "Знакомый начал пить пептиды. Через три дня говорит: «Дискомфорт в груди, который мучил, прошёл». Сам удивился.",
+      "public_author": "Туяна Т.",
+      "public_city": "",
+      "public_tags": [
+        "soy-peptide"
+      ],
+      "source_index": 127,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#552",
+      "source_name": "Туяна Т.",
+      "site_text": "Знакомый начал пить пептиды. Через три дня говорит: \"Дискомфорт в груди, который мучил, прошёл.\" Сам удивился",
+      "raw": "Знакомый начал пить пептиды. Через три дня говорит: \"Дискомфорт в груди, который мучил, прошёл.\" Сам удивился",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-1",
+      "content_key": "review/palantin-1/original",
+      "public_title": "Утром симптомы прошли",
+      "public_body": "Дочь приболела — головная боль, температура чуть поднялась. Укрыла палантином, давала побольше воды. Утром все симптомы прошли. На следующий день уже в школе.",
+      "public_author": "Гульнара М.",
+      "public_city": "Казахстан",
+      "public_tags": [
+        "palantin"
+      ],
+      "source_index": 128,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#554",
+      "source_name": "Гульнара М., Казахстан",
+      "site_text": "Дочь приболела — головная боль, температура чуть поднялась. Укрыла палантином, давала побольше воды. Утром все симптомы прошли. На следующий день уже в школе",
+      "raw": "Дочь приболела — головная боль, температура чуть поднялась. Укрыла палантином, давала побольше воды. Утром все симптомы прошли. На следующий день уже в школе",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-2",
+      "content_key": "review/palantin-2/original",
+      "public_title": "Тревога пропала, сон улучшился",
+      "public_body": "С палантином не расстаюсь — и сплю с ним, и на прогулки в нём. Сон улучшился, тревога пропала. Просыпаюсь в хорошем бодром настроении, отдохнувшей.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "palantin"
+      ],
+      "source_index": 129,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#556",
+      "source_name": "",
+      "site_text": "С палантином не расстаюсь — и сплю с ним, и на прогулки в нём. Сон улучшился, тревога пропала. Просыпаюсь в хорошем бодром настроении, отдохнувшей.",
+      "raw": "С палантином не расстаюсь — и сплю с ним, и на прогулки в нём. Сон улучшился, тревога пропала. Просыпаюсь в хорошем бодром настроении, отдохнувшей.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-3",
+      "content_key": "review/palantin-3/original",
+      "public_title": "Помогает при тревожных состояниях",
+      "public_body": "Палантин помогает при тревожных состояниях. Укрываешь — и становится спокойно. Проверено, люди довольны.",
+      "public_author": "Алия Т.",
+      "public_city": "",
+      "public_tags": [
+        "palantin"
+      ],
+      "source_index": 130,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#557",
+      "source_name": "Алия Т.",
+      "site_text": "Палантин помогает при тревожных состояниях. Укрываешь — и становится спокойно. Проверено, люди довольны",
+      "raw": "Палантин помогает при тревожных состояниях. Укрываешь — и становится спокойно. Проверено, люди довольны",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-4",
+      "content_key": "review/palantin-4/original",
+      "public_title": "Герпес появляется всё реже",
+      "public_body": "Герпес беспокоил постоянно — один проходил, другой появлялся. Начал пить эликсир Саньцин и укрываться палантином для снятия дискомфорта. Через несколько месяцев — герпес появляется всё реже. Палантин снимает неприятные ощущения.",
+      "public_author": "Игорь Б.",
+      "public_city": "",
+      "public_tags": [
+        "palantin",
+        "elixir-sanqing"
+      ],
+      "source_index": 131,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#558",
+      "source_name": "Игорь Б.",
+      "site_text": "Герпес беспокоил постоянно — один проходил, другой появлялся. Начал пить эликсир Саньцин и укрываться палантином для снятия дискомфорта. Через несколько месяцев — герпес появляется всё реже. Палантин снимает неприятные ощущения",
+      "raw": "Герпес беспокоил постоянно — один проходил, другой появлялся. Начал пить эликсир Саньцин и укрываться палантином для снятия дискомфорта. Через несколько месяцев — герпес появляется всё реже. Палантин снимает неприятные ощущения",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-5",
+      "content_key": "review/palantin-5/original",
+      "public_title": "Плечо не болит, поясница не мёрзнет",
+      "public_body": "У свекрови болело плечо, поясница постоянно мёрзла. Уже неделю не снимает палантин, спит в нём. Говорит: плечо не болит, ничем не мажет. И поясница не мёрзнет.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "palantin"
+      ],
+      "source_index": 132,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#561",
+      "source_name": "",
+      "site_text": "У свекрови болело плечо, поясница постоянно мёрзла. Уже неделю не снимает палантин, спит в нём. Говорит: плечо не болит, ничем не мажет. И поясница не мёрзнет.",
+      "raw": "У свекрови болело плечо, поясница постоянно мёрзла. Уже неделю не снимает палантин, спит в нём. Говорит: плечо не болит, ничем не мажет. И поясница не мёрзнет.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "palantin-6",
+      "content_key": "review/palantin-6/original",
+      "public_title": "Приливы жара ушли",
+      "public_body": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше.",
+      "public_author": "Ирина",
+      "public_city": "",
+      "public_tags": [
+        "palantin",
+        "liuwei-tea"
+      ],
+      "source_index": 133,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#406 → Палантин (кросс-продукт)",
+      "source_name": "Ирина",
+      "site_text": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше",
+      "raw": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "rose-1",
+      "content_key": "review/rose-1/original",
+      "public_title": "Здоровый кишечник — здоровый иммунитет",
+      "public_body": "Племяшке было 3-4 года — мучили запоры, ходить в туалет было истерикой. Начали давать Розу Фохоу. Стул наладился, ребёнок набрал в весе, перестала часто простужаться.",
+      "public_author": "Аиша",
+      "public_city": "Грозный",
+      "public_tags": [
+        "rose-fohou"
+      ],
+      "source_index": 134,
+      "source_section": "Роза Фохоу",
+      "source_heading": "#562",
+      "source_name": "Аиша, Грозный",
+      "site_text": "Племяшке было 3-4 года — мучили запоры, ходить в туалет было истерикой. Начали давать Розу Фохоу. Стул наладился, ребёнок набрал в весе, перестала часто простужаться. Здоровый кишечник — здоровый иммунитет!",
+      "raw": "Племяшке было 3-4 года — мучили запоры, ходить в туалет было истерикой. Начали давать Розу Фохоу. Стул наладился, ребёнок набрал в весе, перестала часто простужаться. Здоровый кишечник — здоровый иммунитет!",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "rose-2",
+      "content_key": "review/rose-2/original",
+      "public_title": "Отличное средство от запоров",
+      "public_body": "Мучили запоры. Роза Фохоу — отличное средство, помогло. Плюс стакан воды утром натощак и движение.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "rose-fohou"
+      ],
+      "source_index": 135,
+      "source_section": "Роза Фохоу",
+      "source_heading": "#564",
+      "source_name": "",
+      "site_text": "Мучили запоры. Роза Фохоу — отличное средство, помогло. Плюс стакан воды утром натощак и движение.",
+      "raw": "Мучили запоры. Роза Фохоу — отличное средство, помогло. Плюс стакан воды утром натощак и движение.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "rose-3",
+      "content_key": "review/rose-3/original",
+      "public_title": "Пищеварение наладилось",
+      "public_body": "В нашей семье для налаживания пищеварения отлично помог эликсир — создаёт благоприятную среду для здоровой микрофлоры кишечника.",
+      "public_author": "Людмила",
+      "public_city": "",
+      "public_tags": [
+        "rose-fohou"
+      ],
+      "source_index": 136,
+      "source_section": "Роза Фохоу",
+      "source_heading": "#566",
+      "source_name": "Людмила",
+      "site_text": "В нашей семье для налаживания пищеварения отлично помог эликсир — создаёт благоприятную среду для здоровой микрофлоры кишечника",
+      "raw": "В нашей семье для налаживания пищеварения отлично помог эликсир — создаёт благоприятную среду для здоровой микрофлоры кишечника",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "rose-4",
+      "content_key": "review/rose-4/original",
+      "public_title": "Сон и тревожность в норме",
+      "public_body": "Стала принимать Линчжи и Эликсир Фохоу. Сон улучшился, тревожность стала меньше. Продолжаю.",
+      "public_author": "Светлана В.",
+      "public_city": "",
+      "public_tags": [
+        "rose-fohou",
+        "lingzhi"
+      ],
+      "source_index": 137,
+      "source_section": "Роза Фохоу",
+      "source_heading": "#567",
+      "source_name": "Светлана В.",
+      "site_text": "Стала принимать Линчжи и Эликсир Фохоу. Сон улучшился, тревожность стала меньше. Продолжаю",
+      "raw": "Стала принимать Линчжи и Эликсир Фохоу. Сон улучшился, тревожность стала меньше. Продолжаю",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "rose-5",
+      "content_key": "review/rose-5/original",
+      "public_title": "Убирает вздутие полностью",
+      "public_body": "Живот надулся, боль в боку, ничего не помогало. Вспомнила про пасту Роза — выпила с водой. Всё заработало! Ленивый кишечник, вздутие — паста убирает всё! Отличный продукт.",
+      "public_author": "Наиля",
+      "public_city": "Ульяновская обл.",
+      "public_tags": [
+        "rose-fohou"
+      ],
+      "source_index": 138,
+      "source_section": "Роза Фохоу",
+      "source_heading": "#568",
+      "source_name": "Наиля, Ульяновская обл.",
+      "site_text": "Живот надулся, боль в боку, ничего не помогало. Вспомнила про пасту Роза — выпила с водой. Всё заработало! Ленивый кишечник, вздутие — паста убирает всё! Отличный продукт",
+      "raw": "Живот надулся, боль в боку, ничего не помогало. Вспомнила про пасту Роза — выпила с водой. Всё заработало! Ленивый кишечник, вздутие — паста убирает всё! Отличный продукт",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "xueqingfu-1",
+      "content_key": "review/xueqingfu-1/original",
+      "public_title": "Головные боли и головокружения прошли",
+      "public_body": "С детства мучили постоянные головные боли и головокружения. Несколько раз теряла сознание. После приёма Сюэчинфу — чувствую себя намного лучше. Нет головных болей, тошноты и головокружения.",
+      "public_author": "Айталина П.",
+      "public_city": "",
+      "public_tags": [
+        "xueqingfu"
+      ],
+      "source_index": 139,
+      "source_section": "Сюэчинфу",
+      "source_heading": "#573",
+      "source_name": "Айталина П.",
+      "site_text": "С детства мучили постоянные головные боли и головокружения. Несколько раз теряла сознание. После приёма Сюэчинфу — чувствую себя намного лучше. Нет головных болей, тошноты и головокружения",
+      "raw": "С детства мучили постоянные головные боли и головокружения. Несколько раз теряла сознание. После приёма Сюэчинфу — чувствую себя намного лучше. Нет головных болей, тошноты и головокружения",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "xueqingfu-2",
+      "content_key": "review/xueqingfu-2/original",
+      "public_title": "Головные боли ушли сразу",
+      "public_body": "Всегда болела голова, плохо видела — зрение теряло фокус. Два раза в год ходила в поликлинику. Начала принимать Сюэчинфу — головные боли ушли сразу, появилась энергия. Чувствую себя замечательно.",
+      "public_author": "Саргылана",
+      "public_city": "Якутск",
+      "public_tags": [
+        "xueqingfu"
+      ],
+      "source_index": 140,
+      "source_section": "Сюэчинфу",
+      "source_heading": "#574",
+      "source_name": "Саргылана, 50 лет, Якутск",
+      "site_text": "Всегда болела голова, плохо видела — зрение теряло фокус. Два раза в год ходила в поликлинику. Начала принимать Сюэчинфу — головные боли ушли сразу, появилась энергия. Чувствую себя замечательно",
+      "raw": "Всегда болела голова, плохо видела — зрение теряло фокус. Два раза в год ходила в поликлинику. Начала принимать Сюэчинфу — головные боли ушли сразу, появилась энергия. Чувствую себя замечательно",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "xueqingfu-3",
+      "content_key": "review/xueqingfu-3/original",
+      "public_title": "Уплотнение рассосалось за несколько дней",
+      "public_body": "Было болезненное уплотнение — краснота, боль. Несколько дней приёма Сюэчинфу — уплотнение рассосалось, боль и краснота прошли.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "xueqingfu"
+      ],
+      "source_index": 141,
+      "source_section": "Сюэчинфу",
+      "source_heading": "#572",
+      "source_name": "",
+      "site_text": "Было болезненное уплотнение — краснота, боль. Несколько дней приёма Сюэчинфу — уплотнение рассосалось, боль и краснота прошли.",
+      "raw": "Было болезненное уплотнение — краснота, боль. Несколько дней приёма Сюэчинфу — уплотнение рассосалось, боль и краснота прошли.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "xueqingfu-4",
+      "content_key": "review/xueqingfu-4/original",
+      "public_title": "Самочувствие полностью нормализовалось",
+      "public_body": "Самочувствие было неважным — утомляемость, тяжесть. Пропил курс: Сюэчинфу, Линчжи, Спирулину. Самочувствие полностью нормализовалось.",
+      "public_author": "Татьяна",
+      "public_city": "",
+      "public_tags": [
+        "xueqingfu",
+        "lingzhi",
+        "spirulina"
+      ],
+      "source_index": 142,
+      "source_section": "Сюэчинфу",
+      "source_heading": "#512 → Сюэчинфу (кросс-продукт)",
+      "source_name": "Татьяна",
+      "site_text": "Самочувствие было неважным — утомляемость, тяжесть. Пропил курс: Сюэчинфу, Линчжи, Спирулину. Самочувствие полностью нормализовалось",
+      "raw": "Самочувствие было неважным — утомляемость, тяжесть. Пропил курс: Сюэчинфу, Линчжи, Спирулину. Самочувствие полностью нормализовалось",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "xueqingfu-5",
+      "content_key": "review/xueqingfu-5/original",
+      "public_title": "Анализы пришли в норму",
+      "public_body": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму.",
+      "public_author": "Таисия С.",
+      "public_city": "",
+      "public_tags": [
+        "xueqingfu",
+        "lingzhi",
+        "spirulina"
+      ],
+      "source_index": 109,
+      "source_section": "Линчжи",
+      "source_heading": "#516 → Линчжи (кросс-продукт)",
+      "source_name": "Таисия С.",
+      "site_text": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму",
+      "raw": "Анализы были плохие — показатели выше нормы. Врач назначил таблетки, которые не хотела пить. Пропила курс: Сюэчинфу, Линчжи, Спирулину. Через 3 месяца сдала анализы — всё пришло в норму",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sanqing-1",
+      "content_key": "review/sanqing-1/original",
+      "public_title": "Высыпания прошли",
+      "public_body": "У мужа много лет были высыпания на лбу — ездил к разным врачам, мазал кремами, ничего не помогало. Начал пить эликсир Саньцин. Высыпания прошли. Скромно отметил: «Видимо, помогает».",
+      "public_author": "Людмила М.",
+      "public_city": "Якутия",
+      "public_tags": [
+        "elixir-sanqing"
+      ],
+      "source_index": 143,
+      "source_section": "Элексир Санцынь",
+      "source_heading": "#575",
+      "source_name": "Людмила М., Якутия",
+      "site_text": "У мужа много лет были высыпания на лбу — ездил к разным врачам, мазал кремами, ничего не помогало. Начал пить эликсир Саньцин. Высыпания прошли. Скромно отметил: \"Видимо, помогает.\"",
+      "raw": "У мужа много лет были высыпания на лбу — ездил к разным врачам, мазал кремами, ничего не помогало. Начал пить эликсир Саньцин. Высыпания прошли. Скромно отметил: \"Видимо, помогает.\"",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sanqing-2",
+      "content_key": "review/sanqing-2/original",
+      "public_title": "Вела концерты без кашля",
+      "public_body": "За 5 дней до концертов начался сильный кашель — я ведущая, говорить не могла. Обычно такой кашель не проходил месяцами. Стала пить эликсир Саньцин. Через 5 дней — спокойно вела концерты, не кашляла! А через 3 недели заметила: герпес, с которым боролась почти год, тоже исчез.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "elixir-sanqing"
+      ],
+      "source_index": 144,
+      "source_section": "Элексир Санцынь",
+      "source_heading": "#576",
+      "source_name": "",
+      "site_text": "За 5 дней до концертов начался сильный кашель — я ведущая, говорить не могла. Обычно такой кашель не проходил месяцами. Стала пить эликсир Саньцин. Через 5 дней — спокойно вела концерты, не кашляла! А через 3 недели заметила: герпес, с которым боролась почти год, тоже исчез. Уехала в отпуск, 3 недели ничего не принимала — не вернулся!",
+      "raw": "За 5 дней до концертов начался сильный кашель — я ведущая, говорить не могла. Обычно такой кашель не проходил месяцами. Стала пить эликсир Саньцин. Через 5 дней — спокойно вела концерты, не кашляла! А через 3 недели заметила: герпес, с которым боролась почти год, тоже исчез. Уехала в отпуск, 3 недели ничего не принимала — не вернулся!",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "sanqing-3",
+      "content_key": "review/sanqing-3/original",
+      "public_title": "Кашель уменьшился за несколько дней",
+      "public_body": "Кашель мучил. 3 коробки Саньцин — через несколько дней стало лучше, кашель уменьшился.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "elixir-sanqing"
+      ],
+      "source_index": 145,
+      "source_section": "Элексир Санцынь",
+      "source_heading": "#577",
+      "source_name": "",
+      "site_text": "Кашель мучил. 3 коробки Саньцин — через несколько дней стало лучше, кашель уменьшился.",
+      "raw": "Кашель мучил. 3 коробки Саньцин — через несколько дней стало лучше, кашель уменьшился.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sanqing-4",
+      "content_key": "review/sanqing-4/original",
+      "public_title": "Моя скорая помощь",
+      "public_body": "Саньцин — моя скорая помощь. Помог избавиться от кашля и герпеса. Держу дома всегда.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "elixir-sanqing"
+      ],
+      "source_index": 146,
+      "source_section": "Элексир Санцынь",
+      "source_heading": "#578",
+      "source_name": "",
+      "site_text": "Саньцин — моя скорая помощь. Помог избавиться от кашля и герпеса. Держу дома всегда.",
+      "raw": "Саньцин — моя скорая помощь. Помог избавиться от кашля и герпеса. Держу дома всегда.",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "sanqing-5",
+      "content_key": "review/sanqing-5/original",
+      "public_title": "Герпес появляется всё реже (Саньцин + палантин)",
+      "public_body": "Герпес беспокоил постоянно. Начал пить эликсир Саньцин и укрываться палантином. Через несколько месяцев — герпес появляется всё реже.",
+      "public_author": "Игорь Б.",
+      "public_city": "",
+      "public_tags": [
+        "elixir-sanqing",
+        "palantin"
+      ],
+      "source_index": 131,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#558",
+      "source_name": "Игорь Б.",
+      "site_text": "Герпес беспокоил постоянно — один проходил, другой появлялся. Начал пить эликсир Саньцин и укрываться палантином для снятия дискомфорта. Через несколько месяцев — герпес появляется всё реже. Палантин снимает неприятные ощущения",
+      "raw": "Герпес беспокоил постоянно — один проходил, другой появлялся. Начал пить эликсир Саньцин и укрываться палантином для снятия дискомфорта. Через несколько месяцев — герпес появляется всё реже. Палантин снимает неприятные ощущения",
+      "raw_field": "site_fallback",
+      "status": "shared_cross_category",
+      "note": "Та же история Игоря Б. (Саньцин + палантин), укороченная карточка в категории Саньцин. RAW берётся из блока, уже сверенного с palantin-4."
+    },
+    {
+      "id": "liuwei-1",
+      "content_key": "review/liuwei-1/original",
+      "public_title": "Шум в ушах пропал за 3 дня",
+      "public_body": "Самочувствие было неважным — шум в ушах, тяжесть. Как только начала пить чай Лювей — за 3 дня стало заметно лучше. Шум в ушах пропал, появилась лёгкость и хорошее настроение.",
+      "public_author": "Светлана",
+      "public_city": "Знаменка",
+      "public_tags": [
+        "liuwei-tea"
+      ],
+      "source_index": 147,
+      "source_section": "Чай Лювей",
+      "source_heading": "#581",
+      "source_name": "Светлана, Знаменка",
+      "site_text": "Самочувствие было неважным — шум в ушах, тяжесть. Как только начала пить чай Лювей — за 3 дня стало заметно лучше. Шум в ушах пропал, появилась лёгкость и хорошее настроение. Пью дальше — нравится эффект!",
+      "raw": "Самочувствие было неважным — шум в ушах, тяжесть. Как только начала пить чай Лювей — за 3 дня стало заметно лучше. Шум в ушах пропал, появилась лёгкость и хорошее настроение. Пью дальше — нравится эффект!",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "liuwei-2",
+      "content_key": "review/liuwei-2/original",
+      "public_title": "-20 кг за полгода",
+      "public_body": "За полгода — отёки ушли, сбросила 20 кг. Самочувствие заметно улучшилось.",
+      "public_author": "Галина Ш.",
+      "public_city": "",
+      "public_tags": [
+        "liuwei-tea"
+      ],
+      "source_index": 148,
+      "source_section": "Чай Лювей",
+      "source_heading": "#585",
+      "source_name": "Галина Ш.",
+      "site_text": "За полгода — отёки ушли, сбросила 20 кг. Самочувствие заметно улучшилось",
+      "raw": "За полгода — отёки ушли, сбросила 20 кг. Самочувствие заметно улучшилось",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "liuwei-3",
+      "content_key": "review/liuwei-3/original",
+      "public_title": "Приливы жара ушли (палантин + чай)",
+      "public_body": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше.",
+      "public_author": "Ирина",
+      "public_city": "",
+      "public_tags": [
+        "liuwei-tea",
+        "palantin"
+      ],
+      "source_index": 133,
+      "source_section": "Энергетический палантин",
+      "source_heading": "#406 → Палантин (кросс-продукт)",
+      "source_name": "Ирина",
+      "site_text": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше",
+      "raw": "Сплю в палантине — приливы жара ушли. Пью чай Лювей — тоже помогает. Общее самочувствие заметно лучше",
+      "raw_field": "site_fallback",
+      "status": "exact_after_name_strip",
+      "note": ""
+    },
+    {
+      "id": "liuwei-4",
+      "content_key": "review/liuwei-4/original",
+      "public_title": "Про операцию забыли (БЭМ + чай)",
+      "public_body": "Маме 69 лет, колени сильно болели. Массаж БЭМ, плюс Линчжи, чай Лювей, Спирулина. Через 5 месяцев — про операцию забыли.",
+      "public_author": "Оюна Г.",
+      "public_city": "Загустай",
+      "public_tags": [
+        "liuwei-tea",
+        "magic-foherb",
+        "lingzhi",
+        "spirulina"
+      ],
+      "source_index": 95,
+      "source_section": "БЭМ Magic FoHerb",
+      "source_heading": "#451",
+      "source_name": "Оюна Гаврилова, Загустай",
+      "site_text": "Маме 69 лет, колени сильно болели. Уже готовилась к серьёзной процедуре. Решили попробовать массаж БЭМ. Один раз сделали — мама стала легко ходить, нога не болит. Продолжили массаж, добавили Линчжи, чай Лювей, Спирулину. Через 5 месяцев — про процедуру забыли. Результат отличный! Оюна Г., Загустай",
+      "raw": "Маме 69 лет, колени сильно болели. Уже готовилась к серьёзной процедуре. Решили попробовать массаж БЭМ. Один раз сделали — мама стала легко ходить, нога не болит. Продолжили массаж, добавили Линчжи, чай Лювей, Спирулину. Через 5 месяцев — про процедуру забыли. Результат отличный! Оюна Г., Загустай",
+      "raw_field": "site_fallback",
+      "status": "shared_cross_category",
+      "note": "Та же Оюна Г. / мама 69 лет / БЭМ + Линчжи + Лювей + Спирулина. Укороченная карточка в чае Лювей. RAW из блока bem-6."
+    },
+    {
+      "id": "liuwei-5",
+      "content_key": "review/liuwei-5/original",
+      "public_title": "Наш волшебный напиток (пептиды + чай)",
+      "public_body": "Сын — сильные боли в животе. Вечером дала пептиды и чай. Через 5 минут — встал и начал ходить, боли прошли, появился аппетит.",
+      "public_author": "",
+      "public_city": "",
+      "public_tags": [
+        "liuwei-tea",
+        "soy-peptide"
+      ],
+      "source_index": 124,
+      "source_section": "Соевые пептиды",
+      "source_heading": "#542",
+      "source_name": "",
+      "site_text": "Сын приехал на выходные, начались сильные боли в животе. Весь день лежал. Вечером дала наши пептиды. Не прошло и 5 минут — встал и начал ходить, боли прошли. Через 5 минут появился аппетит. Теперь пептиды — наш волшебный напиток.",
+      "raw": "Сын приехал на выходные, начались сильные боли в животе. Весь день лежал. Вечером дала наши пептиды. Не прошло и 5 минут — встал и начал ходить, боли прошли. Через 5 минут появился аппетит. Теперь пептиды — наш волшебный напиток.",
+      "raw_field": "site_fallback",
+      "status": "shared_cross_category",
+      "note": "Тот же отзыв про сына и пептиды («волшебный напиток»). Карточка Лювей добавляет «и чай»; исходный блок — про пептиды. RAW из блока peptide-3."
+    },
+    {
+      "id": "socks-1",
+      "content_key": "review/socks-1/original",
+      "public_title": "Три дня — и не пахнут",
+      "public_body": "Купила мужу носки Health Priority. Он мне говорит: по 3 дня не меняет — и запаха нет! Сама проверила: поднесла к носу трёхдневные носки — не пахнут! Теперь можно ходить в гости и снимать обувь без страха.",
+      "public_author": "Клавдия",
+      "public_city": "Якутск",
+      "public_tags": [
+        "graphene-socks"
+      ],
+      "source_index": 153,
+      "source_section": "Малые категории",
+      "source_heading": "#590 — Клавдия, Якутск",
+      "source_name": "",
+      "site_text": "Купила мужу носки с графеном. Он мне говорит: по 3 дня не меняет — и запаха нет! Сама проверила: поднесла к носу трёхдневные носки — НЕ ПАХНУТ! Теперь можно ходить в гости и снимать обувь без страха. Клавдия, Якутск",
+      "raw": "Купила мужу носки с графеном. Он мне говорит: по 3 дня не меняет — и запаха нет! Сама проверила: поднесла к носу трёхдневные носки — НЕ ПАХНУТ! Теперь можно ходить в гости и снимать обувь без страха. Клавдия, Якутск",
+      "raw_field": "site_fallback",
+      "status": "verified_product_name_drift",
+      "note": "Та же Клавдия, Якутск: трёхдневные носки без запаха. Карточка: «Health Priority»; «Для сайта»: «носки с графеном». Оригинал в файле пустой — в ключ идёт текст «Для сайта»."
+    },
+    {
+      "id": "candy-1",
+      "content_key": "review/candy-1/original",
+      "public_title": "Боль в горле исчезла к концу дня",
+      "public_body": "У мужа сильно болело горло. Дала 4 леденца из спирулины вечером, на работу взял ещё 6. К концу дня боль полностью исчезла!",
+      "public_author": "Нина Д.",
+      "public_city": "",
+      "public_tags": [
+        "spirulina-candy"
+      ],
+      "source_index": 155,
+      "source_section": "Малые категории",
+      "source_heading": "#592 — Нина Д.",
+      "source_name": "",
+      "site_text": "У мужа сильно болело горло. Дала 4 леденца из спирулины вечером, на работу взял ещё 6. К концу дня боль полностью исчезла! Нина Д.",
+      "raw": "У мужа сильно болело горло. Дала 4 леденца из спирулины вечером, на работу взял ещё 6. К концу дня боль полностью исчезла! Нина Д.",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    },
+    {
+      "id": "mask-1",
+      "content_key": "review/mask-1/original",
+      "public_title": "Сосудистая сеточка ушла на 90%",
+      "public_body": "Много лет на лице была заметная сосудистая сеточка — перепробовала всё, тратила огромные деньги. Взяла ночную маску и лимфодренажный тоник. 70% сеточки ушло в первую неделю! Через месяц — 90%. Косметика невероятная!",
+      "public_author": "Елена",
+      "public_city": "",
+      "public_tags": [
+        "anti-aging-mask"
+      ],
+      "source_index": 156,
+      "source_section": "Малые категории",
+      "source_heading": "#593 — Елена",
+      "source_name": "",
+      "site_text": "Много лет на лице была заметная сосудистая сеточка — перепробовала всё, тратила огромные деньги. Взяла ночную маску и лимфодренажный тоник. 70% сеточки ушло в первую неделю! Через месяц — 90%. Косметика невероятная! Елена",
+      "raw": "Много лет на лице была заметная сосудистая сеточка — перепробовала всё, тратила огромные деньги. Взяла ночную маску и лимфодренажный тоник. 70% сеточки ушло в первую неделю! Через месяц — 90%. Косметика невероятная! Елена",
+      "raw_field": "site_fallback",
+      "status": "prefix_or_contains",
+      "note": ""
+    }
+  ]
+}

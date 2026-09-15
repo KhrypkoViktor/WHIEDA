@@ -1,0 +1,7 @@
+reply_id	intent	question_examples	answer_text	fact_ids	source_ref	owner_status	answer_length
+CPR-001	what_is_whieda	что такое WHIEDA | расскажи о компании | кто такие whieda			qa/company_knowledge/COMPANY_INFORMATION_REQUEST_FOR_OWNER.md	pending_owner	short
+CPR-002	company_activity	чем занимается компания | чем занимается whieda			qa/company_knowledge/COMPANY_INFORMATION_REQUEST_FOR_OWNER.md	pending_owner	short
+CPR-003	history_founding	история whieda | когда основана | год основания		CK-HIS-008	qa/company_knowledge/COMPANY_INFORMATION_REQUEST_FOR_OWNER.md	pending_owner	short
+CPR-004	production_location	где производят | где завод | страна производства		CK-PRD-037	qa/company_knowledge/COMPANY_INFORMATION_REQUEST_FOR_OWNER.md	pending_owner	short
+CPR-005	public_representatives	кто представляет компанию | публичные лидеры whieda			qa/company_knowledge/COMPANY_INFORMATION_REQUEST_FOR_OWNER.md	pending_owner	short
+CPR-006	news_and_events	где новости | мероприятия whieda | официальный канал	Здоровье и процветание WHIEDA: Общая презентация для партнёров; Минск, Кальварийская, 4 (вход с ул. М. Танка); расписание FREQ=WEEKLY;BYDAY=TH; уточните у наставника WHIEDA World Club: Официальный Telegram-канал WHIEDA — https://t.me/Whieda_world_club	CK-EVT-026|CK-EVT-027	n8n/live-exports/structured-master/20260811T172219Z/events.tsv	accepted	full

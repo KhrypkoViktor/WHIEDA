@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "source_report_run_id": "20260813T143036Z-b706fbfa",
+  "classifications": {
+    "GOLD-SMOKE-P0-001": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-ACTIVATOR-EXACT",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "Core returns clarification (ambiguous_product); golden expects structured_card for bare «активатор».",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-SMOKE-P0-001",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl"
+    },
+    "GOLD-NBZ-NBZ-P0-006": {
+      "classification": "core_bug",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "Expected clarification/unknown_product; Core returned knowledge_gap.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-NBZ-NBZ-P0-006",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "report_run_id": "20260813T143036Z-b706fbfa"
+    },
+    "GOLD-NBZ-NBZ-P0-014": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-PHOTO-CARD-POLICY",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "structured_card returned with photo_url while expected_media.photo disallows unexpected photo.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-NBZ-NBZ-P0-014",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl"
+    },
+    "GOLD-NBZ-NBZ-P1-022": {
+      "classification": "core_bug",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "Expected knowledge_gap; Core returned clarification.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-NBZ-NBZ-P1-022",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "report_run_id": "20260813T143036Z-b706fbfa"
+    },
+    "GOLD-NBZ-NBZ-P1-023": {
+      "classification": "core_bug",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "Expected knowledge_gap; Core returned clarification.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-NBZ-NBZ-P1-023",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "report_run_id": "20260813T143036Z-b706fbfa"
+    },
+    "GOLD-EXP-TG-CART-CALC-REMOVE-T2": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-CART-REMOVE-WITHOUT-SESSION",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "Remove turn without cart context returns clarification, not structured_cart with Magic Foherb.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-EXP-TG-CART-CALC-REMOVE-T2",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl"
+    },
+    "GOLD-EXP-TG-PRES-ACTIVATOR-CHOICE-T2": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-ACTIVATOR-EXACT",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "Presentation flow turn expects card; Core clarifies base vs PRO.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-EXP-TG-PRES-ACTIVATOR-CHOICE-T2",
+      "source_ref": "whieda_telegram_golden_flows_v1.jsonl"
+    },
+    "GOLD-EXP-TG-SVC-CATALOG-SHOW-T1": {
+      "classification": "surface_mismatch",
+      "priority": "P1",
+      "execution_surface": "telegram_text",
+      "evidence": "Service catalog show route belongs to Telegram structured menu, not advisor HTTP answer_mode.",
+      "repro": "qa/telegram_navigation/run_telegram_navigation.py --offline",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "telegram_handler_ref": "qa/telegram_navigation/"
+    },
+    "GOLD-EXP-TG-SVC-ACTIVATOR-PRO-T2": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-PHOTO-CARD-POLICY",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "structured_card with unexpected photo on PRO service turn.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-EXP-TG-SVC-ACTIVATOR-PRO-T2",
+      "source_ref": "whieda_telegram_golden_flows_v1.jsonl"
+    },
+    "GOLD-BUS-EXTRA-01": {
+      "classification": "surface_mismatch",
+      "priority": "P0",
+      "execution_surface": "telegram_text",
+      "evidence": "Reply-keyboard label «📈 Бизнес» is Telegram text surface, not advisor HTTP structured_business.",
+      "repro": "qa/telegram_navigation/run_telegram_navigation.py --offline",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "telegram_handler_ref": "qa/telegram_navigation/"
+    },
+    "GOLD-BUS-EXTRA-03": {
+      "classification": "core_bug",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "structured_business_faq answer missing required token «Step».",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-BUS-EXTRA-03",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl",
+      "report_run_id": "20260813T143036Z-b706fbfa"
+    },
+    "GOLD-BUS-EXTRA-04": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-PV-IN-PRODUCT-QUESTION",
+      "priority": "P0",
+      "execution_surface": "advisor_http",
+      "evidence": "Core returned structured_price; golden expects structured_business_faq with PV explainer.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-BUS-EXTRA-04",
+      "source_ref": "whieda_telegram_golden_cases_v1.jsonl"
+    },
+    "GOLD-SMOKE-FLOW-ctx-pro-T3": {
+      "classification": "core_bug",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "Context last_product_sku LOCAL-PRO vs expected EU-N000031-25 after PRO price turn.",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-SMOKE-FLOW-ctx-pro-T3",
+      "source_ref": "whieda_telegram_golden_flows_v1.jsonl",
+      "report_run_id": "20260813T143036Z-b706fbfa"
+    },
+    "GOLD-CONV-CONV-F34-events-T1": {
+      "classification": "policy_decision_required",
+      "policy_id": "POL-EVENT-EFIR-WORDING",
+      "priority": "P1",
+      "execution_surface": "advisor_http",
+      "evidence": "structured_event answer lacks must_contain «эфир»; master event title uses «презентация».",
+      "repro": "python qa/telegram_golden/run_telegram_golden.py --live --case-id GOLD-CONV-CONV-F34-events-T1",
+      "source_ref": "whieda_telegram_golden_flows_v1.jsonl"
+    }
+  }
+}

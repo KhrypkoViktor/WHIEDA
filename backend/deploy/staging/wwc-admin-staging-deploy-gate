@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# WWC admin-staging static deploy gate (P0.3.5.5). Forced command for wwcdeploy only.
+set -euo pipefail
+
+STAGING_STATIC_DIR="/var/www/admin-staging-wwc-best"
+TEMP_TGZ_RE="^${STAGING_STATIC_DIR}/cabinet-staging\.[0-9a-f]{16}\.tgz$"
+# Keep expressions in variables: unescaped spaces inside a [[ =~ literal ]] are
+# parsed by Bash as separate tokens before the regular expression is evaluated.
+SCP_RE='^scp( -p)? -t (.+)$'
+SHA256_RE='^sha256sum (.+)$'
+TAR_RE="^tar -xzf (.+) -C ${STAGING_STATIC_DIR}$"
+RM_RE='^rm -f (.+)$'
+
+reject() {
+  printf 'deploy_gate_rejected: %s\n' "$1" >&2
+  exit 1
+}
+
+cmd="${SSH_ORIGINAL_COMMAND:-}"
+cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+cmd="${cmd%"${cmd##*[![:space:]]}"}"
+
+if [[ -z "$cmd" ]]; then
+  reject "empty_command"
+fi
+
+validate_temp_path() {
+  local path="$1"
+  if [[ ! "$path" =~ $TEMP_TGZ_RE ]]; then
+    reject "wrong_temp_name"
+  fi
+}
+
+if [[ "$cmd" == "mkdir -p ${STAGING_STATIC_DIR}" ]]; then
+  exec /bin/mkdir -p "$STAGING_STATIC_DIR"
+fi
+
+if [[ "$cmd" =~ $SCP_RE ]]; then
+  remote_path="${BASH_REMATCH[2]}"
+  validate_temp_path "$remote_path"
+  if [[ "$cmd" == "scp -p -t "* ]]; then
+    exec /usr/bin/scp -p -t "$remote_path"
+  fi
+  exec /usr/bin/scp -t "$remote_path"
+fi
+
+if [[ "$cmd" =~ $SHA256_RE ]]; then
+  remote_path="${BASH_REMATCH[1]}"
+  validate_temp_path "$remote_path"
+  exec /usr/bin/sha256sum "$remote_path"
+fi
+
+if [[ "$cmd" =~ $TAR_RE ]]; then
+  remote_path="${BASH_REMATCH[1]}"
+  validate_temp_path "$remote_path"
+  if ! /usr/bin/python3 "${ARCHIVE_VERIFY_PATH:-/usr/local/libexec/wwc-admin-staging-archive-verify}" "$remote_path"; then
+    reject "unsafe_archive"
+  fi
+  exec /bin/tar -xzf "$remote_path" -C "$STAGING_STATIC_DIR" --no-same-owner --no-same-permissions
+fi
+
+if [[ "$cmd" =~ $RM_RE ]]; then
+  remote_path="${BASH_REMATCH[1]}"
+  validate_temp_path "$remote_path"
+  exec /bin/rm -f "$remote_path"
+fi
+
+if [[ "$cmd" == *";"* || "$cmd" == *"&&"* || "$cmd" == *"||"* || "$cmd" == *"|"* ]]; then
+  reject "shell_operator"
+fi
+if [[ "$cmd" == *'$('* || "$cmd" == *'${'* || "$cmd" == *'`'* || "$cmd" == *'()'* ]]; then
+  reject "command_substitution"
+fi
+if [[ "$cmd" == *".."* ]]; then
+  reject "path_traversal"
+fi
+if [[ "$cmd" == *"*"* || "$cmd" == *"?"* || "$cmd" == *"["* ]]; then
+  reject "wildcard"
+fi
+if [[ "$cmd" == *"/etc/"* ]]; then
+  reject "etc_path"
+fi
+if [[ "$cmd" =~ rm[[:space:]]+-rf ]]; then
+  reject "rm_rf"
+fi
+if [[ "$cmd" =~ ^(bash|sh|zsh|dash|ksh|csh|tcsh)([[:space:]]|$) ]]; then
+  reject "interactive_shell"
+fi
+
+reject "command_not_allowed"

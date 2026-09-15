@@ -1,0 +1,24 @@
+{"flow_id": "TG-NAV-MENU-6", "category": "menu", "name": "Six menu labels", "checks": ["menu_labels_count"]}
+{"flow_id": "TG-NAV-MENU-STABLE", "category": "menu", "name": "Stable menu labels", "checks": ["menu_labels_stable"]}
+{"flow_id": "TG-NAV-MENU-PRODUCTS", "category": "menu", "name": "Products label intent", "checks": ["menu_products_intent"]}
+{"flow_id": "TG-NAV-MENU-CALC", "category": "menu", "name": "Calculator label intent", "checks": ["menu_calculator_intent"]}
+{"flow_id": "TG-NAV-MENU-BIZ", "category": "menu", "name": "Business label intent", "checks": ["menu_business_intent"]}
+{"flow_id": "TG-NAV-MENU-CO", "category": "menu", "name": "Company label intent", "checks": ["menu_company_intent"]}
+{"flow_id": "TG-NAV-MENU-BASKET", "category": "menu", "name": "Basket label intent", "checks": ["menu_basket_intent"]}
+{"flow_id": "TG-NAV-MENU-EVENTS", "category": "menu", "name": "Events label intent", "checks": ["menu_events_intent"]}
+{"flow_id": "TG-NAV-CAT-PAGE1", "category": "catalog_browse", "name": "First catalog page", "checks": ["catalog_page_one"]}
+{"flow_id": "TG-NAV-CAT-MAX8", "category": "catalog_browse", "name": "Max eight products", "checks": ["catalog_max_eight"]}
+{"flow_id": "TG-NAV-CAT-NOBACK-P1", "category": "catalog_browse", "name": "Page one no back", "checks": ["catalog_first_no_back"]}
+{"flow_id": "TG-NAV-CAT-NONEXT-LAST", "category": "catalog_browse", "name": "Last page no next", "checks": ["catalog_last_no_next"]}
+{"flow_id": "TG-NAV-CAT-SKU-BUTTONS", "category": "catalog_browse", "name": "SKU action buttons", "checks": ["catalog_sku_actions"]}
+{"flow_id": "TG-NAV-CB-VALID-PAGE", "category": "callback_routing", "name": "Valid page callback", "checks": ["callback_page_valid"]}
+{"flow_id": "TG-NAV-CB-VALID-SKU", "category": "callback_routing", "name": "Valid SKU callback", "checks": ["callback_sku_valid"]}
+{"flow_id": "TG-NAV-CB-VALID-ACT", "category": "callback_routing", "name": "Valid action callback", "checks": ["callback_action_valid"]}
+{"flow_id": "TG-NAV-CB-INVALID", "category": "callback_routing", "name": "Invalid callback safe", "checks": ["callback_invalid_safe"]}
+{"flow_id": "TG-NAV-CB-OVER64", "category": "callback_routing", "name": "Oversized callback safe", "checks": ["callback_oversized_safe"]}
+{"flow_id": "TG-NAV-CB-SQLINJ", "category": "callback_routing", "name": "No SQL injection path", "checks": ["callback_no_sql_injection"]}
+{"flow_id": "TG-NAV-FT-PRODUCTS", "category": "free_text", "name": "Products label text", "checks": ["free_text_products"]}
+{"flow_id": "TG-NAV-FT-CATALOG-ASK", "category": "free_text", "name": "Catalog list phrase", "checks": ["free_text_catalog_phrase"]}
+{"flow_id": "TG-NAV-FT-GREET", "category": "free_text", "name": "Greeting unchanged", "checks": ["free_text_greeting"]}
+{"flow_id": "TG-NAV-FT-CAP", "category": "free_text", "name": "Capabilities unchanged", "checks": ["free_text_capabilities"]}
+{"flow_id": "TG-NAV-PF-CARD", "category": "photo_first", "name": "Card action photo-first", "checks": ["photo_first_card_action"]}

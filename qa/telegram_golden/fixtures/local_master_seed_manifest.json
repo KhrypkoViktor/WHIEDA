@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "generated_from": "n8n/live-exports/structured-master/20260810T083328Z",
+  "snapshot_captured_at": "2026-08-10T08:33:28.530164+00:00",
+  "snapshot_manifest_sha256": "4cf9f57f29d3aaf26aeb41602df6346a3e4344a95529d14c82ad27b58703fc14",
+  "fixture_sql_sha256": "87fdca4d66a27c969b0288ec6c959d1b4921ea08a2ada8d8299f4ba9c8b36984",
+  "tenant": "whieda",
+  "golden_snapshot_skus": [
+    "D013",
+    "D014",
+    "EU-N000021-24",
+    "EU-N000024-24",
+    "EU-N000031-25",
+    "F001-02",
+    "F002-02",
+    "F003-02",
+    "F036-00",
+    "F038-00",
+    "F071-00",
+    "M014-00",
+    "M015-00"
+  ],
+  "golden_sku_coverage": {
+    "products_present": [
+      "D013",
+      "D014",
+      "EU-N000021-24",
+      "EU-N000024-24",
+      "EU-N000031-25",
+      "F001-02",
+      "F002-02",
+      "F003-02",
+      "F036-00",
+      "F038-00",
+      "F071-00",
+      "M014-00",
+      "M015-00"
+    ],
+    "products_missing": [],
+    "cards_present": [
+      "D013",
+      "D014",
+      "EU-N000021-24",
+      "EU-N000024-24",
+      "EU-N000031-25",
+      "F001-02",
+      "F002-02",
+      "F003-02",
+      "F036-00",
+      "F038-00",
+      "F071-00",
+      "M014-00",
+      "M015-00"
+    ],
+    "cards_missing": []
+  },
+  "layer_stats": {
+    "products": {
+      "source_rows": 40,
+      "accepted": 40,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "aliases": {
+      "source_rows": 120,
+      "accepted": 118,
+      "deduped": 2,
+      "rejected": 0,
+      "rejects": []
+    },
+    "product_cards": {
+      "source_rows": 23,
+      "accepted": 23,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "resources": {
+      "source_rows": 239,
+      "accepted": 176,
+      "deduped": 0,
+      "rejected": 63,
+      "rejects": [
+        {
+          "locator": "resources.tsv:47",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:48",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:49",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:50",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:52",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:53",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:54",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:55",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:56",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:57",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:58",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:59",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:65",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:66",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:67",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:68",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:69",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:70",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:72",
+          "reason": "inactive resource"
+        },
+        {
+          "locator": "resources.tsv:73",
+          "reason": "inactive resource"
+        }
+      ]
+    },
+    "business_faq": {
+      "source_rows": 13,
+      "accepted": 13,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "business_objections": {
+      "source_rows": 23,
+      "accepted": 6,
+      "deduped": 0,
+      "rejected": 17,
+      "rejects": [
+        {
+          "locator": "business_objections.tsv:8",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:9",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:10",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:11",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:12",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:13",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:14",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:15",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:16",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:17",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:18",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:19",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:20",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:21",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:22",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:23",
+          "reason": "inactive objection"
+        },
+        {
+          "locator": "business_objections.tsv:24",
+          "reason": "inactive objection"
+        }
+      ]
+    },
+    "capability_responses": {
+      "source_rows": 4,
+      "accepted": 4,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "clarification_prompts": {
+      "source_rows": 7,
+      "accepted": 7,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "product_comparisons": {
+      "source_rows": 1,
+      "accepted": 1,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "starter_basket_templates": {
+      "source_rows": 6,
+      "accepted": 6,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "promotions": {
+      "source_rows": 9,
+      "accepted": 9,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "events": {
+      "source_rows": 1,
+      "accepted": 1,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    },
+    "community_resources": {
+      "source_rows": 1,
+      "accepted": 1,
+      "deduped": 0,
+      "rejected": 0,
+      "rejects": []
+    }
+  },
+  "source_layer_sha256": {
+    "products": "1f71422a956f63350063223513fec1a0b3a65eb8773bb58bebecb1c6b658da83",
+    "aliases": "3a58c76240c362e203bbb18eade7d486f14b5a02cd8120b6af5e17da2444e5a0",
+    "product_cards": "db30e469fa85cf8ed522b582a65d916747fe25c9b2577f666469181a68c66dfb",
+    "resources": "d9f0ac626da3414db4e9593819e7345efa3019a811ca6a6442cbfbf48e4c82e6",
+    "business_faq": "e628f82d5a74321a7466a72141f70c45948a93dd554f1a60075e3217e46339c3",
+    "business_objections": "dfae4b3ba94cc9a907188f689a47841d7f0c081ef8fc3c23d98f601306605539",
+    "capability_responses": "e09b6ba017cf268a33a31d65855a35cdacf67c235b404cb5284ee7d2ba207dd9",
+    "clarification_prompts": "30f3757c8838619bda7eafbf682db22743c5243dc58b4567cad455abe354a9cd",
+    "product_comparisons": "2f31b476b8a37f15b88fc398cfd9d206369bae6a7803d5482f0608f3c34535fa",
+    "starter_basket_templates": "61350fe1f1dcae4d5dd168044c895dd1a3e8f491b8dfe90f46dc250a3ffe41f2",
+    "promotions": "8f7d9883f22346d992831d1d33cadd60ed2b9f3a19d0400fbbbdb4429fbc058c",
+    "events": "c8fc89140068476b61514d81213f442788158ecadc3420d46f5218b2b50af195",
+    "community_resources": "9718a28c31bd01ef2922ea151e259d9b7c934db7d9499631be0a3563e142b38c"
+  },
+  "unmapped_source_layers": [
+    "intent_registry",
+    "partners_ref",
+    "structure_owners",
+    "users_access"
+  ]
+}

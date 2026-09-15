@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "updated_at": "2026-08-13",
+  "decisions": [
+    {
+      "policy_id": "POL-ACTIVATOR-EXACT",
+      "title": "Exact «активатор» without PRO qualifier",
+      "status": "pending_owner",
+      "question": "Should bare «активатор» return structured_card for M015-00 or clarification asking base vs PRO?",
+      "related_case_ids": ["GOLD-SMOKE-P0-001", "GOLD-EXP-TG-PRES-ACTIVATOR-CHOICE-T2"],
+      "source_refs": [
+        "n8n/live-exports/structured-master/20260810T083328Z/aliases.tsv",
+        "qa/telegram_golden/whieda_telegram_golden_cases_v1.jsonl"
+      ],
+      "notes": "Master alias notes say clarify when PRO not specified; smoke case expects card."
+    },
+    {
+      "policy_id": "POL-PARTNER-YO-E",
+      "title": "«партнер» vs «партнёр» in price assertions",
+      "status": "pending_owner",
+      "question": "Treat yo/e variants as equivalent in must_contain for partner price lines?",
+      "related_case_ids": [],
+      "source_refs": ["qa/telegram_golden/lab/text_equiv.py"],
+      "notes": "Assertion layer may normalize ё→е; owner confirms for marketing copy."
+    },
+    {
+      "policy_id": "POL-HISTORICAL-SKU-CONTEXT",
+      "title": "Historical LOCAL-* SKU in flow context expectations",
+      "status": "pending_owner",
+      "question": "Should ctx-pro flow expect EU-N000031-25 while synthetic LOCAL-PRO remains in DB?",
+      "related_case_ids": ["GOLD-SMOKE-FLOW-ctx-pro-T3"],
+      "source_refs": [
+        "qa/telegram_golden/whieda_telegram_golden_flows_v1.jsonl",
+        "postgres/scripts/staging_seed_whieda_advisor_local_v1.sql"
+      ],
+      "notes": "Master fixture upserts real SKU; synthetic LOCAL-PRO may still shadow context."
+    },
+    {
+      "policy_id": "POL-PHOTO-CARD-POLICY",
+      "title": "Photo allow/required/none on structured_card",
+      "status": "pending_owner",
+      "question": "When is unexpected photo_url a FAIL vs allowed on card/product detail?",
+      "related_case_ids": [
+        "GOLD-NBZ-NBZ-P0-014",
+        "GOLD-EXP-TG-SVC-ACTIVATOR-PRO-T2"
+      ],
+      "source_refs": ["qa/telegram_golden/whieda_telegram_golden_cases_v1.jsonl"],
+      "notes": "Card may include primary_image_url while expected_media.photo is none/allow."
+    },
+    {
+      "policy_id": "POL-CART-REMOVE-WITHOUT-SESSION",
+      "title": "«убери активатор» without persisted cart session",
+      "status": "pending_owner",
+      "question": "Should remove-item work on stateless HTTP session or require prior cart turn in same session?",
+      "related_case_ids": ["GOLD-EXP-TG-CART-CALC-REMOVE-T2"],
+      "source_refs": ["qa/telegram_experience/whieda_telegram_experience_flows_v1.jsonl"],
+      "notes": "Turn 2 has empty context_before in golden flow definition."
+    },
+    {
+      "policy_id": "POL-PV-IN-PRODUCT-QUESTION",
+      "title": "«сколько PV в активаторе» routing",
+      "status": "pending_owner",
+      "question": "Route to structured_price/PV line or structured_business_faq?",
+      "related_case_ids": ["GOLD-BUS-EXTRA-04"],
+      "source_refs": ["qa/telegram_golden/whieda_telegram_golden_cases_v1.jsonl"],
+      "notes": "Core returned structured_price; golden expects business FAQ."
+    },
+    {
+      "policy_id": "POL-EVENT-EFIR-WORDING",
+      "title": "Must-contain «эфир» for structured_event",
+      "status": "pending_owner",
+      "question": "Require literal «эфир» when event title uses «презентация» or other wording?",
+      "related_case_ids": ["GOLD-CONV-CONV-F34-events-T1"],
+      "source_refs": [
+        "n8n/live-exports/structured-master/20260810T083328Z/events.tsv",
+        "qa/telegram_golden/whieda_telegram_golden_cases_v1.jsonl"
+      ],
+      "notes": "Master event EVT-BY-MINSK-WORLD-CLUB-THU-1800 title lacks «эфир»."
+    }
+  ]
+}

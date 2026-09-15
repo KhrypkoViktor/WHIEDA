@@ -1,0 +1,716 @@
+{
+  "name": "WHIEDA Structured Sync Cron",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whieda-structured-sync-v1",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "whieda-sync-webhook",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{ \"status\": \"accepted\" }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "whieda-sync-ack",
+      "name": "Respond: 200 ACK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        -320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1035748906",
+        "options": {}
+      },
+      "id": "whieda-sync-http-products",
+      "name": "HTTP: Products TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -272,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001001",
+        "options": {}
+      },
+      "id": "whieda-sync-http-aliases",
+      "name": "HTTP: Aliases TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -48,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001005",
+        "options": {}
+      },
+      "id": "whieda-sync-http-resources",
+      "name": "HTTP: Resources TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        176,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001006",
+        "options": {}
+      },
+      "id": "whieda-sync-http-cards",
+      "name": "HTTP: Product Cards TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        400,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001008",
+        "options": {}
+      },
+      "id": "whieda-sync-http-product-details",
+      "name": "HTTP: Product Details TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001007",
+        "options": {}
+      },
+      "id": "whieda-sync-http-solution-bundles",
+      "name": "HTTP: Solution Bundles TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        848,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1415928637",
+        "options": {}
+      },
+      "id": "whieda-sync-http-product-comparisons",
+      "name": "HTTP: Product Comparisons TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1072,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=161104189",
+        "options": {}
+      },
+      "id": "whieda-sync-http-users-access",
+      "name": "HTTP: Users Access TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1296,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=86214234",
+        "options": {}
+      },
+      "id": "whieda-sync-http-structure-owners",
+      "name": "HTTP: Structure Owners TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1520,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=43717728",
+        "options": {}
+      },
+      "id": "whieda-sync-http-business-objections",
+      "name": "HTTP: Business Objections TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1744,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=28151102",
+        "options": {}
+      },
+      "id": "whieda-sync-http-business-faq",
+      "name": "HTTP: Business FAQ TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1968,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1621722235",
+        "options": {}
+      },
+      "id": "whieda-sync-http-promotions",
+      "name": "HTTP: Promotions TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2192,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1468974041",
+        "options": {}
+      },
+      "id": "whieda-sync-http-recommendation-rules",
+      "name": "HTTP: Product Recommendation Rules TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2416,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1974396045",
+        "options": {}
+      },
+      "id": "whieda-sync-http-starter-basket-templates",
+      "name": "HTTP: Starter Basket Templates TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2640,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1444298798",
+        "options": {}
+      },
+      "id": "whieda-sync-http-events",
+      "name": "HTTP: Events TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2864,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=947236678",
+        "options": {}
+      },
+      "id": "whieda-sync-http-community-resources",
+      "name": "HTTP: Community Resources TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3088,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001020",
+        "options": {}
+      },
+      "id": "whieda-sync-http-intent-registry",
+      "name": "HTTP: Intent Registry TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3312,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001021",
+        "options": {}
+      },
+      "id": "whieda-sync-http-clarification-prompts",
+      "name": "HTTP: Clarification Prompts TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3536,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=2001022",
+        "options": {}
+      },
+      "id": "whieda-sync-http-capability-responses",
+      "name": "HTTP: Capability Responses TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3760,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1160261466",
+        "options": {}
+      },
+      "id": "whieda-sync-http-canonical-questions",
+      "name": "HTTP: Canonical Questions TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3984,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://docs.google.com/spreadsheets/d/1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4/export?format=tsv&gid=1733124410",
+        "options": {}
+      },
+      "id": "whieda-sync-http-partners-ref",
+      "name": "HTTP: Partners Ref TSV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4208,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [];"
+      },
+      "id": "whieda-sync-code",
+      "name": "Code: Build Structured Sync SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4432,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query_record_running }}",
+        "options": {}
+      },
+      "id": "whieda-sync-record-running",
+      "name": "Postgres: Record Running Sync",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4656,
+        -144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "RmjHh3rdZri7axzq",
+          "name": "advisor-dev-postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $(\"Code: Build Structured Sync SQL\").first().json.query_apply_all }}",
+        "options": {}
+      },
+      "id": "whieda-sync-apply-all",
+      "name": "Postgres: Apply All Structured Layers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4880,
+        -144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "RmjHh3rdZri7axzq",
+          "name": "advisor-dev-postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Code: Build Structured Sync SQL').first().json;\nreturn [{\n  json: {\n    status: 'ok',\n    project_id: source.project_id,\n    sync_run_uuid: source.sync_run_uuid,\n    row_counts: source.row_counts,\n    sync_started_at: source.sync_started_at,\n    synced_at: new Date().toISOString(),\n  },\n}];"
+      },
+      "id": "whieda-sync-summary",
+      "name": "Code: Sync Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5104,
+        -144
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Respond: 200 ACK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond: 200 ACK": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Products TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Products TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Aliases TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Aliases TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Resources TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Resources TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Product Cards TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Product Cards TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Product Details TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Product Details TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Solution Bundles TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Solution Bundles TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Product Comparisons TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Product Comparisons TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Users Access TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Users Access TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Structure Owners TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Structure Owners TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Business Objections TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Business Objections TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Business FAQ TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Business FAQ TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Promotions TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Promotions TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Product Recommendation Rules TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Product Recommendation Rules TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Starter Basket Templates TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Starter Basket Templates TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Events TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Events TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Community Resources TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Community Resources TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Intent Registry TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Intent Registry TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Clarification Prompts TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Clarification Prompts TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Capability Responses TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Capability Responses TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Canonical Questions TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Canonical Questions TSV": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Partners Ref TSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Partners Ref TSV": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Structured Sync SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Structured Sync SQL": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Record Running Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Record Running Sync": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Apply All Structured Layers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres: Apply All Structured Layers": {
+      "main": [
+        [
+          {
+            "node": "Code: Sync Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": "__WHIEDA_SYNC_ERROR_WORKFLOW_ID__"
+  }
+}
