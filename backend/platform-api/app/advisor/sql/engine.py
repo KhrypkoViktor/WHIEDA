@@ -40,6 +40,7 @@ from app.advisor.sql.product_discovery import build_discovery_choice_response
 from app.advisor.sql.solution_bundles import (
     choose_bundle_products,
     format_solution_bundle,
+    has_specific_bundle_context,
     match_solution_bundle,
     may_match_solution_bundle,
     ordered_bundle_skus,
@@ -292,10 +293,19 @@ async def run_structured_query(
     # Bundle aliases live in the structured master sheet.  Load the small
     # active set for any meaningful query instead of maintaining a second,
     # incomplete topic list in Python.
+    # A plain product question («сколько стоит активатор клеток», «линчжи»)
+    # opens the product, not a scenario bundle that merely lists it; a bundle
+    # wins only when nothing resolves directly or the wording is a scenario
+    # («совместимость», «при плоскостопии»). Restored from 8f08a74 — the guard
+    # was lost in the 2026-09-02 consolidation restore.
     if may_match_solution_bundle(question):
         async with tenant_connection(tenant.tenant_id) as conn:
             active_bundles = await repo.load_active_solution_bundles(conn, tenant.tenant_id)
             bundle = match_solution_bundle(question, active_bundles)
+            if bundle and not has_specific_bundle_context(question):
+                direct_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+                if direct_product:
+                    bundle = None
             if bundle:
                 products = await repo.load_products_by_skus(
                     conn, tenant.tenant_id, ordered_bundle_skus(bundle)
