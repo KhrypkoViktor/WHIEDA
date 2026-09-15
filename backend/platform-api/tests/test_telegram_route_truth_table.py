@@ -90,6 +90,23 @@ async def test_ignored_group_message_delivers_nothing(whieda_bot_binding):
 
 
 @pytest.mark.asyncio
+async def test_support_forum_traffic_reaches_core(whieda_bot_binding):
+    """«/forum», messages inside a forum topic and the «Закрыть» button are the
+    only group traffic Core handles (support forum, owner 15.09.2026)."""
+    register = {"update_id": 7010, "message": {"text": "/forum", "chat": {"id": -100501, "type": "supergroup", "is_forum": True}, "from": {"id": 688931415}}}
+    topic = {"update_id": 7011, "message": {"text": "Активирую", "is_topic_message": True, "message_thread_id": 77, "chat": {"id": -100501, "type": "supergroup", "is_forum": True}, "from": {"id": 2101187096}}}
+    close = {"update_id": 7012, "callback_query": {"id": "cb", "data": "svc:close:11111111-1111-1111-1111-111111111111", "from": {"id": 2101187096}, "message": {"message_id": 5, "chat": {"id": -100501, "type": "supergroup"}}}}
+    general = {"update_id": 7013, "message": {"text": "всем привет", "chat": {"id": -100501, "type": "supergroup", "is_forum": True}, "from": {"id": 9001}}}
+    with patch("app.telegram.routes._forward_to_legacy_consultant", AsyncMock()) as legacy:
+        with patch("app.telegram.routes.process_core_telegram_update", AsyncMock()) as core:
+            for update in (register, topic, close, general):
+                await _process_telegram_update_body(whieda_bot_binding, update, "trace-forum")
+    legacy.assert_not_awaited()
+    assert core.await_count == 3
+    assert [c.args[1]["update_id"] for c in core.await_args_list] == [7010, 7011, 7012]
+
+
+@pytest.mark.asyncio
 async def test_nsp_core_never_forwards_legacy(whieda_bot_binding):
     nsp = replace(
         whieda_bot_binding,

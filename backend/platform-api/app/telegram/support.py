@@ -41,6 +41,7 @@ from app.support.service import (
     get_open_ticket_for_user,
     get_ticket,
     list_open_tickets_for_admin,
+    list_ticket_messages,
     open_or_reuse_ticket,
     record_relayed_message,
     register_forum,
@@ -97,17 +98,19 @@ OFFERS: dict[str, Offer] = {
             "Стоимость подключения — 4 490 ₽"
         ),
     ),
-    "gemini_12m": Offer(
-        code="gemini_12m",
-        button="Gemini Pro 6 900 ₽",
-        title="Gemini Pro, лицензия на 1 год",
-        price_text="6 900 ₽",
+    # Owner, 15.09.2026: the 1-year licence with a full-term guarantee is not
+    # available now; the second offer is 6 months for 3 990 ₽.
+    "gemini_6m": Offer(
+        code="gemini_6m",
+        button="Gemini Pro 3 990 ₽",
+        title="Gemini Pro, лицензия на 6 месяцев",
+        price_text="3 990 ₽",
         card=(
             "Gemini тариф Pro\n"
-            "Лицензия на 1 год\n"
+            "Лицензия на 6 месяцев\n"
             "Гарантия на весь срок подписки. Если лицензия «слетит», производим переподключение за свой счёт.\n"
             "В целом, подобные лицензии работают спокойно без сбоев у наших клиентов с начала 2026 года.\n\n"
-            "Стоимость подключения — 6 900 ₽"
+            "Стоимость подключения — 3 990 ₽"
         ),
     ),
 }
@@ -117,7 +120,7 @@ SERVICES_TEXT = (
     "В подписку входит нейросеть Gemini Pro + Nanobanana (генерация картинок) + "
     "VEO3 (видео) + 2 TB Google Drive (облачное хранилище).\n\n"
     "Тариф Pro, лицензия на 18 месяцев — 4 490 ₽, гарантия 1 месяц.\n"
-    "Тариф Pro, лицензия на 1 год — 6 900 ₽, гарантия на весь срок подписки.\n\n"
+    "Тариф Pro, лицензия на 6 месяцев — 3 990 ₽, гарантия на весь срок подписки.\n\n"
     "Выберите вариант или напишите администратору."
 )
 
@@ -126,7 +129,7 @@ def services_keyboard() -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [{"text": OFFERS["gemini_18m"].button, "callback_data": "svc:order:gemini_18m"}],
-            [{"text": OFFERS["gemini_12m"].button, "callback_data": "svc:order:gemini_12m"}],
+            [{"text": OFFERS["gemini_6m"].button, "callback_data": "svc:order:gemini_6m"}],
             [{"text": "Поддержка", "callback_data": f"svc:support:{CHANNEL_GEMINI}"}],
         ]
     }
@@ -150,6 +153,22 @@ def support_admin_id() -> int | None:
 def is_support_admin(user_id: int) -> bool:
     admin = support_admin_id()
     return admin is not None and int(user_id) == admin
+
+
+def is_support_forum_traffic(update: dict[str, Any]) -> bool:
+    """Group traffic the webhook must let through to the processor: «/forum»
+    registration, any message inside a forum topic, and the «Закрыть» button.
+    Everything else in groups stays ignored as before."""
+    callback = (update or {}).get("callback_query") or {}
+    if callback:
+        chat = (callback.get("message") or {}).get("chat") or {}
+        return chat.get("type") == "supergroup" and str(callback.get("data") or "").startswith("svc:close:")
+    message = (update or {}).get("message") or {}
+    chat = message.get("chat") or {}
+    if chat.get("type") != "supergroup":
+        return False
+    text = str(message.get("text") or message.get("caption") or "").strip()
+    return bool(message.get("is_topic_message")) or bool(_FORUM_REGISTER_RE.fullmatch(text))
 
 
 def _may_register_forum(user_id: int) -> bool:
@@ -465,6 +484,34 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
 # Forum group (one topic per ticket)
 # ----------------------------------------------------------------------------
 
+async def _move_open_tickets_to_forum(tenant: TenantContext) -> int:
+    """Tickets opened before the group existed get their topics now, with the
+    conversation so far replayed, so the administrator continues in one place.
+    Only this environment's tickets (its admin id) — the database is shared."""
+    admin = support_admin_id()
+    if admin is None:
+        return 0
+    moved = 0
+    for ticket in await list_open_tickets_for_admin(tenant.tenant_id, admin_telegram_user_id=admin, limit=50):
+        bound = await _open_forum_topic(tenant, ticket)
+        if not _in_forum(bound):
+            continue
+        what = f"Заказ: {bound['offer_title']}" if bound.get("offer_title") else "Вопрос по Gemini"
+        lines = [f"{_client_label(bound)} · {what}", ""]
+        for item in await list_ticket_messages(tenant.tenant_id, ticket_id=str(bound["ticket_id"])):
+            who = "Клиент" if item["direction"] == "user_to_admin" else "Администратор"
+            body = str(item.get("text") or "").strip() or ("(вложение)" if item.get("telegram_file_id") else "")
+            if body:
+                lines.append(f"{who}: {body}")
+        lines += ["", "Пишите в эту тему — ответ уйдёт клиенту."]
+        delivered = await _send_to_admin(bound, "\n".join(lines), reply_markup=_close_keyboard(bound))
+        await record_relayed_message(
+            tenant.tenant_id, ticket_id=str(bound["ticket_id"]), direction="system", text=lines[0],
+            delivered_chat_id=int(bound["forum_chat_id"]), delivered_message_id=delivered.get("message_id"),
+        )
+        moved += 1
+    return moved
+
 async def try_handle_support_forum_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -483,9 +530,11 @@ async def try_handle_support_forum_message(
             tenant.tenant_id, binding_id=current_bot_binding().binding_id, chat_id=msg.chat_id,
             title=title, registered_by=msg.user_id,
         )
-        await _send(msg.chat_id, "Группа поддержки подключена: каждая новая заявка будет открываться отдельной темой.", thread_id=msg.thread_id)
-        logger.info("support_forum_registered", extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id)})
-        return {"ok": True, "route": "support_forum", "status": "registered", "trace_id": trace_id}
+        moved = await _move_open_tickets_to_forum(tenant)
+        note = f" Открытые заявки перенесены в темы: {moved}." if moved else ""
+        await _send(msg.chat_id, "Группа поддержки подключена: каждая новая заявка будет открываться отдельной темой." + note, thread_id=msg.thread_id)
+        logger.info("support_forum_registered", extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id), "moved": moved})
+        return {"ok": True, "route": "support_forum", "status": "registered", "moved": moved, "trace_id": trace_id}
     if msg.thread_id is None:
         return None
     ticket = await find_ticket_by_forum_thread(tenant.tenant_id, forum_chat_id=msg.chat_id, forum_thread_id=msg.thread_id)

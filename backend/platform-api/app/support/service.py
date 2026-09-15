@@ -270,6 +270,21 @@ async def attach_forum_topic(
         )
 
 
+async def list_ticket_messages(tenant_id: str, *, ticket_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """The relayed conversation, oldest first (used to replay a ticket into its new topic)."""
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_all(
+            conn,
+            """
+            select direction, text, telegram_file_id, created_at from support_messages
+            where tenant_id = %s and ticket_id = %s::uuid and direction in ('user_to_admin', 'admin_to_user')
+            order by created_at
+            limit %s
+            """,
+            (tenant_id, str(ticket_id), max(1, min(limit, 200))),
+        )
+
+
 async def find_ticket_by_forum_thread(
     tenant_id: str, *, forum_chat_id: int, forum_thread_id: int
 ) -> dict[str, Any] | None:

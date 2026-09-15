@@ -89,7 +89,7 @@ async def test_services_word_shows_gemini_card_with_three_buttons(whieda_tenant,
     kwargs = send.await_args.kwargs
     assert kwargs["text"] == SERVICES_TEXT
     buttons = [row[0]["text"] for row in kwargs["reply_markup"]["inline_keyboard"]]
-    assert buttons == ["Gemini Pro 4 490 ₽", "Gemini Pro 6 900 ₽", "Поддержка"]
+    assert buttons == ["Gemini Pro 4 490 ₽", "Gemini Pro 3 990 ₽", "Поддержка"]
 
 
 @pytest.mark.asyncio
@@ -293,7 +293,7 @@ def _forum_message(text: str, *, user: int = KARINA, thread_id: int | None = 77,
 
 
 def _forum_ticket(**over) -> dict:
-    return _ticket(forum_chat_id=FORUM, forum_thread_id=77, **over)
+    return _ticket(**{"forum_chat_id": FORUM, "forum_thread_id": 77, **over})
 
 
 @pytest.fixture
@@ -312,13 +312,45 @@ def forum_env(monkeypatch: pytest.MonkeyPatch):
 async def test_owner_registers_the_forum_group_with_slash_forum(whieda_tenant, whieda_bot_binding, forum_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
     register = AsyncMock(return_value={"chat_id": FORUM})
-    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.register_forum", register):
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.register_forum", register), patch(
+        "app.telegram.support.list_open_tickets_for_admin", AsyncMock(return_value=[])
+    ):
         result = await process_core_telegram_update(
             whieda_tenant, _forum_message("/forum", user=ADMIN, thread_id=None), "f1", binding=whieda_bot_binding
         )
     assert result["status"] == "registered"
     assert register.await_args.kwargs["chat_id"] == FORUM and register.await_args.kwargs["binding_id"] == "whieda-test-binding"
     assert "подключена" in send.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_registration_moves_open_tickets_into_topics_with_history(whieda_tenant, whieda_bot_binding, forum_env):
+    """A ticket opened before the group existed (Samtsova, 15.09) gets its topic
+    on /forum, with the conversation so far replayed."""
+    send = AsyncMock(return_value={"ok": True, "message_id": 900})
+    create_topic = AsyncMock(return_value={"ok": True, "message_thread_id": 78})
+    open_ticket = _ticket(admin_telegram_user_id=KARINA)
+    history = [
+        {"direction": "user_to_admin", "text": "Хочу за 4490", "telegram_file_id": None},
+        {"direction": "admin_to_user", "text": "Добрый день", "telegram_file_id": None},
+    ]
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.register_forum", AsyncMock(return_value={"chat_id": FORUM})
+    ), patch("app.telegram.support.list_open_tickets_for_admin", AsyncMock(return_value=[open_ticket])), patch(
+        "app.telegram.support.create_forum_topic", create_topic
+    ), patch("app.telegram.support.attach_forum_topic", AsyncMock(return_value=_forum_ticket(forum_thread_id=78, admin_telegram_user_id=KARINA))), patch(
+        "app.telegram.support.list_ticket_messages", AsyncMock(return_value=history)
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
+        result = await process_core_telegram_update(
+            whieda_tenant, _forum_message("/forum", user=ADMIN, thread_id=None), "f1b", binding=whieda_bot_binding
+        )
+    assert result["status"] == "registered" and result["moved"] == 1
+    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    replay = [c.kwargs for c in send.await_args_list if c.kwargs.get("message_thread_id") == 78][0]
+    assert replay["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев")
+    assert "Клиент: Хочу за 4490" in replay["text"] and "Администратор: Добрый день" in replay["text"]
+    assert "Ольга" not in replay["text"]
+    assert "перенесены в темы: 1" in send.await_args_list[-1].kwargs["text"]
 
 
 @pytest.mark.asyncio
