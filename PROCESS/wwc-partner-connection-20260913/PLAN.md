@@ -1056,13 +1056,20 @@ def test_validate_flags_wrong_price_without_promo_and_wrong_total():
 6. **Два служебных места в группе Карины**: тема «Бонусы» (лента начислений) и тема «Отчёты» (команды `отчёт`, `отчёт партнёр <ref>`, `хвосты`). Без имён клиентов.
 7. **Активация**: «Активировано до …» → клиенту «лицензия активна до …», напоминание за 7 дней клиенту и в тему; заявка закрывается.
 
+## Финальная шлифовка (владелец, 15.09 поздно вечером)
+- **Депозит у Карины вместо переводов за каждую продажу.** Виктор переводит крупно (например 20 000 ₽) — кнопка «Перевёл» с суммой; Карина нажимает «Получила» (подтверждение только на пополнения, их мало). Каждая продажа списывает с депозита 2 990 или 2 490. Баланс виден в теме «Отчёты» и в `отчёт`; когда остаток меньше одной лицензии — бот предупреждает обоих. Хвостов нет по построению; «переведено день в день» не нужно.
+- **Продал партнёр → в записи и в ленте указывается исходная заявка #S-N клиента.**
+- **В ленте «Бонусы» и в отчётах партнёр обозначается e-mail-логином**, не ref_code и не Telegram (по нику человека находят, по почте — нет). E-mail партнёра хранится в Core (`lead_actors.email`, миграция v10; заполняется из Google-формы и из реестра владельцем). Пока почты нет — «партнёр без почты» + короткий id.
+
 ## Данные (миграция v10, additive)
 - `service_tariffs(tenant_id, offer_code, retail_minor, wholesale_direct_minor, wholesale_partner_minor, partner_share_wusd_minor, updated_by, updated_at)`.
-- `service_sales(sale_id, tenant_id, ticket_id, offer_code, client_actor_id, seller ('owner'|'partner'), partner_ref, retail_minor, owed_admin_minor, paid_currency (RUB|WUSD), paid_at, settled_at, activated_until, status (paid|settled|activated|closed), created_by)`.
+- `service_sales(sale_id, tenant_id, ticket_id, offer_code, client_actor_id, seller ('owner'|'partner'), partner_ref, retail_minor, owed_admin_minor, paid_currency (RUB|WUSD), paid_at, activated_until, status (paid|activated|closed), created_by)`.
+- `service_admin_deposit(entry_id, tenant_id, admin_telegram_user_id, kind ('topup'|'sale'), amount_minor (+/−), sale_id, sent_by, confirmed_by, confirmed_at, created_at)` — баланс = сумма; пополнение считается после «Получила».
+- `lead_actors.email text` — для безымянного обозначения партнёра.
 - Бонус партнёру: `partner_bonus_ledger`, idempotency по `sale_id`; строка в `Referral_Bonuses` (Операция «Gemini», payment_id = sale_id).
 
 ## Порядок
-D1 тариф + «Оплачено» (продавец, расчёт, обязанность Карине) + бонус партнёру + пуш — 1 день. D2 «Переведено», `хвосты`, напоминание 21:00, «Активировано» + напоминание за 7 дней — 0,5 дня. D3 темы «Бонусы»/«Отчёты», `отчёт`, зеркало в таблицу — 0,5 дня. Выкат staging → проверка в группе → prod тем же SHA.
+D1 тариф + «Оплачено» (продавец, расчёт, обязанность Карине) + бонус партнёру + пуш — 1 день. D2 депозит: «Перевёл N», «Получила», списание при продаже, предупреждение о низком остатке; «Активировано» + напоминание за 7 дней — 0,5 дня. D3 темы «Бонусы»/«Отчёты», `отчёт`, зеркало в таблицу — 0,5 дня. Выкат staging → проверка в группе → prod тем же SHA.
 
 ## Первая живая запись
 Самцова, 6 мес, продал Виктор: клиент заплатил Виктору 40 W$ (переплата 35 уже возвращена на баланс), Карине — 2 990 ₽, доли партнёру нет.
