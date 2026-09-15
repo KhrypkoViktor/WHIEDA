@@ -145,6 +145,11 @@ def is_services_request(text: str) -> bool:
     return services_enabled() and bool(_SERVICES_RE.fullmatch(str(text or "").strip()))
 
 
+def is_services_start_token(token: str) -> bool:
+    """`/start gemini` from the site button «Подключить Gemini Pro» opens the card."""
+    return services_enabled() and str(token or "").strip().lower() in {"gemini", "services"}
+
+
 def support_admin_id() -> int | None:
     value = get_settings().platform_support_admin_telegram_id
     return int(value) if value else None

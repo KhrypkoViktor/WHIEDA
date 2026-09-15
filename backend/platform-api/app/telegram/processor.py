@@ -40,6 +40,8 @@ from app.telegram.content_access import try_handle_content_access
 from app.telegram.pro_start import handle_pro_start, is_pro_start_token
 from app.telegram.support import (
     try_handle_support_callback,
+    is_services_start_token,
+    show_services,
     try_handle_support_forum_message,
     try_handle_support_message,
     try_relay_user_message,
@@ -426,6 +428,8 @@ async def _process_core_telegram_update_scoped(
     if start_token:
         if parse_referral_start_token(start_token) is not None:
             return await handle_referral_start_token(tenant, msg, start_token, trace_id)
+        if is_services_start_token(start_token):
+            return await show_services(msg.chat_id, trace_id=trace_id)
         if is_pro_start_token(start_token):
             if manual_operations:
                 await _manual_operation_notice(msg.chat_id)
