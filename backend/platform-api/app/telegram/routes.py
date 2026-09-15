@@ -23,6 +23,7 @@ from app.telegram.log_safe import chat_ref
 from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.sequencer import build_message_fingerprint, get_chat_sequencer
+from app.telegram.support import is_support_forum_traffic
 from app.telegram.update_parser import (
     parse_telegram_callback,
     parse_telegram_message,
@@ -83,6 +84,15 @@ async def _process_telegram_update_body(
 ) -> None:
     tenant = binding.tenant
     route_mode = binding.processing_mode
+    # Support forum group (topic per ticket): its registration command, topic
+    # messages and the close button are the only group traffic Core serves.
+    if route_mode == "core" and is_support_forum_traffic(update):
+        try:
+            await process_core_telegram_update(tenant, update, trace_id or "", binding=binding)
+        except Exception:
+            logger.exception("telegram_core_forum_failed")
+        return
+
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
