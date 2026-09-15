@@ -11,11 +11,17 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $SqlDir = Join-Path $Root "postgres\sql"
 
-# Order matters: tenancy + RLS helpers before tenant-scoped tables; binding after registry.
+# Order: registry/RLS helpers, existing leads schema + RLS, session/journey
+# stack, WHIEDA telegram binding row, binding-context columns/backfill of
+# WHIEDA rows, then durable Telegram inbox/outbox. Each file listed once.
+# Do not apply production.
 $Files = @(
     "platform_tenant_registry_v1.sql",
     "platform_tenant_rls_v1.sql",
-    # Existing staging must already contain lead_actors and referral_profiles.
+    "whieda_website_leads_p0_v1.sql",
+    "wwc_leads_p01_runtime_migration.sql",
+    "platform_tenant_rls_legacy_leads_v1.sql",
+    # Partner platform chain needs lead_actors and referral_profiles from above.
     "platform_partner_subscriptions_v1.sql",
     "platform_partner_subscription_currency_v2.sql",
     "platform_referral_bonuses_v1.sql",
@@ -26,14 +32,22 @@ $Files = @(
     "platform_partner_subscription_reminders_v6.sql",
     "platform_partner_products_v7.sql",
     "platform_support_tickets_v8.sql",
+    "platform_support_forum_v9.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
+    "platform_advisor_structured_base_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
     "platform_user_memory_v1.sql",
     "platform_pilot_telemetry_v1.sql",
     "platform_retention_export_v1.sql",
-    "platform_whieda_telegram_binding_v1.sql"
+    "platform_whieda_telegram_binding_v1.sql",
+    "platform_bot_binding_context_v1.sql",
+    "platform_telegram_durable_inbox_v1.sql",
+    "platform_tenant_advisor_data_plane_v1.sql",
+    "platform_tenant_release_package_v1.sql",
+    "platform_tenant_release_price_plane_v1.sql",
+    "platform_telegram_durable_outbox_v1.sql"
 )
 
 if ($CreateDb) {
@@ -59,9 +73,7 @@ foreach ($f in $Files) {
 
 $Seed = Join-Path $Root "postgres\scripts\staging_seed_whieda_journey_v1.sql"
 if (Test-Path $Seed) {
-    Write-Host "  -> staging_seed_whieda_journey_v1.sql"
-    & psql -h $DbHost -p $Port -U $User -d $Db -f $Seed
-    if ($LASTEXITCODE -ne 0) { throw "psql failed on staging seed" }
+    Write-Host "  skip staging_seed_whieda_journey_v1.sql (stale vs onboarding schema; not in APPLY_ORDER)"
 }
 
 Write-Host "OK: staging platform SQL applied."

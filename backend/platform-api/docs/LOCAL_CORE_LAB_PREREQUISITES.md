@@ -6,6 +6,12 @@ One command after Docker Desktop is installed:
 python backend\platform-api\scripts\run_local_core_lab.py --e2e
 ```
 
+Tenant Telegram local canary (last local Core gate):
+
+```powershell
+python backend\platform-api\scripts\run_local_core_lab.py --e2e --tenant-telegram-canary
+```
+
 Run the doctor first if anything fails:
 
 ```powershell
@@ -28,6 +34,7 @@ The doctor is read-only: it does not download, start containers, or modify files
 |------|---------|-----------|
 | `55432` | Staging Postgres | `whieda-local-staging-postgres` |
 | `8080` | Platform Core API | `whieda-local-core-api` |
+| `18081` | Local Telegram HTTP capture | host process (canary only) |
 
 If these ports are already used by the lab containers from a previous run, the doctor reports **WARN** (safe to rerun). Any other occupier is **FAIL**.
 

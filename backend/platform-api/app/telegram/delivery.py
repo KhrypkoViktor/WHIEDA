@@ -1,15 +1,105 @@
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import html
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Iterator
 
 import httpx
 
+from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url
 from app.telegram.log_safe import chat_ref
+from app.telegram.tenant_media import resolve_delivery_photo_url, sanitize_delivery_text
 
 logger = logging.getLogger(__name__)
+
+_allowed_bot_token: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "telegram_allowed_bot_token",
+    default=None,
+)
+
+
+class TelegramDeliveryError(RuntimeError):
+    """Raised on the durable-inbox worker path when Telegram send fails."""
+
+
+class TelegramDeliveryUnknown(TelegramDeliveryError):
+    """Request outcome is ambiguous; do not automatically resend."""
+
+
+@contextlib.contextmanager
+def outbound_binding_guard(bot_token: str) -> Iterator[None]:
+    token = _allowed_bot_token.set(bot_token)
+    try:
+        yield
+    finally:
+        _allowed_bot_token.reset(token)
+
+
+@dataclass(frozen=True)
+class DeliveryDraft:
+    kind: str
+    payload: dict[str, Any]
+
+
+_delivery_plan: contextvars.ContextVar[list[DeliveryDraft] | None] = contextvars.ContextVar(
+    "telegram_delivery_plan",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def capture_delivery_plan() -> Iterator[list[DeliveryDraft]]:
+    items: list[DeliveryDraft] = []
+    token = _delivery_plan.set(items)
+    try:
+        yield items
+    finally:
+        _delivery_plan.reset(token)
+
+
+def current_delivery_plan() -> list[DeliveryDraft] | None:
+    return _delivery_plan.get()
+
+
+def _queue_delivery(kind: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    plan = _delivery_plan.get()
+    if plan is None:
+        return None
+    plan.append(DeliveryDraft(kind=kind, payload=dict(payload)))
+    return {"ok": True, "queued": True}
+
+
+def compact_delivery_payload(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    chat_id = str(payload.get("chat_id") or "").strip()
+    if kind == "photo":
+        compact: dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo_url": str(payload.get("photo_url") or "").strip()[:2048],
+        }
+        return compact
+    compact = {"chat_id": chat_id, "text": str(payload.get("text") or "").strip()[:4096]}
+    markup = payload.get("reply_markup")
+    if isinstance(markup, dict) and markup:
+        compact["reply_markup"] = markup
+    return compact
+
+
+def _assert_outbound_token(bot_token: str) -> None:
+    allowed = _allowed_bot_token.get()
+    if allowed is not None and allowed != bot_token:
+        raise RuntimeError("foreign_bot_token_forbidden")
+
+
+def _bot_api_url(bot_token: str, method: str) -> str:
+    try:
+        return telegram_bot_api_url(bot_token, method)
+    except TelegramApiBaseError as exc:
+        raise TelegramDeliveryError(str(exc)) from exc
+
 
 _ALLOWED_HTML_TAGS = ("b", "strong", "i", "em", "code")
 
@@ -38,7 +128,17 @@ async def send_telegram_text(
 ) -> dict[str, Any]:
     if not text.strip():
         return {"ok": False, "skipped": True}
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    queued = _queue_delivery(
+        "text",
+        compact_delivery_payload(
+            "text",
+            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup},
+        ),
+    )
+    if queued is not None:
+        return queued
+    _assert_outbound_token(bot_token)
+    url = _bot_api_url(bot_token, "sendMessage")
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": format_telegram_html(text)[:4096],
@@ -54,15 +154,16 @@ async def send_telegram_text(
         if isinstance(reply_markup, dict) and reply_markup
         else {"remove_keyboard": True}
     )
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.post(url, json=payload)
-    data = response.json() if response.text else {}
-    if response.status_code >= 400 or not data.get("ok"):
+    data, status_code = await _post_telegram(url, payload, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_send_failed",
-            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+            extra={"status": status_code, "chat_id": chat_ref(chat_id)},
         )
-        return {"ok": False, "status_code": response.status_code, "detail": data}
+        result = {"ok": False, "status_code": status_code, "detail": data}
+        if _allowed_bot_token.get() is not None:
+            raise TelegramDeliveryError(f"telegram_send_failed:{status_code}")
+        return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
@@ -76,20 +177,28 @@ async def send_telegram_photo(
     """Send photo without caption — text is always a separate message."""
     if not photo_url.strip():
         return {"ok": False, "skipped": True}
-    url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    queued = _queue_delivery(
+        "photo",
+        compact_delivery_payload("photo", {"chat_id": chat_id, "photo_url": photo_url}),
+    )
+    if queued is not None:
+        return queued
+    _assert_outbound_token(bot_token)
+    url = _bot_api_url(bot_token, "sendPhoto")
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "photo": photo_url.strip()[:2048],
     }
-    async with httpx.AsyncClient(timeout=timeout_sec) as client:
-        response = await client.post(url, json=payload)
-    data = response.json() if response.text else {}
-    if response.status_code >= 400 or not data.get("ok"):
+    data, status_code = await _post_telegram(url, payload, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
         logger.warning(
             "telegram_photo_failed",
-            extra={"status": response.status_code, "chat_id": chat_ref(chat_id)},
+            extra={"status": status_code, "chat_id": chat_ref(chat_id)},
         )
-        return {"ok": False, "status_code": response.status_code, "detail": data}
+        result = {"ok": False, "status_code": status_code, "detail": data}
+        if _allowed_bot_token.get() is not None:
+            raise TelegramDeliveryError(f"telegram_photo_failed:{status_code}")
+        return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
@@ -162,6 +271,20 @@ async def set_message_reaction(*, chat_id: str, message_id: int, emoji: str, bot
     )
 
 
+async def _post_telegram(
+    url: str,
+    payload: dict[str, Any],
+    timeout_sec: float,
+) -> tuple[dict[str, Any], int]:
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.post(url, json=payload)
+        data = response.json() if response.text else {}
+        return data if isinstance(data, dict) else {}, response.status_code
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        raise TelegramDeliveryUnknown("telegram_send_ambiguous") from exc
+
+
 async def answer_callback_query(
     *,
     callback_query_id: str,
@@ -173,7 +296,8 @@ async def answer_callback_query(
     """Acknowledge callback_query without logging user-visible callback text."""
     if not callback_query_id or not bot_token:
         return {"ok": False, "skipped": True}
-    url = f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery"
+    _assert_outbound_token(bot_token)
+    url = _bot_api_url(bot_token, "answerCallbackQuery")
     payload: dict[str, Any] = {"callback_query_id": callback_query_id}
     if text and text.strip():
         payload["text"] = text.strip()[:200]
@@ -222,6 +346,7 @@ async def configure_telegram_command_menu(
 
 
 def extract_photo_url(media: Any) -> str | None:
+    """Read a raw photo_url from media. Delivery does not publish this value."""
     if not isinstance(media, dict):
         return None
     photo = media.get("photo_url")
@@ -230,20 +355,45 @@ def extract_photo_url(media: Any) -> str | None:
     return None
 
 
+# Tenants whose cards still carry absolute photo URLs and links inside the
+# answer text (primary_image_url, video and certificate URLs). Their delivery
+# stays byte-for-byte as before the tenant media plane; every other tenant
+# publishes only package media from our host and no foreign links.
+LEGACY_MEDIA_TENANTS: frozenset[str] = frozenset({"whieda"})
+
+
+def _legacy_photo_url(media: Any) -> str | None:
+    photo = extract_photo_url(media)
+    if not photo or "://" not in photo:
+        return None
+    return photo
+
+
 async def deliver_structured_advisor_response(
     chat_id: int | str,
     core_response: dict[str, Any],
     *,
     bot_token: str,
+    tenant_id: str | None = None,
+    binding_status: str = "active",
     reply_markup: dict | None = None,
 ) -> dict[str, Any]:
     """
     Photo-first rule: sendPhoto without caption, then sendMessage with full text.
+    Photo URL is constructed from the current binding tenant only.
     If sendPhoto fails, still send text (never silence the user).
     """
-    text = str(core_response.get("answer_text") or "").strip()
-    photo_url = extract_photo_url(core_response.get("media"))
-    result: dict[str, Any] = {"photo_sent": False, "text_sent": False}
+    if binding_status != "active" or not tenant_id:
+        return {"photo_sent": False, "text_sent": False, "skipped": True}
+
+    raw_text = str(core_response.get("answer_text") or "")
+    photo_url = resolve_delivery_photo_url(core_response, tenant_id=tenant_id)
+    if tenant_id in LEGACY_MEDIA_TENANTS:
+        photo_url = photo_url or _legacy_photo_url(core_response.get("media"))
+        text = raw_text.strip()
+    else:
+        text = sanitize_delivery_text(raw_text, allowed_url=photo_url)
+    result: dict[str, Any] = {"photo_sent": False, "text_sent": False, "photo_url": photo_url}
 
     if photo_url:
         photo_result = await send_telegram_photo(

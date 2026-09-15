@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-north",
+    "faq_id": "SHARE-01-faq",
+    "sku": "SHARE-01",
+    "title": "North Capsule",
+    "answer_text": "FAQ North Capsule"
+  }
+]

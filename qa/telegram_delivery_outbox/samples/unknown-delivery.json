@@ -1,0 +1,46 @@
+{
+  "ok": true,
+  "mode": "offline-snapshot",
+  "counts": {
+    "pending": 1,
+    "leased": 0,
+    "sent": 0,
+    "retryable_failed": 0,
+    "unknown_delivery": 1,
+    "dead": 0
+  },
+  "oldest_pending": {
+    "delivery_id": "33333333-3333-4333-8333-333333333333",
+    "binding_id": "north-advisor-bot",
+    "telegram_update_id": 9102,
+    "sequence_no": 2,
+    "kind": "text",
+    "status": "pending",
+    "attempt_count": 0,
+    "last_error_code": "",
+    "payload": {
+      "chat_ref": "chat:ad5736686512",
+      "text_len": 16
+    },
+    "created_at": "2026-08-25T09:01:00+00:00"
+  },
+  "unknown_delivery": [
+    {
+      "delivery_id": "22222222-2222-4222-8222-222222222222",
+      "binding_id": "north-advisor-bot",
+      "telegram_update_id": 9102,
+      "sequence_no": 1,
+      "kind": "photo",
+      "status": "unknown_delivery",
+      "attempt_count": 1,
+      "last_error_code": "telegram_send_ambiguous",
+      "payload": {
+        "chat_ref": "chat:ad5736686512",
+        "photo_url": "https://media.example.org/media/tenant-north/SHARE-01/1.webp"
+      },
+      "created_at": "2026-08-25T09:01:00+00:00"
+    }
+  ],
+  "dead": [],
+  "row_count": 2
+}

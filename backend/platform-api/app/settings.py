@@ -94,6 +94,38 @@ class Settings(BaseSettings):
             "unset means relative paths are returned as-is."
         ),
     )
+    platform_tenant_media_base_url: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_TENANT_PRODUCT_MEDIA_BASE_URL",
+        description=(
+            "HTTPS origin+prefix for tenant product media published as "
+            "{base}/{tenant}/{sku}/{file}, e.g. https://media.sysarch.pro/media. "
+            "Separate from PLATFORM_TENANT_MEDIA_BASE_URL, which is a bare origin."
+        ),
+    )
+    telegram_api_base_url: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_TELEGRAM_API_BASE_URL",
+        description="Local-only Bot API origin for lab capture. Unset uses api.telegram.org.",
+    )
+    telegram_outbox_worker: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_TELEGRAM_OUTBOX_WORKER",
+        description="Drain durable outbox in-process. Local canary only.",
+    )
+    telegram_durable_inbox_bindings: str = Field(
+        default="",
+        validation_alias="PLATFORM_TELEGRAM_DURABLE_INBOX_BINDINGS",
+        description=(
+            "Comma-separated binding ids whose webhook updates go through the durable "
+            "inbox/outbox instead of the in-process path; '*' means every binding. "
+            "Falls back to in-process when the inbox schema is not ready."
+        ),
+    )
+    feature_readiness_cache_ttl_sec: float = Field(
+        default=30.0,
+        validation_alias="PLATFORM_FEATURE_READINESS_CACHE_TTL_SEC",
+    )
 
     core_route_public_ref: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_PUBLIC_REF")
     core_route_leads: RouteMode = Field(default="core", validation_alias="CORE_ROUTE_LEADS")
@@ -296,6 +328,14 @@ class Settings(BaseSettings):
             if part.isdigit():
                 ids.add(int(part))
         return frozenset(ids)
+
+    @property
+    def parsed_telegram_durable_inbox_bindings(self) -> frozenset[str]:
+        return frozenset(
+            part.strip()
+            for part in self.telegram_durable_inbox_bindings.split(",")
+            if part.strip()
+        )
 
 
 @lru_cache

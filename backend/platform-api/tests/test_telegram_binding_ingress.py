@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.telegram.bindings import BotBindingContext, binding_context_scope
+from app.telegram.inbox import InMemoryInboxStore, set_inbox_store_for_tests
 
 
 def _context(tenant, *, binding_id: str = "nsp-binding") -> BotBindingContext:
@@ -33,8 +34,17 @@ def _update() -> dict:
             "text": "привет",
             "chat": {"id": 100, "type": "private"},
             "from": {"id": 200},
+            "contact": {"phone_number": "+375000000000"},
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def inbox_store():
+    store = InMemoryInboxStore()
+    set_inbox_store_for_tests(store)
+    yield store
+    set_inbox_store_for_tests(None)
 
 
 class _Connection:
@@ -51,7 +61,7 @@ class _Pool:
 
 
 @pytest.mark.asyncio
-async def test_unknown_binding_returns_200_without_processing(client, monkeypatch):
+async def test_unknown_binding_returns_200_without_processing(client, monkeypatch, inbox_store):
     resolve = AsyncMock(return_value=None)
     process = AsyncMock()
     monkeypatch.setattr("app.telegram.routes.resolve_bot_binding_context", resolve)
@@ -62,10 +72,11 @@ async def test_unknown_binding_returns_200_without_processing(client, monkeypatc
     assert response.status_code == 200
     assert response.json() == {"ok": True}
     process.assert_not_awaited()
+    assert inbox_store.snapshot_rows() == []
 
 
 @pytest.mark.asyncio
-async def test_active_binding_bad_secret_returns_403(client, whieda_tenant, monkeypatch):
+async def test_active_binding_bad_secret_returns_403(client, whieda_tenant, monkeypatch, inbox_store):
     context = _context(whieda_tenant)
     monkeypatch.setattr(
         "app.telegram.routes.resolve_bot_binding_context",
@@ -83,6 +94,7 @@ async def test_active_binding_bad_secret_returns_403(client, whieda_tenant, monk
     assert response.status_code == 403
     assert response.json()["error"] == "invalid_webhook_secret"
     process.assert_not_awaited()
+    assert inbox_store.snapshot_rows() == []
     assert "nsp-secret" not in response.text
     assert "nsp-token" not in response.text
 
@@ -99,7 +111,7 @@ def test_active_binding_unicode_bad_secret_returns_403(whieda_tenant):
 
 @pytest.mark.asyncio
 async def test_active_binding_valid_secret_returns_200_and_processes(
-    client, whieda_tenant, monkeypatch
+    client, whieda_tenant, monkeypatch, inbox_store
 ):
     context = _context(whieda_tenant)
     monkeypatch.setattr(
@@ -119,12 +131,48 @@ async def test_active_binding_valid_secret_returns_200_and_processes(
     assert response.json() == {"ok": True}
     process.assert_awaited_once()
     assert process.await_args.args[0] is context
+    # Durable inbox is opt-in per binding; the default keeps the in-process path.
+    assert inbox_store.snapshot_rows() == []
     assert "nsp-token" not in response.text
     assert "nsp-secret" not in response.text
 
 
 @pytest.mark.asyncio
-async def test_binding_store_unavailable_returns_503(client, monkeypatch):
+async def test_durable_inbox_binding_persists_update_before_processing(
+    client, whieda_tenant, monkeypatch, inbox_store
+):
+    context = _context(whieda_tenant)
+    monkeypatch.setattr(
+        "app.telegram.routes.resolve_bot_binding_context",
+        AsyncMock(return_value=context),
+    )
+    monkeypatch.setattr("app.telegram.routes._durable_inbox_enabled", lambda binding: True)
+    process = AsyncMock()
+    monkeypatch.setattr("app.telegram.routes._process_telegram_update", process)
+
+    response = await client.post(
+        "/v1/telegram/nsp-binding/webhook",
+        json=_update(),
+        headers={"x-telegram-bot-api-secret-token": "nsp-secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    process.assert_awaited_once()
+    assert process.await_args.args[0] is context
+    rows = inbox_store.snapshot_rows()
+    assert len(rows) == 1
+    assert rows[0].binding_id == "nsp-binding"
+    assert rows[0].telegram_update_id == 501
+    assert rows[0].state == "processed"
+    assert "phone_number" not in str(rows[0].payload)
+    assert "+375000000000" not in str(rows[0].payload)
+    assert "nsp-token" not in response.text
+    assert "nsp-secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_binding_store_unavailable_returns_503(client, monkeypatch, inbox_store):
     monkeypatch.setattr(
         "app.telegram.routes.resolve_bot_binding_context",
         AsyncMock(
@@ -139,6 +187,7 @@ async def test_binding_store_unavailable_returns_503(client, monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["error"] == "bot_binding_store_unavailable"
+    assert inbox_store.snapshot_rows() == []
 
 
 def test_binding_scope_keeps_nsp_token_and_username(whieda_tenant):

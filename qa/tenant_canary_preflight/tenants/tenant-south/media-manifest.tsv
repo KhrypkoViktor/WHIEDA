@@ -1,0 +1,2 @@
+tenant_id	sku	relative_path	filename	source_path	sha256	bytes	mime_type	status	reason
+tenant-south	SHARE-01	media/tenant-south/SHARE-01/main.webp	main.webp	../../sources/pixel.png	a9eb462ddac3667b1c5d02af79cb4400c967b12629dfc89050275a9406e6679f	73	image/png	ready	

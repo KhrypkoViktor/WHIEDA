@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "sku": "A-001",
+    "canonical_name": "Alpha Spirulina",
+    "what_it_is": "Card for Alpha Spirulina",
+    "primary_image_url": "https://cdn.example.test/tenant-alpha/A-001.jpg"
+  }
+]

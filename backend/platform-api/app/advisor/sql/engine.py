@@ -7,6 +7,20 @@ from typing import Any
 
 from app.advisor.sql import context as session_ctx
 from app.advisor.gap import emit_gap_response, sanitize_user_text, GAP_TEXTS
+from app.advisor.voice import (
+    catalog_browse_text,
+    company_intro_text,
+    discomfort_boundary_text,
+    empty_catalog_text,
+    gap_text_for,
+    income_question_text,
+    is_home_tenant,
+    maybe_prefix_home_brand,
+    mlm_objection_text,
+    product_selection_text,
+    pv_definition_text,
+    service_fallback,
+)
 from app.advisor.sql import formatters as fmt
 from app.advisor.sql import repository as repo
 from app.advisor.sql.ambiguity import try_ambiguity_clarification
@@ -225,11 +239,11 @@ async def run_structured_query(
 
     service_intent = detect_service_intent(question)
     if service_intent:
-        return await _service_intent_response(tenant.tenant_id, service_intent, trace_id)
+        return await _service_intent_response(tenant, service_intent, trace_id)
 
     if is_catalog_list_request(question):
         return fmt.ok_response(
-            CATALOG_BROWSE_FALLBACK,
+            catalog_browse_text(tenant),
             "structured_business",
             trace_id,
             media=fmt.empty_media(),
@@ -245,6 +259,7 @@ async def run_structured_query(
             gap_kind="unknown_product",
             trace_id=trace_id,
             channel=channel,
+            text=gap_text_for(tenant.tenant_id, "unknown_product"),
         )
 
     if is_high_risk_medical_boundary(question):
@@ -268,6 +283,7 @@ async def run_structured_query(
             gap_kind="unsupported_topic",
             trace_id=trace_id,
             channel=channel,
+            text=gap_text_for(tenant.tenant_id, "unsupported_topic"),
         )
 
     if is_calculator_request(question):
@@ -312,7 +328,7 @@ async def run_structured_query(
 
     if is_product_selection_request(question):
         return fmt.ok_response(
-            PRODUCT_SELECTION_FALLBACK,
+            product_selection_text(tenant),
             "clarification",
             trace_id,
             media=fmt.empty_media(),
@@ -327,7 +343,7 @@ async def run_structured_query(
             gap_kind="medical_or_safety_boundary",
             trace_id=trace_id,
             channel=channel,
-            text=DISCOMFORT_BOUNDARY_TEXT,
+            text=discomfort_boundary_text(tenant),
             answer_mode="clarification",
             clarifications=["discomfort_boundary"],
         )
@@ -341,7 +357,7 @@ async def run_structured_query(
                     "structured_business_faq",
                     trace_id,
                 )
-        return fmt.ok_response(INCOME_QUESTION_FALLBACK, "structured_business", trace_id, media=fmt.empty_media())
+        return fmt.ok_response(income_question_text(tenant), "structured_business", trace_id, media=fmt.empty_media())
 
     if is_company_intro_request(question):
         async with tenant_connection(tenant.tenant_id) as conn:
@@ -359,7 +375,7 @@ async def run_structured_query(
                     "structured_business_objection",
                     trace_id,
                 )
-        return fmt.ok_response(COMPANY_INTRO_FALLBACK, "structured_business", trace_id, media=fmt.empty_media())
+        return fmt.ok_response(company_intro_text(tenant), "structured_business", trace_id, media=fmt.empty_media())
 
     if is_marketing_plan_request(question) or is_step_topic_request(question):
         lookup_question = re.sub(r"\bstep\b", "степ", question, flags=re.I)
@@ -372,9 +388,15 @@ async def run_structured_query(
                 trace_id,
             )
         if is_marketing_plan_request(question):
-            return fmt.ok_response(
+            plan_text = (
                 "Маркетинг-план WHIEDA описывает объём PV, повторные покупки, статусы и условия бонусов. "
-                "Напишите, что именно разобрать: PV, повторку, бинар, Step или вариант старта.",
+                "Напишите, что именно разобрать: PV, повторку, бинар, Step или вариант старта."
+                if is_home_tenant(tenant.tenant_id)
+                else "Маркетинг-план описывает объём PV, повторные покупки, статусы и условия бонусов. "
+                "Напишите, что именно разобрать: PV, повторку, бинар, Step или вариант старта."
+            )
+            return fmt.ok_response(
+                plan_text,
                 "structured_business_faq",
                 trace_id,
                 media=fmt.empty_media(),
@@ -395,7 +417,8 @@ async def run_structured_query(
                 titles = [str(row.get("title") or "").strip() for row in templates if row.get("title")]
                 preview = ", ".join(titles[:3])
                 text = (
-                    "Есть несколько стартовых вариантов входа в WHIEDA"
+                    "Есть несколько стартовых вариантов входа"
+                    + (" в WHIEDA" if is_home_tenant(tenant.tenant_id) else "")
                     + (f": {preview}." if preview else ".")
                     + " Напишите бюджет в BYN или целевой PV — подберу корзину."
                 )
@@ -484,6 +507,16 @@ async def run_structured_query(
 
     async with tenant_connection(tenant.tenant_id) as conn:
         stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
+        if not is_home_tenant(tenant.tenant_id):
+            catalog_size = await repo.count_catalog_products(conn, tenant.tenant_id)
+            if catalog_size == 0:
+                return fmt.ok_response(
+                    empty_catalog_text(tenant),
+                    "clarification",
+                    trace_id,
+                    media=fmt.empty_media(),
+                    clarifications=["empty_tenant_catalog"],
+                )
 
         if is_menu_reprompt(question):
             pending_clarification = str(stored.get("pending_product_clarification") or "")
@@ -582,6 +615,7 @@ async def run_structured_query(
                     target_pv=budget_req.get("target_pv"),
                     goal=str(budget_req.get("goal") or "balanced"),
                     templates=templates,
+                    tenant_id=tenant.tenant_id,
                 )
                 response = fmt.ok_response(
                     text,
@@ -682,7 +716,7 @@ async def run_structured_query(
             )
         if MLM_OBJECTION_RE.search(question):
             return fmt.ok_response(
-                MLM_OBJECTION_FALLBACK,
+                mlm_objection_text(tenant),
                 "structured_business_objection",
                 trace_id,
             )
@@ -706,10 +740,12 @@ async def run_structured_query(
                     "structured_business_faq",
                     trace_id,
                 )
-            return fmt.ok_response(PV_DEFINITION_FALLBACK, "structured_business_faq", trace_id)
+            return fmt.ok_response(pv_definition_text(tenant), "structured_business_faq", trace_id)
 
-        if (is_context_followup(question) or DETAILS_RE.search(question)) and not stored.get(
-            "last_product_sku"
+        if (
+            (is_context_followup(question) or DETAILS_RE.search(question))
+            and not stored.get("last_product_sku")
+            and not has_price_intent(question)
         ):
             details_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
             if not details_product:
@@ -723,7 +759,7 @@ async def run_structured_query(
                     clarifications=["details_topic_unknown"],
                 )
 
-        faq_fallback = _business_faq_fallback(question)
+        faq_fallback = _business_faq_fallback(question) if is_home_tenant(tenant.tenant_id) else None
         if faq_fallback and not has_price_intent(question):
             return fmt.ok_response(faq_fallback, "structured_business_faq", trace_id)
 
@@ -731,7 +767,10 @@ async def run_structured_query(
         # A matching business FAQ explains the rule, but a named product plus
         # «повторка/цена» asks for the current price.  Do not let the FAQ keep
         # its value after the price guard has rejected it.
-        if faq and has_price_intent(question) and not is_pv_definition_question(question):
+        if faq and (
+            (has_price_intent(question) and not is_pv_definition_question(question))
+            or has_media_intent(question)
+        ):
             faq = None
         elif faq:
             if is_product_definition_question(question):
@@ -834,9 +873,25 @@ async def run_structured_query(
 
         # Strong exact aliases continue through the normal resolver. Generic
         # discovery phrases are deliberately intercepted before alias scoring
-        # can silently choose a random first product.
+        # can silently choose a random first product. Explicit product tokens
+        # (SKU, slug, PRO) resolve first so discovery cannot steal them or
+        # require a live DB cursor in the unit path.
         discovery_phrase = product_query_text(question)
-        if discovery_phrase not in {"активатор", "паста", "красный", "зелёный", "зеленый", "синий", "пояс"}:
+        explicit_product = bool(sku or slug or has_pro_marker(question))
+        if (
+            not explicit_product
+            and is_home_tenant(tenant.tenant_id)
+            and discovery_phrase
+            not in {
+                "активатор",
+                "паста",
+                "красный",
+                "зелёный",
+                "зеленый",
+                "синий",
+                "пояс",
+            }
+        ):
             discovery = await build_discovery_choice_response(
                 conn,
                 tenant.tenant_id,
@@ -853,8 +908,11 @@ async def run_structured_query(
                 return discovery
 
         if pending_clarification == "activator_variant":
-            pending_base_sku = str(stored.get("pending_base_sku") or "M015-00")
-            pending_pro_sku = str(stored.get("pending_pro_sku") or "EU-N000031-25")
+            pending_base_sku = str(stored.get("pending_base_sku") or "")
+            pending_pro_sku = str(stored.get("pending_pro_sku") or "")
+            if is_home_tenant(tenant.tenant_id):
+                pending_base_sku = pending_base_sku or "M015-00"
+                pending_pro_sku = pending_pro_sku or "EU-N000031-25"
             pending_sku = None
             if ACTIVATOR_BASE_CHOICE_RE.search(normalized):
                 pending_sku = pending_base_sku
@@ -909,8 +967,8 @@ async def run_structured_query(
             if "product_ambiguity_activator" in (keys or []):
                 ambiguity_context = {
                     "pending_product_clarification": "activator_variant",
-                    "pending_base_sku": "M015-00",
-                    "pending_pro_sku": "EU-N000031-25",
+                    "pending_base_sku": "M015-00" if is_home_tenant(tenant.tenant_id) else None,
+                    "pending_pro_sku": "EU-N000031-25" if is_home_tenant(tenant.tenant_id) else None,
                 }
                 text = f"{ACTIVATOR_VARIANT_PROMPT}\n{ACTIVATOR_VARIANT_HINT}"
             response = await emit_gap_response(
@@ -960,23 +1018,15 @@ async def run_structured_query(
             )
 
         if not product and has_price_intent(question):
-            if _should_use_knowledge_gap(question, normalized):
-                return await emit_gap_response(
-                    tenant.tenant_id,
-                    session=session,
-                    question=question,
-                    gap_kind="unknown_product",
-                    trace_id=trace_id,
-                    channel=channel,
-                )
-            return await emit_gap_response(
-                tenant.tenant_id,
-                session=session,
-                question=question,
-                gap_kind="unknown_followup",
-                trace_id=trace_id,
-                channel=channel,
+            prompt = await repo.load_clarification_prompt(
+                conn, tenant.tenant_id, "price_product_unknown"
+            )
+            return fmt.ok_response(
+                prompt or "О каком товаре хотите узнать цену?",
+                "clarification",
+                trace_id,
                 clarifications=["product_name_or_sku"],
+                media=fmt.empty_media(),
             )
 
         if product and has_price_intent(question):
@@ -1185,17 +1235,17 @@ def _business_faq_fallback(question: str) -> str | None:
     return None
 
 
-async def _service_intent_response(tenant_id: str, intent_id: str, trace_id: str) -> dict[str, Any]:
-    fallback = SERVICE_FALLBACKS.get(intent_id, SERVICE_FALLBACKS["help"])
-    async with tenant_connection(tenant_id) as conn:
+async def _service_intent_response(
+    tenant: TenantContext, intent_id: str, trace_id: str
+) -> dict[str, Any]:
+    fallback = service_fallback(tenant, intent_id)
+    async with tenant_connection(tenant.tenant_id) as conn:
         text = None
         for candidate in CAPABILITY_INTENT_ALIASES.get(intent_id, (intent_id,)):
-            text = await repo.load_capability_response(conn, tenant_id, candidate)
+            text = await repo.load_capability_response(conn, tenant.tenant_id, candidate)
             if text:
                 break
-    answer = str(text or fallback).strip()
-    if "whieda" not in answer.casefold():
-        answer = f"WHIEDA\n\n{answer}"
+    answer = maybe_prefix_home_brand(tenant, str(text or fallback).strip())
     return fmt.ok_response(answer, "structured_business", trace_id, media=fmt.empty_media())
 
 

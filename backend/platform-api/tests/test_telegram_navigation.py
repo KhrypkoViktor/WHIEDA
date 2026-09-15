@@ -420,6 +420,7 @@ async def test_photo_first_not_broken_in_delivery():
                 1,
                 {"answer_text": "body", "media": {"photo_url": "https://img/x.jpg"}},
                 bot_token="token",
+                tenant_id="whieda",
             )
     photo.assert_awaited_once()
     text.assert_awaited_once()

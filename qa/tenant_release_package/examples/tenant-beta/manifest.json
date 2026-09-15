@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-beta-catalog",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-beta",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "Tenant Beta",
+    "advisor_signature": "советник tenant-beta"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "a2547dcc441da8088404885ce5e45d8f2c5bffdb41c7d2a909e3950edd97d9d0"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "60e3b6a7ae7270f22d244994cdcbf58d283c61a6ac35a3591cfb7511adc978f6"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "392fe087309b1b8f9f804faeb58063ba179bd347a981d529b093556c82f4f158"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "a75b0cbd7bf45a8b0b00ca9becd78179da8169fd078ac5c1e678983b99868161"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "5bf5a9ca29f2f5c0faf3c5b3ea5764de87e91b5d90596931233e675662b5a464"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_release_package/examples/tenant-beta"
+  }
+}

@@ -10,6 +10,7 @@ SQL_DIR = ROOT / "postgres" / "sql"
 COMPOSE_FILE = ROOT / "postgres" / "docker-compose.local-staging.yml"
 SEED = ROOT / "postgres" / "scripts" / "staging_seed_whieda_journey_v1.sql"
 APPLY_PS1 = ROOT / "postgres" / "scripts" / "apply_staging_platform_all.ps1"
+BACKFILL_PLAN = ROOT / "postgres" / "scripts" / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 LOCAL_STAGING_HOST = "127.0.0.1"
 LOCAL_STAGING_PORT = 55432
@@ -40,14 +41,31 @@ APPLY_ORDER = [
     "wwc_leads_p01_runtime_migration.sql",
     "platform_tenant_rls_legacy_leads_v1.sql",
     "platform_partner_subscriptions_v1.sql",
+    "platform_partner_subscription_currency_v2.sql",
+    "platform_referral_bonuses_v1.sql",
+    "platform_referral_bonus_redemptions_v2.sql",
+    "platform_referral_admin_intents_v3.sql",
+    "platform_partner_site_requests_v4.sql",
+    "platform_partner_renewal_requests_v5.sql",
+    "platform_partner_subscription_reminders_v6.sql",
+    "platform_partner_products_v7.sql",
+    "platform_support_tickets_v8.sql",
+    "platform_support_forum_v9.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
+    "platform_advisor_structured_base_v1.sql",
     "platform_identity_journey_v1.sql",
     "platform_onboarding_v1.sql",
     "platform_user_memory_v1.sql",
     "platform_pilot_telemetry_v1.sql",
     "platform_retention_export_v1.sql",
     "platform_whieda_telegram_binding_v1.sql",
+    "platform_bot_binding_context_v1.sql",
+    "platform_telegram_durable_inbox_v1.sql",
+    "platform_tenant_advisor_data_plane_v1.sql",
+    "platform_tenant_release_package_v1.sql",
+    "platform_tenant_release_price_plane_v1.sql",
+    "platform_telegram_durable_outbox_v1.sql",
 ]
 
 RLS_PROOF_TABLES = (
@@ -62,12 +80,39 @@ RLS_PROOF_TABLES = (
     "partner_library_items",
 )
 
+INBOX_RLS_PROOF_TABLES = (
+    "telegram_update_inbox",
+    "telegram_delivery_outbox",
+)
+
+ADVISOR_PROFILE_RLS_TABLES = (
+    "tenant_advisor_profile",
+)
+
+RELEASE_PACKAGE_RLS_TABLES = (
+    "tenant_release_run",
+    "tenant_release_staging_product",
+    "tenant_release_candidate",
+    "tenant_release_candidate_product",
+    "tenant_release_candidate_price",
+)
+
+INBOX_SQL = "platform_telegram_durable_inbox_v1.sql"
+OUTBOX_SQL = "platform_telegram_durable_outbox_v1.sql"
+
 LEADS_SCHEMA_FILES = (
     SQL_DIR / "whieda_website_leads_p0_v1.sql",
     SQL_DIR / "wwc_leads_p01_runtime_migration.sql",
 )
 
 RLS_LEGACY_FILE = SQL_DIR / "platform_tenant_rls_legacy_leads_v1.sql"
+
+
+def apply_script_files(text: str | None = None) -> list[str]:
+    source = APPLY_PS1.read_text(encoding="utf-8") if text is None else text
+    start = source.index("$Files = @(")
+    end = source.index(")", start)
+    return re.findall(r'"([^"\n]+\.sql)"', source[start:end])
 
 
 def validate_proof_db_name(db: str) -> None:

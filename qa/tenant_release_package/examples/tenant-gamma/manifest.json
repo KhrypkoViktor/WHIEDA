@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-gamma-usd-catalog",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-gamma",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "Tenant Gamma",
+    "advisor_signature": "советник tenant-gamma"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "9bfa94983a99fbc1f728da90487ba57d4c2eb10afa9c0fbd18cb77b8b64c05b1"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "432c754d9eb0af722fec01d7616cb14ab43547f3ac89ee487f280fb3bd8b7c36"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "c7e185fa8441dd0d8eda4cf447a0ab9d0b83b4a47efd4cb792a9cb375760be76"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "30dd47ce6e70952bb90430e2e32be10b3db032ea5d354fe6dc2df3848112d158"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "dd2238ae16dbe7d985c845499ae4e9500d37e69b25f3664e042a3d2bca1e02f3"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_release_package/examples/tenant-gamma"
+  }
+}

@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-gamma",
+    "faq_id": "G-001-faq",
+    "sku": "G-001",
+    "title": "Gamma Capsule",
+    "answer_text": "FAQ Gamma Capsule"
+  }
+]

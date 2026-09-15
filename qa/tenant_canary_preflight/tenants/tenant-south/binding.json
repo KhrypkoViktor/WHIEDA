@@ -1,0 +1,14 @@
+{
+  "tenant_id": "tenant-south",
+  "tenant_status": "active",
+  "bindings": [
+    {
+      "binding_id": "south-advisor-bot",
+      "tenant_id": "tenant-south",
+      "status": "active",
+      "bot_username": "south_canary_bot",
+      "bot_id": "91002",
+      "processing_mode": "core"
+    }
+  ]
+}

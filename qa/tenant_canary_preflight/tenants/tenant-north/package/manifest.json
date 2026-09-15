@@ -1,0 +1,37 @@
+{
+  "schema_version": "tenant-release-package.v1",
+  "package_id": "tenant-north-canary",
+  "package_version": "1.0.0",
+  "tenant_id": "tenant-north",
+  "release_status": "candidate",
+  "display": {
+    "display_name": "tenant-north",
+    "advisor_signature": "советник tenant-north"
+  },
+  "files": {
+    "products": {
+      "path": "products.json",
+      "sha256": "d0750d12a2e9b1b7f848d47d7b4a28ce0a266873c9c55ac807480f25517a1321"
+    },
+    "aliases": {
+      "path": "aliases.json",
+      "sha256": "d50c97b890f9315c0dcaa3ea0bb403b22610a7e2d63bf5b9c446d448449f4869"
+    },
+    "cards": {
+      "path": "cards.json",
+      "sha256": "5cbbb88d51afe776c009c04c2752d933b127d2b60a6988b8a476da117d226f9f"
+    },
+    "media": {
+      "path": "media.json",
+      "sha256": "ecf6333c2b68fe660a604f3133c8b76d696fcc668304d67caf6f38dd943235b3"
+    },
+    "faq": {
+      "path": "faq.json",
+      "sha256": "c6ce3b26d725493573102cd3a87ec10cd0bb8532c55f3fef5d6e91486a3c64da"
+    }
+  },
+  "source": {
+    "kind": "synthetic-fixture",
+    "ref": "qa/tenant_canary_preflight/tenant-north"
+  }
+}

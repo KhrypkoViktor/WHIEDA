@@ -1,0 +1,9 @@
+[
+  {
+    "tenant_id": "tenant-alpha",
+    "faq_id": "A-001-faq",
+    "sku": "A-001",
+    "title": "Alpha Spirulina",
+    "answer_text": "FAQ Alpha Spirulina"
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "tenant_id": "tenant-gamma",
+    "sku": "G-001",
+    "canonical_name": "Gamma Capsule",
+    "review_status": "approved",
+    "price_missing": false,
+    "media_state": "present",
+    "source": {
+      "kind": "synthetic-fixture",
+      "ref": "fixture:tenant-gamma:G-001"
+    },
+    "prices": [
+      {
+        "kind": "retail",
+        "amount": "37.13",
+        "currency": "USD",
+        "source": "catalogue_2026"
+      }
+    ]
+  }
+]

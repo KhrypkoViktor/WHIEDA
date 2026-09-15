@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -31,6 +32,7 @@ from app.ref.routes import router as ref_router
 from app.schema_requirements import find_missing_tables, parse_disabled_features
 from app.settings import get_settings
 from app.telegram.routes import router as telegram_router
+from app.telegram.worker import run_outbox_worker_loop
 from app.tenancy import TenantMiddleware
 from app.theme_access.routes import router as theme_access_router
 
@@ -45,9 +47,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=settings.legacy_request_timeout_sec,
         follow_redirects=True,
     )
+    worker_task = None
+    if settings.telegram_outbox_worker:
+        worker_task = asyncio.create_task(run_outbox_worker_loop())
     try:
         yield
     finally:
+        if worker_task is not None:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
         await app.state.http_client.aclose()
         await close_pool()
 
