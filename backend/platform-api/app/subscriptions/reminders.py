@@ -48,10 +48,47 @@ async def list_due_reminders(tenant_id: str, *, limit: int = 100) -> list[dict[s
                   and log.paid_until = ps.paid_until
                   and log.status = 'sent'
               )
-            order by events.event_at, rp.ref_code
+            union all
+            -- CLUB: учёт + напоминания за 7/3/1 день партнёру (владелец, 13.09.2026).
+            select
+              rp.ref_code,
+              la.display_name,
+              la.telegram_chat_id,
+              rp.country_code,
+              pa.paid_until,
+              events.event_type,
+              events.event_at,
+              coalesce(nullif(rp.public_profile->>'subdomain', ''), rp.ref_code) || '.wwc.best'
+                as hostname
+            from partner_product_access pa
+            join referral_profiles rp
+              on rp.tenant_id = pa.tenant_id and rp.ref_code = pa.ref_code and rp.enabled = true
+            join lead_actors la
+              on la.tenant_id = rp.tenant_id and la.actor_id = rp.owner_id and la.active = true
+            cross join lateral (
+              values
+                ('club_due_7d'::text, pa.paid_until - interval '7 days'),
+                ('club_due_3d'::text, pa.paid_until - interval '3 days'),
+                ('club_due_1d'::text, pa.paid_until - interval '1 day')
+            ) events(event_type, event_at)
+            where pa.tenant_id = %s
+              and pa.product_code = 'club_subscription'
+              and pa.paid_until is not null
+              and la.telegram_chat_id is not null
+              and events.event_at <= now()
+              and events.event_at > now() - interval '2 days'
+              and not exists (
+                select 1 from partner_subscription_reminder_log log
+                where log.tenant_id = pa.tenant_id
+                  and log.ref_code = pa.ref_code
+                  and log.event_type = events.event_type
+                  and log.paid_until = pa.paid_until
+                  and log.status = 'sent'
+              )
+            order by event_at, ref_code
             limit %s
             """,
-            (tenant_id, safe_limit),
+            (tenant_id, tenant_id, safe_limit),
         )
 
 
@@ -118,6 +155,16 @@ def build_due_reminder_text(reminder: dict[str, Any]) -> str:
     name = str(reminder.get("display_name") or reminder["ref_code"]).strip()
     hostname = str(reminder["hostname"])
     event_type = str(reminder["event_type"])
+    if event_type.startswith("club_due_"):
+        days = {"club_due_7d": "7 дней", "club_due_3d": "3 дня", "club_due_1d": "1 день"}[event_type]
+        until = reminder["paid_until"]
+        until_text = until.strftime("%d.%m.%Y") if hasattr(until, "strftime") else str(until)
+        return "\n".join(
+            [
+                f"{name}, CLUB заканчивается через {days} (до {until_text}).",
+                "Продление — 120 WWC$ (12 000 ₽) за 3 месяца. Напишите Виктору, чтобы продлить.",
+            ]
+        )
     if event_type == "due_7d":
         lead = f"{name}, до окончания доступа к {hostname} осталось 7 дней."
     elif event_type == "grace_start":

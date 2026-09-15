@@ -12,7 +12,13 @@ from zoneinfo import ZoneInfo
 
 from app.settings import get_settings
 from app.referral_bonus.service import referral_payment_notification_context
-from app.telegram.money import money, wwc, wwc_signed
+from app.telegram.money import both, money, wwc, wwc_signed
+from app.subscriptions.pricing import (
+    PRODUCT_LABELS,
+    USAGE as MULTILINE_USAGE,
+    lines_from_json,
+    parse_payment_command,
+)
 from app.subscriptions.service import (
     GRACE_PERIOD,
     PartnerIdentityAmbiguousError,
@@ -24,9 +30,11 @@ from app.subscriptions.service import (
     SubscriptionError,
     cancel_payment_intent,
     confirm_payment_intent,
+    create_lines_intent,
     create_payment_intent,
     list_due_subscriptions,
     resolve_partner_for_billing,
+    set_personal_price,
     subscription_state,
 )
 from app.telegram.bindings import current_bot_binding
@@ -44,7 +52,15 @@ _PAY_RE = re.compile(
 )
 _STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
 _DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
-_CALLBACK_RE = re.compile(r"^billing:(confirm|cancel):([0-9a-f]{32})$")
+_CALLBACK_RE = re.compile(r"^billing:(confirm|cancel|price|price_cancel):([0-9a-f]{32})$")
+_PRICE_RE = re.compile(
+    rf"^(?:цена|/price)\s+({_IDENTIFIER})\s+(pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup)\s+"
+    r"(снять|сброс|([0-9]+(?:[.,][0-9]{1,2})?)\s+(WWC\$|W\$|WUSD))(?:\s+(.+))?$",
+    re.IGNORECASE,
+)
+_PRICE_USAGE = "Формат: цена ref:code PRO 15 WWC$ причина — или: цена ref:code PRO снять"
+# Pending personal-price confirmations, keyed by a token in the button.
+_PRICE_INTENTS: dict[str, dict[str, Any]] = {}
 _PAY_USAGE = "Формат: оплата ref:code 30 WWC$ [3|6|12] или оплата @username 3000 RUB [3|6|12]"
 _STATUS_USAGE = "Формат: статус @username или статус ref:code"
 
@@ -117,7 +133,7 @@ async def notify_payment_participants(payment: dict[str, Any]) -> None:
 
 
 def is_billing_command_candidate(text: str) -> bool:
-    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due"}
+    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due", "цена", "/price"}
 
 
 def parse_billing_command(text: str) -> BillingCommand:
@@ -227,14 +243,17 @@ def _status_text(partner: dict[str, Any], *, at: datetime | None = None) -> str:
         "suspended": "приостановлен",
     }
     grace_until = paid_until + GRACE_PERIOD if paid_until else None
+    club_until = partner.get("club_paid_until")
+    club_line = f"CLUB: до {club_until.astimezone(MOSCOW).strftime('%d.%m.%Y')}" if club_until else "CLUB: не подключён"
     return "\n".join(
         [
             f"Партнёр: {partner['display_name']}",
             f"Ref: {partner['ref_code']}",
             f"Сайт: {partner['hostname']}",
-            f"Статус: {labels[state]}",
+            f"PRO (сайт): {labels[state]}",
             f"Оплачено до: {_date(paid_until)}",
             f"Льготный срок до: {_date(grace_until)}",
+            club_line,
         ]
     )
 
@@ -276,6 +295,11 @@ async def try_handle_billing_message(
         await _deliver(msg.chat_id, "Команда недоступна.")
         return {**base, "ok": False, "status": "forbidden"}
     try:
+        first = _first_token(msg.text)
+        if first in {"цена", "/price"}:
+            return await _handle_price_command(tenant, msg, base)
+        if first in {"оплата", "/pay"} and ("\n" in msg.text.strip() or not _PAY_RE.fullmatch(msg.text.strip())):
+            return await _handle_multiline_payment(tenant, msg, update, base)
         command = parse_billing_command(msg.text)
         if command.kind == "pay":
             message_id = _message_id(update)
@@ -339,6 +363,8 @@ async def try_handle_billing_callback(
         await _deliver(callback.chat_id, "Подтверждение недействительно.")
         return {**base, "ok": False, "status": "invalid_callback"}
     action, token = match.groups()
+    if action in {"price", "price_cancel"}:
+        return await _handle_price_callback(tenant, callback, action, token, base)
     intent_id = f"{token[0:8]}-{token[8:12]}-{token[12:16]}-{token[16:20]}-{token[20:32]}"
     try:
         if action == "cancel":
@@ -365,17 +391,28 @@ async def try_handle_billing_callback(
                     "telegram_billing_participant_notification_failed",
                     extra={"trace_id": trace_id, "payment_id": str(payment.get("payment_id"))},
                 )
-        await _deliver(
-            callback.chat_id,
-            "\n".join(
-                [
-                    "Платёж записан." if not payment.get("idempotent") else "Платёж уже был записан.",
-                    f"ID: {str(payment['payment_id'])[:8]}",
-                    f"Доступ до: {_date(payment['period_end'])}",
-                    f"Grace до: {_date(payment['period_end'] + GRACE_PERIOD)}",
-                ]
-            ),
-        )
+        if payment.get("multiline"):
+            lines = ["Платёж записан." if not payment.get("idempotent") else "Платёж уже был записан."]
+            for item in payment.get("lines") or []:
+                label = PRODUCT_LABELS.get(str(item["product_code"]), str(item["product_code"]))
+                lines.append(f"{label}: {money(int(item['amount_minor']), str(item['currency']))}")
+            if payment.get("paid_until"):
+                lines.append(f"PRO до: {_date(payment['paid_until'])}")
+            if payment.get("club_paid_until"):
+                lines.append(f"CLUB до: {_date(payment['club_paid_until'])}")
+            await _deliver(callback.chat_id, "\n".join(lines))
+        else:
+            await _deliver(
+                callback.chat_id,
+                "\n".join(
+                    [
+                        "Платёж записан." if not payment.get("idempotent") else "Платёж уже был записан.",
+                        f"ID: {str(payment['payment_id'])[:8]}",
+                        f"Доступ до: {_date(payment['period_end'])}",
+                        f"Grace до: {_date(payment['period_end'] + GRACE_PERIOD)}",
+                    ]
+                ),
+            )
         return {
             **base,
             "status": "confirmed",
@@ -393,3 +430,111 @@ async def try_handle_billing_callback(
         message, status = "Платёж не записан. Отправьте команду оплаты ещё раз.", "failed"
     await _deliver(callback.chat_id, message)
     return {**base, "ok": False, "status": status}
+
+
+# ----------------------------------------------------------------------------
+# Multi-line payments and personal prices (products v7)
+# ----------------------------------------------------------------------------
+
+def _lines_preview(intent: dict[str, Any]) -> str:
+    lines = lines_from_json(intent["lines"] if not isinstance(intent["lines"], str) else __import__("json").loads(intent["lines"]))
+    out = [f"Партнёр: {intent['display_name']}", f"Ref: {intent['ref_code']}", f"Сайт: {intent['hostname']}", ""]
+    reasons = intent.get("price_reasons") or {}
+    for line in lines:
+        label = PRODUCT_LABELS.get(line.product_code, line.product_code)
+        term = f", {line.access_months} мес." if line.access_months else ""
+        tag = " — акция" if line.promo else (f" — персональная цена: {reasons[line.product_code]}" if line.product_code in reasons else "")
+        out.append(f"{label}: {both(line.amount_minor, line.currency)}{term}{tag}")
+    out.append(f"Получено: {both(int(intent['received_minor']), str(intent['currency']))}")
+    out.append("")
+    out.append(f"PRO сейчас до: {_date(intent.get('paid_until'))}")
+    out.append(f"CLUB сейчас до: {_date(intent.get('club_paid_until'))}")
+    out.append("")
+    out.append("Сумма сходится. Провести операцию?")
+    return "\n".join(out)
+
+
+async def _handle_multiline_payment(
+    tenant: TenantContext, msg: Any, update: dict[str, Any], base: dict[str, Any]
+) -> dict[str, Any]:
+    parsed = parse_payment_command(msg.text)
+    message_id = _message_id(update)
+    if message_id is None:
+        raise SubscriptionError("Не удалось определить сообщение. Отправьте команду ещё раз.")
+    intent = await create_lines_intent(
+        tenant.tenant_id,
+        identifier=parsed.identifier,
+        lines=parsed.lines,
+        received_minor=parsed.received_minor,
+        currency=parsed.currency,
+        telegram_chat_id=msg.chat_id,
+        telegram_message_id=message_id,
+        telegram_user_id=msg.user_id,
+    )
+    await _deliver(msg.chat_id, _lines_preview(intent), reply_markup=_intent_keyboard(intent["intent_id"]))
+    return {**base, "status": "preview", "intent_id": str(intent["intent_id"]), "multiline": True}
+
+
+_PRICE_PRODUCTS = {
+    "pro": "platform_subscription", "платформа": "platform_subscription", "сайт": "platform_subscription",
+    "клуб": "club_subscription", "club": "club_subscription",
+    "настройка": "site_setup", "настройка сайта": "site_setup", "setup": "site_setup",
+}
+
+
+async def _handle_price_command(tenant: TenantContext, msg: Any, base: dict[str, Any]) -> dict[str, Any]:
+    match = _PRICE_RE.fullmatch(msg.text.strip())
+    if not match:
+        raise SubscriptionError(_PRICE_USAGE)
+    identifier, product_word, action, raw_amount, _currency, reason = match.groups()
+    product_code = _PRICE_PRODUCTS[re.sub(r"\s+", " ", product_word.lower())]
+    partner = await resolve_partner_for_billing(tenant.tenant_id, identifier)
+    revoke = raw_amount is None
+    if not revoke and not (reason or "").strip():
+        raise SubscriptionError("Укажите причину персональной цены — она сохраняется навсегда.")
+    price_minor = None if revoke else int(round(float(raw_amount.replace(",", ".")) * 100))
+    token = __import__("uuid").uuid4().hex
+    _PRICE_INTENTS[token] = {
+        "ref_code": partner["ref_code"], "product_code": product_code, "price_wusd_minor": price_minor,
+        "reason": (reason or "").strip(), "user_id": msg.user_id,
+    }
+    label = PRODUCT_LABELS[product_code]
+    text = (
+        f"{partner['display_name']} (ref:{partner['ref_code']})\n"
+        + (f"Снять персональную цену на {label}, вернуть общий тариф?" if revoke
+           else f"Персональная цена: {label}: {both(price_minor, 'WUSD')} — действует до отмены.\nПричина: {reason.strip()}\n\nЗаписать?")
+    )
+    await _deliver(
+        msg.chat_id, text,
+        reply_markup={"inline_keyboard": [[
+            {"text": "Подтвердить", "callback_data": f"billing:price:{token}"},
+            {"text": "Отмена", "callback_data": f"billing:price_cancel:{token}"},
+        ]]},
+    )
+    return {**base, "status": "price_preview"}
+
+
+async def _handle_price_callback(
+    tenant: TenantContext, callback: Any, action: str, token: str, base: dict[str, Any]
+) -> dict[str, Any]:
+    pending = _PRICE_INTENTS.pop(token, None)
+    if not pending or pending["user_id"] != callback.user_id:
+        await _deliver(callback.chat_id, "Подтверждение недействительно или устарело. Отправьте команду ещё раз.")
+        return {**base, "ok": False, "status": "invalid_callback"}
+    if action == "price_cancel":
+        await _deliver(callback.chat_id, "Отменено.")
+        return {**base, "status": "cancelled"}
+    result = await set_personal_price(
+        tenant.tenant_id,
+        ref_code=pending["ref_code"],
+        product_code=pending["product_code"],
+        price_wusd_minor=pending["price_wusd_minor"],
+        reason=pending["reason"],
+        approved_by_telegram_user_id=callback.user_id,
+    )
+    label = PRODUCT_LABELS[pending["product_code"]]
+    if pending["price_wusd_minor"] is None:
+        await _deliver(callback.chat_id, f"Готово: у ref:{pending['ref_code']} снова общий тариф на {label}.")
+    else:
+        await _deliver(callback.chat_id, f"Готово: ref:{pending['ref_code']} — {label} по {both(int(result['price_wusd_minor']), 'WUSD')}.")
+    return {**base, "status": "price_set"}
