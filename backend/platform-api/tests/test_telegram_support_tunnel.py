@@ -118,8 +118,10 @@ async def test_confirm_opens_ticket_and_tells_both_sides(whieda_tenant, whieda_b
     to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(ADMIN)]
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert len(to_admin) == 1 and len(to_user) == 1
-    assert "#S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев — 4 490 ₽" in to_admin[0]["text"]
-    assert "Ольга (@olga)" in to_admin[0]["text"] and "Reply" in to_admin[0]["text"]
+    assert "Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев — 4 490 ₽" in to_admin[0]["text"]
+    # The administrator never sees the person: no name, no @username, no link.
+    assert "Ольга" not in to_admin[0]["text"] and "@olga" not in to_admin[0]["text"]
+    assert "Reply" in to_admin[0]["text"]
     assert to_admin[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("svc:close:")
     assert "Заявка #S-1042 принята" in to_user[0]["text"]
     # The admin-side header is stored with its delivered message id for Reply routing.
@@ -143,7 +145,7 @@ async def test_user_text_inside_open_ticket_goes_to_admin_not_advisor(whieda_ten
     advisor.assert_not_awaited()
     kwargs = send.await_args.kwargs
     assert kwargs["chat_id"] == str(ADMIN)
-    assert kwargs["text"] == "#S-1042 · Ольга (@olga)\nКогда активируете?"
+    assert kwargs["text"] == "Клиент WWC · Заявка #S-1042\nКогда активируете?"
     assert record.await_args.kwargs["source_message_id"] == 11
     assert record.await_args.kwargs["delivered_message_id"] == 601
 
@@ -163,7 +165,7 @@ async def test_admin_reply_is_routed_to_the_ticket_user(whieda_tenant, whieda_bo
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert to_user[0]["text"] == "Ответ администратора по заявке #S-1042:\nАктивирую сегодня вечером"
     to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(ADMIN)]
-    assert "→ отправлено: Ольга (@olga) (#S-1042)" == to_admin[0]["text"]
+    assert "→ отправлено: Клиент WWC · Заявка #S-1042" == to_admin[0]["text"]
 
 
 @pytest.mark.asyncio
@@ -187,7 +189,8 @@ async def test_admin_plain_message_with_several_open_tickets_asks_for_reply(whie
         result = await process_core_telegram_update(whieda_tenant, _message("Готово", user=ADMIN), "t7", binding=whieda_bot_binding)
     assert result["status"] == "ambiguous"
     text = send.await_args.kwargs["text"]
-    assert "Reply" in text and "#S-1042 · Ольга (@olga)" in text and "#S-1043 · Иван" in text
+    assert "Reply" in text and "Заявка #S-1042" in text and "Заявка #S-1043" in text
+    assert "Ольга" not in text and "Иван" not in text
 
 
 @pytest.mark.asyncio
@@ -241,3 +244,18 @@ async def test_user_without_ticket_is_untouched(whieda_tenant, whieda_bot_bindin
         result = await process_core_telegram_update(whieda_tenant, _message("Сколько стоит матрас?"), "t11", binding=whieda_bot_binding)
     assert result["route"] == "advisor"
     advisor.assert_awaited_once()
+
+
+def test_services_command_works_on_the_production_minimal_profile(monkeypatch: pytest.MonkeyPatch):
+    """Owner signed «сервисы» off for production on 15.09.2026: the text command
+    opens the services card on every UI profile, including `minimal`."""
+    from app.settings import get_settings
+    from app.telegram.support import is_services_request
+
+    monkeypatch.setenv("PLATFORM_TELEGRAM_UI_PROFILE", "minimal")
+    get_settings.cache_clear()
+    try:
+        assert is_services_request("сервисы") and is_services_request("/services")
+        assert not is_services_request("оплата")
+    finally:
+        get_settings.cache_clear()
