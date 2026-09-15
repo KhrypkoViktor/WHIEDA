@@ -39,6 +39,7 @@ MIGRATIONS = (
     "platform_partner_site_requests_v4.sql",
     "platform_partner_renewal_requests_v5.sql",
     "platform_partner_subscription_reminders_v6.sql",
+    "platform_partner_products_v7.sql",
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

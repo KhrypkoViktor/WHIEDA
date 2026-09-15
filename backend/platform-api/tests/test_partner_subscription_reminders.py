@@ -38,3 +38,13 @@ def test_operational_reminder_scripts_are_copied_into_image():
     assert "scripts/send_due_partner_reminders.py" in dockerfile
     assert "scripts/check_telegram_webhook_health.py" in dockerfile
     assert "scripts/send_telegram_command_canary.py" in dockerfile
+
+
+def test_club_reminders_name_the_term_and_price():
+    from datetime import datetime, timezone
+
+    row = {**_row("club_due_3d"), "paid_until": datetime(2026, 12, 14, tzinfo=timezone.utc)}
+    text = build_due_reminder_text(row)
+    assert "CLUB заканчивается через 3 дня (до 14.12.2026)" in text
+    assert "120 WWC$ (12 000 ₽)" in text
+    assert "Продлить платформу" not in text

@@ -388,7 +388,10 @@ async def resolve_partner_for_billing(tenant_id: str, identifier: str) -> dict[s
             f"""
             select rp.tenant_id, rp.ref_code, rp.public_profile,
                    la.actor_id, la.display_name, la.telegram_username,
-                   ps.paid_until
+                   ps.paid_until,
+                   (select pa.paid_until from partner_product_access pa
+                     where pa.tenant_id = rp.tenant_id and pa.ref_code = rp.ref_code
+                       and pa.product_code = 'club_subscription') as club_paid_until
             from referral_profiles rp
             join lead_actors la
               on la.actor_id = rp.owner_id
@@ -558,7 +561,7 @@ async def confirm_payment_intent(
             """
             select intent_id, ref_code, amount_minor, currency, product_code, access_months,
                    telegram_chat_id, telegram_message_id, telegram_user_id,
-                   expires_at, consumed_payment_id, cancelled_at
+                   expires_at, consumed_payment_id, cancelled_at, lines
             from partner_payment_intents
             where tenant_id = %s and intent_id = %s::uuid
             for update
@@ -590,6 +593,44 @@ async def confirm_payment_intent(
         clock = await fetch_one(conn, "select now() as current_time")
         if _as_utc(intent["expires_at"]) <= _as_utc(clock["current_time"]):
             raise PaymentIntentExpiredError("payment intent expired")
+
+        if intent.get("lines"):
+            # Multi-line owner payment: one received transfer, several products.
+            from app.subscriptions.pricing import lines_from_json
+
+            stored = intent["lines"]
+            if isinstance(stored, str):
+                stored = json.loads(stored)
+            result = await record_payment_lines_in_connection(
+                conn,
+                tenant_id=tenant_id,
+                ref_code=intent["ref_code"],
+                lines=lines_from_json(stored),
+                received_minor=int(intent["amount_minor"]),
+                currency=intent["currency"],
+                telegram_chat_id=int(intent["telegram_chat_id"]),
+                telegram_message_id=int(intent["telegram_message_id"]),
+                telegram_user_id=int(intent["telegram_user_id"]),
+                list_prices={str(item["product_code"]): item.get("list_price_minor") for item in stored},
+            )
+            first = result["lines"][0] if result["lines"] else None
+            if first and not result["idempotent"]:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "update partner_payment_intents set consumed_payment_id = %s where tenant_id = %s and intent_id = %s::uuid",
+                        (first["payment_id"], tenant_id, normalized_intent_id),
+                    )
+            return {
+                **(first or {}),
+                "ref_code": intent["ref_code"],
+                "tenant_id": tenant_id,
+                "multiline": True,
+                "lines": result["lines"],
+                "paid_until": result["pro_paid_until"],
+                "club_paid_until": result["club_paid_until"],
+                "idempotent": result["idempotent"],
+                "referral_bonus": result["referral_bonus"],
+            }
 
         payment = await _record_manual_payment_in_connection(
             conn,
@@ -967,3 +1008,327 @@ async def apply_initial_access_seed(
                 if previous is None or datetime.fromisoformat(previous) < cutoff:
                     changed += 1
     return {**manifest, "applied": True, "changed_count": changed}
+
+
+# ----------------------------------------------------------------------------
+# One received transfer, several product lines (products migration v7)
+# ----------------------------------------------------------------------------
+
+TERM_PRODUCTS = {"platform_subscription", "club_subscription"}
+
+
+def _lines_fingerprint(lines: list[Any], received_minor: int, currency: str) -> str:
+    payload = [(l.product_code, int(l.amount_minor), int(l.access_months), bool(l.promo)) for l in lines]
+    return hashlib.sha256(json.dumps([payload, int(received_minor), currency], sort_keys=True).encode()).hexdigest()[:32]
+
+
+async def _extend_term(
+    conn: Any, *, tenant_id: str, ref_code: str, product_code: str, access_months: int, current: datetime
+) -> tuple[datetime, datetime, datetime | None]:
+    """Next term for a recurring product: from the current end while it is still
+    active or in grace, otherwise from now. Returns (start, end, previous end)."""
+    if product_code == "platform_subscription":
+        row = await fetch_one(
+            conn,
+            "select paid_until from partner_subscriptions where tenant_id = %s and ref_code = %s for update",
+            (tenant_id, ref_code),
+        )
+    else:
+        await fetch_one(
+            conn,
+            """
+            insert into partner_product_access (tenant_id, ref_code, product_code, paid_until)
+            values (%s, %s, %s, null)
+            on conflict (tenant_id, ref_code, product_code) do nothing
+            returning ref_code
+            """,
+            (tenant_id, ref_code, product_code),
+        )
+        row = await fetch_one(
+            conn,
+            "select paid_until from partner_product_access where tenant_id = %s and ref_code = %s and product_code = %s for update",
+            (tenant_id, ref_code, product_code),
+        )
+    previous = row.get("paid_until") if row else None
+    state = subscription_state(previous, at=current)
+    start = _as_utc(previous) if previous is not None and state in {"active", "grace"} else current
+    end = add_calendar_months(start, access_months)
+    if product_code == "platform_subscription":
+        await fetch_one(
+            conn,
+            "update partner_subscriptions set paid_until = %s, updated_at = now() where tenant_id = %s and ref_code = %s returning paid_until",
+            (end, tenant_id, ref_code),
+        )
+    else:
+        await fetch_one(
+            conn,
+            "update partner_product_access set paid_until = %s, updated_at = now() where tenant_id = %s and ref_code = %s and product_code = %s returning paid_until",
+            (end, tenant_id, ref_code, product_code),
+        )
+    return start, end, previous
+
+
+async def _current_terms(conn: Any, *, tenant_id: str, ref_code: str) -> dict[str, Any]:
+    pro = await fetch_one(
+        conn, "select paid_until from partner_subscriptions where tenant_id = %s and ref_code = %s", (tenant_id, ref_code)
+    )
+    club = await fetch_one(
+        conn,
+        "select paid_until from partner_product_access where tenant_id = %s and ref_code = %s and product_code = 'club_subscription'",
+        (tenant_id, ref_code),
+    )
+    return {
+        "pro_paid_until": pro.get("paid_until") if pro else None,
+        "club_paid_until": club.get("paid_until") if club else None,
+    }
+
+
+async def record_payment_lines_in_connection(
+    conn: Any,
+    *,
+    tenant_id: str,
+    ref_code: str,
+    lines: list[Any],
+    received_minor: int,
+    currency: str,
+    telegram_chat_id: int,
+    telegram_message_id: int,
+    telegram_user_id: int,
+    list_prices: dict[str, int | None] | None = None,
+) -> dict[str, Any]:
+    """Record one received payment and its lines; extend PRO / CLUB terms;
+    award the referral bonus for the PRO line only. Idempotent per owner
+    message: the same lines again → ``idempotent``; different lines → conflict."""
+    if not lines:
+        raise SubscriptionError("Нет ни одной строки оплаты.")
+    normalized_currency = str(currency or "").strip().upper()
+    if normalized_currency not in {"RUB", "WUSD"}:
+        raise SubscriptionError("currency must be RUB or WUSD")
+    for line in lines:
+        if line.currency != normalized_currency:
+            raise SubscriptionError("Все строки одной оплаты должны быть в одной валюте.")
+        if line.product_code in TERM_PRODUCTS and line.access_months not in {3, 6, 12}:
+            raise SubscriptionError("access_months must be 3, 6 or 12")
+    fingerprint = _lines_fingerprint(lines, received_minor, normalized_currency)
+
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+            select rp.tenant_id, rp.ref_code, null from referral_profiles rp
+            where rp.tenant_id = %s and rp.ref_code = %s and rp.enabled = true
+            on conflict (tenant_id, ref_code) do nothing
+            """,
+            (tenant_id, ref_code),
+        )
+    partner = await fetch_one(
+        conn,
+        "select ref_code from partner_subscriptions where tenant_id = %s and ref_code = %s for update",
+        (tenant_id, ref_code),
+    )
+    if not partner:
+        raise PartnerNotFoundError("active referral profile not found")
+
+    existing = await fetch_one(
+        conn,
+        """
+        select received_payment_id, ref_code, lines_fingerprint from partner_payments
+        where tenant_id = %s and source = 'telegram_manual'
+          and telegram_chat_id = %s and telegram_message_id = %s
+        """,
+        (tenant_id, telegram_chat_id, telegram_message_id),
+    )
+    if existing:
+        if existing["ref_code"] != ref_code or existing["lines_fingerprint"] != fingerprint:
+            raise PaymentIdempotencyConflictError("telegram message already records a different payment")
+        recorded = await fetch_all(
+            conn,
+            "select * from partner_payment_ledger where tenant_id = %s and received_payment_id = %s::uuid order by created_at",
+            (tenant_id, str(existing["received_payment_id"])),
+        )
+        terms = await _current_terms(conn, tenant_id=tenant_id, ref_code=ref_code)
+        return {
+            "received_payment_id": str(existing["received_payment_id"]),
+            "lines": recorded, "idempotent": True, "referral_bonus": None, **terms,
+        }
+
+    clock = await fetch_one(conn, "select now() as current_time")
+    current = _as_utc(clock["current_time"])
+    header = await fetch_one(
+        conn,
+        """
+        insert into partner_payments (
+          tenant_id, ref_code, received_amount_minor, currency,
+          telegram_chat_id, telegram_message_id, telegram_user_id, lines_fingerprint
+        ) values (%s, %s, %s, %s, %s, %s, %s, %s)
+        returning received_payment_id
+        """,
+        (tenant_id, ref_code, int(received_minor), normalized_currency, telegram_chat_id, telegram_message_id, telegram_user_id, fingerprint),
+    )
+    received_payment_id = str(header["received_payment_id"])
+
+    recorded: list[dict[str, Any]] = []
+    referral_bonus = None
+    for line in lines:
+        if line.product_code in TERM_PRODUCTS:
+            period_start, period_end, previous = await _extend_term(
+                conn, tenant_id=tenant_id, ref_code=ref_code, product_code=line.product_code,
+                access_months=line.access_months, current=current,
+            )
+        else:
+            period_start, period_end, previous = current, current, None
+        promo_note = (line.note or "акция") if line.promo else None
+        ledger = await fetch_one(
+            conn,
+            """
+            insert into partner_payment_ledger (
+              payment_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
+              period_start, period_end, previous_paid_until, source, telegram_chat_id, telegram_message_id,
+              telegram_user_id, received_payment_id, promo_note, list_price_minor
+            ) values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'telegram_manual', %s, %s, %s, %s::uuid, %s, %s)
+            returning payment_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
+                      period_start, period_end, previous_paid_until, telegram_user_id, created_at
+            """,
+            (
+                str(uuid.uuid4()), tenant_id, ref_code, int(line.amount_minor), normalized_currency, line.product_code,
+                int(line.access_months), period_start, period_end, previous, telegram_chat_id, telegram_message_id,
+                telegram_user_id, received_payment_id, promo_note, (list_prices or {}).get(line.product_code),
+            ),
+        )
+        recorded.append(ledger)
+        if line.product_code == "platform_subscription" and int(line.amount_minor) > 0:
+            # Referral reward rules exist for PRO only; other products earn nothing.
+            referral_bonus = await award_referral_bonus_for_payment(conn, tenant_id=tenant_id, payment=ledger)
+    terms = await _current_terms(conn, tenant_id=tenant_id, ref_code=ref_code)
+    return {
+        "received_payment_id": received_payment_id, "lines": recorded, "idempotent": False,
+        "referral_bonus": referral_bonus, **terms,
+    }
+
+
+async def record_payment_lines(tenant_id: str, **kwargs: Any) -> dict[str, Any]:
+    async with tenant_connection(tenant_id) as conn:
+        return await record_payment_lines_in_connection(conn, tenant_id=tenant_id, **kwargs)
+
+
+async def create_lines_intent(
+    tenant_id: str,
+    *,
+    identifier: str,
+    lines: list[Any],
+    received_minor: int | None,
+    currency: str,
+    telegram_chat_id: int,
+    telegram_message_id: int,
+    telegram_user_id: int,
+) -> dict[str, Any]:
+    """Preview for a multi-line owner payment. Validates every line against the
+    list or personal price (a mismatch needs «акция») and the received total;
+    stores the lines in the intent for confirm_payment_intent."""
+    from app.subscriptions.pricing import effective_price_minor, validate_lines, with_list_prices
+
+    normalized_currency = str(currency or "").strip().upper()
+    total = sum(int(line.amount_minor) for line in lines)
+    received = int(received_minor) if received_minor is not None else total
+    partner = await resolve_partner_for_billing(tenant_id, identifier)
+    async with tenant_connection(tenant_id) as conn:
+        prices: dict[str, int | None] = {}
+        reasons: dict[str, str] = {}
+        for line in lines:
+            price, reason = await effective_price_minor(
+                conn, tenant_id=tenant_id, ref_code=partner["ref_code"], product_code=line.product_code,
+                access_months=int(line.access_months), currency=normalized_currency,
+            )
+            prices[line.product_code] = price
+            if reason:
+                reasons[line.product_code] = reason
+        problems = validate_lines(lines, prices, received)
+        if problems:
+            raise SubscriptionError("\n".join(problems))
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+                values (%s, %s, %s)
+                on conflict (tenant_id, ref_code) do nothing
+                """,
+                (tenant_id, partner["ref_code"], partner.get("paid_until")),
+            )
+        clock = await fetch_one(conn, "select now() as current_time")
+        current = _as_utc(clock["current_time"])
+        payload = json.dumps(with_list_prices(lines, prices), ensure_ascii=False)
+        await fetch_one(
+            conn,
+            """
+            insert into partner_payment_intents (
+              intent_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
+              telegram_chat_id, telegram_message_id, telegram_user_id, expires_at, lines
+            ) values (%s::uuid, %s, %s, %s, %s, 'multi', 0, %s, %s, %s, %s, %s::jsonb)
+            on conflict (tenant_id, telegram_chat_id, telegram_message_id) do nothing
+            returning intent_id
+            """,
+            (
+                str(uuid.uuid4()), tenant_id, partner["ref_code"], received, normalized_currency,
+                telegram_chat_id, telegram_message_id, telegram_user_id, current + PAYMENT_INTENT_TTL, payload,
+            ),
+        )
+        intent = await fetch_one(
+            conn,
+            """
+            select intent_id, tenant_id, ref_code, amount_minor, currency, product_code, access_months,
+                   telegram_chat_id, telegram_message_id, telegram_user_id, expires_at,
+                   consumed_payment_id, cancelled_at, created_at, lines
+            from partner_payment_intents
+            where tenant_id = %s and telegram_chat_id = %s and telegram_message_id = %s
+            """,
+            (tenant_id, telegram_chat_id, telegram_message_id),
+        )
+        club = await fetch_one(
+            conn,
+            "select paid_until from partner_product_access where tenant_id = %s and ref_code = %s and product_code = 'club_subscription'",
+            (tenant_id, partner["ref_code"]),
+        )
+    if not intent:
+        raise SubscriptionError("payment intent was not created")
+    stored = intent["lines"] if not isinstance(intent["lines"], str) else json.loads(intent["lines"])
+    if intent["ref_code"] != partner["ref_code"] or int(intent["amount_minor"]) != received or (stored or None) != with_list_prices(lines, prices):
+        raise PaymentIdempotencyConflictError("telegram message already contains a different payment intent")
+    return {
+        **intent, **partner, "received_minor": received, "list_prices": prices, "price_reasons": reasons,
+        "club_paid_until": club.get("paid_until") if club else None,
+    }
+
+
+async def set_personal_price(
+    tenant_id: str,
+    *,
+    ref_code: str,
+    product_code: str,
+    price_wusd_minor: int | None,
+    reason: str,
+    approved_by_telegram_user_id: int,
+) -> dict[str, Any]:
+    """Set (or, with ``price_wusd_minor=None``, revoke) a partner's personal price.
+    History is kept: the previous override is revoked, never deleted."""
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            update partner_price_overrides set revoked_at = now()
+             where tenant_id = %s and ref_code = %s and product_code = %s and revoked_at is null
+            returning override_id
+            """,
+            (tenant_id, ref_code, product_code),
+        )
+        if price_wusd_minor is None:
+            return {"ref_code": ref_code, "product_code": product_code, "price_wusd_minor": None, "reason": reason}
+        row = await fetch_one(
+            conn,
+            """
+            insert into partner_price_overrides (tenant_id, ref_code, product_code, price_wusd_minor, reason, approved_by_telegram_user_id)
+            values (%s, %s, %s, %s, %s, %s)
+            returning override_id, ref_code, product_code, price_wusd_minor, reason
+            """,
+            (tenant_id, ref_code, product_code, int(price_wusd_minor), reason, int(approved_by_telegram_user_id)),
+        )
+    return dict(row)
