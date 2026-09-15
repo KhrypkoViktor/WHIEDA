@@ -78,6 +78,7 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # support tunnel (subscriber <-> service administrator via the bot)
             "support_tickets",
             "support_messages",
+            "support_forums",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

@@ -34,6 +34,7 @@ async def send_telegram_text(
     bot_token: str,
     timeout_sec: float = 10.0,
     reply_markup: dict | None = None,
+    message_thread_id: int | None = None,
 ) -> dict[str, Any]:
     if not text.strip():
         return {"ok": False, "skipped": True}
@@ -44,6 +45,8 @@ async def send_telegram_text(
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
+    if message_thread_id is not None:
+        payload["message_thread_id"] = int(message_thread_id)
     # The bot uses Telegram's compact command menu. Remove any legacy reply
     # keyboard whenever a plain response does not need its own inline controls.
     payload["reply_markup"] = (
@@ -97,10 +100,13 @@ async def copy_telegram_message(
     message_id: int,
     bot_token: str,
     timeout_sec: float = 10.0,
+    message_thread_id: int | None = None,
 ) -> dict[str, Any]:
     """Copy a proof message to the administrator without exposing a download URL."""
     url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
-    payload = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
+    payload: dict[str, Any] = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
+    if message_thread_id is not None:
+        payload["message_thread_id"] = int(message_thread_id)
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.post(url, json=payload)
     data = response.json() if response.text else {}
@@ -111,6 +117,46 @@ async def copy_telegram_message(
         )
         return {"ok": False, "status_code": response.status_code, "detail": data}
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
+async def _call_telegram(method: str, payload: dict[str, Any], *, bot_token: str, timeout_sec: float = 10.0) -> dict[str, Any]:
+    """One Bot API call; failures are logged by method name only (no token, no chat ids)."""
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.post(f"https://api.telegram.org/bot{bot_token}/{method}", json=payload)
+    data = response.json() if response.text else {}
+    if response.status_code >= 400 or not data.get("ok"):
+        logger.warning("telegram_call_failed", extra={"method": method, "status": response.status_code})
+        return {"ok": False, "status_code": response.status_code, "detail": data}
+    return {"ok": True, "result": data.get("result")}
+
+
+async def create_forum_topic(*, chat_id: str, name: str, bot_token: str) -> dict[str, Any]:
+    """A topic per support ticket; the bot must be an administrator with «Manage topics»."""
+    result = await _call_telegram("createForumTopic", {"chat_id": chat_id, "name": name[:128]}, bot_token=bot_token)
+    if not result.get("ok"):
+        return result
+    return {"ok": True, "message_thread_id": (result.get("result") or {}).get("message_thread_id")}
+
+
+async def edit_forum_topic(*, chat_id: str, message_thread_id: int, name: str, bot_token: str) -> dict[str, Any]:
+    return await _call_telegram(
+        "editForumTopic", {"chat_id": chat_id, "message_thread_id": int(message_thread_id), "name": name[:128]}, bot_token=bot_token
+    )
+
+
+async def close_forum_topic(*, chat_id: str, message_thread_id: int, bot_token: str) -> dict[str, Any]:
+    return await _call_telegram(
+        "closeForumTopic", {"chat_id": chat_id, "message_thread_id": int(message_thread_id)}, bot_token=bot_token
+    )
+
+
+async def set_message_reaction(*, chat_id: str, message_id: int, emoji: str, bot_token: str) -> dict[str, Any]:
+    """A quiet delivery receipt for the administrator inside a topic."""
+    return await _call_telegram(
+        "setMessageReaction",
+        {"chat_id": chat_id, "message_id": int(message_id), "reaction": [{"type": "emoji", "emoji": emoji}]},
+        bot_token=bot_token,
+    )
 
 
 async def answer_callback_query(

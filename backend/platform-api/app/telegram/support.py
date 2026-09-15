@@ -4,12 +4,20 @@ A subscriber opens «Сервисы», picks a Gemini offer (or «Поддерж
 and a ticket opens between them and the service administrator. From then on
 the bot relays messages both ways; neither side sees the other's contact.
 
-How the administrator answers so the bot knows whom to send to: every relayed
-message lands in the admin chat with a «#S-1042 · Name» header. The admin
-uses Telegram's *Reply* on that message; Telegram attaches the original
-message id, and the bot maps it back to the ticket. A plain message without a
-Reply goes to the only open ticket, or — when several are open — the bot asks
-for a Reply instead of guessing.
+How the administrator answers so the bot knows whom to send to — two modes:
+
+* Forum group (owner, 15.09.2026): the owner registers a Telegram group with
+  topics by sending «/forum» in it; the bot must be an administrator there with
+  «Manage topics». Every ticket then gets its own topic «#S-7 · Gemini …»; the
+  administrator simply writes inside the topic, no Reply needed. Closing the
+  ticket closes the topic.
+* Private chat (fallback when no forum is registered): every relayed message
+  lands in the admin chat with a «Клиент WWC · Заявка #S-1042» header; the
+  admin uses Telegram's *Reply* on it, and the bot maps the reply back to the
+  ticket. A plain message without a Reply goes to the only open ticket.
+
+The administrator never sees the person's name, username or a link — only the
+ticket number.
 
 The administrator is PLATFORM_SUPPORT_ADMIN_TELEGRAM_ID: the owner on staging,
 the real administrator in production (both environments share one database,
@@ -25,17 +33,29 @@ from typing import Any
 
 from app.settings import get_settings
 from app.support.service import (
+    attach_forum_topic,
     close_ticket,
     find_ticket_by_admin_message,
+    find_ticket_by_forum_thread,
+    get_forum,
     get_open_ticket_for_user,
     get_ticket,
     list_open_tickets_for_admin,
     open_or_reuse_ticket,
     record_relayed_message,
+    register_forum,
     ticket_label,
 )
 from app.telegram.bindings import current_bot_binding
-from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
+from app.telegram.delivery import (
+    answer_callback_query,
+    close_forum_topic,
+    copy_telegram_message,
+    create_forum_topic,
+    edit_forum_topic,
+    send_telegram_text,
+    set_message_reaction,
+)
 from app.telegram.log_safe import chat_ref
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -45,6 +65,8 @@ logger = logging.getLogger(__name__)
 CHANNEL_GEMINI = "gemini"
 _SERVICES_RE = re.compile(r"^(?:сервисы|/services|gemini|джемини)$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close):([A-Za-z0-9_-]+)$")
+# Owner (or the administrator) sends this inside the forum group once.
+_FORUM_REGISTER_RE = re.compile(r"^/forum(?:@\w+)?$", re.IGNORECASE)
 # Owner commands the support admin may also use on staging; never relayed.
 _OWNER_COMMAND_TOKENS = {
     "оплата", "/pay", "статус", "/status", "/due", "бонусы", "/bonuses", "реферер", "/referrer",
@@ -130,6 +152,11 @@ def is_support_admin(user_id: int) -> bool:
     return admin is not None and int(user_id) == admin
 
 
+def _may_register_forum(user_id: int) -> bool:
+    owner = get_settings().platform_billing_owner_telegram_id
+    return is_support_admin(user_id) or (owner is not None and int(user_id) == int(owner))
+
+
 def _display(msg: TelegramMessage | TelegramCallbackQuery) -> str:
     raw = msg.raw or {}
     user = ((raw.get("message") or {}).get("from") or (raw.get("callback_query") or {}).get("from") or {})
@@ -158,10 +185,50 @@ def _first_token(text: str) -> str:
     return (str(text or "").strip().split() or [""])[0].lower()
 
 
-async def _send(chat_id: int, text: str, *, reply_markup: dict | None = None) -> dict[str, Any]:
+async def _send(
+    chat_id: int, text: str, *, reply_markup: dict | None = None, thread_id: int | None = None
+) -> dict[str, Any]:
     return await send_telegram_text(
-        chat_id=str(chat_id), text=text, bot_token=current_bot_binding().bot_token, reply_markup=reply_markup
+        chat_id=str(chat_id), text=text, bot_token=current_bot_binding().bot_token,
+        reply_markup=reply_markup, message_thread_id=thread_id,
     )
+
+
+def _in_forum(ticket: dict[str, Any]) -> bool:
+    return ticket.get("forum_thread_id") is not None and ticket.get("forum_chat_id") is not None
+
+
+def _topic_name(ticket: dict[str, Any], *, closed: bool = False) -> str:
+    what = str(ticket.get("offer_title") or "Вопрос по Gemini")
+    return ("✅ " if closed else "") + f"{ticket_label(ticket)} · {what}"
+
+
+async def _send_to_admin(ticket: dict[str, Any], text: str, *, reply_markup: dict | None = None) -> dict[str, Any]:
+    """Into the ticket's topic when the forum is on; otherwise the admin's private chat."""
+    if _in_forum(ticket):
+        return await _send(int(ticket["forum_chat_id"]), text, reply_markup=reply_markup, thread_id=int(ticket["forum_thread_id"]))
+    return await _send(int(ticket["admin_telegram_user_id"]), text, reply_markup=reply_markup)
+
+
+async def _open_forum_topic(tenant: TenantContext, ticket: dict[str, Any]) -> dict[str, Any]:
+    """Create the ticket's topic if a forum is registered for this bot. On any
+    failure the ticket stays in private-chat mode, so support never stops."""
+    if _in_forum(ticket):
+        return ticket
+    forum = await get_forum(tenant.tenant_id, binding_id=current_bot_binding().binding_id)
+    if not forum:
+        return ticket
+    created = await create_forum_topic(
+        chat_id=str(forum["chat_id"]), name=_topic_name(ticket), bot_token=current_bot_binding().bot_token
+    )
+    thread_id = created.get("message_thread_id") if created.get("ok") else None
+    if not thread_id:
+        logger.warning("support_forum_topic_failed", extra={"ticket": ticket_label(ticket)})
+        return ticket
+    attached = await attach_forum_topic(
+        tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), forum_chat_id=int(forum["chat_id"]), forum_thread_id=int(thread_id)
+    )
+    return {**ticket, **(attached or {})}
 
 
 def _close_keyboard(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -198,6 +265,8 @@ async def _open_tunnel(
         user_display=_display(source),
         admin_telegram_user_id=admin,
     )
+    if ticket["created"]:
+        ticket = await _open_forum_topic(tenant, ticket)
     label = ticket_label(ticket)
     client = _client_label(ticket)
     if offer:
@@ -212,23 +281,25 @@ async def _open_tunnel(
             f"Обращение {label} открыто. Напишите вопрос — он уйдёт администратору Gemini, "
             "ответ придёт сюда."
         )
-    delivered = await _send(
-        admin,
-        header + "\n\nОтветьте на это сообщение (Reply) — ответ уйдёт человеку.",
-        reply_markup=_close_keyboard(ticket),
-    )
+    if _in_forum(ticket):
+        hint = "Пишите в эту тему — ответ уйдёт клиенту."
+        delivered_chat = int(ticket["forum_chat_id"])
+    else:
+        hint = "Ответьте на это сообщение (Reply) — ответ уйдёт человеку."
+        delivered_chat = admin
+    delivered = await _send_to_admin(ticket, header + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
     await record_relayed_message(
         tenant.tenant_id,
         ticket_id=str(ticket["ticket_id"]),
         direction="system",
         text=header,
-        delivered_chat_id=admin,
+        delivered_chat_id=delivered_chat,
         delivered_message_id=delivered.get("message_id"),
     )
     await _send(source.chat_id, user_text)
     logger.info(
         "support_ticket_opened",
-        extra={"trace_id": trace_id, "ticket": label, "offer": offer.code if offer else None, "created": ticket["created"]},
+        extra={"trace_id": trace_id, "ticket": label, "offer": offer.code if offer else None, "ticket_created": ticket["created"]},
     )
     return {"ok": True, "route": "services", "status": "ticket_opened", "ticket": label, "trace_id": trace_id}
 
@@ -243,7 +314,7 @@ async def try_handle_support_callback(
     if not services_enabled() and action in {"order", "confirm", "support"}:
         return None
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=current_bot_binding().bot_token)
-    if callback.chat_type != "private":
+    if callback.chat_type != "private" and action != "close":
         return {"ok": True, "route": "services", "status": "private_chat_required", "trace_id": trace_id}
 
     if action == "order":
@@ -278,25 +349,39 @@ async def try_handle_support_callback(
         return await _open_tunnel(tenant, callback, offer=None, trace_id=trace_id)
 
     if action == "close":
-        if not is_support_admin(callback.user_id):
+        existing = await get_ticket(tenant.tenant_id, ticket_id=arg)
+        # In the forum any human in the ticket's topic may close it; in private chat only the admin.
+        in_topic = existing is not None and _in_forum(existing) and callback.chat_id == int(existing["forum_chat_id"])
+        if not in_topic and not is_support_admin(callback.user_id):
             return {"ok": False, "route": "services", "status": "forbidden", "trace_id": trace_id}
-        ticket = await close_ticket(tenant.tenant_id, ticket_id=arg, closed_by="admin")
-        if not ticket:
-            existing = await get_ticket(tenant.tenant_id, ticket_id=arg)
-            await _send(callback.chat_id, f"{ticket_label(existing) if existing else 'Обращение'} уже закрыто.")
-            return {"ok": True, "route": "services", "status": "already_closed", "trace_id": trace_id}
-        label = ticket_label(ticket)
-        await _send(
-            int(ticket["user_chat_id"]),
-            f"Обращение {label} закрыто. Если появятся вопросы — откройте «Сервисы» и нажмите «Поддержка».",
-        )
-        await _send(callback.chat_id, f"{label} закрыто.")
-        return {"ok": True, "route": "services", "status": "closed", "ticket": label, "trace_id": trace_id}
+        return await _close_ticket_everywhere(tenant, arg, existing, reply_chat=callback.chat_id, trace_id=trace_id)
     return None
 
 
+async def _close_ticket_everywhere(
+    tenant: TenantContext, ticket_id: str, existing: dict[str, Any] | None, *, reply_chat: int, trace_id: str
+) -> dict[str, Any]:
+    ticket = await close_ticket(tenant.tenant_id, ticket_id=ticket_id, closed_by="admin")
+    thread = int(existing["forum_thread_id"]) if existing and _in_forum(existing) and reply_chat == int(existing["forum_chat_id"]) else None
+    if not ticket:
+        await _send(reply_chat, f"{ticket_label(existing) if existing else 'Обращение'} уже закрыто.", thread_id=thread)
+        return {"ok": True, "route": "services", "status": "already_closed", "trace_id": trace_id}
+    label = ticket_label(ticket)
+    await _send(
+        int(ticket["user_chat_id"]),
+        f"Обращение {label} закрыто. Если появятся вопросы — откройте «Сервисы» и нажмите «Поддержка».",
+    )
+    await _send(reply_chat, f"{label} закрыто.", thread_id=thread)
+    if _in_forum(ticket):
+        token = current_bot_binding().bot_token
+        chat, topic = str(ticket["forum_chat_id"]), int(ticket["forum_thread_id"])
+        await edit_forum_topic(chat_id=chat, message_thread_id=topic, name=_topic_name(ticket, closed=True), bot_token=token)
+        await close_forum_topic(chat_id=chat, message_thread_id=topic, bot_token=token)
+    return {"ok": True, "route": "services", "status": "closed", "ticket": label, "trace_id": trace_id}
+
+
 async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, ticket: dict[str, Any], *, trace_id: str) -> dict[str, Any]:
-    admin = int(ticket["admin_telegram_user_id"])
+    admin = int(ticket["forum_chat_id"]) if _in_forum(ticket) else int(ticket["admin_telegram_user_id"])
     label = ticket_label(ticket)
     header = _client_label(ticket)
     if msg.file_id:
@@ -305,10 +390,11 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
         await copy_telegram_message(
             chat_id=str(admin), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
             bot_token=current_bot_binding().bot_token,
+            message_thread_id=int(ticket["forum_thread_id"]) if _in_forum(ticket) else None,
         )
-        delivered = await _send(admin, f"{header}\n(вложение выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=_close_keyboard(ticket))
+        delivered = await _send_to_admin(ticket, f"{header}\n(вложение выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=_close_keyboard(ticket))
     else:
-        delivered = await _send(admin, f"{header}\n{msg.text}", reply_markup=_close_keyboard(ticket))
+        delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=_close_keyboard(ticket))
     result = await record_relayed_message(
         tenant.tenant_id,
         ticket_id=str(ticket["ticket_id"]),
@@ -363,8 +449,54 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
         delivered_chat_id=user_chat,
         delivered_message_id=delivered.get("message_id"),
     )
-    await _send(msg.chat_id, f"→ отправлено: {_client_label(ticket)}")
+    if _in_forum(ticket) and msg.chat_id == int(ticket["forum_chat_id"]):
+        # Inside the topic a reaction is the receipt; a text line would just add noise.
+        receipt = await set_message_reaction(
+            chat_id=str(msg.chat_id), message_id=msg.message_id, emoji="👍", bot_token=current_bot_binding().bot_token
+        )
+        if not receipt.get("ok"):
+            await _send(msg.chat_id, f"→ отправлено: {_client_label(ticket)}", thread_id=int(ticket["forum_thread_id"]))
+    else:
+        await _send(msg.chat_id, f"→ отправлено: {_client_label(ticket)}")
     return {"ok": True, "route": "support_relay", "direction": "admin_to_user", "ticket": label, "trace_id": trace_id}
+
+
+# ----------------------------------------------------------------------------
+# Forum group (one topic per ticket)
+# ----------------------------------------------------------------------------
+
+async def try_handle_support_forum_message(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any] | None:
+    """Runs before the group-quiet filter: «/forum» registers the group, and any
+    human text inside a ticket's topic goes to the client."""
+    if msg.chat_type != "supergroup" or msg.from_bot:
+        return None
+    if _FORUM_REGISTER_RE.fullmatch(msg.text.strip()):
+        if not _may_register_forum(msg.user_id):
+            return {"ok": False, "route": "support_forum", "status": "forbidden", "trace_id": trace_id}
+        if not msg.is_forum:
+            await _send(msg.chat_id, "В этой группе не включены темы. Включите «Темы» в настройках группы и повторите /forum.")
+            return {"ok": False, "route": "support_forum", "status": "not_a_forum", "trace_id": trace_id}
+        title = str(((msg.raw.get("message") or {}).get("chat") or {}).get("title") or "")
+        await register_forum(
+            tenant.tenant_id, binding_id=current_bot_binding().binding_id, chat_id=msg.chat_id,
+            title=title, registered_by=msg.user_id,
+        )
+        await _send(msg.chat_id, "Группа поддержки подключена: каждая новая заявка будет открываться отдельной темой.", thread_id=msg.thread_id)
+        logger.info("support_forum_registered", extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id)})
+        return {"ok": True, "route": "support_forum", "status": "registered", "trace_id": trace_id}
+    if msg.thread_id is None:
+        return None
+    ticket = await find_ticket_by_forum_thread(tenant.tenant_id, forum_chat_id=msg.chat_id, forum_thread_id=msg.thread_id)
+    if ticket is None:
+        return None
+    if ticket["status"] != "open":
+        await _send(msg.chat_id, f"{ticket_label(ticket)} закрыто; клиент откроет новое обращение через «Сервисы», если нужно.", thread_id=msg.thread_id)
+        return {"ok": False, "route": "support_relay", "status": "closed", "trace_id": trace_id}
+    if msg.text.strip().lower() in {"закрыть", "/close"}:
+        return await _close_ticket_everywhere(tenant, str(ticket["ticket_id"]), ticket, reply_chat=msg.chat_id, trace_id=trace_id)
+    return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
 
 
 async def try_handle_support_admin_message(

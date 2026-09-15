@@ -40,6 +40,7 @@ from app.telegram.content_access import try_handle_content_access
 from app.telegram.pro_start import handle_pro_start, is_pro_start_token
 from app.telegram.support import (
     try_handle_support_callback,
+    try_handle_support_forum_message,
     try_handle_support_message,
     try_relay_user_message,
 )
@@ -339,6 +340,12 @@ async def _process_core_telegram_update_scoped(
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
+            # The only group callback the bot serves: «Закрыть #S-N» inside a
+            # support forum topic.
+            if callback.data.startswith("svc:close:"):
+                forum_close_result = await try_handle_support_callback(tenant, callback, trace_id=trace_id)
+                if forum_close_result is not None:
+                    return forum_close_result
             return {"ok": True, "route": "ignored_group_callback"}
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
@@ -368,6 +375,13 @@ async def _process_core_telegram_update_scoped(
     msg = parse_telegram_message(update)
     if not msg:
         return {"ok": True, "route": "ignored"}
+
+    # Support forum group: «/forum» registration and the administrator's
+    # answers inside ticket topics — before the group-quiet filter, since
+    # nobody mentions the bot there.
+    forum_result = await try_handle_support_forum_message(tenant, msg, trace_id=trace_id)
+    if forum_result is not None:
+        return forum_result
 
     if not should_process_telegram_message(msg, current_bot_binding().bot_username):
         return {"ok": True, "route": "ignored_group_message"}
