@@ -6,6 +6,14 @@ from typing import Any
 
 from app.db import fetch_all, fetch_one
 
+# Columns of one product row for bundle lookups. Lost in the 2026-09-02
+# consolidation restore (86ed285): every question matching a solution bundle
+# raised NameError and the bot answered with the generic error text.
+_PRODUCT_COLUMNS = (
+    "sku, canonical_name, retail_price_byn, retail_price_rub, "
+    "partner_price_byn, partner_w"
+)
+
 
 def client_id(tenant_id: str) -> str:
     return tenant_id
