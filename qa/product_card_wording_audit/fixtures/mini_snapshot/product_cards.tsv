@@ -1,0 +1,2 @@
+project_id	sku	canonical_name	short_name	category	what_it_is	who_asks_about_it	common_use_cases	how_to_use_short	what_to_expect_soft	contraindications_short	do_not_claim	when_to_escalate	price_answer_mode	primary_image_url	source_status	notes
+whieda	CLEAN-01	Clean Card	Clean Card	test	Clean product card without flagged phrases.	For people who want a simple example.	one use case only	Use as directed.	Expect comfort only.	individual intolerance	Do not promise treatment.	Escalate on severe reaction.	structured_price		approved_draft	test fixture

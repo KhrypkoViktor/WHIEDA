@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "apiBasePath": "/api/v1/admin",
+  "targetHost": "admin-staging.wwc.best"
+}

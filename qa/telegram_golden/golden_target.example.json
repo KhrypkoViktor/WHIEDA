@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "name": "golden-http-local",
+  "base_url": "http://127.0.0.1:8080",
+  "health_path": "/health/ready",
+  "openapi_path": "/openapi.json",
+  "default_country": "BY",
+  "default_language": "ru",
+  "timeouts": {
+    "request_seconds": 12.0,
+    "health_seconds": 10.0
+  },
+  "advisor": {
+    "path": "/v1/advisor/query",
+    "method": "POST",
+    "headers": {
+      "Host": "wwc.best",
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    },
+    "request": {
+      "tenant": {
+        "location": "header_host",
+        "note": "Tenant resolved from Host header; do not send tenant in body"
+      },
+      "session": {
+        "field": "session",
+        "default": "golden-http-lab"
+      },
+      "ref": {
+        "field": "ref",
+        "default": "ladnaya"
+      },
+      "text": {
+        "field": "question",
+        "from_case": "input"
+      },
+      "sku": {
+        "field": "sku",
+        "from_case": "sku",
+        "optional": true
+      },
+      "country": {
+        "field": "country",
+        "default": "BY"
+      },
+      "language": {
+        "field": "language",
+        "default": "ru"
+      },
+      "context_before": {
+        "field": "context_before",
+        "from_case": "context_before",
+        "optional": true
+      }
+    },
+    "response": {
+      "answer_text": {"path": "answer_text"},
+      "answer_mode": {"path": "answer_mode"},
+      "product_name": {"path": "product.canonical_name"},
+      "product_sku": {"path": "product.sku"},
+      "photo": {"path": "media.photo_url"},
+      "videos": {"path": "media.videos"},
+      "pdf_documents": {"path": "media.documents"},
+      "clarifications": {"path": "clarifications"},
+      "error_id": {"path": "error_id"}
+    }
+  },
+  "openapi_contract": {
+    "required_paths": [
+      "/health/live",
+      "/health/ready",
+      "/v1/advisor/query"
+    ],
+    "advisor_path": "/v1/advisor/query",
+    "advisor_method": "post"
+  }
+}

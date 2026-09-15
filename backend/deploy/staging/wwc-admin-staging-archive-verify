@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Installed entry point: /usr/local/libexec/wwc-admin-staging-archive-verify (P0.3.5.5.1)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_LIB_DIR = Path(__file__).resolve().parent
+if str(_LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(_LIB_DIR))
+
+from staging_archive_validator import main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(main())

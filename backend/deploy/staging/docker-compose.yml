@@ -1,0 +1,46 @@
+services:
+  api:
+    build:
+      context: ../../platform-api
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      # P0.3.4: API is reached only through the reverse SSH tunnel Core → site VPS.
+      - "127.0.0.1:8081:8080"
+    volumes:
+      # Host secret (created by owner); required for WWC_MARKETS_GOOGLE_CREDENTIALS_PATH.
+      - /opt/whieda-platform-staging/secrets/wwc-markets-sync.json:/opt/whieda-platform-staging/secrets/wwc-markets-sync.json:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+
+  worker:
+    build:
+      context: ../../platform-api
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.jobs.worker"]
+    env_file:
+      - .env
+    volumes:
+      - /opt/whieda-platform-staging/secrets/wwc-markets-sync.json:/opt/whieda-platform-staging/secrets/wwc-markets-sync.json:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    restart: unless-stopped

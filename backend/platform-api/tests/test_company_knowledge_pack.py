@@ -16,6 +16,9 @@ DOCS = ROOT / "backend" / "platform-api" / "docs"
 
 sys.path.insert(0, str(PKG))
 sys.path.insert(0, str(LAB))
+# qa/product_discovery ships modules with the same bare names; drop its cached copies
+for _name in ("builder", "constants", "lint", "tsv_io"):
+    sys.modules.pop(_name, None)
 
 from constants import (  # noqa: E402
     AUDIENCE_LAYERS,

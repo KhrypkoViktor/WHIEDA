@@ -1,0 +1,120 @@
+{
+  "name": "WHIEDA Structured Sync Error Audit",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "whieda-sync-error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first()?.json || {};\nconst STRUCTURED_SYNC_WORKFLOW_ID = '9roEvXNsDpnwqjzH';\nconst failedWorkflowId = payload.workflow?.id ? String(payload.workflow.id) : '';\nconst originalExecutionId = payload.execution?.id ? String(payload.execution.id) : null;\nconst errorWorkflowExecutionId = (typeof $execution !== 'undefined' && $execution && $execution.id)\n  ? String($execution.id)\n  : null;\n\nif (failedWorkflowId !== STRUCTURED_SYNC_WORKFLOW_ID) {\n  return [{\n    json: {\n      skip_failed_audit: true,\n      reason: 'not_whieda_structured_sync',\n      failed_workflow_id: failedWorkflowId,\n      query_failed_audit: 'SELECT 1;',\n    },\n  }];\n}\n\nconst rawError = payload.execution?.error?.message\n  || payload.execution?.error?.description\n  || payload.error?.message\n  || payload.message\n  || 'structured_sync_failed';\n\nfunction redactSyncError(message) {\n  if (message == null) return 'sync_error';\n  let text = String(message).trim();\n  const rules = [\n    [/((?:password|passwd|pwd|token|api[_-]?key|secret|bearer)\\s*[=:]\\s*)\\S+/gi, '$1[REDACTED]'],\n    [/\\bBearer\\s+[A-Za-z0-9._\\-+/=]{8,}\\b/gi, 'Bearer [REDACTED]'],\n    [/\\bsk-[A-Za-z0-9]{16,}\\b/gi, 'sk-[REDACTED]'],\n    [/\\b\\d{8,12}\\b/g, '[USER_ID_REDACTED]'],\n    [/\\b(?:INSERT|UPDATE|DELETE|SELECT)\\s+(?:INTO|FROM|SET)?\\s*[\\w.\"']+/gi, '[SQL_REDACTED]'],\n    [/https?:\\/\\/[^\\s]+/gi, '[URL_REDACTED]'],\n  ];\n  for (const [pattern, replacement] of rules) {\n    text = text.replace(pattern, replacement);\n  }\n  text = text.replace(/\\s+/g, ' ').trim();\n  if (text.length > 500) text = `${text.slice(0, 497)}...`;\n  return text || 'sync_error';\n}\n\nfunction sqlValue(value) {\n  if (value === null || value === undefined) return 'NULL';\n  return `'${String(value).replace(/'/g, \"''\")}'`;\n}\n\nconst summary = redactSyncError(rawError);\nconst execId = sqlValue(originalExecutionId);\nconst metadataUnmatched = `'{\"unmatched_error_trigger\": true}'`;\n\nlet queryFailedAudit;\nif (!originalExecutionId) {\n  queryFailedAudit = `INSERT INTO advisor_structured_sync_runs (\n  project_id, started_at, finished_at, status, workflow_execution_id, error_summary, error_metadata\n) VALUES ('whieda', now(), now(), 'failed', NULL, ${sqlValue(summary)}, ${metadataUnmatched}::jsonb)\nRETURNING run_id, sync_run_uuid, workflow_execution_id, status, error_summary;`;\n} else {\n  queryFailedAudit = `WITH updated AS (\n  UPDATE advisor_structured_sync_runs\n  SET status = 'failed', finished_at = now(), error_summary = ${sqlValue(summary)}, error_metadata = NULL\n  WHERE workflow_execution_id = ${execId} AND status = 'running'\n  RETURNING run_id, sync_run_uuid, workflow_execution_id\n)\nINSERT INTO advisor_structured_sync_runs (\n  project_id, started_at, finished_at, status, workflow_execution_id, error_summary, error_metadata\n)\nSELECT 'whieda', now(), now(), 'failed', ${execId}, ${sqlValue(summary)}, ${metadataUnmatched}::jsonb\nWHERE NOT EXISTS (SELECT 1 FROM updated)\n  AND NOT EXISTS (\n    SELECT 1 FROM advisor_structured_sync_runs\n    WHERE workflow_execution_id = ${execId}\n      AND status IN ('running', 'failed')\n  )\nRETURNING run_id, sync_run_uuid, workflow_execution_id, status, error_summary;`;\n}\n\nreturn [{\n  json: {\n    skip_failed_audit: false,\n    original_execution_id: originalExecutionId,\n    error_workflow_execution_id: errorWorkflowExecutionId,\n    failed_workflow_id: failedWorkflowId,\n    query_failed_audit: queryFailedAudit,\n    error_summary: summary,\n  },\n}];"
+      },
+      "id": "whieda-sync-error-code",
+      "name": "Code: Build Failed Audit SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "skip-failed-audit-false",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              },
+              "leftValue": "={{ $json.skip_failed_audit }}",
+              "rightValue": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "whieda-sync-error-if",
+      "name": "IF: WHIEDA Sync Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query_failed_audit }}",
+        "options": {}
+      },
+      "id": "whieda-sync-error-postgres",
+      "name": "Postgres: Write Failed Audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        720,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "RmjHh3rdZri7axzq",
+          "name": "advisor-dev-postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Failed Audit SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Failed Audit SQL": {
+      "main": [
+        [
+          {
+            "node": "IF: WHIEDA Sync Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF: WHIEDA Sync Failure?": {
+      "main": [
+        [
+          {
+            "node": "Postgres: Write Failed Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

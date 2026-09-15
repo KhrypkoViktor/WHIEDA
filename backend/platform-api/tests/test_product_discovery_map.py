@@ -16,6 +16,9 @@ FIXTURE = ROOT / "qa" / "master_integrity" / "fixtures" / "valid"
 TSV = PKG / "PRODUCT_DISCOVERY_MAP_CANDIDATES_V1.tsv"
 
 sys.path.insert(0, str(PKG))
+# qa/company_knowledge ships modules with the same bare names; drop its cached copies
+for _name in ("builder", "constants", "lint", "snapshot_loader", "tsv_io"):
+    sys.modules.pop(_name, None)
 
 from builder import build_rows, mandatory_phrase_coverage  # noqa: E402
 from constants import MANDATORY_GROUPS, TSV_COLUMNS  # noqa: E402

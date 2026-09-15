@@ -1,0 +1,4 @@
+﻿market_id,country_iso,country_name,currency_code,price_visibility,is_active,is_default
+ru,RU,Россия,RUB,full,true,false
+by,BY,Беларусь,BYN,full,true,false
+global,*,Другая страна,RUB,full,true,true

@@ -1,0 +1,29 @@
+{
+  "snapshot_id": "20260811T172219Z",
+  "fact_count": 44,
+  "leader_count": 10,
+  "question_count": 48,
+  "public_reply_count": 6,
+  "partner_contact_count": 10,
+  "accepted_facts": 34,
+  "needs_owner_facts": 10,
+  "by_audience_layer": {
+    "platform_internal": 9,
+    "partner_network": 24,
+    "company_public": 11
+  },
+  "by_topic_status": {
+    "company_overview/accepted": 4,
+    "leadership/accepted": 3,
+    "history/needs_owner_input": 1,
+    "partner_business/accepted": 14,
+    "technology/accepted": 3,
+    "events/accepted": 2,
+    "contacts/accepted": 8,
+    "contacts/needs_owner_input": 1,
+    "production/needs_owner_input": 4,
+    "company_overview/needs_owner_input": 3,
+    "leadership/needs_owner_input": 1
+  },
+  "unreadable_sources": []
+}

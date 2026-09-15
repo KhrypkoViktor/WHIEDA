@@ -1,0 +1,25 @@
+{
+  "snapshot_id": "mini_fixture",
+  "layers": {
+    "products": {
+      "file": "products.tsv",
+      "sha256": "d505c7863cb542c8625b202a38f8cb113a5a158fbd59fd7ca31d11d1a41ae4ac",
+      "rows": 1
+    },
+    "aliases": {
+      "file": "aliases.tsv",
+      "sha256": "cb4b6782917ffc7afb3085124797acb678824539760b5cdff69cc101fb345576",
+      "rows": 1
+    },
+    "product_cards": {
+      "file": "product_cards.tsv",
+      "sha256": "7009a05ee4f58e902a8be7fd90569bef500cba035364262227c7cc6744b371e9",
+      "rows": 1
+    },
+    "resources": {
+      "file": "resources.tsv",
+      "sha256": "9d59e8532a874177a3c78dbb75e1843f299b5ced99ac0d91dbf9f23c2d83b47e",
+      "rows": 1
+    }
+  }
+}

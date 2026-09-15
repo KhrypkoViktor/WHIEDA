@@ -1,0 +1,16 @@
+{
+  "workflow": {
+    "id": "9roEvXNsDpnwqjzH",
+    "name": "WHIEDA Structured Sync Cron"
+  },
+  "execution": {
+    "id": "exec-original-12345",
+    "url": "https://example.invalid/execution/exec-original-12345",
+    "error": {
+      "message": "division by zero token=super-secret password=hunter2",
+      "stack": "Error: division by zero"
+    },
+    "lastNodeExecuted": "Postgres: Apply All Structured Layers",
+    "mode": "webhook"
+  }
+}

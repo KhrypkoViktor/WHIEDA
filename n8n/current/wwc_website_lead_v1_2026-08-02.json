@@ -1,0 +1,331 @@
+[
+  {
+    "updatedAt": "2026-07-29T05:32:55.332Z",
+    "createdAt": "2026-07-27T17:11:54.911Z",
+    "id": "wwc-website-leads-p0",
+    "name": "WWC Website Leads P0.3 — country gate",
+    "description": null,
+    "active": true,
+    "isArchived": false,
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "wwc-website-lead-v1",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "9c9c2f7c-c8e9-4ae5-b12e-9e1c628c7581",
+        "name": "Webhook: WWC lead",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          -620,
+          0
+        ],
+        "webhookId": "9c9c2f7c-c8e9-4ae5-b12e-9e1c628c7581"
+      },
+      {
+        "parameters": {
+          "jsCode": "const raw = $input.first().json;\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\nconst clean = (value, max = 1000) => String(value ?? '').trim().replace(/\\s+/g, ' ').slice(0, max);\nconst cleanMultiline = (value, max = 2000) => String(value ?? '').replace(/\\r\\n/g, '\\n').split('\\n').map((line) => line.trim().replace(/[ \\t]+/g, ' ')).join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, max);\nconst refFromPageUrl = (value) => {\n  try {\n    const url = new URL(String(value || ''), 'https://wwc.best');\n    const query = String(url.searchParams.get('ref') || '').trim().toLowerCase();\n    if (query) return query;\n    const host = url.hostname.toLowerCase();\n    if (!host.endsWith('.wwc.best') || host === 'wwc.best' || host === 'www.wwc.best') return '';\n    const sub = host.split('.')[0];\n    if (sub === 'elena') return 'onlineelena';\n    if (sub === 'samtsova') return 'olga-samtsova';\n    return sub;\n  } catch (e) {\n    return '';\n  }\n};\nconst name = clean(body.name, 160);\nconst contact = clean(body.contact, 240);\nconst product = clean(body.product, 360);\nconst idempotency = clean(body.idempotency_key, 160);\nconst honey = clean(body.website, 160);\nconst fromUrl = refFromPageUrl(body.page_url || body.landing_url || '');\nlet firstRefCode = clean(body.initial_ref || body.first_ref || body.ref, 64).toLowerCase();\nlet activeRefCode = clean(body.active_ref || body.ref, 64).toLowerCase();\nif (!activeRefCode) activeRefCode = fromUrl;\nif (!firstRefCode) firstRefCode = fromUrl || activeRefCode;\nconst errors = [];\nif (honey) errors.push('spam');\nif (!name) errors.push('name');\nif (!contact) errors.push('contact');\nif (!product) errors.push('product');\nif (!idempotency) errors.push('idempotency');\nreturn [{ json: {\n  valid: errors.length === 0,\n  errors,\n  tenant_id: 'whieda',\n  name, contact, product_name: product,\n  product_sku: clean(body.product_sku, 80),\n  product_variant: clean(body.product_variant, 240),\n  comment: cleanMultiline(body.comment, 2000),\n  page_url: clean(body.page_url, 1000),\n  first_ref_code: firstRefCode,\n  active_ref_code: activeRefCode,\n  idempotency_key: idempotency,\n  country_code: ['RU', 'BY'].includes(clean(body.country_code, 2).toUpperCase()) ? clean(body.country_code, 2).toUpperCase() : 'RU',\n  metadata: {\n    referrer: clean(raw.headers?.referer, 1000),\n    user_agent: clean(raw.headers?.['user-agent'], 500),\n    routing_version: 'p0.4-site-owner',\n    country_source: clean(body.country_source, 80)\n  }\n} }];\n"
+        },
+        "id": "99fc237e-18d2-433f-a44c-a6c9b13f167f",
+        "name": "Code: validate and assign owner",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -380,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.valid }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                },
+                "id": "507542be-a844-42b2-94aa-9b7a3b4ce117"
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "315d8a5c-7362-4e07-80c9-43a489ed3677",
+        "name": "IF: valid lead",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -140,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "WITH supplied AS (\n  SELECT\n    '{{ String($json.first_ref_code).replace(/'/g, '') }}'::text AS first_ref,\n    '{{ String($json.active_ref_code).replace(/'/g, '') }}'::text AS active_ref,\n    '{{ String($json.country_code).replace(/'/g, '') }}'::text AS requested_country\n), routing AS (\n  SELECT\n    CASE WHEN first_profile.ref_code IS NOT NULL AND NOT (supplied.requested_country <> 'BY' AND first_profile.owner_id = 'harold') THEN supplied.first_ref ELSE NULL END AS first_ref_code,\n    CASE WHEN active_profile.ref_code IS NOT NULL AND NOT (supplied.requested_country <> 'BY' AND active_profile.owner_id = 'harold') THEN supplied.active_ref ELSE NULL END AS active_ref_code,\n    CASE WHEN supplied.requested_country <> 'BY' AND COALESCE(active_profile.owner_id, first_profile.owner_id) = 'harold' THEN 'viktor' ELSE COALESCE(active_profile.owner_id, first_profile.owner_id, 'viktor') END AS attributed_owner_id,\n    CASE WHEN supplied.requested_country <> 'BY' AND COALESCE(active_profile.owner_id, first_profile.owner_id) = 'harold' THEN 'viktor' ELSE COALESCE(active_profile.owner_id, first_profile.owner_id, 'viktor') END AS assigned_owner_id,\n    supplied.requested_country,\n    first_profile.profile_version AS ref_profile_version\n  FROM supplied\n  LEFT JOIN referral_profiles first_profile\n    ON first_profile.ref_code = supplied.first_ref\n   AND first_profile.tenant_id = '{{ String($json.tenant_id).replace(/'/g, '') }}'\n   AND first_profile.enabled = true\n  LEFT JOIN referral_profiles active_profile\n    ON active_profile.ref_code = supplied.active_ref\n   AND active_profile.tenant_id = '{{ String($json.tenant_id).replace(/'/g, '') }}'\n   AND active_profile.enabled = true\n), service_route AS (\n  SELECT sl.service_location_id, sl.country_code, sl.city\n  FROM routing\n  JOIN service_locations sl ON sl.tenant_id = '{{ String($json.tenant_id).replace(/'/g, '') }}' AND sl.operator_actor_id = routing.assigned_owner_id AND sl.enabled = true\n  ORDER BY sl.verified_at DESC NULLS LAST, sl.created_at DESC\n  LIMIT 1\n), saved AS (\n  INSERT INTO website_leads (\n    tenant_id, name, contact, comment, product_name, product_sku, product_variant, page_url,\n    initial_ref_code, first_ref_code, active_ref_code, attributed_owner_id, assigned_owner_id,\n    ref_profile_version, service_location_id, country_code, city, idempotency_key, metadata\n  )\n  SELECT\n    '{{ String($json.tenant_id).replace(/'/g, '') }}',\n    '{{ String($json.name).replace(/'/g, '') }}',\n    '{{ String($json.contact).replace(/'/g, '') }}',\n    '{{ String($json.comment).replace(/'/g, '') }}',\n    '{{ String($json.product_name).replace(/'/g, '') }}',\n    '{{ String($json.product_sku).replace(/'/g, '') }}',\n    '{{ String($json.product_variant).replace(/'/g, '') }}',\n    '{{ String($json.page_url).replace(/'/g, '') }}',\n    routing.first_ref_code, routing.first_ref_code, routing.active_ref_code,\n    routing.attributed_owner_id, routing.assigned_owner_id, routing.ref_profile_version,\n    service_route.service_location_id, COALESCE(service_route.country_code, routing.requested_country), service_route.city,\n    '{{ String($json.idempotency_key).replace(/'/g, '') }}',\n    '{{ JSON.stringify($json.metadata).replace(/'/g, '') }}'::jsonb\n  FROM routing\n  LEFT JOIN service_route ON true\n  ON CONFLICT (tenant_id, idempotency_key) DO UPDATE SET updated_at = now()\n  RETURNING lead_id, public_id, (xmax = 0) AS created, attributed_owner_id, assigned_owner_id\n), ownership AS (\n  INSERT INTO website_lead_owner_history (lead_id, tenant_id, owner_id, action, changed_by, reason)\n  SELECT lead_id, '{{ String($json.tenant_id).replace(/'/g, '') }}', assigned_owner_id,\n         'created', 'website-p0.1', 'Server-side referral routing'\n  FROM saved WHERE created\n), status_log AS (\n  INSERT INTO website_lead_status_history (lead_id, tenant_id, old_status, new_status, changed_by_actor_id, reason)\n  SELECT lead_id, '{{ String($json.tenant_id).replace(/'/g, '') }}', NULL, 'new',\n         'website-p0.1', 'Created from website form'\n  FROM saved WHERE created\n)\nSELECT public_id, created, attributed_owner_id, assigned_owner_id FROM saved;",
+          "options": {}
+        },
+        "id": "fe024be3-2bb4-4cf8-a37c-5a5189a5a04e",
+        "name": "Postgres: save lead and audit",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          100,
+          -80
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "RmjHh3rdZri7axzq",
+            "name": "advisor-dev-postgres"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "{\"ok\":true,\"message\":\"Заявка принята. Мы скоро свяжемся с вами.\"}",
+          "options": {
+            "responseCode": 201
+          }
+        },
+        "id": "ae768c9c-4d3a-4de4-b540-887e2eb2cb51",
+        "name": "Respond: lead accepted",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          360,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "{\"ok\":false,\"message\":\"Проверьте имя, контакт и выбранный товар.\"}",
+          "options": {
+            "responseCode": 400
+          }
+        },
+        "id": "e5987696-ca92-4fe8-b73a-5a922a07aa84",
+        "name": "Respond: invalid lead",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1,
+        "position": [
+          100,
+          120
+        ]
+      },
+      {
+        "parameters": {
+          "options": {},
+          "operation": "executeQuery",
+          "query": "with lead as (select * from website_leads where public_id='{{ String($json.public_id).replace(/'/g,'') }}' and tenant_id='whieda'), r as (\n select a.actor_id,a.telegram_chat_id,'owner' kind from lead l join lead_actors a on a.actor_id=l.assigned_owner_id\n union\n select a.actor_id,a.telegram_chat_id,'watcher' kind from lead l join lead_visibility_rules v on v.tenant_id=l.tenant_id and v.enabled and v.event_type='lead_created' and v.scope_type='owner' and v.scope_value=l.assigned_owner_id join lead_actors a on a.actor_id=v.watcher_actor_id\n), d as (insert into lead_delivery_attempts(lead_id,tenant_id,event_type,recipient_actor_id,delivery_mode,status) select l.lead_id,l.tenant_id,'lead_created',r.actor_id,'full','pending' from lead l join r on true on conflict do nothing returning delivery_id,recipient_actor_id)\nselect d.delivery_id,r.actor_id,r.telegram_chat_id,r.kind,l.public_id,l.product_name,l.name,l.contact,l.comment,l.first_ref_code from d join r on r.actor_id=d.recipient_actor_id join lead l on true where r.telegram_chat_id is not null;"
+        },
+        "id": "d001",
+        "name": "Postgres: prepare lead delivery",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          340,
+          -230
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "RmjHh3rdZri7axzq",
+            "name": "advisor-dev-postgres"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "return $input.all().map((i) => {\n  const x = i.json;\n  const note = x.comment ? ('Комментарий: ' + x.comment + '\\n') : '';\n  return { json: { ...x, text: 'Новая заявка <b>' + x.public_id + '</b>\\nТовар: ' + x.product_name + '\\nИмя: ' + x.name + '\\nКонтакт: ' + x.contact + '\\n' + note + 'Ref: ' + (x.first_ref_code || '—') + '\\n' + (x.kind === 'watcher' ? 'Копия: наблюдение за веткой.' : 'Ваша заявка.') } };\n});"
+        },
+        "id": "d002",
+        "name": "Code: format lead delivery",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          570,
+          -230
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "specifyBody": "json",
+          "sendBody": true,
+          "url": "={{ 'https://api.telegram.org/bot' + $env.WHIEDA_ADVISOR_TELEGRAM_BOT_TOKEN + '/sendMessage' }}",
+          "jsonBody": "={{ {chat_id: $json.telegram_chat_id,text: $json.text,parse_mode:'HTML'} }}",
+          "options": {}
+        },
+        "id": "d003",
+        "name": "Telegram: send lead delivery",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          800,
+          -230
+        ]
+      },
+      {
+        "parameters": {
+          "options": {},
+          "operation": "executeQuery",
+          "query": "update lead_delivery_attempts set status='sent', sent_at=now(), telegram_message_id='{{ String($json.result.message_id).replace(/'/g, '') }}', error_text=null where delivery_id='{{ String($('Code: format lead delivery').item.json.delivery_id).replace(/'/g, '') }}' and status='pending';"
+        },
+        "id": "d004",
+        "name": "Postgres: mark lead delivery sent",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.6,
+        "position": [
+          1030,
+          -230
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "RmjHh3rdZri7axzq",
+            "name": "advisor-dev-postgres"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Webhook: WWC lead": {
+        "main": [
+          [
+            {
+              "node": "Code: validate and assign owner",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code: validate and assign owner": {
+        "main": [
+          [
+            {
+              "node": "IF: valid lead",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF: valid lead": {
+        "main": [
+          [
+            {
+              "node": "Postgres: save lead and audit",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Respond: invalid lead",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: save lead and audit": {
+        "main": [
+          [
+            {
+              "node": "Respond: lead accepted",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "index": 0,
+              "node": "Postgres: prepare lead delivery",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Postgres: prepare lead delivery": {
+        "main": [
+          [
+            {
+              "node": "Code: format lead delivery",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Code: format lead delivery": {
+        "main": [
+          [
+            {
+              "node": "Telegram: send lead delivery",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Telegram: send lead delivery": {
+        "main": [
+          [
+            {
+              "node": "Postgres: mark lead delivery sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Postgres: mark lead delivery sent": {}
+    },
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "staticData": null,
+    "meta": null,
+    "pinData": null,
+    "versionId": "a33efc2f-fc56-4b45-983d-0f8f6e44e0af",
+    "activeVersionId": "a33efc2f-fc56-4b45-983d-0f8f6e44e0af",
+    "versionCounter": 72,
+    "triggerCount": 1,
+    "tags": [],
+    "shared": [
+      {
+        "updatedAt": "2026-07-27T17:11:54.911Z",
+        "createdAt": "2026-07-27T17:11:54.911Z",
+        "role": "workflow:owner",
+        "workflowId": "wwc-website-leads-p0",
+        "projectId": "1FUo3Q5p98Dgqg6i",
+        "project": {
+          "updatedAt": "2026-05-22T18:25:05.304Z",
+          "createdAt": "2026-05-21T15:35:37.607Z",
+          "id": "1FUo3Q5p98Dgqg6i",
+          "name": "Victor KHRYPKO <khrypko.viktar@gmail.com>",
+          "type": "personal",
+          "icon": null,
+          "description": null,
+          "creatorId": "fc2f5ee4-8b25-48f2-9def-36fd6dbf427a"
+        }
+      }
+    ],
+    "versionMetadata": {
+      "name": null,
+      "description": null
+    }
+  }
+]
