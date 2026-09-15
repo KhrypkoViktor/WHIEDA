@@ -1,0 +1,61 @@
+{
+  "name": "CORE_BINDING_RELEASE_MANIFEST_V1",
+  "date": "2026-08-20",
+  "branch": "core-binding-release",
+  "worktree": "D:\\Projects\\_worktrees\\whieda-core-binding-release",
+  "base": "69db0b58b6abb94efd1cc40a366aa7d7d287cfb9",
+  "commit": "050f94683f5774c9f51296d44b7bcda6aa8c02c0",
+  "commit_subject": "feat: isolate Telegram ingress by BotBindingContext so NSP cannot use WHIEDA identity",
+  "files": [
+    "backend/platform-api/app/telegram/admin_login.py",
+    "backend/platform-api/app/telegram/bindings.py",
+    "backend/platform-api/app/telegram/catalog_browse.py",
+    "backend/platform-api/app/telegram/delivery.py",
+    "backend/platform-api/app/telegram/log_safe.py",
+    "backend/platform-api/app/telegram/navigation.py",
+    "backend/platform-api/app/telegram/processor.py",
+    "backend/platform-api/app/telegram/routes.py",
+    "backend/platform-api/app/telegram/sequencer.py",
+    "backend/platform-api/tests/test_staging_sql_order.py",
+    "backend/platform-api/tests/test_telegram_binding_ingress.py",
+    "backend/platform-api/tests/test_telegram_chat_sequencer.py",
+    "backend/platform-api/tests/test_telegram_delivery.py",
+    "backend/platform-api/tests/test_telegram_log_safe.py",
+    "backend/platform-api/tests/test_telegram_navigation.py",
+    "backend/platform-api/tests/test_telegram_processor.py",
+    "backend/platform-api/tests/test_telegram_route_truth_table.py",
+    "postgres/sql/platform_bot_binding_context_v1.sql"
+  ],
+  "migration": {
+    "path": "postgres/sql/platform_bot_binding_context_v1.sql",
+    "sha256": "f9ab0143d754a9a4cee9817958d084f88665b8548cdbde3f36668a503a6175a5"
+  },
+  "tests": {
+    "cwd": "D:\\Projects\\_worktrees\\whieda-core-binding-release\\backend\\platform-api",
+    "command": "python -m pytest tests/test_telegram_binding_ingress.py tests/test_telegram_log_safe.py tests/test_telegram_processor.py tests/test_telegram_chat_sequencer.py tests/test_telegram_delivery.py tests/test_telegram_route_truth_table.py tests/test_telegram_navigation.py tests/test_staging_sql_order.py tests/test_local_staging_proof.py -q",
+    "result": "104 passed, 2 failed",
+    "passed_ge_95": true,
+    "preexisting_failures_at_base": [
+      "tests/test_staging_sql_order.py::test_apply_script_lists_full_order",
+      "tests/test_local_staging_proof.py::test_sql_order_matches_apply_ps1"
+    ],
+    "preexisting_failure_reason": "At 69db0b5, EXPECTED_ORDER/APPLY_ORDER list three lead SQL files that apply_staging_platform_all.ps1 does not contain. This slice did not edit the apply script or staging_proof_lib.py."
+  },
+  "gate_b_not_in_this_commit": [
+    "postgres/scripts/apply_staging_platform_all.ps1",
+    "postgres/scripts/staging_proof_lib.py",
+    "seed/backfill of tenant_bot_bindings beyond additive SQL",
+    "app/admin/**",
+    "app/observability.py",
+    "n8n/**",
+    "deploy / setWebhook / secrets"
+  ],
+  "excluded_product_surface": [
+    "app/cart/**",
+    "newcomer panel",
+    "?cart=",
+    "calculator_web_url / wwc.best",
+    "03_Website/**",
+    "markets / cabinet extras"
+  ]
+}
