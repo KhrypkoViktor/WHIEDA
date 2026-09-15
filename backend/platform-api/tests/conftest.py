@@ -92,3 +92,17 @@ def whieda_bot_binding(whieda_tenant: TenantContext) -> BotBindingContext:
         bot_token="whieda-test-token",
         webhook_secret="whieda-test-secret",
     )
+
+
+@pytest.fixture(autouse=True)
+def no_solution_bundles(request):
+    """Advisor unit tests stub repository calls one by one with a bare `object()`
+    connection; the bundle lookup added to the engine in September would hit the
+    DB first. Default it to «no active bundles» — a bundle test patches it itself."""
+    if not request.node.fspath.basename.startswith("test_advisor_"):
+        yield
+        return
+    from unittest.mock import patch
+
+    with patch("app.advisor.sql.engine.repo.load_active_solution_bundles", AsyncMock(return_value=[])):
+        yield
