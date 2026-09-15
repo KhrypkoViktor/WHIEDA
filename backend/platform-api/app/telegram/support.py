@@ -111,9 +111,9 @@ def services_keyboard() -> dict[str, Any]:
 
 
 def services_enabled() -> bool:
-    """Staging feature until the owner signs it off for the production `minimal`
-    profile (AGENTS.md: production shows only ready partner actions)."""
-    return get_settings().telegram_ui_profile != "minimal"
+    """Owner signed «сервисы» off for production on 15.09.2026 (AGENTS.md):
+    the tunnel works on every profile as long as an administrator is configured."""
+    return True
 
 
 def is_services_request(text: str) -> bool:
@@ -140,6 +140,12 @@ def _display(msg: TelegramMessage | TelegramCallbackQuery) -> str:
     if name and username:
         return f"{name} (@{username})"
     return name or (f"@{username}" if username else f"Telegram {msg.user_id}")
+
+
+def _client_label(ticket: dict[str, Any]) -> str:
+    """What the administrator sees instead of the person: no name, no username,
+    no link (owner, 15.09.2026). The real display stays in `support_tickets`."""
+    return f"Клиент WWC · Заявка {ticket_label(ticket)}"
 
 
 def _reply_to_message_id(msg: TelegramMessage) -> int | None:
@@ -193,14 +199,15 @@ async def _open_tunnel(
         admin_telegram_user_id=admin,
     )
     label = ticket_label(ticket)
+    client = _client_label(ticket)
     if offer:
-        header = f"{label} · Заказ: {offer.title} — {offer.price_text}\n{_display(source)}"
+        header = f"{client} · Заказ: {offer.title} — {offer.price_text}"
         user_text = (
             f"Заявка {label} принята: {offer.title} — {offer.price_text}.\n"
             "Администратор ответит здесь же, в этом чате. Всё, что вы напишете сюда, уйдёт ему."
         )
     else:
-        header = f"{label} · Вопрос по Gemini\n{_display(source)}"
+        header = f"{client} · Вопрос по Gemini"
         user_text = (
             f"Обращение {label} открыто. Напишите вопрос — он уйдёт администратору Gemini, "
             "ответ придёт сюда."
@@ -291,7 +298,7 @@ async def try_handle_support_callback(
 async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, ticket: dict[str, Any], *, trace_id: str) -> dict[str, Any]:
     admin = int(ticket["admin_telegram_user_id"])
     label = ticket_label(ticket)
-    header = f"{label} · {ticket['user_display']}"
+    header = _client_label(ticket)
     if msg.file_id:
         # A photo or document: copy it (no forward header, no contact leak), then
         # a text line the admin can Reply to.
@@ -356,7 +363,7 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
         delivered_chat_id=user_chat,
         delivered_message_id=delivered.get("message_id"),
     )
-    await _send(msg.chat_id, f"→ отправлено: {ticket['user_display']} ({label})")
+    await _send(msg.chat_id, f"→ отправлено: {_client_label(ticket)}")
     return {"ok": True, "route": "support_relay", "direction": "admin_to_user", "ticket": label, "trace_id": trace_id}
 
 
@@ -385,7 +392,9 @@ async def try_handle_support_admin_message(
     if len(open_tickets) == 1:
         return await _relay_admin_to_user(tenant, msg, open_tickets[0], trace_id=trace_id)
     lines = ["Открыто несколько обращений — ответьте через Reply на сообщение нужного:"]
-    lines += [f"{ticket_label(t)} · {t['user_display']}" for t in open_tickets]
+    lines += [
+        f"{_client_label(t)}" + (f" · {t['offer_title']}" if t.get("offer_title") else "") for t in open_tickets
+    ]
     await _send(msg.chat_id, "\n".join(lines))
     return {"ok": False, "route": "support_relay", "status": "ambiguous", "trace_id": trace_id}
 
