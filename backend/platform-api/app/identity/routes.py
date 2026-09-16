@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.identity.service import create_telegram_link_token, exchange_telegram_link_token
@@ -8,6 +10,16 @@ from app.settings import get_settings
 from app.tenancy import get_request_tenant, require_entitlement
 
 router = APIRouter(tags=["identity"])
+
+
+def _verify_exchange_secret(provided: str | None) -> None:
+    """telegram_user_id in the exchange body is caller-supplied and never verified
+    against a real Telegram update, so this route must only accept server-to-server
+    callers holding PLATFORM_IDENTITY_EXCHANGE_SECRET. Unset secret = route disabled,
+    not open -- there is no known legitimate public caller for it today."""
+    expected = get_settings().platform_identity_exchange_secret
+    if not expected or not provided or provided != expected:
+        raise HTTPException(status_code=403, detail={"ok": False, "error": "exchange_forbidden"})
 
 
 class TelegramLinkTokenCreateBody(BaseModel):
@@ -39,7 +51,12 @@ async def create_link_token_site(body: TelegramLinkTokenCreateBody, request: Req
 
 
 @router.post("/v1/telegram-link-tokens/exchange")
-async def exchange_link_token_v1(body: TelegramLinkTokenExchangeBody, request: Request) -> dict:
+async def exchange_link_token_v1(
+    body: TelegramLinkTokenExchangeBody,
+    request: Request,
+    x_platform_identity_secret: Annotated[str | None, Header(alias="X-Platform-Identity-Secret")] = None,
+) -> dict:
+    _verify_exchange_secret(x_platform_identity_secret)
     return await _exchange_link_token(body, request)
 
 
