@@ -1,0 +1,70 @@
+{
+  "_comment": "Кто какие файлы правит. Ветка `<zone>/<тема>` может менять только пути своей зоны и общие (shared). Проверяется .github/scripts/check_zone.py на каждом PR.",
+  "zones": {
+    "core": {
+      "agent": "Core-агент (партнёрка, подписки, оплаты, поддержка, форум, советник, вход обновлений)",
+      "paths": [
+        "backend/platform-api/app/advisor/",
+        "backend/platform-api/app/telegram/",
+        "backend/platform-api/app/subscriptions/",
+        "backend/platform-api/app/support/",
+        "backend/platform-api/app/service_sales/",
+        "backend/platform-api/app/referral_bonus/",
+        "backend/platform-api/app/leads/",
+        "backend/platform-api/app/content_access/",
+        "backend/platform-api/app/identity/",
+        "backend/platform-api/app/site_requests/",
+        "backend/platform-api/app/db.py",
+        "backend/platform-api/app/main.py",
+        "backend/platform-api/scripts/",
+        "backend/deploy/",
+        "postgres/sql/platform_partner_",
+        "postgres/sql/platform_referral_",
+        "postgres/sql/platform_support_",
+        "postgres/sql/platform_service_",
+        "qa/telegram_golden/",
+        "PROCESS/wwc-",
+        "n8n/current/run_partners_ref_runtime_sync_2026-08-01.py"
+      ]
+    },
+    "nsp": {
+      "agent": "NSP-агент (tenant NSP: свой binding, свои модули, миграции, тесты, golden)",
+      "paths": [
+        "backend/platform-api/app/tenants/",
+        "backend/platform-api/app/tenant_release/",
+        "backend/platform-api/tests/test_nsp",
+        "backend/platform-api/tests/test_tenant",
+        "postgres/sql/platform_tenant_",
+        "qa/tenant_release_package/",
+        "qa/nsp_golden/",
+        "PROCESS/nsp-"
+      ]
+    },
+    "site": {
+      "agent": "Site-агент (сайт wwc.best, заявки с сайта в n8n, данные партнёров)",
+      "paths": [
+        "n8n/current/patch_wwc_website_leads_",
+        "n8n/current/wwc_sql.py",
+        "n8n/current/read_lead_execution.py",
+        "WHIEDA_AGENT_ACCESS_V1_2026-09-14.md",
+        "PROCESS/wwc-site-"
+      ]
+    }
+  },
+  "shared_append_only": {
+    "_comment": "Меняют все, но только добавлением строк; ничего не переименовывать и не удалять.",
+    "paths": [
+      "backend/platform-api/app/settings.py",
+      "backend/platform-api/app/schema_requirements.py",
+      "backend/platform-api/tests/postgres_testkit.py",
+      "backend/platform-api/tests/conftest.py",
+      "backend/deploy/core/release_core.ps1",
+      ".github/zones.json",
+      "AGENTS.md"
+    ]
+  },
+  "forbidden": {
+    "_comment": "Никогда не в git.",
+    "patterns": ["__pycache__/", ".pyc", ".env", "secrets/", "node_modules/"]
+  }
+}
