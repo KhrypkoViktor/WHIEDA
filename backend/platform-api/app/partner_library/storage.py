@@ -189,9 +189,12 @@ def _build_storage_backend(settings: Settings) -> StorageBackend:
         raise RuntimeError("local partner library storage is allowed only in dev/test")
     if not settings.platform_partner_library_local_root:
         raise RuntimeError("PLATFORM_PARTNER_LIBRARY_LOCAL_ROOT is required")
+    local_secret = settings.platform_partner_library_local_signing_secret or ""
+    if len(local_secret) < 32:
+        raise RuntimeError("PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET is required (>=32 chars)")
     return LocalStorageBackend(
         Path(settings.platform_partner_library_local_root),
-        signing_secret=settings.platform_partner_library_local_signing_secret,
+        signing_secret=local_secret,
         base_url=settings.platform_partner_library_local_base_url,
     )
 

@@ -234,9 +234,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_ROOT",
     )
-    platform_partner_library_local_signing_secret: str = Field(
-        default="development-only-change-me",
+    platform_partner_library_local_signing_secret: str | None = Field(
+        default=None,
         validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET",
+        description=(
+            "Signs partner-library download URLs for the 'local' storage backend. "
+            "No literal default -- a known fallback here would let anyone forge a "
+            "signed URL and bypass the partner_paid check (security audit "
+            "2026-09-16, F008). _build_storage_backend refuses to start without it."
+        ),
     )
     platform_partner_library_local_base_url: str = Field(
         default="/api/v1/partner-library/local-files",
