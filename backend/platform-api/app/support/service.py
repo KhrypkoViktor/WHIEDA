@@ -250,8 +250,27 @@ async def get_forum(tenant_id: str, *, binding_id: str) -> dict[str, Any] | None
     async with tenant_connection(tenant_id) as conn:
         return await fetch_one(
             conn,
-            "select tenant_id, binding_id, chat_id, title from support_forums where tenant_id = %s and binding_id = %s",
+            "select tenant_id, binding_id, chat_id, title, bonuses_thread_id, reports_thread_id from support_forums where tenant_id = %s and binding_id = %s",
             (tenant_id, binding_id),
+        )
+
+
+async def set_forum_service_threads(
+    tenant_id: str, *, binding_id: str, bonuses_thread_id: int | None, reports_thread_id: int | None
+) -> None:
+    """Service topics «Бонусы» / «Отчёты» in the forum (Gemini sales, v10)."""
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            update support_forums
+               set bonuses_thread_id = coalesce(%s, bonuses_thread_id),
+                   reports_thread_id = coalesce(%s, reports_thread_id),
+                   updated_at = now()
+             where tenant_id = %s and binding_id = %s
+            returning binding_id
+            """,
+            (bonuses_thread_id, reports_thread_id, tenant_id, binding_id),
         )
 
 

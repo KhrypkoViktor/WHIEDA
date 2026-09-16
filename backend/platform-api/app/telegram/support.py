@@ -58,6 +58,14 @@ from app.telegram.delivery import (
     set_message_reaction,
 )
 from app.telegram.log_safe import chat_ref
+from app.telegram.service_sales import (
+    SERVICE_COMMAND_TOKENS,
+    ensure_service_topics,
+    is_reports_topic,
+    paid_button,
+    try_handle_service_command,
+    try_handle_service_sale_callback,
+)
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
@@ -72,7 +80,7 @@ _FORUM_REGISTER_RE = re.compile(r"^/forum(?:@\w+)?$", re.IGNORECASE)
 _OWNER_COMMAND_TOKENS = {
     "оплата", "/pay", "статус", "/status", "/due", "бонусы", "/bonuses", "реферер", "/referrer",
     "корректировка-бонусов", "/bonus-adjust", "цена", "/price",
-}
+} | SERVICE_COMMAND_TOKENS
 
 
 @dataclass(frozen=True)
@@ -187,7 +195,8 @@ def is_support_forum_traffic(update: dict[str, Any]) -> bool:
     callback = (update or {}).get("callback_query") or {}
     if callback:
         chat = (callback.get("message") or {}).get("chat") or {}
-        return chat.get("type") == "supergroup" and str(callback.get("data") or "").startswith("svc:close:")
+        data = str(callback.get("data") or "")
+        return chat.get("type") == "supergroup" and (data.startswith("svc:close:") or data.startswith("sale:") or data.startswith("dep:"))
     message = (update or {}).get("message") or {}
     chat = message.get("chat") or {}
     if chat.get("type") != "supergroup":
@@ -276,7 +285,8 @@ async def _open_forum_topic(tenant: TenantContext, ticket: dict[str, Any]) -> di
 
 
 def _close_keyboard(ticket: dict[str, Any]) -> dict[str, Any]:
-    return {"inline_keyboard": [[{"text": f"Закрыть {ticket_label(ticket)}", "callback_data": f"svc:close:{ticket['ticket_id']}"}]]}
+    # «Оплачено» starts the sale record (Gemini, v10); «Закрыть» ends the tunnel.
+    return {"inline_keyboard": [[paid_button(ticket), {"text": f"Закрыть {ticket_label(ticket)}", "callback_data": f"svc:close:{ticket['ticket_id']}"}]]}
 
 
 # ----------------------------------------------------------------------------
@@ -351,6 +361,8 @@ async def _open_tunnel(
 async def try_handle_support_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
+    if callback.data.startswith(("sale:", "dep:")):
+        return await try_handle_service_sale_callback(tenant, callback, trace_id=trace_id)
     match = _CALLBACK_RE.fullmatch(callback.data)
     if not match:
         return None
@@ -564,6 +576,7 @@ async def try_handle_support_forum_message(
             tenant.tenant_id, binding_id=current_bot_binding().binding_id, chat_id=msg.chat_id,
             title=title, registered_by=msg.user_id,
         )
+        await ensure_service_topics(tenant)
         moved, failed = await _move_open_tickets_to_forum(tenant)
         note = f" Открытые заявки перенесены в темы: {moved}." if moved else ""
         if failed:
@@ -576,8 +589,17 @@ async def try_handle_support_forum_message(
         return {"ok": True, "route": "support_forum", "status": "registered", "moved": moved, "trace_id": trace_id}
     if msg.thread_id is None:
         return None
+    # Operators' commands («отчёт», «баланс», «перевёл N», «тариф») work in any
+    # topic of the group, incl. «Отчёты»; nothing of that is relayed to a client.
+    command_result = await try_handle_service_command(tenant, msg, trace_id=trace_id)
+    if command_result is not None:
+        return command_result
     ticket = await find_ticket_by_forum_thread(tenant.tenant_id, forum_chat_id=msg.chat_id, forum_thread_id=msg.thread_id)
     if ticket is None:
+        forum = await get_forum(tenant.tenant_id, binding_id=current_bot_binding().binding_id)
+        if is_reports_topic(forum, msg.chat_id, msg.thread_id):
+            await _send(msg.chat_id, "Команды: «отчёт», «баланс», «перевёл 20000», «тариф».", thread_id=msg.thread_id)
+            return {"ok": True, "route": "service_command", "status": "help", "trace_id": trace_id}
         return None
     if ticket["status"] != "open":
         await _send(msg.chat_id, f"{ticket_label(ticket)} закрыто; клиент откроет новое обращение через «Сервисы», если нужно.", thread_id=msg.thread_id)
@@ -629,6 +651,9 @@ async def try_handle_support_message(
         return None
     if is_services_request(msg.text):
         return await show_services(msg.chat_id, trace_id=trace_id)
+    command_result = await try_handle_service_command(tenant, msg, trace_id=trace_id)
+    if command_result is not None:
+        return command_result
     admin_result = await try_handle_support_admin_message(tenant, msg, trace_id=trace_id)
     if admin_result is not None:
         return admin_result

@@ -7,7 +7,7 @@ import pytest
 
 from tests.postgres_testkit import MIGRATIONS, temporary_database
 
-SUPPORT_MIGRATIONS = (*MIGRATIONS, "platform_support_tickets_v8.sql", "platform_support_forum_v9.sql")
+SUPPORT_MIGRATIONS = (*MIGRATIONS, "platform_support_tickets_v8.sql", "platform_support_forum_v9.sql", "platform_service_sales_v10.sql")
 
 
 @pytest.mark.integration

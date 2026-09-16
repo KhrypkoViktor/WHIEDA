@@ -68,7 +68,9 @@ def support_env(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def no_forum():
-    with patch("app.telegram.support.get_forum", AsyncMock(return_value=None)):
+    with patch("app.telegram.support.get_forum", AsyncMock(return_value=None)), patch(
+        "app.telegram.support.ensure_service_topics", AsyncMock(return_value=None)
+    ):
         yield
 
 
@@ -152,7 +154,8 @@ async def test_confirm_opens_ticket_and_tells_both_sides(whieda_tenant, whieda_b
     # The administrator never sees the person: no name, no @username, no link.
     assert "Ольга" not in to_admin[0]["text"] and "@olga" not in to_admin[0]["text"]
     assert "Reply" in to_admin[0]["text"]
-    assert to_admin[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].startswith("svc:close:")
+    buttons = [b["callback_data"] for row in to_admin[0]["reply_markup"]["inline_keyboard"] for b in row]
+    assert any(b.startswith("svc:close:") for b in buttons) and any(b.startswith("sale:paid:") for b in buttons)
     assert "Заявка #S-1042 принята" in to_user[0]["text"]
     # The admin-side header is stored with its delivered message id for Reply routing.
     assert record.await_args.kwargs["delivered_message_id"] == 501

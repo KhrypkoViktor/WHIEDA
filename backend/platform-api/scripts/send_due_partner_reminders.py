@@ -77,12 +77,25 @@ async def run(args: argparse.Namespace) -> dict[str, object]:
                     binding.tenant.tenant_id, delivery_id, error=str(exc)
                 )
                 failed += 1
+        # Gemini: licence-ending nudges and the low-deposit notice (v10).
+        from app.service_sales.reminders import send_service_notices
+        from app.settings import get_settings
+
+        settings = get_settings()
+        service = await send_service_notices(
+            tenant_id=binding.tenant.tenant_id,
+            binding_id=binding.binding_id,
+            bot_token=binding.bot_token,
+            admin_telegram_user_id=settings.platform_support_admin_telegram_id,
+            owner_telegram_user_id=settings.platform_billing_owner_telegram_id,
+        )
         return {
             "ok": failed == 0,
             "dry_run": False,
             "candidate_count": len(reminders),
             "sent": sent,
             "failed": failed,
+            "service": service,
         }
     finally:
         await close_pool()

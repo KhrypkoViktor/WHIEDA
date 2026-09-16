@@ -79,6 +79,11 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "support_tickets",
             "support_messages",
             "support_forums",
+            # service sales (Gemini): tariff, sales, administrator deposit
+            "service_tariffs",
+            "service_sales",
+            "service_admin_deposit",
+            "service_notice_log",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

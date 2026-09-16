@@ -365,7 +365,7 @@ async def _process_core_telegram_update_scoped(
         if callback.chat_type != "private":
             # The only group callback the bot serves: «Закрыть #S-N» inside a
             # support forum topic.
-            if callback.data.startswith("svc:close:"):
+            if callback.data.startswith(("svc:close:", "sale:", "dep:")):
                 forum_close_result = await try_handle_support_callback(tenant, callback, trace_id=trace_id)
                 if forum_close_result is not None:
                     return forum_close_result
