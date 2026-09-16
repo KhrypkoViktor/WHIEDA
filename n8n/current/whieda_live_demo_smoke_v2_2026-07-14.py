@@ -14,8 +14,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 BASE_URL = os.environ.get("N8N_BASE_URL", "https://sysarchn8n.duckdns.org")
-EMAIL = os.environ["N8N_ADMIN_EMAIL"]
-PASSWORD = os.environ["N8N_ADMIN_PASSWORD"]
+# n8n public API key (Settings -> n8n API), not the personal editor login.
+API_KEY = os.environ["WHIEDA_N8N_API_KEY"]
 WORKFLOW_ID = "advisor-whieda-phase1"
 WEBHOOK_URL = f"{BASE_URL}/webhook/advisor-whieda-v0"
 CHAT_ID = 1147735602
@@ -27,7 +27,7 @@ OUT_PATH = Path(__file__).resolve().parents[1] / "live-exports" / date.today().i
 
 def login():
     session = requests.Session()
-    session.post(f"{BASE_URL}/rest/login", json={"emailOrLdapLoginId": EMAIL, "password": PASSWORD}, verify=False, timeout=30).raise_for_status()
+    session.headers["X-N8N-API-KEY"] = API_KEY
     return session
 
 
@@ -63,9 +63,9 @@ def last_json(run_data, name):
 
 
 def execution_ids(session, limit=12):
-    response = session.get(f"{BASE_URL}/rest/executions?limit={limit}&workflowId={WORKFLOW_ID}", verify=False, timeout=30)
-    payload = response.json().get("data", {})
-    rows = payload.get("results", payload if isinstance(payload, list) else [])
+    response = session.get(f"{BASE_URL}/api/v1/executions?limit={limit}&workflowId={WORKFLOW_ID}", verify=False, timeout=30)
+    payload = response.json().get("data", [])
+    rows = payload if isinstance(payload, list) else payload.get("results", [])
     return [
         int(row["id"])
         for row in rows
@@ -74,10 +74,13 @@ def execution_ids(session, limit=12):
 
 
 def fetch_summary(session, execution_id):
-    detail = session.get(f"{BASE_URL}/rest/executions/{execution_id}?includeData=true", verify=False, timeout=60).json()
+    # Public API returns the execution at top level (old /rest wrapped it in {"data": ...});
+    # its "data" is already unflattened, the old endpoint returned a flattened JSON string.
+    detail = {"data": session.get(f"{BASE_URL}/api/v1/executions/{execution_id}?includeData=true", verify=False, timeout=60).json()}
     data = detail.get("data", {}).get("data")
-    if not isinstance(data, str): return None
-    run_data = decode_graph(json.loads(data)).get("resultData", {}).get("runData", {})
+    if isinstance(data, str): data = decode_graph(json.loads(data))
+    if not isinstance(data, dict): return None
+    run_data = data.get("resultData", {}).get("runData", {})
     normalized = last_json(run_data, "Code: Normalize Payload")
     validated = last_json(run_data, "Code: Validate Dify Response")
     return {
