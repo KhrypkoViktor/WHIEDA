@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -10,9 +11,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-BASE_URL = "https://sysarchn8n.duckdns.org"
-EMAIL = "khrypko.viktar@gmail.com"
-PASSWORD = "***REMOVED***"
+BASE_URL = os.environ.get("N8N_BASE_URL", "https://sysarchn8n.duckdns.org")
+EMAIL = os.environ["N8N_ADMIN_EMAIL"]
+PASSWORD = os.environ["N8N_ADMIN_PASSWORD"]
 WORKFLOW_ID = "advisor-whieda-phase1"
 WEBHOOK_URL = f"{BASE_URL}/webhook/advisor-whieda-v0"
 
