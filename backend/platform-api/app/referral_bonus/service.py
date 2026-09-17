@@ -74,6 +74,7 @@ def parse_site_start_token(token: str) -> str | None:
 class InviterCard:
     display_name: str
     site_url: str
+    ref_code: str = ""
 
 
 async def inviter_card(tenant_id: str, inviter_actor_id: str | None) -> InviterCard | None:
@@ -85,7 +86,8 @@ async def inviter_card(tenant_id: str, inviter_actor_id: str | None) -> InviterC
             conn,
             """
             select coalesce(public_profile->>'display_name', ref_code) as display_name,
-                   coalesce(public_profile->>'public_site_url', '') as site_url
+                   coalesce(public_profile->>'public_site_url', '') as site_url,
+                   ref_code
             from referral_profiles
             where tenant_id = %s and owner_id = %s and enabled
             order by (public_profile->>'public_site_url') is null, ref_code
@@ -95,7 +97,7 @@ async def inviter_card(tenant_id: str, inviter_actor_id: str | None) -> InviterC
         )
     if not row:
         return None
-    return InviterCard(display_name=str(row["display_name"] or ""), site_url=str(row["site_url"] or ""))
+    return InviterCard(display_name=str(row["display_name"] or ""), site_url=str(row["site_url"] or ""), ref_code=str(row["ref_code"] or ""))
 
 
 def telegram_actor_id(tenant_id: str, telegram_user_id: int) -> str:

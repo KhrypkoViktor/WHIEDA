@@ -125,8 +125,10 @@ def _referrals_text(entries: list[dict[str, Any]]) -> str:
 SITE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScu0yDkGGw5uKjRoNDUvzTA6lQBCZywnjSGFmhLv_zcHXPnGw/viewform?usp=pp_url&entry.1166182770="
 
 
-def site_form_url(telegram_user_id: int | None) -> str:
+def site_form_url(telegram_user_id: int | None, *, inviter_ref: str | None = None) -> str:
     tail = f"новый сайт · бот · {int(telegram_user_id)}" if telegram_user_id else "новый сайт · бот"
+    if inviter_ref:
+        tail += f" · от {inviter_ref}"
     return SITE_FORM_URL + quote(tail, safe="")
 
 
@@ -215,13 +217,13 @@ def site_offer_text(inviter_name: str) -> str:
     # Имя из базы в именительном падеже, склонять нельзя — потому «пригласил партнёр: Имя».
     head = f"Вас пригласил партнёр WWC: {inviter_name}. " if inviter_name else ""
     return (
-        f"{head}Такой же сайт — за 1 день, 10 W$ в месяц (1000 ₽ / 35 BYN). "
-        "20 W$ — разовое подключение."
+        f"{head}Такой же сайт — за 1 день, 10 WWC$ в месяц (1 000 ₽ / 35 BYN). "
+        "20 WWC$ (2 000 ₽) — разовая настройка сайта."
     )
 
 
-def site_offer_keyboard(*, telegram_user_id: int | None, example_url: str) -> dict:
-    rows = [[{"text": "Заказать сайт", "url": site_form_url(telegram_user_id)}]]
+def site_offer_keyboard(*, telegram_user_id: int | None, example_url: str, inviter_ref: str | None = None) -> dict:
+    rows = [[{"text": "Заказать сайт", "url": site_form_url(telegram_user_id, inviter_ref=inviter_ref)}]]
     if example_url:
         host = example_url.split("//", 1)[-1].strip("/")
         rows.append([{"text": f"Посмотреть пример: {host}", "url": example_url}])
@@ -241,7 +243,9 @@ async def show_site_offer(
     await _deliver(
         telegram_chat_id,
         site_offer_text(name),
-        reply_markup=site_offer_keyboard(telegram_user_id=telegram_user_id, example_url=example),
+        reply_markup=site_offer_keyboard(
+            telegram_user_id=telegram_user_id, example_url=example, inviter_ref=inviter.ref_code if inviter else None
+        ),
     )
     return {"ok": True, "route": "site_offer", "trace_id": trace_id}
 
