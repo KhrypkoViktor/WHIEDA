@@ -188,7 +188,7 @@ def build(package: Path) -> list[dict[str, Any]]:
                 text=text,
                 mode="clarification",
                 gap_kind="medical_or_safety_boundary",
-                must_contain=["не заменяет"],
+                must_contain=["врач"],
                 source_ref="compliance:medical_claims",
             )
         )

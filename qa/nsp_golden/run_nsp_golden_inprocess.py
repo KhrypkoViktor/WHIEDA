@@ -13,9 +13,12 @@ import argparse
 import asyncio
 import csv
 import json
+import sys
 from pathlib import Path
 
-from app.advisor.sql.engine import run_structured_query
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend" / "platform-api"))
+
+from app.advisor.sql.engine import run_structured_query  # noqa: E402
 from app.db import close_pool, init_pool
 from app.tenancy import TenantContext
 
