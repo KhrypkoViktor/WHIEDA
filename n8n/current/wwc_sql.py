@@ -21,6 +21,7 @@ workflow ещё дёргает `ssh_run('n8n publish:workflow')`. Провере
 from __future__ import annotations
 
 import importlib.util
+import os
 import json
 import sys
 import time
@@ -39,9 +40,25 @@ def _helper():
     return m
 
 
+API_KEY = os.environ.get("WHIEDA_N8N_API_KEY", "")
+
+
+def n8n_api(helper):
+    """Public API n8n (/api/v1, заголовок X-N8N-API-KEY). Ключ — user-level env
+    WHIEDA_N8N_API_KEY (создан владельцем 16.09.2026 при security-hardening),
+    личный логин/пароль больше не нужны и не используются: он менялся и
+    упирался в лимит 429."""
+    if not API_KEY:
+        raise RuntimeError("нет WHIEDA_N8N_API_KEY в окружении")
+    session = requests.Session()
+    session.headers["X-N8N-API-KEY"] = API_KEY
+    session.verify = False
+    return session, f"{helper.BASE_URL}/api/v1"
+
+
 def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
     helper = _helper()
-    session = helper.login_session()
+    session, api = n8n_api(helper)
     base = helper.BASE_URL
     suffix = uuid.uuid4().hex[:10]
     path = f"wwc-sql-{suffix}"
@@ -70,15 +87,11 @@ def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
     }
     workflow_id = None
     try:
-        created = session.post(f"{base}/rest/workflows", json=workflow, verify=False, timeout=60)
+        payload = {k: workflow[k] for k in ("name", "nodes", "connections", "settings")}
+        created = session.post(f"{api}/workflows", json=payload, timeout=60)
         created.raise_for_status()
-        data = created.json().get("data", created.json())
-        workflow_id = data["id"]
-        version = data.get("versionId")
-        act = session.post(f"{base}/rest/workflows/{workflow_id}/activate", json={"versionId": version}, verify=False, timeout=60)
-        if act.status_code == 409:
-            version = session.get(f"{base}/rest/workflows/{workflow_id}", verify=False, timeout=60).json()["data"].get("versionId")
-            act = session.post(f"{base}/rest/workflows/{workflow_id}/activate", json={"versionId": version}, verify=False, timeout=60)
+        workflow_id = created.json()["id"]
+        act = session.post(f"{api}/workflows/{workflow_id}/activate", timeout=60)
         act.raise_for_status()
         url = f"{base}/webhook/{path}"
         last = None
@@ -99,11 +112,11 @@ def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
     finally:
         if workflow_id:
             try:
-                session.post(f"{base}/rest/workflows/{workflow_id}/deactivate", verify=False, timeout=30)
+                session.post(f"{api}/workflows/{workflow_id}/deactivate", timeout=30)
             except Exception:
                 pass
             try:
-                session.delete(f"{base}/rest/workflows/{workflow_id}", verify=False, timeout=30)
+                session.delete(f"{api}/workflows/{workflow_id}", timeout=30)
             except Exception:
                 pass
 

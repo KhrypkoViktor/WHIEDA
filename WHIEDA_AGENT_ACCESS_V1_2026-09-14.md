@@ -13,7 +13,7 @@
 | Что нужно | Как | Состояние 14.09.2026 |
 |---|---|---|
 | Сайт: деплой staging/prod | `npm run deploy:staging` / `deploy:prod` из живого дерева | **работает**, ключ `~/.ssh/wwc_deploy_ed25519` |
-| n8n: workflow, executions | REST через `login_session()` | **работает**, env `WHIEDA_N8N_EMAIL` / `WHIEDA_N8N_PASSWORD` |
+| n8n: workflow, executions, SQL | public API `/api/v1`, заголовок `X-N8N-API-KEY` | **работает**, env `WHIEDA_N8N_API_KEY` (с 16.09.2026). Логин/пароль не использовать: пароль сменён, /rest/login ловит 429 |
 | Runtime-база Core (Postgres) | `n8n/current/wwc_sql.py` — через n8n, без SSH | **работает** чтение и запись |
 | SSH на Core VPS | `ssh_run()` в n8n-helper, env `WHIEDA_SSH_PASSWORD` | **не работает**: пароль ротирован, переменная устарела |
 | Google Sheet `Partner_Subscriptions` | только через n8n Google Sheets-узел | не проверено; строки вставляет владелец |
@@ -31,11 +31,16 @@
 
 ## 2. n8n
 
-Помощник: `n8n/current/publish_and_run_whieda_sync_2026-07-13.py`.
-`helper.login_session()` возвращает `requests.Session` с cookie n8n,
-`helper.BASE_URL` — адрес. Переменные окружения `WHIEDA_N8N_EMAIL`,
-`WHIEDA_N8N_PASSWORD` **уже заданы** у агента — проверять через
-`[ -n "$WHIEDA_N8N_PASSWORD" ]`, не печатать.
+**С 16.09.2026 — только API-ключ.** `WHIEDA_N8N_API_KEY` задан у агента
+(user-level env), проверять `[ -n "$WHIEDA_N8N_API_KEY" ]`, не печатать.
+Public API: `https://sysarchn8n.duckdns.org/api/v1/...` с заголовком
+`X-N8N-API-KEY`. Образец — `n8n_api()` в `n8n/current/wwc_sql.py`.
+
+Старый путь `helper.login_session()` (`/rest/login` по email/паролю) **не
+использовать**: пароль владельца сменён при security-hardening, а сам helper
+долбит логин каждые 3 с и получает 429 на четверть часа. Скрипты
+`patch_*`/`read_lead_execution.py` ещё на нём — переводить на API-ключ по мере
+надобности (`/rest/workflows` → `/api/v1/workflows`).
 
 Что этим делается:
 - патчи workflow — образец `patch_wwc_website_leads_host_owner_2026-09-14.py`
