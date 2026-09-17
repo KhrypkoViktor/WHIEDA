@@ -47,6 +47,26 @@ OFF_TOPIC_PROBES = [
 # tenant. The routing path differs per phrasing (price vs card vs media
 # intent), so we pin the mode/gap_kind actually observed on staging rather
 # than a guess — the isolation guarantee is must_not_contain, checked below.
+# Business FAQ (package faq rows without sku, nsp_business_faq_v1.jsonl):
+# (question, fragment that must be in the answer). Routed either by a Core
+# intent branch (company intro / plan / income / PV) or by the generic
+# find_business_faq() alias match — both must return the package answer.
+BUSINESS_PROBES = [
+    ("расскажи о компании", "1972"),
+    ("что за компания nsp", "Nature's Sunshine"),
+    ("есть ли nsp в беларуси", "представительств"),
+    ("как стать партнёром", "nsp25.com"),
+    ("что такое pv", "очки"),
+    ("какой маркетинг план", "не гарантируется"),
+    ("сколько можно заработать", "не гарантируется"),
+    ("какие ранги", "Ассистент"),
+    ("можно ли продавать на маркетплейсах", "запрещено"),
+    ("это лечит", "не лекарства"),
+    ("подходит ли детям", "карточке"),
+    ("позови человека", "/support"),
+    ("как заказать в минск", "/support"),
+    ("что почитать новичку", "маркетинг-план"),
+]
 UNKNOWN_PRODUCT_PROBES = [
     ("сколько стоит активатор клеток", "clarification", None),
     ("расскажи про спирулину", "knowledge_gap", "unknown_product"),
@@ -203,6 +223,19 @@ def build(package: Path) -> list[dict[str, Any]]:
                 gap_kind="unsupported_topic",
                 must_contain=["Товары"],
                 source_ref="compliance:off_topic",
+            )
+        )
+    for index, (text, fragment) in enumerate(BUSINESS_PROBES, start=1):
+        cases.append(
+            _case(
+                f"GOLD-NSP-BIZ-{index:03d}",
+                cls="business_faq",
+                priority="P1",
+                text=text,
+                mode="structured_business_faq",
+                gap_kind=None,
+                must_contain=[fragment],
+                source_ref="faq.json#biz-*",
             )
         )
     for index, (text, mode, gap_kind) in enumerate(UNKNOWN_PRODUCT_PROBES, start=1):
