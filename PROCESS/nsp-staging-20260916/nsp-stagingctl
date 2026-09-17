@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# NSP shared-staging control: one container, one DB, one bot. Never touches core-api/core-worker.
+# Usage: nsp-stagingctl <status|env-init <src-tag>|up <image-tag>|down|logs|webhook-info|webhook-set|apply-package <dir>|preflight <dir>>
+set -euo pipefail
+
+BASE=/opt/whieda-shared-staging
+NAME=whieda-shared-staging-api
+OLD=${NAME}-old-20260826
+NET=whieda-staging-data
+PORT=127.0.0.1:18082
+ENV_FILE=$BASE/secrets/api.env
+PUBLIC=https://nsp-staging.sysarch.pro
+BINDING=nsp-maxim-canary-bot
+NGINX_CONF_DISABLED=/etc/nginx/conf.d/disabled/nsp-staging.conf.disabled-20260912
+NGINX_CONF=/etc/nginx/conf.d/nsp-staging.conf
+
+cmd=${1:-status}; shift || true
+
+case "$cmd" in
+  status)
+    docker ps -a --filter "name=${NAME}" --format '{{.Names}}\t{{.Status}}\t{{.Image}}'
+    echo "--- health ---"; curl -s -m 5 "http://${PORT}/health/live" || echo "(no answer on ${PORT})"; echo
+    echo "--- nginx vhost ---"; docker exec docker-nginx-1 sh -c "ls /etc/nginx/conf.d/ | grep -i nsp || true"
+    echo "--- public ---"; curl -s -m 8 -o /dev/null -w '%{http_code}\n' "${PUBLIC}/health/live" || true
+    ;;
+  env-init)
+    # Copy runtime env from the old container once; secrets stay on this host.
+    src=${1:-$OLD}
+    docker inspect "$src" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+      | grep -v -E '^(PATH|PYTHON_VERSION|PYTHON_SHA256|GPG_KEY|LANG|HOME)=' > "$ENV_FILE"
+    {
+      echo "ENVIRONMENT=staging"
+      echo "PLATFORM_TELEGRAM_DURABLE_INBOX_BINDINGS=${BINDING}"
+      echo "PLATFORM_TELEGRAM_OUTBOX_WORKER=true"
+      echo "PLATFORM_TENANT_PRODUCT_MEDIA_BASE_URL=https://media.sysarch.pro/nsp-media"
+    } >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "env keys:"; sed -E 's/=.*//' "$ENV_FILE" | sort | tr '\n' ' '; echo
+    ;;
+  up)
+    tag=${1:?image tag}
+    if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
+      if docker ps --format '{{.Names}}' | grep -qx "$NAME"; then docker stop "$NAME"; fi
+      docker rename "$NAME" "${NAME}-prev-$(date +%Y%m%d%H%M%S)"
+    fi
+    docker run -d --name "$NAME" --restart unless-stopped --env-file "$ENV_FILE" \
+      --network "$NET" -p "${PORT}:8080" \
+      -v "$BASE/src-10763d5/qa/nsp/release_packages:/packages:ro" \
+      -v "$BASE/src-10763d5/postgres:/app/postgres:ro" \
+      "whieda-shared-staging-core:${tag}"
+    docker network connect bridge "$NAME"   # egress to api.telegram.org
+    sleep 6
+    docker ps --filter "name=${NAME}" --format '{{.Names}}\t{{.Status}}'
+    curl -s -m 5 "http://${PORT}/health/live"; echo
+    ;;
+  nginx-enable)
+    docker exec docker-nginx-1 sh -c "cp '$NGINX_CONF_DISABLED' '$NGINX_CONF' && nginx -t && nginx -s reload"
+    curl -s -m 8 -o /dev/null -w 'public health: %{http_code}\n' "${PUBLIC}/health/live"
+    ;;
+  down)
+    docker stop "$NAME"
+    ;;
+  logs)
+    docker logs --tail "${1:-60}" "$NAME" 2>&1 | cut -c1-220
+    ;;
+  webhook-info|webhook-set|webhook-delete)
+    # image has no curl; talk to Bot API with python, token never leaves the container
+    docker exec -i -e CMD="$cmd" -e PUBLIC="$PUBLIC" -e BINDING="$BINDING" "$NAME" python - <<'PY'
+import json, os, urllib.parse, urllib.request
+tok = os.environ["NSP_STAGE_BOT_TOKEN"]; base = f"https://api.telegram.org/bot{tok}/"
+cmd = os.environ["CMD"]
+if cmd == "webhook-info":
+    req = urllib.request.Request(base + "getWebhookInfo")
+elif cmd == "webhook-set":
+    data = urllib.parse.urlencode({"url": f"{os.environ['PUBLIC']}/v1/telegram/{os.environ['BINDING']}/webhook", "secret_token": os.environ["NSP_STAGE_WEBHOOK_SECRET"], "drop_pending_updates": "true"}).encode()
+    req = urllib.request.Request(base + "setWebhook", data=data)
+else:
+    req = urllib.request.Request(base + "deleteWebhook", data=b"")
+out = json.loads(urllib.request.urlopen(req, timeout=15).read())
+res = out.get("result"); 
+if isinstance(res, dict): res.pop("last_error_message", None)
+print(json.dumps(out, ensure_ascii=False))
+PY
+    ;;
+  preflight|apply-package)
+    # Gate M runner in a one-off container; package dir is relative to src-<tag>/qa/nsp/release_packages
+    pkg=${1:-nsp-maxim-canary-v1}; tag=${2:-lead-10763d5}
+    mode=$([ "$cmd" = "preflight" ] && echo "--preflight" || echo "--apply --confirm APPLY_SHARED_STAGING")
+    docker run --rm --env-file "$ENV_FILE" --network "$NET" \
+      -v "$BASE/src-${tag#lead-}:/src" -v "$BASE/packages:/pkg" -v "$BASE/reports:/reports" \
+      -w /src/backend/platform-api "whieda-shared-staging-core:${tag}" \
+      sh -c "export WHIEDA_SHARED_STAGING_DSN=\$PLATFORM_DATABASE_URL WHIEDA_SHARED_STAGING_EXPECTED_DB=whieda_shared_staging; python scripts/run_shared_staging_tenant_canary.py $mode --package /src/qa/nsp/release_packages/$pkg --tenant nsp-maxim --media-manifest /pkg/media-manifest.tsv" \
+      | python3 -c "import json,sys; d=json.load(sys.stdin); d.pop(\"migration_files\",None); (d.get(\"preflight\") or {}).pop(\"migration_files\",None); print(json.dumps({k:d[k] for k in d if k in (\"ok\",\"state\",\"mode\",\"code\",\"message\",\"imported_skus\",\"backup_dir\",\"package_sha256\")}, ensure_ascii=False, indent=1))"
+    # the package seed rewrites the binding row (disabled, nsp_maxim_bot); put the stage bot back
+    [ "$cmd" = "apply-package" ] && "$0" binding-stage
+    ;;
+  menu-set)
+    # Telegram command menu for the NSP bot: no calculator/cabinet/invite (WHIEDA partner features)
+    docker exec -i "$NAME" python - <<'PY'
+import asyncio, os
+from app.telegram.delivery import configure_telegram_command_menu
+commands = [
+    {"command": "start", "description": "С чего начать"},
+    {"command": "products", "description": "Товары"},
+    {"command": "business", "description": "Бизнес"},
+    {"command": "company", "description": "О компании"},
+    {"command": "support", "description": "Поддержка"},
+]
+print(asyncio.run(configure_telegram_command_menu(bot_token=os.environ["NSP_STAGE_BOT_TOKEN"], commands=commands)))
+PY
+    ;;
+  binding-stage)
+    docker exec -i whieda-staging-db psql -U staging_admin -d whieda_shared_staging -tA <<'SQL'
+update tenant_bot_bindings set status='active', bot_username='NSP_Stage_bot', bot_token_ref='env:NSP_STAGE_BOT_TOKEN', webhook_secret_ref='env:NSP_STAGE_WEBHOOK_SECRET', processing_mode='core' where binding_id='nsp-maxim-canary-bot';
+select 'binding', binding_id, status, bot_username from tenant_bot_bindings where binding_id='nsp-maxim-canary-bot';
+SQL
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2; exit 2;;
+esac
