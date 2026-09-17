@@ -17,7 +17,7 @@
 | Runtime-база Core (Postgres) | `n8n/current/wwc_sql.py` — через n8n, без SSH | **работает** чтение и запись |
 | SSH на Core VPS | `ssh_run()` в n8n-helper, env `WHIEDA_SSH_PASSWORD` | **не работает**: пароль ротирован, переменная устарела |
 | Google Sheet `Partner_Subscriptions` | только через n8n Google Sheets-узел | не проверено; строки вставляет владелец |
-| GitHub push | `git push` | **заблокирован** для агента классификатором; пушит владелец |
+| GitHub push | `git push origin master` | **работает** (17.09.2026, e34c850). Порядок: коммит → push → deploy:staging → deploy:prod; незапушенное на стейдж не выкатывать |
 | Публичный API партнёров | `GET https://wwc.best/api/v1/public/ref/<code>` | без авторизации |
 | Фото от владельца | картинка из чата Claude → транскрипт сессии (base64), см. п. 8; либо `Downloads\Telegram Desktop\photo_*.jpg` | **работает** оба пути |
 
@@ -100,9 +100,14 @@ FK на referral_profiles **без каскада**).
 
 ## 6. GitHub
 
-`git push` агенту заблокирован. Коммиты делать; пуш — владелец, или добавить
-правило в `.claude/settings.json`. `deploy:prod` выравнивает локальный
-`master`, но `origin/master` без пуша отстаёт.
+`git push origin master` проходит (17.09.2026). Правило Core-лида: на стейдж
+выкатывается только запушенное — `git status -sb` без `[ahead]` перед
+`deploy:staging`, иначе guard прода останавливает релиз. Ветки — `site/…`,
+подпись — `site-agent`.
+
+Тяжёлые медиа (видео) в сборку не кладём: `scp -i ~/.ssh/wwc_deploy_ed25519`
+напрямую в `/var/www/<цель>/start/media/` — tar при деплое файлы поверх не
+удаляет. Образец: `club.mp4` + `club-poster.jpg`, 17.09.2026.
 
 ## 7. Что проверять первым при подключении партнёра
 
