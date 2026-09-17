@@ -21,10 +21,16 @@ from app.leads.actor_link import (
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
-from app.referral_bonus.service import accept_referral_start, parse_referral_start_token
+from app.referral_bonus.service import (
+    accept_referral_start,
+    inviter_card,
+    parse_referral_start_token,
+    parse_site_start_token,
+)
 from app.settings import get_settings
 from app.telegram.referral_bonus import (
     show_referral_dashboard,
+    show_site_offer,
     try_handle_referral_callback,
     try_handle_referral_message,
 )
@@ -215,6 +221,37 @@ async def handle_referral_start_token(
             trace_id=trace_id,
         )
     return {"ok": result.status == "attributed", "route": "referral_start", "status": result.status, "trace_id": trace_id}
+
+
+async def handle_site_start_token(
+    tenant: TenantContext, msg: TelegramMessage, token: str, trace_id: str
+) -> dict[str, Any]:
+    """«Хочу такой же сайт» с партнёрского сайта: пригласивший записывается
+    молча, человек видит один экран — заказать сайт. Кабинет с балансом и
+    рефссылкой откроется после оплаты, не раньше."""
+    invite_code = parse_site_start_token(token)
+    if invite_code is None:
+        raise ValueError("not a site start token")
+    if msg.chat_type != "private":
+        return {"ok": True, "route": "site_start", "status": "private_chat_required"}
+    inviter = None
+    status = "invalid"
+    if invite_code:
+        result = await accept_referral_start(
+            tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id,
+            invite_code=invite_code, raw_update=msg.raw,
+        )
+        status = result.status
+        inviter = await inviter_card(tenant.tenant_id, result.inviter_actor_id)
+    # Битая ссылка — не тупик: оффер показываем всё равно, только без имени.
+    await show_site_offer(
+        tenant,
+        telegram_user_id=msg.user_id,
+        telegram_chat_id=msg.chat_id,
+        inviter=inviter,
+        trace_id=trace_id,
+    )
+    return {"ok": True, "route": "site_start", "status": status, "trace_id": trace_id}
 
 
 async def handle_onboarding(
@@ -447,6 +484,8 @@ async def _process_core_telegram_update_scoped(
 
     start_token = parse_start_token(msg.text)
     if start_token:
+        if parse_site_start_token(start_token) is not None:
+            return await handle_site_start_token(tenant, msg, start_token, trace_id)
         if parse_referral_start_token(start_token) is not None:
             return await handle_referral_start_token(tenant, msg, start_token, trace_id)
         if is_services_start_token(start_token):

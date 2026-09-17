@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode
 
 from app.cart.web_links import CALCULATOR_WEB_URL
 from app.referral_bonus.service import (
+    InviterCard,
     BonusRedemptionError,
     BonusRedemptionExpiredError,
     BonusRedemptionForbiddenError,
@@ -206,6 +207,43 @@ async def _actor_for_telegram(
         telegram_chat_id=telegram_chat_id,
         raw_update=raw_update,
     )
+
+
+def site_offer_text(inviter_name: str) -> str:
+    """Один экран под одно действие (текст владельца, 17.09.2026). Без баланса
+    и рефссылки: человек ещё ничего не купил, кабинет ему сейчас — шум."""
+    # Имя из базы в именительном падеже, склонять нельзя — потому «пригласил партнёр: Имя».
+    head = f"Вас пригласил партнёр WWC: {inviter_name}. " if inviter_name else ""
+    return (
+        f"{head}Такой же сайт — за 1 день, 10 W$ в месяц (1000 ₽ / 35 BYN). "
+        "20 W$ — разовое подключение."
+    )
+
+
+def site_offer_keyboard(*, telegram_user_id: int | None, example_url: str) -> dict:
+    rows = [[{"text": "Заказать сайт", "url": site_form_url(telegram_user_id)}]]
+    if example_url:
+        host = example_url.split("//", 1)[-1].strip("/")
+        rows.append([{"text": f"Посмотреть пример: {host}", "url": example_url}])
+    return {"inline_keyboard": rows}
+
+
+async def show_site_offer(
+    tenant: TenantContext,
+    *,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+    inviter: InviterCard | None,
+    trace_id: str,
+) -> dict[str, Any]:
+    name = inviter.display_name if inviter else ""
+    example = inviter.site_url if inviter else ""
+    await _deliver(
+        telegram_chat_id,
+        site_offer_text(name),
+        reply_markup=site_offer_keyboard(telegram_user_id=telegram_user_id, example_url=example),
+    )
+    return {"ok": True, "route": "site_offer", "trace_id": trace_id}
 
 
 async def show_referral_dashboard(

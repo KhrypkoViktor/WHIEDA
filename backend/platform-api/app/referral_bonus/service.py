@@ -19,6 +19,10 @@ from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
 logger = logging.getLogger(__name__)
 
 REFERRAL_START_PREFIX = "ref_"
+# «Хочу такой же сайт» с партнёрского сайта: тот же код приглашения, но
+# намерение другое — человек хочет сайт, а не кабинет. Экран после /start
+# у этого токена один: заказать сайт (владелец, 17.09.2026).
+SITE_START_PREFIX = "site_"
 _INVITE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 
 
@@ -55,6 +59,43 @@ def parse_referral_start_token(token: str) -> str | None:
         return None
     code = raw[len(REFERRAL_START_PREFIX) :]
     return code if _INVITE_CODE_RE.fullmatch(code) else ""
+
+
+def parse_site_start_token(token: str) -> str | None:
+    """Return the invite code behind site_<code>, "" when malformed, None when not ours."""
+    raw = str(token or "").strip()
+    if not raw.lower().startswith(SITE_START_PREFIX):
+        return None
+    code = raw[len(SITE_START_PREFIX) :]
+    return code if _INVITE_CODE_RE.fullmatch(code) else ""
+
+
+@dataclass(frozen=True)
+class InviterCard:
+    display_name: str
+    site_url: str
+
+
+async def inviter_card(tenant_id: str, inviter_actor_id: str | None) -> InviterCard | None:
+    """Имя и сайт пригласившего для экрана «вы пришли от …»."""
+    if not inviter_actor_id:
+        return None
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select coalesce(public_profile->>'display_name', ref_code) as display_name,
+                   coalesce(public_profile->>'public_site_url', '') as site_url
+            from referral_profiles
+            where tenant_id = %s and owner_id = %s and enabled
+            order by (public_profile->>'public_site_url') is null, ref_code
+            limit 1
+            """,
+            (tenant_id, inviter_actor_id),
+        )
+    if not row:
+        return None
+    return InviterCard(display_name=str(row["display_name"] or ""), site_url=str(row["site_url"] or ""))
 
 
 def telegram_actor_id(tenant_id: str, telegram_user_id: int) -> str:
