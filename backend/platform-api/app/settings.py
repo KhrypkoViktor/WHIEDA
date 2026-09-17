@@ -175,13 +175,13 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ADMIN_CONFIRM_SECRET",
         description="Shared secret for internal POST /v1/admin/auth/telegram-confirm.",
     )
-    platform_identity_exchange_secret: str | None = Field(
+    platform_internal_api_secret: str | None = Field(
         default=None,
-        validation_alias="PLATFORM_IDENTITY_EXCHANGE_SECRET",
+        validation_alias="PLATFORM_INTERNAL_API_SECRET",
         description=(
-            "Shared secret for internal POST /v1/telegram-link-tokens/exchange. "
-            "telegram_user_id in that request body is caller-supplied and unverified "
-            "by Telegram, so the route must stay server-to-server only; unset = route disabled."
+            "Shared secret (X-Platform-Internal-Secret) for HTTP routes that act on a "
+            "client-named identity without proof of ownership: telegram-link-tokens/exchange, "
+            "memory-facts, onboarding. Server-to-server only; unset = those routes disabled."
         ),
     )
     platform_admin_session_ttl_minutes: int = Field(

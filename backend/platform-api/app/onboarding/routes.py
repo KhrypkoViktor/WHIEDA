@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from app.internal_auth import InternalSecretHeader, require_internal_secret
 from app.onboarding.service import enroll_user, handle_onboarding_text
 from app.tenancy import get_request_tenant, require_entitlement
 
@@ -22,12 +23,16 @@ class OnboardingCommandBody(BaseModel):
 
 
 @router.post("/v1/onboarding/enroll")
-async def enroll_v1(body: OnboardingEnrollBody, request: Request) -> dict:
+async def enroll_v1(body: OnboardingEnrollBody, request: Request, internal_secret: InternalSecretHeader = None) -> dict:
+    # telegram_user_id is caller-supplied; the bot's own onboarding runs through the
+    # verified webhook path, so the HTTP variant is server-to-server only (F021).
+    require_internal_secret(internal_secret)
     return await _enroll(body, request)
 
 
 @router.post("/v1/onboarding/command")
-async def command_v1(body: OnboardingCommandBody, request: Request) -> dict:
+async def command_v1(body: OnboardingCommandBody, request: Request, internal_secret: InternalSecretHeader = None) -> dict:
+    require_internal_secret(internal_secret)
     return await _command(body, request)
 
 
