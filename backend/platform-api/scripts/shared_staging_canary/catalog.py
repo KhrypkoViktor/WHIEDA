@@ -168,11 +168,13 @@ def select_import_skus(package_dir: Path, *, tenant_id: str) -> tuple[list[str],
             continue
         if sku in eligible:
             importable.append(sku)
-    if tenant_id == "nsp-maxim" and len(importable) != 17:
+    # The first canary had exactly 17 approved SKU; the catalog grows from
+    # there (package v2 = 58), so 17 is the floor, not the count (NSP, 17.09).
+    if tenant_id == "nsp-maxim" and len(importable) < 17:
         errors.append(
             {
                 "code": "nsp_approved_count",
-                "message": f"nsp-maxim canary requires 17 USD-approved SKU, got {len(importable)}",
+                "message": f"nsp-maxim canary requires at least 17 USD-approved SKU, got {len(importable)}",
             }
         )
     return importable, errors, {"loaded": loaded, "report": report}
