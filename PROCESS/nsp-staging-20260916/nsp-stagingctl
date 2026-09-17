@@ -43,10 +43,11 @@ case "$cmd" in
       if docker ps --format '{{.Names}}' | grep -qx "$NAME"; then docker stop "$NAME"; fi
       docker rename "$NAME" "${NAME}-prev-$(date +%Y%m%d%H%M%S)"
     fi
+    srcdir="$BASE/src-${tag#*-}"; [ -d "$srcdir" ] || srcdir="$BASE/src-10763d5"
     docker run -d --name "$NAME" --restart unless-stopped --env-file "$ENV_FILE" \
       --network "$NET" -p "${PORT}:8080" \
-      -v "$BASE/src-10763d5/qa/nsp/release_packages:/packages:ro" \
-      -v "$BASE/src-10763d5/postgres:/app/postgres:ro" \
+      -v "$BASE/packages:/packages:ro" \
+      -v "$srcdir/postgres:/app/postgres:ro" \
       "whieda-shared-staging-core:${tag}"
     docker network connect bridge "$NAME"   # egress to api.telegram.org
     sleep 6
