@@ -703,9 +703,13 @@ async def run_structured_query(
             return response
 
         if has_promotion_intent(question):
-            promos = await repo.load_active_promotions(conn, tenant.tenant_id, country)
-            text = format_promotions(promos)
-            return fmt.ok_response(text, "structured_promotion", trace_id)
+            # A product whose name carries the stem («Подарка», «Выгодный набор»)
+            # is a product question, not a promo question (NSP SKU 514, 16.09.2026).
+            named_product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
+            if named_product is None:
+                promos = await repo.load_active_promotions(conn, tenant.tenant_id, country)
+                text = format_promotions(promos)
+                return fmt.ok_response(text, "structured_promotion", trace_id)
 
         if has_event_intent(question):
             events = await repo.load_upcoming_events(conn, tenant.tenant_id, country)

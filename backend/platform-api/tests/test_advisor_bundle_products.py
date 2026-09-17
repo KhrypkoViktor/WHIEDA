@@ -86,3 +86,19 @@ def test_scenario_wording_still_opens_the_bundle():
 
     assert has_specific_bundle_context("стельки при плоскостопии")
     assert not has_specific_bundle_context("сколько стоит активатор клеток")
+
+
+def test_treatment_questions_hit_the_medical_boundary_not_a_product_card():
+    from app.advisor.sql.text import is_discomfort_boundary
+
+    for q in ("чем лечить гастрит", "какой бад от давления", "можно заменить лекарство на добавку", "что принимать от бессонницы"):
+        assert is_discomfort_boundary(q), q
+    assert not is_discomfort_boundary("сколько стоит активатор клеток")
+
+
+def test_promotion_stem_inside_a_product_name_is_not_a_promo_question():
+    from app.advisor.sql.text import has_promotion_intent
+
+    # The stem still fires on its own; the engine resolves the product first (NSP «Подарка», SKU 514).
+    assert has_promotion_intent("подарка")
+    assert has_promotion_intent("какие сейчас акции")

@@ -7,6 +7,17 @@ from app.tenancy import TenantContext
 HOME_TENANT_ID = "whieda"
 
 
+def _tenant_profile(tenant_id: str | None):
+    """A tenant's own wording, registered in `app.tenants` (owned by the tenant
+    team). The package may be absent on a build that has no tenants yet — then
+    every tenant keeps the neutral voice below."""
+    try:
+        from app.tenants import get_tenant_profile
+    except ImportError:
+        return None
+    return get_tenant_profile(tenant_id)
+
+
 def is_home_tenant(tenant_id: str) -> bool:
     return tenant_id == HOME_TENANT_ID
 
@@ -88,6 +99,9 @@ def product_selection_text(tenant: TenantContext) -> str:
 
 
 def discomfort_boundary_text(tenant: TenantContext) -> str:
+    profile = _tenant_profile(tenant.tenant_id)
+    if profile and profile.medical_boundary:
+        return profile.medical_boundary
     if is_home_tenant(tenant.tenant_id):
         return (
             "Помогу подобрать WHIEDA под вашу задачу. Выберите направление: "
@@ -139,6 +153,11 @@ def service_fallback(tenant: TenantContext, intent_id: str) -> str:
         from app.advisor.sql.engine import SERVICE_FALLBACKS
 
         return SERVICE_FALLBACKS.get(intent_id, SERVICE_FALLBACKS["help"])
+    profile = _tenant_profile(tenant.tenant_id)
+    if profile:
+        own = profile.service_text(intent_id) or (profile.help_text if intent_id not in {"greeting", "capabilities", "smalltalk_status"} else None)
+        if own:
+            return own
     greeting = (
         f"Здравствуйте! Я {signature}.\n\n"
         "📦 Товары\n"
@@ -188,6 +207,11 @@ def gap_text_for(tenant_id: str, kind: str) -> str:
 
     if is_home_tenant(tenant_id):
         return GAP_TEXTS[kind]
+    profile = _tenant_profile(tenant_id)
+    if profile:
+        own = profile.gap_text(kind)
+        if own:
+            return own
     if kind == "missing_resource":
         return (
             "Для этого товара такой материал пока не прикреплён. "

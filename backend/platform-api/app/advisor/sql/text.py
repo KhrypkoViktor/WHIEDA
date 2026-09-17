@@ -33,8 +33,12 @@ INCOME_QUESTION_RE = re.compile(
     r"(как\s+заработать|сколько\s+можно\s+заработать|доход\s+партн|заработок\s+партн)",
     re.I,
 )
+# «чем лечить», «какой бад от …», «вместо/заменить лекарство» — a request for
+# treatment, not for a product card (NSP staging golden, 16.09.2026).
 DISCOMFORT_BOUNDARY_RE = re.compile(
-    r"(бол(?:ит|ят)\s+(?:колен|спин|шея|спина|колени|поясниц)|хочу\s+совет)",
+    r"(бол(?:ит|ят)\s+(?:колен|спин|шея|спина|колени|поясниц)|хочу\s+совет|"
+    r"чем\s+(?:по)?лечить|как\s+вылечить|какой\s+бад\s+от|что\s+(?:принимать|пить)\s+от|"
+    r"замен(?:ить|яет|а)\s+лекарств|вместо\s+лекарств|вместо\s+таблет)",
     re.I,
 )
 # These are not product-selection questions.  Keep this deliberately narrow: the
