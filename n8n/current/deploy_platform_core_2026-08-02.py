@@ -162,17 +162,30 @@ def main() -> int:
         )
         return 0
 
-    cfg = ssh_config()
+    # Ключ — основной путь (пароль root менялся и падал «Authentication failed», 18.09.2026):
+    # тот же ключ, что у `ssh whieda-n8n` и деплоя сайта. Пароль остаётся запасным.
+    key_path = Path(os.environ.get("WHIEDA_SSH_KEY", Path.home() / ".ssh" / "wwc_deploy_ed25519"))
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        cfg["host"],
-        username=cfg["user"],
-        password=cfg["password"],
-        look_for_keys=False,
-        allow_agent=False,
-        timeout=30,
-    )
+    if key_path.exists():
+        client.connect(
+            os.environ.get("WHIEDA_SSH_HOST", "185.252.232.93"),
+            username=os.environ.get("WHIEDA_SSH_USER", "root"),
+            key_filename=str(key_path),
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=30,
+        )
+    else:
+        cfg = ssh_config()
+        client.connect(
+            cfg["host"],
+            username=cfg["user"],
+            password=cfg["password"],
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=30,
+        )
     env_content = render_env_file(client)
     try:
         ssh_exec(client, f"mkdir -p {REMOTE_DIR}")
