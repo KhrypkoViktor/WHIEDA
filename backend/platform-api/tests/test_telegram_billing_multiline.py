@@ -114,3 +114,77 @@ async def test_status_shows_pro_and_club(whieda_tenant, whieda_bot_binding, owne
     assert result["status"] == "status"
     text = deliver.await_args.args[1]
     assert "PRO (сайт)" in text and "CLUB: до 14.12.2026" in text
+
+
+@pytest.mark.asyncio
+async def test_bonus_line_reaches_the_intent_and_the_preview(whieda_tenant, whieda_bot_binding, owner_env, quiet):
+    deliver = AsyncMock()
+    intent = AsyncMock(return_value={
+        "intent_id": "22222222-2222-2222-2222-222222222222", "ref_code": "olesya", "display_name": "Олеся Вселенная",
+        "hostname": "olesya.wwc.best", "currency": "WUSD", "received_minor": 10000, "paid_until": None, "club_paid_until": None,
+        "bonus_minor": 500, "bonus_balance_minor": 1200,
+        "lines": [
+            {"product_code": "platform_subscription", "amount_minor": 3000, "currency": "WUSD", "access_months": 3, "promo": False, "note": "", "list_price_minor": 3000},
+            {"product_code": "club_subscription", "amount_minor": 7500, "currency": "WUSD", "access_months": 3, "promo": True, "note": "пакет PRO + клуб", "list_price_minor": 12000},
+            {"product_code": "bonus_offset", "amount_minor": 500, "currency": "WUSD", "access_months": 0, "promo": False, "note": "", "list_price_minor": None},
+        ],
+        "price_reasons": {},
+    })
+    with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.create_lines_intent", intent):
+        result = await process_core_telegram_update(
+            whieda_tenant, _msg("оплата ref:olesya\nпакет 105 WWC$\nполучено 100 WWC$\nбонусами 5 WWC$", 501), "t6", binding=whieda_bot_binding
+        )
+    assert result["status"] == "preview"
+    assert intent.await_args.kwargs["bonus_minor"] == 500 and intent.await_args.kwargs["received_minor"] == 10000
+    text = deliver.await_args.args[1]
+    assert "Получено: 100 WWC$" in text and "Бонусами: 5 WWC$ (на балансе 12 WWC$, останется 7 WWC$)" in text
+    assert "bonus_offset" not in text and "строки = получено + бонусы" in text
+
+
+@pytest.mark.asyncio
+async def test_confirmed_payment_reports_the_bonus_offset(whieda_tenant, whieda_bot_binding, owner_env, quiet):
+    deliver = AsyncMock()
+    payment = {
+        "payment_id": "33333333-3333-3333-3333-333333333333", "tenant_id": "whieda", "ref_code": "olesya", "multiline": True,
+        "period_end": datetime(2026, 12, 21, tzinfo=timezone.utc), "paid_until": datetime(2026, 12, 21, tzinfo=timezone.utc),
+        "club_paid_until": datetime(2026, 12, 21, tzinfo=timezone.utc), "idempotent": False, "referral_bonus": None,
+        "lines": [{"product_code": "platform_subscription", "amount_minor": 3000, "currency": "WUSD"}],
+        "bonus_offset": {"bonus_offset_minor": 500, "bonus_balance_minor": 700, "actor_id": "olesya-vselennaya"},
+    }
+    with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.confirm_payment_intent", AsyncMock(return_value=payment)), patch(
+        "app.telegram.billing.notify_payment_participants", AsyncMock()
+    ), patch("app.telegram.billing.answer_callback_query", AsyncMock()):
+        callback = {"callback_query": {"id": "c2", "data": "billing:confirm:33333333333333333333333333333333", "from": {"id": OWNER}, "message": {"message_id": 8, "chat": {"id": OWNER, "type": "private"}}}}
+        result = await process_core_telegram_update(whieda_tenant, callback, "t7", binding=whieda_bot_binding)
+    assert result["status"] == "confirmed"
+    text = deliver.await_args.args[1]
+    assert "Платёж записан." in text and "Бонусами списано: 5 WWC$. Остаток бонусов: 7 WWC$." in text and "PRO до: 21.12.2026" in text
+
+
+@pytest.mark.asyncio
+async def test_unlimited_previews_and_confirms(whieda_tenant, whieda_bot_binding, owner_env, quiet):
+    deliver = AsyncMock()
+    partner = {"ref_code": "dev", "display_name": "Виктор Хрипко", "hostname": "dev.wwc.best", "paid_until": datetime(2026, 9, 21, 21, tzinfo=timezone.utc)}
+    with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.resolve_partner_for_billing", AsyncMock(return_value=partner)):
+        result = await process_core_telegram_update(whieda_tenant, _msg("безлимит ref:dev", 502), "t8", binding=whieda_bot_binding)
+    assert result["status"] == "unlimited_preview"
+    text = deliver.await_args.args[1]
+    assert "Виктор Хрипко (ref:dev)" in text and "Безлимит" in text and "без платежа" in text
+    cb = deliver.await_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    assert cb.startswith("billing:unlimited:")
+
+    unlimited = AsyncMock(return_value={"ref_code": "dev", "paid_until": datetime(2099, 12, 31, 20, 59, 59, tzinfo=timezone.utc)})
+    with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.set_unlimited_access", unlimited), patch(
+        "app.telegram.billing.answer_callback_query", AsyncMock()
+    ):
+        callback = {"callback_query": {"id": "c3", "data": cb, "from": {"id": OWNER}, "message": {"message_id": 9, "chat": {"id": OWNER, "type": "private"}}}}
+        result = await process_core_telegram_update(whieda_tenant, callback, "t9", binding=whieda_bot_binding)
+    assert result["status"] == "unlimited_set"
+    unlimited.assert_awaited_once_with("whieda", ref_code="dev")
+    assert "2099" in deliver.await_args.args[1]
+    # A stranger's callback token is refused, nothing is written.
+    with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.set_unlimited_access", unlimited), patch(
+        "app.telegram.billing.answer_callback_query", AsyncMock()
+    ):
+        again = await process_core_telegram_update(whieda_tenant, callback, "t10", binding=whieda_bot_binding)
+    assert again["status"] == "invalid_callback" and unlimited.await_count == 1

@@ -216,6 +216,13 @@ class Settings(BaseSettings):
         default="lax",
         validation_alias="PLATFORM_CONTENT_COOKIE_SAMESITE",
     )
+    # Session cookies (site login and cabinet) are issued for the whole family
+    # of these domains — one login for wwc.best and every partner subdomain.
+    # Comma-separated; empty → host-only cookies as before 18.09.2026.
+    platform_cookie_shared_domains: str = Field(
+        default="wwc.best",
+        validation_alias="PLATFORM_COOKIE_SHARED_DOMAINS",
+    )
 
     platform_partner_library_storage_backend: Literal["local", "filesystem", "s3"] = Field(
         default="local",

@@ -596,7 +596,7 @@ async def confirm_payment_intent(
 
         if intent.get("lines"):
             # Multi-line owner payment: one received transfer, several products.
-            from app.subscriptions.pricing import lines_from_json
+            from app.subscriptions.pricing import BONUS_OFFSET, bonus_from_json, lines_from_json
 
             stored = intent["lines"]
             if isinstance(stored, str):
@@ -611,7 +611,8 @@ async def confirm_payment_intent(
                 telegram_chat_id=int(intent["telegram_chat_id"]),
                 telegram_message_id=int(intent["telegram_message_id"]),
                 telegram_user_id=int(intent["telegram_user_id"]),
-                list_prices={str(item["product_code"]): item.get("list_price_minor") for item in stored},
+                list_prices={str(item["product_code"]): item.get("list_price_minor") for item in stored if str(item.get("product_code")) != BONUS_OFFSET},
+                bonus_minor=bonus_from_json(stored),
             )
             first = result["lines"][0] if result["lines"] else None
             if first and not result["idempotent"]:
@@ -630,6 +631,7 @@ async def confirm_payment_intent(
                 "club_paid_until": result["club_paid_until"],
                 "idempotent": result["idempotent"],
                 "referral_bonus": result["referral_bonus"],
+                "bonus_offset": result.get("bonus_offset"),
             }
 
         payment = await _record_manual_payment_in_connection(
@@ -1017,9 +1019,11 @@ async def apply_initial_access_seed(
 TERM_PRODUCTS = {"platform_subscription", "club_subscription"}
 
 
-def _lines_fingerprint(lines: list[Any], received_minor: int, currency: str) -> str:
+def _lines_fingerprint(lines: list[Any], received_minor: int, currency: str, bonus_minor: int = 0) -> str:
     payload = [(l.product_code, int(l.amount_minor), int(l.access_months), bool(l.promo)) for l in lines]
-    return hashlib.sha256(json.dumps([payload, int(received_minor), currency], sort_keys=True).encode()).hexdigest()[:32]
+    # Bonus offsets came later (18.09.2026): without one the fingerprint stays byte-identical to the old shape.
+    parts: list[Any] = [payload, int(received_minor), currency] + ([int(bonus_minor)] if bonus_minor else [])
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:32]
 
 
 async def _extend_term(
@@ -1095,10 +1099,14 @@ async def record_payment_lines_in_connection(
     telegram_message_id: int,
     telegram_user_id: int,
     list_prices: dict[str, int | None] | None = None,
+    bonus_minor: int = 0,
 ) -> dict[str, Any]:
     """Record one received payment and its lines; extend PRO / CLUB terms;
-    award the referral bonus for the PRO line only. Idempotent per owner
-    message: the same lines again → ``idempotent``; different lines → conflict."""
+    award the referral bonus for the PRO line only. ``bonus_minor`` (WWC$) is the
+    part of the lines the partner covered with their own bonus points: it is
+    debited from ``partner_bonus_ledger`` in the same transaction, so a short
+    balance records nothing. Idempotent per owner message: the same lines again
+    → ``idempotent``; different lines → conflict."""
     if not lines:
         raise SubscriptionError("Нет ни одной строки оплаты.")
     normalized_currency = str(currency or "").strip().upper()
@@ -1109,7 +1117,10 @@ async def record_payment_lines_in_connection(
             raise SubscriptionError("Все строки одной оплаты должны быть в одной валюте.")
         if line.product_code in TERM_PRODUCTS and line.access_months not in {3, 6, 12}:
             raise SubscriptionError("access_months must be 3, 6 or 12")
-    fingerprint = _lines_fingerprint(lines, received_minor, normalized_currency)
+    bonus_minor = int(bonus_minor or 0)
+    if bonus_minor < 0:
+        raise SubscriptionError("bonus_minor must not be negative")
+    fingerprint = _lines_fingerprint(lines, received_minor, normalized_currency, bonus_minor)
 
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1159,11 +1170,14 @@ async def record_payment_lines_in_connection(
         """
         insert into partner_payments (
           tenant_id, ref_code, received_amount_minor, currency,
-          telegram_chat_id, telegram_message_id, telegram_user_id, lines_fingerprint
-        ) values (%s, %s, %s, %s, %s, %s, %s, %s)
+          telegram_chat_id, telegram_message_id, telegram_user_id, lines_fingerprint, note
+        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         returning received_payment_id
         """,
-        (tenant_id, ref_code, int(received_minor), normalized_currency, telegram_chat_id, telegram_message_id, telegram_user_id, fingerprint),
+        (
+            tenant_id, ref_code, int(received_minor), normalized_currency, telegram_chat_id, telegram_message_id,
+            telegram_user_id, fingerprint, (f"бонусами {bonus_minor / 100:g} WWC$" if bonus_minor else None),
+        ),
     )
     received_payment_id = str(header["received_payment_id"])
 
@@ -1199,11 +1213,66 @@ async def record_payment_lines_in_connection(
         if line.product_code == "platform_subscription" and int(line.amount_minor) > 0:
             # Referral reward rules exist for PRO only; other products earn nothing.
             referral_bonus = await award_referral_bonus_for_payment(conn, tenant_id=tenant_id, payment=ledger)
+    bonus_offset = None
+    if bonus_minor:
+        bonus_offset = await _debit_bonus_offset(
+            conn, tenant_id=tenant_id, ref_code=ref_code, bonus_minor=bonus_minor,
+            received_payment_id=received_payment_id, lines=recorded,
+        )
     terms = await _current_terms(conn, tenant_id=tenant_id, ref_code=ref_code)
     return {
         "received_payment_id": received_payment_id, "lines": recorded, "idempotent": False,
-        "referral_bonus": referral_bonus, **terms,
+        "referral_bonus": referral_bonus, "bonus_offset": bonus_offset, **terms,
     }
+
+
+async def _debit_bonus_offset(
+    conn: Any, *, tenant_id: str, ref_code: str, bonus_minor: int, received_payment_id: str, lines: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Take ``bonus_minor`` WWC$ off the partner's own bonus balance for this payment.
+    Same ledger shape as the automatic redemption; the PRO line (or the first
+    line) is the source payment. Raises when the balance is short — the whole
+    payment then rolls back with the transaction."""
+    owner = await fetch_one(
+        conn,
+        "select owner_id from referral_profiles where tenant_id = %s and ref_code = %s limit 1",
+        (tenant_id, ref_code),
+    )
+    if not owner:
+        raise PartnerNotFoundError("active referral profile not found")
+    actor_id = str(owner["owner_id"])
+    await fetch_one(conn, "select pg_advisory_xact_lock(hashtext(%s)) as locked", (f"bonus:{tenant_id}:{actor_id}",))
+    balance_row = await fetch_one(
+        conn,
+        "select coalesce(sum(amount_minor), 0) as amount_minor from partner_bonus_ledger where tenant_id = %s and actor_id = %s and currency = 'WUSD'",
+        (tenant_id, actor_id),
+    )
+    balance = int((balance_row or {}).get("amount_minor") or 0)
+    if balance < bonus_minor:
+        raise SubscriptionError(
+            f"Бонусов не хватает: на балансе {balance / 100:g} WWC$, в строке «бонусами» {bonus_minor / 100:g} WWC$."
+        )
+    source = next((l for l in lines if l["product_code"] == "platform_subscription"), lines[0] if lines else None)
+    entry = await fetch_one(
+        conn,
+        """
+        insert into partner_bonus_ledger (
+          tenant_id, actor_id, entry_type, amount_minor, currency, product_code,
+          source_payment_id, idempotency_key, rule_snapshot, description
+        ) values (%s, %s, 'debit', %s, 'WUSD', 'platform_subscription', %s::uuid, %s, %s::jsonb, %s)
+        on conflict do nothing
+        returning entry_id
+        """,
+        (
+            tenant_id, actor_id, -int(bonus_minor), str(source["payment_id"]) if source else None,
+            f"payment:{received_payment_id}:bonus_offset",
+            json.dumps({"bonus_offset_minor": int(bonus_minor), "received_payment_id": received_payment_id}),
+            f"Bonus offset: {bonus_minor / 100:g} WWC$ towards payment {received_payment_id[:8]}",
+        ),
+    )
+    if not entry:
+        raise SubscriptionError("Списание бонусов уже записано для этого платежа.")
+    return {"bonus_offset_minor": int(bonus_minor), "bonus_balance_minor": balance - int(bonus_minor), "actor_id": actor_id}
 
 
 async def record_payment_lines(tenant_id: str, **kwargs: Any) -> dict[str, Any]:
@@ -1221,15 +1290,18 @@ async def create_lines_intent(
     telegram_chat_id: int,
     telegram_message_id: int,
     telegram_user_id: int,
+    bonus_minor: int = 0,
 ) -> dict[str, Any]:
     """Preview for a multi-line owner payment. Validates every line against the
-    list or personal price (a mismatch needs «акция») and the received total;
+    list or personal price (a mismatch needs «акция») and the received total
+    (lines == received + bonus, and the bonus must be on the partner's balance);
     stores the lines in the intent for confirm_payment_intent."""
-    from app.subscriptions.pricing import effective_price_minor, validate_lines, with_list_prices
+    from app.subscriptions.pricing import bonus_in_currency, effective_price_minor, validate_lines, with_list_prices
 
     normalized_currency = str(currency or "").strip().upper()
+    bonus_minor = int(bonus_minor or 0)
     total = sum(int(line.amount_minor) for line in lines)
-    received = int(received_minor) if received_minor is not None else total
+    received = int(received_minor) if received_minor is not None else total - bonus_in_currency(bonus_minor, normalized_currency)
     partner = await resolve_partner_for_billing(tenant_id, identifier)
     async with tenant_connection(tenant_id) as conn:
         prices: dict[str, int | None] = {}
@@ -1242,7 +1314,19 @@ async def create_lines_intent(
             prices[line.product_code] = price
             if reason:
                 reasons[line.product_code] = reason
-        problems = validate_lines(lines, prices, received)
+        problems = validate_lines(lines, prices, received, bonus_minor)
+        bonus_balance = 0
+        if bonus_minor:
+            balance_row = await fetch_one(
+                conn,
+                "select coalesce(sum(amount_minor), 0) as amount_minor from partner_bonus_ledger where tenant_id = %s and actor_id = %s and currency = 'WUSD'",
+                (tenant_id, str(partner["actor_id"])),
+            )
+            bonus_balance = int((balance_row or {}).get("amount_minor") or 0)
+            if bonus_balance < bonus_minor:
+                problems.append(
+                    f"Бонусов не хватает: на балансе {bonus_balance / 100:g} WWC$, в строке «бонусами» {bonus_minor / 100:g} WWC$."
+                )
         if problems:
             raise SubscriptionError("\n".join(problems))
         async with conn.cursor() as cur:
@@ -1256,7 +1340,7 @@ async def create_lines_intent(
             )
         clock = await fetch_one(conn, "select now() as current_time")
         current = _as_utc(clock["current_time"])
-        payload = json.dumps(with_list_prices(lines, prices), ensure_ascii=False)
+        payload = json.dumps(with_list_prices(lines, prices, bonus_minor), ensure_ascii=False)
         await fetch_one(
             conn,
             """
@@ -1291,11 +1375,12 @@ async def create_lines_intent(
     if not intent:
         raise SubscriptionError("payment intent was not created")
     stored = intent["lines"] if not isinstance(intent["lines"], str) else json.loads(intent["lines"])
-    if intent["ref_code"] != partner["ref_code"] or int(intent["amount_minor"]) != received or (stored or None) != with_list_prices(lines, prices):
+    if intent["ref_code"] != partner["ref_code"] or int(intent["amount_minor"]) != received or (stored or None) != with_list_prices(lines, prices, bonus_minor):
         raise PaymentIdempotencyConflictError("telegram message already contains a different payment intent")
     return {
         **intent, **partner, "received_minor": received, "list_prices": prices, "price_reasons": reasons,
         "club_paid_until": club.get("paid_until") if club else None,
+        "bonus_minor": bonus_minor, "bonus_balance_minor": bonus_balance,
     }
 
 
@@ -1331,4 +1416,29 @@ async def set_personal_price(
             """,
             (tenant_id, ref_code, product_code, int(price_wusd_minor), reason, int(approved_by_telegram_user_id)),
         )
+    return dict(row)
+
+
+# «Безлимит» (owner, 18.09.2026): the owner's own technical site and the
+# co-founder's site never expire. Not a payment — nothing in the ledgers —
+# just a paid_until far enough that reminders and the public resolver stay quiet.
+UNLIMITED_UNTIL = datetime(2099, 12, 31, 20, 59, 59, tzinfo=timezone.utc)
+
+
+async def set_unlimited_access(tenant_id: str, *, ref_code: str) -> dict[str, Any]:
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+            select rp.tenant_id, rp.ref_code, %s from referral_profiles rp
+            where rp.tenant_id = %s and rp.ref_code = %s and rp.enabled = true
+            on conflict (tenant_id, ref_code) do update
+              set paid_until = excluded.paid_until, updated_at = now()
+            returning ref_code, paid_until
+            """,
+            (UNLIMITED_UNTIL, tenant_id, ref_code),
+        )
+    if not row:
+        raise PartnerNotFoundError("active referral profile not found")
     return dict(row)

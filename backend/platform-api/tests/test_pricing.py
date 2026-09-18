@@ -67,3 +67,33 @@ def test_validate_flags_off_price_lines_without_promo_and_wrong_total():
 def test_describe_lines_reads_like_a_receipt():
     lines = [PaymentLine("platform_subscription", 300000, "RUB", 3, False, ""), PaymentLine("site_setup", 200000, "RUB", 0, False, "")]
     assert describe_lines(lines, 500000) == ["PRO (сайт): 3 000 ₽, 3 мес.", "настройка сайта: 2 000 ₽", "Получено: 5 000 ₽"]
+    assert describe_lines(lines, 400000, bonus_minor=1000)[-1] == "Бонусами: 10 WWC$"
+
+
+def test_bonus_line_covers_the_gap_between_lines_and_received():
+    # Olesya, 18.09.2026: bundle 105 WWC$, 10 000 ₽ received, the missing 5 WWC$ from her bonus balance.
+    parsed = parse_payment_command("оплата ref:olesya\nпакет 10500 RUB\nполучено 10000 RUB\nбонусами 5 WWC$")
+    assert parsed.bonus_minor == 500 and parsed.received_minor == 1000000 and parsed.currency == "RUB"
+    prices = {"platform_subscription": 300000, "club_subscription": 1200000}
+    assert validate_lines(parsed.lines, prices, parsed.received_minor, parsed.bonus_minor) == []
+    # Same in WWC$: 100 received + 5 bonus = 105.
+    w = parse_payment_command("оплата ref:olesya\nпакет 105 WWC$\nполучено 100 WWC$\nбонусами 5 W$")
+    assert validate_lines(w.lines, {"platform_subscription": 3000, "club_subscription": 12000}, w.received_minor, w.bonus_minor) == []
+    # Bonus that does not close the gap is still a mismatch, and the message names it.
+    problems = validate_lines(w.lines, {"platform_subscription": 3000, "club_subscription": 12000}, w.received_minor, 300)
+    assert len(problems) == 1 and "бонусами 3 WWC$" in problems[0]
+    # Bonus is WWC$ only; zero is not a bonus.
+    with pytest.raises(SubscriptionError):
+        parse_payment_command("оплата ref:olesya\nпакет 105 WWC$\nбонусами 500 RUB")
+    with pytest.raises(SubscriptionError):
+        parse_payment_command("оплата ref:olesya\nпакет 105 WWC$\nбонусами 0 WWC$")
+
+
+def test_bonus_offset_rides_in_the_intent_as_a_marker_not_a_line():
+    from app.subscriptions.pricing import BONUS_OFFSET, bonus_from_json, lines_from_json, with_list_prices
+
+    lines = [PaymentLine("platform_subscription", 3000, "WUSD", 3, False, "")]
+    stored = with_list_prices(lines, {"platform_subscription": 3000}, bonus_minor=500)
+    assert [i["product_code"] for i in stored] == ["platform_subscription", BONUS_OFFSET]
+    assert lines_from_json(stored) == lines and bonus_from_json(stored) == 500
+    assert with_list_prices(lines, {"platform_subscription": 3000}) == stored[:1] and bonus_from_json(stored[:1]) == 0

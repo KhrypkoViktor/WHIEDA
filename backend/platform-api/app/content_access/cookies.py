@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from fastapi import Request, Response
 
+from app.cookie_domain import cookie_domain_for
 from app.settings import get_settings
 
 
-def set_session_cookie(response: Response, raw_session: str) -> None:
+def set_session_cookie(response: Response, raw_session: str, request: Request | None = None) -> None:
     settings = get_settings()
     response.set_cookie(
         key=settings.platform_content_cookie_name,
@@ -15,10 +16,11 @@ def set_session_cookie(response: Response, raw_session: str) -> None:
         samesite=settings.platform_content_cookie_samesite,
         max_age=settings.platform_content_session_ttl_days * 24 * 60 * 60,
         path="/",
+        domain=cookie_domain_for(request),
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_session_cookie(response: Response, request: Request | None = None) -> None:
     settings = get_settings()
     response.delete_cookie(
         key=settings.platform_content_cookie_name,
@@ -26,6 +28,7 @@ def clear_session_cookie(response: Response) -> None:
         httponly=True,
         secure=settings.platform_content_cookie_secure,
         samesite=settings.platform_content_cookie_samesite,
+        domain=cookie_domain_for(request),
     )
 
 

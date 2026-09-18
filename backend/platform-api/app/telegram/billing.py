@@ -35,6 +35,7 @@ from app.subscriptions.service import (
     list_due_subscriptions,
     resolve_partner_for_billing,
     set_personal_price,
+    set_unlimited_access,
     subscription_state,
 )
 from app.telegram.bindings import current_bot_binding
@@ -52,7 +53,12 @@ _PAY_RE = re.compile(
 )
 _STATUS_RE = re.compile(rf"^(?:статус|/status)\s+({_IDENTIFIER})$", re.IGNORECASE)
 _DUE_RE = re.compile(r"^/due$", re.IGNORECASE)
-_CALLBACK_RE = re.compile(r"^billing:(confirm|cancel|price|price_cancel):([0-9a-f]{32})$")
+_CALLBACK_RE = re.compile(r"^billing:(confirm|cancel|price|price_cancel|unlimited|unlimited_cancel):([0-9a-f]{32})$")
+# «безлимит ref:dev» — the owner's technical site and the co-founder's site never expire.
+_UNLIMITED_RE = re.compile(rf"^(?:безлимит|/unlimited)\s+({_IDENTIFIER})\s*$", re.IGNORECASE)
+_UNLIMITED_USAGE = "Формат: безлимит ref:code — сайт (PRO) без срока, без платежа и бонусов."
+# Pending «безлимит» confirmations, keyed by a token in the button.
+_UNLIMITED_INTENTS: dict[str, dict[str, Any]] = {}
 _PRICE_RE = re.compile(
     rf"^(?:цена|/price)\s+({_IDENTIFIER})\s+(pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup)\s+"
     r"(снять|сброс|([0-9]+(?:[.,][0-9]{1,2})?)\s+(WWC\$|W\$|WUSD))(?:\s+(.+))?$",
@@ -133,7 +139,7 @@ async def notify_payment_participants(payment: dict[str, Any]) -> None:
 
 
 def is_billing_command_candidate(text: str) -> bool:
-    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due", "цена", "/price"}
+    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due", "цена", "/price", "безлимит", "/unlimited"}
 
 
 def parse_billing_command(text: str) -> BillingCommand:
@@ -298,6 +304,8 @@ async def try_handle_billing_message(
         first = _first_token(msg.text)
         if first in {"цена", "/price"}:
             return await _handle_price_command(tenant, msg, base)
+        if first in {"безлимит", "/unlimited"}:
+            return await _handle_unlimited_command(tenant, msg, base)
         if first in {"оплата", "/pay"} and ("\n" in msg.text.strip() or not _PAY_RE.fullmatch(msg.text.strip())):
             return await _handle_multiline_payment(tenant, msg, update, base)
         command = parse_billing_command(msg.text)
@@ -365,6 +373,8 @@ async def try_handle_billing_callback(
     action, token = match.groups()
     if action in {"price", "price_cancel"}:
         return await _handle_price_callback(tenant, callback, action, token, base)
+    if action in {"unlimited", "unlimited_cancel"}:
+        return await _handle_unlimited_callback(tenant, callback, action, token, base)
     intent_id = f"{token[0:8]}-{token[8:12]}-{token[12:16]}-{token[16:20]}-{token[20:32]}"
     try:
         if action == "cancel":
@@ -396,6 +406,12 @@ async def try_handle_billing_callback(
             for item in payment.get("lines") or []:
                 label = PRODUCT_LABELS.get(str(item["product_code"]), str(item["product_code"]))
                 lines.append(f"{label}: {money(int(item['amount_minor']), str(item['currency']))}")
+            offset = payment.get("bonus_offset") or {}
+            if offset.get("bonus_offset_minor"):
+                lines.append(
+                    f"Бонусами списано: {wwc(int(offset['bonus_offset_minor']))}. "
+                    f"Остаток бонусов: {wwc(int(offset.get('bonus_balance_minor') or 0))}."
+                )
             if payment.get("paid_until"):
                 lines.append(f"PRO до: {_date(payment['paid_until'])}")
             if payment.get("club_paid_until"):
@@ -446,11 +462,15 @@ def _lines_preview(intent: dict[str, Any]) -> str:
         tag = " — акция" if line.promo else (f" — персональная цена: {reasons[line.product_code]}" if line.product_code in reasons else "")
         out.append(f"{label}: {both(line.amount_minor, line.currency)}{term}{tag}")
     out.append(f"Получено: {both(int(intent['received_minor']), str(intent['currency']))}")
+    bonus = int(intent.get("bonus_minor") or 0)
+    if bonus:
+        balance = int(intent.get("bonus_balance_minor") or 0)
+        out.append(f"Бонусами: {wwc(bonus)} (на балансе {wwc(balance)}, останется {wwc(balance - bonus)})")
     out.append("")
     out.append(f"PRO сейчас до: {_date(intent.get('paid_until'))}")
     out.append(f"CLUB сейчас до: {_date(intent.get('club_paid_until'))}")
     out.append("")
-    out.append("Сумма сходится. Провести операцию?")
+    out.append("Сумма сходится. Провести операцию?" if not bonus else "Сумма сходится: строки = получено + бонусы. Провести операцию?")
     return "\n".join(out)
 
 
@@ -470,6 +490,7 @@ async def _handle_multiline_payment(
         telegram_chat_id=msg.chat_id,
         telegram_message_id=message_id,
         telegram_user_id=msg.user_id,
+        bonus_minor=parsed.bonus_minor,
     )
     await _deliver(msg.chat_id, _lines_preview(intent), reply_markup=_intent_keyboard(intent["intent_id"]))
     return {**base, "status": "preview", "intent_id": str(intent["intent_id"]), "multiline": True}
@@ -538,3 +559,45 @@ async def _handle_price_callback(
     else:
         await _deliver(callback.chat_id, f"Готово: ref:{pending['ref_code']} — {label} по {both(int(result['price_wusd_minor']), 'WUSD')}.")
     return {**base, "status": "price_set"}
+
+
+# ----------------------------------------------------------------------------
+# «Безлимит»: the owner's technical site and the co-founder's site never expire
+# ----------------------------------------------------------------------------
+
+async def _handle_unlimited_command(tenant: TenantContext, msg: Any, base: dict[str, Any]) -> dict[str, Any]:
+    match = _UNLIMITED_RE.fullmatch(msg.text.strip())
+    if not match:
+        raise SubscriptionError(_UNLIMITED_USAGE)
+    partner = await resolve_partner_for_billing(tenant.tenant_id, match.group(1))
+    token = __import__("uuid").uuid4().hex
+    _UNLIMITED_INTENTS[token] = {"ref_code": partner["ref_code"], "user_id": msg.user_id}
+    text = (
+        f"{partner['display_name']} (ref:{partner['ref_code']})\n"
+        f"Сайт: {partner['hostname']}\n"
+        f"PRO сейчас до: {_date(partner.get('paid_until'))}\n\n"
+        "Безлимит: PRO без срока (до 31.12.2099), без платежа и без бонусов.\n\nЗаписать?"
+    )
+    await _deliver(
+        msg.chat_id, text,
+        reply_markup={"inline_keyboard": [[
+            {"text": "Подтвердить", "callback_data": f"billing:unlimited:{token}"},
+            {"text": "Отмена", "callback_data": f"billing:unlimited_cancel:{token}"},
+        ]]},
+    )
+    return {**base, "status": "unlimited_preview"}
+
+
+async def _handle_unlimited_callback(
+    tenant: TenantContext, callback: Any, action: str, token: str, base: dict[str, Any]
+) -> dict[str, Any]:
+    pending = _UNLIMITED_INTENTS.pop(token, None)
+    if not pending or pending["user_id"] != callback.user_id:
+        await _deliver(callback.chat_id, "Подтверждение недействительно или устарело. Отправьте команду ещё раз.")
+        return {**base, "ok": False, "status": "invalid_callback"}
+    if action == "unlimited_cancel":
+        await _deliver(callback.chat_id, "Отменено.")
+        return {**base, "status": "cancelled"}
+    result = await set_unlimited_access(tenant.tenant_id, ref_code=pending["ref_code"])
+    await _deliver(callback.chat_id, f"Готово: ref:{result['ref_code']} — PRO до {_date(result['paid_until'])} (безлимит).")
+    return {**base, "status": "unlimited_set"}
