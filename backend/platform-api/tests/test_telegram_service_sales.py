@@ -242,3 +242,20 @@ async def test_service_commands_are_never_relayed_to_a_client(whieda_tenant, whi
     assert result["status"] == "balance"
     relay.assert_not_awaited()
     assert "Депозит у администратора: 5 000 ₽." in send.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_owner_topup_in_the_general_topic_is_not_dropped(whieda_tenant, whieda_bot_binding, sales_env):
+    """General topic messages carry no thread id; the owner's «перевёл» must still count."""
+    from app.telegram.routes import _process_telegram_update_body
+    from app.telegram.support import is_support_forum_traffic
+
+    update = _forum_message("перевёл 20000", thread=None)
+    assert is_support_forum_traffic(update)
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    with patch("app.telegram.service_sales.send_telegram_text", send), patch(
+        "app.telegram.service_sales.add_topup", AsyncMock(return_value={"entry_id": "33333333-3333-3333-3333-333333333333", "amount_minor": 2000000})
+    ):
+        result = await process_core_telegram_update(whieda_tenant, update, "s13", binding=whieda_bot_binding)
+    assert result["status"] == "topup_pending"
+    assert send.await_args_list[0].kwargs["message_thread_id"] == 78  # the «Отчёты» topic gets the «Получила» button

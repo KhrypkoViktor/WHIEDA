@@ -32,6 +32,7 @@ async def _require_paid_session(request: Request) -> tuple[str, dict[str, Any]]:
         subscription = await resolve_partner_subscription_by_telegram_user_id(
             tenant.tenant_id,
             int(telegram_user_id),
+            on_ambiguous="best",
         )
     if not subscription or not subscription.get("partner_paid"):
         raise HTTPException(status_code=403, detail={"error": "partner_paid_required"})
