@@ -135,8 +135,33 @@ def render_env_file(client: paramiko.SSHClient | None = None) -> str:
         lines.append(f"PLATFORM_TELEGRAM_BOT_USERNAME={bot_username.lstrip('@')}")
     lines.append("PLATFORM_TELEGRAM_LEGACY_TIMEOUT_SEC=180")
     lines.append("PLATFORM_LEGACY_REQUEST_TIMEOUT_SEC=30")
+    # Всё, что на сервере есть сверх шаблона (PLATFORM_BILLING_OWNER_TELEGRAM_ID,
+    # ключи cookie и т.п.), переносится как есть — иначе каждая выкладка стирала бы
+    # настройки, добавленные руками (18.09.2026).
+    rendered = {line.split("=", 1)[0] for line in lines if "=" in line}
+    for extra in fetch_remote_extra_env_lines(client, rendered):
+        lines.append(extra)
     lines.append("")
     return "\n".join(lines)
+
+
+def fetch_remote_extra_env_lines(client: paramiko.SSHClient | None, known: set[str]) -> list[str]:
+    if client is None:
+        return []
+    env_path = f"{REMOTE_DIR}/src/deploy/core/.env"
+    try:
+        raw = ssh_exec(client, f"cat {env_path} 2>/dev/null || true", timeout=15)
+    except Exception:
+        return []
+    extra: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key and key not in known:
+            extra.append(stripped)
+    return extra
 
 
 def main() -> int:
