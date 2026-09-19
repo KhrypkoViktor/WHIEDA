@@ -34,7 +34,7 @@ async def handle_pro_start(
     tenant: TenantContext, msg: TelegramMessage, trace_id: str
 ) -> dict[str, Any]:
     subscription = await resolve_partner_subscription_by_telegram_user_id(
-        tenant.tenant_id, msg.user_id
+        tenant.tenant_id, msg.user_id, on_ambiguous="best"
     )
     if subscription:
         action = (

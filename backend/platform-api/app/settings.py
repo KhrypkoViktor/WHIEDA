@@ -175,6 +175,15 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ADMIN_CONFIRM_SECRET",
         description="Shared secret for internal POST /v1/admin/auth/telegram-confirm.",
     )
+    platform_internal_api_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_INTERNAL_API_SECRET",
+        description=(
+            "Shared secret (X-Platform-Internal-Secret) for HTTP routes that act on a "
+            "client-named identity without proof of ownership: telegram-link-tokens/exchange, "
+            "memory-facts, onboarding. Server-to-server only; unset = those routes disabled."
+        ),
+    )
     platform_admin_session_ttl_minutes: int = Field(
         default=720,
         validation_alias="PLATFORM_ADMIN_SESSION_TTL_MINUTES",
@@ -232,9 +241,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_ROOT",
     )
-    platform_partner_library_local_signing_secret: str = Field(
-        default="development-only-change-me",
+    platform_partner_library_local_signing_secret: str | None = Field(
+        default=None,
         validation_alias="PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET",
+        description=(
+            "Signs partner-library download URLs for the 'local' storage backend. "
+            "No literal default -- a known fallback here would let anyone forge a "
+            "signed URL and bypass the partner_paid check (security audit "
+            "2026-09-16, F008). _build_storage_backend refuses to start without it."
+        ),
     )
     platform_partner_library_local_base_url: str = Field(
         default="/api/v1/partner-library/local-files",

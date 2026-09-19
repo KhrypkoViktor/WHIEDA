@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -10,9 +11,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-BASE_URL = "https://sysarchn8n.duckdns.org"
-EMAIL = "khrypko.viktar@gmail.com"
-PASSWORD = "***REMOVED***"
+BASE_URL = os.environ.get("N8N_BASE_URL", "https://sysarchn8n.duckdns.org")
+# n8n public API key (Settings -> n8n API), not the personal editor login.
+API_KEY = os.environ["WHIEDA_N8N_API_KEY"]
 WORKFLOW_ID = "advisor-whieda-phase1"
 WEBHOOK_URL = f"{BASE_URL}/webhook/advisor-whieda-v0"
 
@@ -96,13 +97,7 @@ CASES = [
 
 def login() -> requests.Session:
     session = requests.Session()
-    response = session.post(
-        f"{BASE_URL}/rest/login",
-        json={"emailOrLdapLoginId": EMAIL, "password": PASSWORD},
-        verify=False,
-        timeout=30,
-    )
-    response.raise_for_status()
+    session.headers["X-N8N-API-KEY"] = API_KEY
     return session
 
 
@@ -129,13 +124,13 @@ def send_prompt(session: requests.Session, case: dict) -> int:
 
 def fetch_latest_execution_ids(session: requests.Session, limit: int = 25) -> list[int]:
     response = session.get(
-        f"{BASE_URL}/rest/executions?limit={limit}&workflowId={WORKFLOW_ID}",
+        f"{BASE_URL}/api/v1/executions?limit={limit}&workflowId={WORKFLOW_ID}",
         verify=False,
         timeout=30,
     )
     response.raise_for_status()
-    payload = response.json().get("data", {})
-    rows = payload.get("results", payload if isinstance(payload, list) else [])
+    payload = response.json().get("data", [])
+    rows = payload if isinstance(payload, list) else payload.get("results", [])
     ids = []
     for item in rows:
         try:
@@ -147,12 +142,14 @@ def fetch_latest_execution_ids(session: requests.Session, limit: int = 25) -> li
 
 def fetch_execution_detail(session: requests.Session, execution_id: int) -> dict:
     response = session.get(
-        f"{BASE_URL}/rest/executions/{execution_id}?includeData=true",
+        f"{BASE_URL}/api/v1/executions/{execution_id}?includeData=true",
         verify=False,
         timeout=60,
     )
     response.raise_for_status()
-    return response.json()
+    # The public API returns the execution at top level; the old /rest endpoint
+    # wrapped it in {"data": ...}. Keep the wrapper so the readers below stay unchanged.
+    return {"data": response.json()}
 
 
 def decode_graph(graph: list) -> dict:
@@ -187,7 +184,11 @@ def decode_graph(graph: list) -> dict:
 
 
 def decode_execution_payload(detail: dict) -> dict:
+    """/rest returned execution data as a flattened JSON string (decode_graph);
+    the public API already returns it unflattened. Accept both."""
     encoded = detail.get("data", {}).get("data")
+    if isinstance(encoded, dict):
+        return encoded
     if not isinstance(encoded, str):
         return {}
     graph = json.loads(encoded)

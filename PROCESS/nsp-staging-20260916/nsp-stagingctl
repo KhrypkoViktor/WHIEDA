@@ -84,13 +84,15 @@ print(json.dumps(out, ensure_ascii=False))
 PY
     ;;
   preflight|apply-package)
-    # Gate M runner in a one-off container; package dir is relative to src-<tag>/qa/nsp/release_packages
+    # Gate M runner in a one-off container; package dir is /opt/whieda-shared-staging/packages/<pkg>
+    # (NSP release packages live in the NSP repo, not in the WHIEDA src tree)
     pkg=${1:-nsp-maxim-canary-v1}; tag=${2:-lead-10763d5}
+    srcdir="$BASE/src-${tag#*-}"; [ -d "$srcdir" ] || srcdir="$BASE/src-10763d5"
     mode=$([ "$cmd" = "preflight" ] && echo "--preflight" || echo "--apply --confirm APPLY_SHARED_STAGING")
     docker run --rm --env-file "$ENV_FILE" --network "$NET" \
-      -v "$BASE/src-${tag#lead-}:/src" -v "$BASE/packages:/pkg" -v "$BASE/reports:/reports" \
+      -v "$srcdir:/src" -v "$BASE/packages:/pkg" -v "$BASE/reports:/reports" \
       -w /src/backend/platform-api "whieda-shared-staging-core:${tag}" \
-      sh -c "export WHIEDA_SHARED_STAGING_DSN=\$PLATFORM_DATABASE_URL WHIEDA_SHARED_STAGING_EXPECTED_DB=whieda_shared_staging; python scripts/run_shared_staging_tenant_canary.py $mode --package /src/qa/nsp/release_packages/$pkg --tenant nsp-maxim --media-manifest /pkg/media-manifest.tsv" \
+      sh -c "export WHIEDA_SHARED_STAGING_DSN=\$PLATFORM_DATABASE_URL WHIEDA_SHARED_STAGING_EXPECTED_DB=whieda_shared_staging; python scripts/run_shared_staging_tenant_canary.py $mode --package /pkg/$pkg --tenant nsp-maxim --media-manifest /pkg/media-manifest.tsv" \
       | python3 -c "import json,sys; d=json.load(sys.stdin); d.pop(\"migration_files\",None); (d.get(\"preflight\") or {}).pop(\"migration_files\",None); print(json.dumps({k:d[k] for k in d if k in (\"ok\",\"state\",\"mode\",\"code\",\"message\",\"imported_skus\",\"backup_dir\",\"package_sha256\")}, ensure_ascii=False, indent=1))"
     # the package seed rewrites the binding row (disabled, nsp_maxim_bot); put the stage bot back
     [ "$cmd" = "apply-package" ] && "$0" binding-stage

@@ -37,6 +37,7 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # identity and journey
             "identity_link_tokens",
             "telegram_identity_links",
+            "telegram_consents",
             "visitor_sessions",
             "journey_attributions",
             "interaction_events",

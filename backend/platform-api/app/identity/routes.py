@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.identity.service import create_telegram_link_token, exchange_telegram_link_token
+from app.internal_auth import InternalSecretHeader, require_internal_secret
 from app.settings import get_settings
 from app.tenancy import get_request_tenant, require_entitlement
 
@@ -39,7 +40,15 @@ async def create_link_token_site(body: TelegramLinkTokenCreateBody, request: Req
 
 
 @router.post("/v1/telegram-link-tokens/exchange")
-async def exchange_link_token_v1(body: TelegramLinkTokenExchangeBody, request: Request) -> dict:
+async def exchange_link_token_v1(
+    body: TelegramLinkTokenExchangeBody,
+    request: Request,
+    internal_secret: InternalSecretHeader = None,
+) -> dict:
+    # telegram_user_id in the body is caller-supplied and never verified against a
+    # real Telegram update; the webhook path (processor.handle_start_token) is the
+    # only public way in.
+    require_internal_secret(internal_secret)
     return await _exchange_link_token(body, request)
 
 

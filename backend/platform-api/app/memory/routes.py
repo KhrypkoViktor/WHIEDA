@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from app.internal_auth import InternalSecretHeader, require_internal_secret
 from app.memory.service import list_memory_facts, upsert_memory_fact
 from app.tenancy import get_request_tenant, require_entitlement
 
@@ -20,7 +21,12 @@ class MemoryFactBody(BaseModel):
 
 
 @router.get("/v1/memory-facts/{subject_type}/{subject_id}")
-async def list_facts(subject_type: str, subject_id: str, request: Request) -> dict:
+async def list_facts(
+    subject_type: str, subject_id: str, request: Request, internal_secret: InternalSecretHeader = None
+) -> dict:
+    # subject_id is whatever the caller names; nothing proves they own that
+    # session/Telegram user, so this stays server-to-server (F021).
+    require_internal_secret(internal_secret)
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     facts = await list_memory_facts(tenant.tenant_id, subject_type=subject_type, subject_id=subject_id)
@@ -28,7 +34,8 @@ async def list_facts(subject_type: str, subject_id: str, request: Request) -> di
 
 
 @router.put("/v1/memory-facts")
-async def put_fact(body: MemoryFactBody, request: Request) -> dict:
+async def put_fact(body: MemoryFactBody, request: Request, internal_secret: InternalSecretHeader = None) -> dict:
+    require_internal_secret(internal_secret)
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     return await upsert_memory_fact(

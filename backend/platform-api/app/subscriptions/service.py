@@ -708,7 +708,15 @@ async def resolve_partner_subscription_by_telegram_user_id(
     telegram_user_id: int,
     *,
     at: datetime | None = None,
+    on_ambiguous: str = "raise",
 ) -> dict[str, Any] | None:
+    """One Telegram user → one partner subscription.
+
+    A person can own several profiles (the owner: `nnm` + `dev`). Billing
+    callers keep ``on_ambiguous="raise"`` and ask which one; read-only status
+    callers (site «/me», PRO gate) pass ``"best"`` and get the profile with the
+    latest paid_until — a 500 on the site status card is never the answer.
+    """
     current = _as_utc(at or datetime.now(timezone.utc))
     async with tenant_connection(tenant_id) as conn:
         rows = await fetch_all(
@@ -727,14 +735,14 @@ async def resolve_partner_subscription_by_telegram_user_id(
             where la.tenant_id = %s
               and la.telegram_user_id = %s
               and la.active = true
-            order by rp.ref_code
+            order by ps.paid_until desc nulls last, rp.ref_code
             limit 2
             """,
             (tenant_id, telegram_user_id),
         )
     if not rows:
         return None
-    if len(rows) > 1:
+    if len(rows) > 1 and on_ambiguous != "best":
         raise PartnerIdentityAmbiguousError("telegram user owns multiple referral profiles")
     return _normalize_subscription(rows[0], at=current)
 

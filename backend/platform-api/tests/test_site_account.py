@@ -128,3 +128,24 @@ async def test_load_site_account_reads_club_when_table_exists(monkeypatch: pytes
     monkeypatch.setattr("app.content_access.account._club_table_present", None)
     account = await load_site_account("whieda", 7, at=NOW)
     assert account["club"]["status"] == "active" and account["club"]["days_left"] == 30
+
+
+@pytest.mark.asyncio
+async def test_status_reads_pick_the_best_profile_when_a_user_owns_several():
+    """The owner owns `nnm` and `dev`; the site status card must not 500 (prod, 18.09.2026)."""
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from app.subscriptions.service import PartnerIdentityAmbiguousError, resolve_partner_subscription_by_telegram_user_id
+
+    rows = [
+        {"actor_id": "viktor", "telegram_user_id": 688931415, "ref_code": "dev", "public_profile": {}, "paid_until": datetime(2026, 12, 21, tzinfo=timezone.utc)},
+        {"actor_id": "viktor", "telegram_user_id": 688931415, "ref_code": "nnm", "public_profile": {}, "paid_until": None},
+    ]
+    with patch("app.subscriptions.service.tenant_connection") as tc, patch("app.subscriptions.service.fetch_all", AsyncMock(return_value=rows)):
+        tc.return_value.__aenter__.return_value = object()
+        tc.return_value.__aexit__.return_value = False
+        best = await resolve_partner_subscription_by_telegram_user_id("whieda", 688931415, on_ambiguous="best")
+        assert best["ref_code"] == "dev"
+        with pytest.raises(PartnerIdentityAmbiguousError):
+            await resolve_partner_subscription_by_telegram_user_id("whieda", 688931415)

@@ -9,7 +9,7 @@ param(
   [string]$WorkflowId = 'tCuwyLflr0ukorER',
   [string]$RemoteHost = '185.252.232.93',
   [string]$RemoteUser = 'root',
-  [string]$Password = '***REMOVED***'
+  [string]$Password = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,8 +20,11 @@ function Invoke-RemoteProcess {
     [string[]]$Arguments
   )
 
-  $ask = Join-Path $env:TEMP ('codex-ssh-askpass-' + [guid]::NewGuid().ToString() + '.bat')
-  Set-Content -LiteralPath $ask -Value "@echo $Password" -Encoding ASCII
+  $ask = $null
+  if ($Password) {
+    $ask = Join-Path $env:TEMP ('codex-ssh-askpass-' + [guid]::NewGuid().ToString() + '.bat')
+    Set-Content -LiteralPath $ask -Value "@echo $Password" -Encoding ASCII
+  }
 
   try {
     $attempt = 0
@@ -48,9 +51,11 @@ function Invoke-RemoteProcess {
       $psi.RedirectStandardOutput = $true
       $psi.RedirectStandardError = $true
       $psi.CreateNoWindow = $true
-      $psi.Environment['SSH_ASKPASS'] = $ask
-      $psi.Environment['DISPLAY'] = '1'
-      $psi.Environment['SSH_ASKPASS_REQUIRE'] = 'force'
+      if ($ask) {
+        $psi.Environment['SSH_ASKPASS'] = $ask
+        $psi.Environment['DISPLAY'] = '1'
+        $psi.Environment['SSH_ASKPASS_REQUIRE'] = 'force'
+      }
       $psi.Environment['PATH'] = $env:PATH
 
       $proc = New-Object System.Diagnostics.Process
@@ -75,21 +80,28 @@ function Invoke-RemoteProcess {
     throw ($stderr.Trim())
   }
   finally {
-    Remove-Item -LiteralPath $ask -Force -ErrorAction SilentlyContinue
+    if ($ask) {
+      Remove-Item -LiteralPath $ask -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 
 function Invoke-Ssh {
   param([string]$RemoteCommand)
 
-  $result = Invoke-RemoteProcess -FilePath 'ssh.exe' -Arguments @(
+  $authArgs = if ($Password) {
+    @('-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no')
+  } else {
+    @('-o', 'PreferredAuthentications=publickey')
+  }
+
+  $result = Invoke-RemoteProcess -FilePath 'ssh.exe' -Arguments (@(
     '-o', 'StrictHostKeyChecking=no',
-    '-o', 'PreferredAuthentications=password',
-    '-o', 'PubkeyAuthentication=no',
-    '-o', 'BatchMode=no',
+    '-o', 'BatchMode=no'
+  ) + $authArgs + @(
     "$RemoteUser@$RemoteHost",
     $RemoteCommand
-  )
+  ))
 
   return $result.StdOut
 }
@@ -100,14 +112,19 @@ function Invoke-Scp {
     [string]$DestinationPath
   )
 
-  [void](Invoke-RemoteProcess -FilePath 'scp.exe' -Arguments @(
+  $authArgs = if ($Password) {
+    @('-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no')
+  } else {
+    @('-o', 'PreferredAuthentications=publickey')
+  }
+
+  [void](Invoke-RemoteProcess -FilePath 'scp.exe' -Arguments (@(
     '-o', 'StrictHostKeyChecking=no',
-    '-o', 'PreferredAuthentications=password',
-    '-o', 'PubkeyAuthentication=no',
-    '-o', 'BatchMode=no',
+    '-o', 'BatchMode=no'
+  ) + $authArgs + @(
     $SourcePath,
     "${RemoteUser}@${RemoteHost}:$DestinationPath"
-  ))
+  )))
 }
 
 if ($Mode -eq 'export') {

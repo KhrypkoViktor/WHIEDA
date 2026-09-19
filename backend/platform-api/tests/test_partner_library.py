@@ -207,6 +207,39 @@ def test_local_storage_is_forbidden_outside_dev_and_test(tmp_path):
         _build_storage_backend(settings)
 
 
+def test_local_storage_requires_a_strong_signing_secret(tmp_path):
+    """Security audit 2026-09-16, F008: the local backend used to fall back to
+    a literal, publicly-known signing secret when unset, which would let
+    anyone forge a partner-library download URL. It must now fail closed the
+    same way the filesystem backend already did."""
+    with pytest.raises(RuntimeError, match="PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET"):
+        _build_storage_backend(
+            Settings(
+                environment="development",
+                platform_partner_library_storage_backend="local",
+                platform_partner_library_local_root=str(tmp_path),
+            )
+        )
+    with pytest.raises(RuntimeError, match="PLATFORM_PARTNER_LIBRARY_LOCAL_SIGNING_SECRET"):
+        _build_storage_backend(
+            Settings(
+                environment="development",
+                platform_partner_library_storage_backend="local",
+                platform_partner_library_local_root=str(tmp_path),
+                platform_partner_library_local_signing_secret="too-short",
+            )
+        )
+    storage = _build_storage_backend(
+        Settings(
+            environment="development",
+            platform_partner_library_storage_backend="local",
+            platform_partner_library_local_root=str(tmp_path),
+            platform_partner_library_local_signing_secret="x" * 32,
+        )
+    )
+    assert isinstance(storage, LocalStorageBackend)
+
+
 def test_private_filesystem_storage_is_allowed_on_staging(tmp_path):
     settings = Settings(
         environment="staging",

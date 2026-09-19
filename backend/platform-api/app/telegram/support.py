@@ -62,6 +62,7 @@ from app.telegram.service_sales import (
     SERVICE_COMMAND_TOKENS,
     ensure_service_topics,
     is_reports_topic,
+    is_service_command,
     paid_button,
     try_handle_service_command,
     try_handle_service_sale_callback,
@@ -202,7 +203,9 @@ def is_support_forum_traffic(update: dict[str, Any]) -> bool:
     if chat.get("type") != "supergroup":
         return False
     text = str(message.get("text") or message.get("caption") or "").strip()
-    return bool(message.get("is_topic_message")) or bool(_FORUM_REGISTER_RE.fullmatch(text))
+    # Operators' commands («перевёл 20000», «баланс», «отчёт», «тариф») count
+    # even in the group's General topic, where Telegram sets no thread id.
+    return bool(message.get("is_topic_message")) or bool(_FORUM_REGISTER_RE.fullmatch(text)) or is_service_command(text)
 
 
 def _may_register_forum(user_id: int) -> bool:
@@ -587,13 +590,13 @@ async def try_handle_support_forum_message(
         await _send(msg.chat_id, "Группа поддержки подключена: каждая новая заявка будет открываться отдельной темой." + note, thread_id=msg.thread_id)
         logger.info("support_forum_registered", extra={"trace_id": trace_id, "chat_id": chat_ref(msg.chat_id), "moved": moved})
         return {"ok": True, "route": "support_forum", "status": "registered", "moved": moved, "trace_id": trace_id}
-    if msg.thread_id is None:
-        return None
     # Operators' commands («отчёт», «баланс», «перевёл N», «тариф») work in any
-    # topic of the group, incl. «Отчёты»; nothing of that is relayed to a client.
+    # topic of the group, General included; nothing of that is relayed to a client.
     command_result = await try_handle_service_command(tenant, msg, trace_id=trace_id)
     if command_result is not None:
         return command_result
+    if msg.thread_id is None:
+        return None
     ticket = await find_ticket_by_forum_thread(tenant.tenant_id, forum_chat_id=msg.chat_id, forum_thread_id=msg.thread_id)
     if ticket is None:
         forum = await get_forum(tenant.tenant_id, binding_id=current_bot_binding().binding_id)
