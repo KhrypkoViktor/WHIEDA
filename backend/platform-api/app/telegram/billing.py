@@ -133,7 +133,16 @@ async def notify_payment_participants(payment: dict[str, Any]) -> None:
 
 
 def is_billing_command_candidate(text: str) -> bool:
-    return _first_token(text) in {"оплата", "/pay", "статус", "/status", "/due", "цена", "/price"}
+    """Owner billing commands. A bare «цена» / «статус» (no arguments) is a
+    partner's follow-up to a product card and belongs to the advisor — on
+    19.09.2026 every guest typing «цена» got the billing «forbidden» reply."""
+    stripped = str(text or "").strip()
+    head = _first_token(stripped)
+    if head in {"оплата", "/pay", "/due", "/status", "/price"}:
+        return True
+    if head in {"статус", "цена"}:
+        return len(stripped.split()) > 1
+    return False
 
 
 def parse_billing_command(text: str) -> BillingCommand:

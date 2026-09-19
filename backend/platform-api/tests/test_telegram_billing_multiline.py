@@ -140,3 +140,13 @@ async def test_owner_payment_command_works_on_the_production_minimal_profile(whi
         get_settings.cache_clear()
     assert result["status"] == "preview"
     advisor.assert_not_awaited()
+
+
+def test_bare_price_and_status_words_are_not_billing_commands():
+    from app.telegram.billing import is_billing_command_candidate
+
+    assert not is_billing_command_candidate("цена")
+    assert not is_billing_command_candidate("статус")
+    assert is_billing_command_candidate("цена ref:olga PRO 15 WWC$ скидка")
+    assert is_billing_command_candidate("статус ref:kira")
+    assert is_billing_command_candidate("оплата ref:kira 3000 rub 3")
