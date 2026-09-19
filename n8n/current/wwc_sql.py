@@ -111,7 +111,7 @@ def _cleanup_stale(session: requests.Session, api: str) -> int:
     return removed
 
 
-def _post_with_retries(url: str, payload: dict, timeout: int) -> list[dict]:
+def _post_with_retries(url: str, payload: dict, timeout: int, on_empty=None) -> list[dict]:
     last = None
     network_failures = 0
     for attempt in range(WEBHOOK_WAIT_ATTEMPTS):
@@ -132,9 +132,28 @@ def _post_with_retries(url: str, payload: dict, timeout: int) -> list[dict]:
             last = f"{resp.status_code}: {resp.text[:300]}"
             break
         resp.raise_for_status()
-        body = resp.json() if resp.text.strip() else {"rows": []}
-        return body.get("rows", [])
+        if not resp.text.strip():
+            # Узел Postgres упал: n8n отвечает 200 с пустым телом. Достаём текст
+            # ошибки из выполнения — иначе «[]» выглядит как успех (19.09.2026).
+            raise SqlExecutionError(on_empty() if on_empty else "пустой ответ n8n (запрос не выполнен)")
+        return resp.json().get("rows", [])
     raise RuntimeError(f"webhook {url.rsplit('/', 1)[-1]}: {last}")
+
+
+class SqlExecutionError(RuntimeError):
+    """Postgres отверг запрос; текст — из журнала выполнения n8n."""
+
+
+def _last_execution_error(session: requests.Session, api: str, workflow_id: str) -> str:
+    try:
+        ex = session.get(f"{api}/executions", params={"workflowId": workflow_id, "limit": 1, "includeData": "true"}, timeout=60).json()
+        for e in ex.get("data", []):
+            err = e.get("data", {}).get("resultData", {}).get("error", {}) or {}
+            if err:
+                return f"{err.get('message')} — {str(err.get('description') or '')[:300]}"
+    except Exception as exc:  # журнал недоступен — хотя бы скажем, что запрос не прошёл
+        return f"запрос не выполнен (журнал n8n недоступен: {exc})"
+    return "запрос не выполнен (n8n не вернул строк)"
 
 
 def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
@@ -182,7 +201,7 @@ def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
         url = f"{base}/webhook/{path}"
         rows: list[dict] = []
         for chunk in chunks:
-            rows = _post_with_retries(url, {"sql": chunk}, timeout)
+            rows = _post_with_retries(url, {"sql": chunk}, timeout, on_empty=lambda: _last_execution_error(session, api, workflow_id))
         return rows
     finally:
         if workflow_id:
