@@ -79,6 +79,7 @@ from app.telegram.modes import should_deliver_telegram_response
 from app.telegram.navigation import (
     advisor_followup_inline_keyboard,
     is_newcomer_panel_request,
+    is_wwc_bot_request,
     main_menu_reply_keyboard,
 )
 from app.telegram.update_parser import (
@@ -92,8 +93,11 @@ from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
 
+# Partner-facing flows that production keeps manual. Owner billing commands
+# and callbacks («оплата …», «цена …», billing:*) are owner-gated inside
+# app/telegram/billing.py and work on every profile (prod dropped
+# «оплата ref:fedorov 3000 rub 3» into the advisor on 19.09.2026).
 _MANUAL_OPERATION_CALLBACK_PREFIXES = (
-    "billing:",
     "renew:",
     "site:",
     "referral:redeem:",
@@ -384,12 +388,11 @@ async def _process_core_telegram_update_scoped(
     if content_result is not None:
         return content_result
 
-    if not manual_operations:
-        billing_callback_result = await try_handle_billing_callback(
-            tenant, update, trace_id=trace_id
-        )
-        if billing_callback_result is not None:
-            return billing_callback_result
+    billing_callback_result = await try_handle_billing_callback(
+        tenant, update, trace_id=trace_id
+    )
+    if billing_callback_result is not None:
+        return billing_callback_result
 
     referral_admin_callback_result = await try_handle_referral_admin_callback(
         tenant, update, trace_id=trace_id
@@ -471,10 +474,9 @@ async def _process_core_telegram_update_scoped(
     if not msg.text:
         return {"ok": True, "route": "ignored_media"}
 
-    if not manual_operations:
-        billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
-        if billing_result is not None:
-            return billing_result
+    billing_result = await try_handle_billing_message(tenant, update, trace_id=trace_id)
+    if billing_result is not None:
+        return billing_result
 
     referral_admin_result = await try_handle_referral_admin_message(
         tenant, update, trace_id=trace_id
@@ -501,17 +503,20 @@ async def _process_core_telegram_update_scoped(
     if onboarding_result:
         return onboarding_result
 
-    if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
-        if manual_operations:
-            await _remove_legacy_reply_keyboard(msg.chat_id)
-            return await show_referral_dashboard(
-                tenant,
-                telegram_user_id=msg.user_id,
-                telegram_chat_id=msg.chat_id,
-                raw_update=msg.raw,
-                trace_id=trace_id,
-            )
+    # «WWC Bot» (button or text) opens the advisor menu; bare /start and a
+    # greeting open the cabinet on every profile — the old seven-button panel
+    # lives behind the «WWC Bot» button (owner, 19.09.2026).
+    if is_wwc_bot_request(msg.text):
         return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
+    if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
+        await _remove_legacy_reply_keyboard(msg.chat_id)
+        return await show_referral_dashboard(
+            tenant,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+            raw_update=msg.raw,
+            trace_id=trace_id,
+        )
 
     navigation_result = await handle_navigation_text(tenant, msg, trace_id)
     if navigation_result:

@@ -258,12 +258,8 @@ async def handle_newcomer_panel(
     *,
     trace_id: str = "",
 ) -> dict[str, Any]:
-    await _deliver_navigation_text(
-        chat_id,
-        "Главное меню:",
-        tenant,
-        include_main_menu=True,
-    )
+    # One message: the «Главное меню:» header only existed to drop the legacy
+    # reply keyboard, which /start now removes on its own.
     await _deliver_navigation_text(
         chat_id,
         NEWCOMER_PANEL_TEXT,
@@ -366,6 +362,8 @@ async def dispatch_parsed_callback(
         return await handle_catalog_products(tenant, chat_id, page=1, trace_id=trace_id)
     if parsed.kind == "nav_menu":
         return await handle_main_menu(tenant, chat_id, trace_id=trace_id)
+    if parsed.kind == "nav_wwcbot":
+        return await handle_newcomer_panel(tenant, chat_id, trace_id=trace_id)
     if parsed.kind.startswith("newcomer_"):
         action = parsed.kind.removeprefix("newcomer_")
         return await handle_newcomer_action(

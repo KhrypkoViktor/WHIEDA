@@ -23,6 +23,7 @@ from app.referral_bonus.service import (
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import wwc, wwc_signed
+from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
 from app.telegram.support import SERVICES_CARD_CALLBACK
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -150,6 +151,7 @@ def _dashboard_keyboard(
     # в боте; Gemini — карточка сервисов (тоннель к администратору).
     order_site = [{"text": "Заказать сайт WWC", "url": site_form_url(telegram_user_id)}]
     gemini = [{"text": "Подключить Gemini Pro", "callback_data": SERVICES_CARD_CALLBACK}]
+    wwc_bot = [{"text": WWC_BOT_BUTTON_LABEL, "callback_data": WWC_BOT_CALLBACK}]
     if minimal:
         rows = [
             [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
@@ -157,6 +159,7 @@ def _dashboard_keyboard(
             [{"text": "Отправить приглашение", "url": share_url}],
             [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
             gemini,
+            wwc_bot,
             [{"text": "Поддержка", "url": SUPPORT_URL}],
         ]
         if not has_site:
@@ -170,6 +173,7 @@ def _dashboard_keyboard(
         [{"text": "Мои рефералы", "callback_data": "referral:list"}],
         [{"text": "История WWC$", "callback_data": "referral:history"}],
         gemini,
+        wwc_bot,
         [{"text": "Поддержка", "url": SUPPORT_URL}],
     ]
     rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)

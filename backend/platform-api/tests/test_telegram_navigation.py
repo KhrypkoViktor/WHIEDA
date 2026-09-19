@@ -150,10 +150,10 @@ async def test_newcomer_panel_removes_old_keyboard_before_inline_actions(
         with patch("app.telegram.catalog_browse.send_telegram_text", AsyncMock()) as deliver:
             await handle_newcomer_panel(tenant, 42, trace_id="trace-menu")
 
-    assert deliver.await_count == 2
-    first, second = deliver.await_args_list
-    assert first.kwargs["reply_markup"] == {"remove_keyboard": True}
-    assert second.kwargs["reply_markup"]["inline_keyboard"]
+    # One message with the inline actions (the «Главное меню:» header is gone:
+    # /start removes the legacy keyboard itself, the panel sits behind «WWC Bot»).
+    assert deliver.await_count == 1
+    assert deliver.await_args.kwargs["reply_markup"]["inline_keyboard"]
 
 
 def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
@@ -572,7 +572,7 @@ async def test_process_core_routes_callback_before_message(tenant, whieda_bot_bi
 
 
 @pytest.mark.asyncio
-async def test_bare_start_opens_newcomer_panel(tenant, whieda_bot_binding):
+async def test_bare_start_opens_cabinet(tenant, whieda_bot_binding):
     update = {
         "update_id": 12,
         "message": {
@@ -585,9 +585,9 @@ async def test_bare_start_opens_newcomer_panel(tenant, whieda_bot_binding):
     with patch("app.telegram.processor.try_handle_admin_login", AsyncMock(return_value=None)):
         with patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)):
             with patch(
-                "app.telegram.processor.handle_newcomer_panel",
-                AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
-            ) as panel:
+                "app.telegram.processor.show_referral_dashboard",
+                AsyncMock(return_value={"ok": True, "route": "referral"}),
+            ) as panel, patch("app.telegram.processor.send_telegram_text", AsyncMock()):
                 result = await process_core_telegram_update(
                     tenant,
                     update,
@@ -595,7 +595,7 @@ async def test_bare_start_opens_newcomer_panel(tenant, whieda_bot_binding):
                     binding=whieda_bot_binding,
                 )
     panel.assert_awaited_once()
-    assert result["route"] == "newcomer_panel"
+    assert result["route"] == "referral"
 
 
 @pytest.mark.asyncio
@@ -627,7 +627,7 @@ async def test_bare_start_removes_old_keyboard_on_minimal_profile(tenant, whieda
 
 
 @pytest.mark.asyncio
-async def test_s_chego_nachat_opens_newcomer_panel(tenant, whieda_bot_binding):
+async def test_s_chego_nachat_opens_cabinet(tenant, whieda_bot_binding):
     update = {
         "update_id": 13,
         "message": {
@@ -640,9 +640,9 @@ async def test_s_chego_nachat_opens_newcomer_panel(tenant, whieda_bot_binding):
     with patch("app.telegram.processor.try_handle_admin_login", AsyncMock(return_value=None)):
         with patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)):
             with patch(
-                "app.telegram.processor.handle_newcomer_panel",
-                AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
-            ) as panel:
+                "app.telegram.processor.show_referral_dashboard",
+                AsyncMock(return_value={"ok": True, "route": "referral"}),
+            ) as panel, patch("app.telegram.processor.send_telegram_text", AsyncMock()):
                 result = await process_core_telegram_update(
                     tenant,
                     update,
@@ -650,11 +650,11 @@ async def test_s_chego_nachat_opens_newcomer_panel(tenant, whieda_bot_binding):
                     binding=whieda_bot_binding,
                 )
     panel.assert_awaited_once()
-    assert result["route"] == "newcomer_panel"
+    assert result["route"] == "referral"
 
 
 @pytest.mark.asyncio
-async def test_telegram_greeting_opens_newcomer_panel(tenant, whieda_bot_binding):
+async def test_telegram_greeting_opens_cabinet(tenant, whieda_bot_binding):
     update = {
         "update_id": 14,
         "message": {
@@ -667,9 +667,9 @@ async def test_telegram_greeting_opens_newcomer_panel(tenant, whieda_bot_binding
     with patch("app.telegram.processor.try_handle_admin_login", AsyncMock(return_value=None)):
         with patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)):
             with patch(
-                "app.telegram.processor.handle_newcomer_panel",
-                AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
-            ) as panel:
+                "app.telegram.processor.show_referral_dashboard",
+                AsyncMock(return_value={"ok": True, "route": "referral"}),
+            ) as panel, patch("app.telegram.processor.send_telegram_text", AsyncMock()):
                 with patch("app.telegram.processor.handle_advisor_query", AsyncMock()) as advisor:
                     result = await process_core_telegram_update(
                         tenant,
@@ -679,7 +679,7 @@ async def test_telegram_greeting_opens_newcomer_panel(tenant, whieda_bot_binding
                     )
     panel.assert_awaited_once()
     advisor.assert_not_awaited()
-    assert result["route"] == "newcomer_panel"
+    assert result["route"] == "referral"
 
 
 @pytest.mark.asyncio
@@ -754,3 +754,19 @@ async def test_catalog_page_count_math():
     page_size = 8
     total_pages = math.ceil(total / page_size)
     assert total_pages == 2
+
+
+@pytest.mark.asyncio
+async def test_wwc_bot_button_and_text_open_the_advisor_panel(tenant, whieda_bot_binding):
+    """The old seven-button menu lives behind «WWC Bot» in the cabinet (owner, 19.09.2026)."""
+    text_update = {"message": {"message_id": 5, "text": "WWC Bot", "chat": {"id": 55, "type": "private"}, "from": {"id": 9}}}
+    callback_update = {"callback_query": {"id": "cb", "data": "nav:wwcbot", "from": {"id": 9}, "message": {"message_id": 6, "chat": {"id": 55, "type": "private"}}}}
+    with patch("app.telegram.processor.try_handle_admin_login", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.handle_newcomer_panel", AsyncMock(return_value={"ok": True, "route": "newcomer_panel"})) as panel, patch(
+        "app.telegram.catalog_browse.handle_newcomer_panel", AsyncMock(return_value={"ok": True, "route": "newcomer_panel"})
+    ) as panel_cb, patch("app.telegram.catalog_browse.answer_callback_query", AsyncMock()):
+        by_text = await process_core_telegram_update(tenant, text_update, "t-wwcbot", binding=whieda_bot_binding)
+        by_button = await process_core_telegram_update(tenant, callback_update, "t-wwcbot-cb", binding=whieda_bot_binding)
+    assert by_text["route"] == "newcomer_panel" and panel.await_count == 1
+    assert by_button["route"] == "newcomer_panel" and panel_cb.await_count == 1

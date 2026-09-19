@@ -70,7 +70,8 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     assert rows[3][0]["text"] == "Отправить приглашение"
     assert rows[4][0]["callback_data"] == "referral:list"
     assert rows[6][0] == {"text": "Подключить Gemini Pro", "callback_data": "svc:card:gemini"}
-    assert rows[7][0] == {"text": "Поддержка", "url": SUPPORT_URL}
+    assert rows[7][0] == {"text": "🤖 WWC Bot", "callback_data": "nav:wwcbot"}
+    assert rows[8][0] == {"text": "Поддержка", "url": SUPPORT_URL}
     assert len(invitation_text(link)) <= 256
 
 
@@ -103,13 +104,14 @@ def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
         "Отправить приглашение",
         "Калькулятор",
         "Подключить Gemini Pro",
+        "🤖 WWC Bot",
         "Поддержка",
     ]
     assert rows[1][0]["copy_text"]["text"] == (
         "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
     )
     # The only callback on production is the services card (owner signed it off 15.09.2026).
-    assert [row[0]["callback_data"] for row in rows if "callback_data" in row[0]] == ["svc:card:gemini"]
+    assert [row[0]["callback_data"] for row in rows if "callback_data" in row[0]] == ["svc:card:gemini", "nav:wwcbot"]
 
 
 @pytest.mark.asyncio

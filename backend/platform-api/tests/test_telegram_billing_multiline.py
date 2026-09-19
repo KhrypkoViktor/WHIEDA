@@ -114,3 +114,29 @@ async def test_status_shows_pro_and_club(whieda_tenant, whieda_bot_binding, owne
     assert result["status"] == "status"
     text = deliver.await_args.args[1]
     assert "PRO (сайт)" in text and "CLUB: до 14.12.2026" in text
+
+
+@pytest.mark.asyncio
+async def test_owner_payment_command_works_on_the_production_minimal_profile(whieda_tenant, whieda_bot_binding, owner_env, quiet, monkeypatch):
+    """Prod (minimal) dropped «оплата ref:fedorov 3000 rub 3» into the advisor on 19.09.2026."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_TELEGRAM_UI_PROFILE", "minimal")
+    get_settings.cache_clear()
+    deliver = AsyncMock()
+    intent = AsyncMock(return_value={
+        "intent_id": "11111111-1111-1111-1111-111111111111", "ref_code": "fedorov", "display_name": "Фёдоров",
+        "hostname": "fedorov.wwc.best", "currency": "RUB", "amount_minor": 300000, "access_months": 3, "paid_until": None,
+        "club_paid_until": None, "lines": None, "price_reasons": {},
+        "period_end": datetime(2026, 12, 21, tzinfo=timezone.utc), "grace_until": datetime(2026, 12, 24, tzinfo=timezone.utc),
+    })
+    advisor = AsyncMock()
+    try:
+        with patch("app.telegram.billing._deliver", deliver), patch("app.telegram.billing.create_lines_intent", intent), patch(
+            "app.telegram.billing.create_payment_intent", intent
+        ), patch("app.telegram.processor.handle_advisor_query", advisor):
+            result = await process_core_telegram_update(whieda_tenant, _msg("оплата ref:fedorov 3000 rub 3"), "t-min", binding=whieda_bot_binding)
+    finally:
+        get_settings.cache_clear()
+    assert result["status"] == "preview"
+    advisor.assert_not_awaited()

@@ -256,6 +256,16 @@ def build_menu_callback() -> str:
     return "nav:menu"
 
 
+# «WWC Bot» — the advisor menu (products, match, first purchase, basket,
+# materials, how-to, mentor) folded into one cabinet button (owner, 19.09.2026).
+WWC_BOT_BUTTON_LABEL = "🤖 WWC Bot"
+WWC_BOT_CALLBACK = "nav:wwcbot"
+
+
+def is_wwc_bot_request(text: str) -> bool:
+    return _normalize(str(text or "")) in {"wwc bot", "wwcbot", "бот", "меню бота"}
+
+
 def build_newcomer_callback(action: str) -> str:
     if action not in NEWCOMER_ACTION_LABELS:
         raise ValueError("unknown newcomer action")
@@ -280,6 +290,8 @@ def parse_callback_data(data: str) -> ParsedCallback | None:
         return ParsedCallback(kind="nav_products")
     if raw == "nav:menu":
         return ParsedCallback(kind="nav_menu")
+    if raw == WWC_BOT_CALLBACK:
+        return ParsedCallback(kind="nav_wwcbot")
     if raw.startswith("nc:"):
         action = raw.split(":", 1)[1]
         if action not in NEWCOMER_ACTIONS_ENABLED:
