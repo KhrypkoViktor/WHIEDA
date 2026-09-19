@@ -36,7 +36,8 @@ import requests
 from wwc_sql import _helper, n8n_api
 
 BASE = Path(__file__).resolve().parent
-SHEET_ID = "1Lm6ucw1oo0HQjvN2ZuxIGs2vK1lehw93jwqff7ldbz4"
+# Таблица «WWC учёт — Core» (создана 19.09.2026; владелец решил вести учёт в ней)
+SHEET_ID = "15gFqy8I0FNkFZKayG4klYIZvX9igK9gjLAcdXPoOUnk"
 WORKFLOW_NAME = "WWC учёт: Core → таблица (Партнёры / Платежи / Бонусы)"
 WEBHOOK_PATH = "wwc-sheet-sync-run"
 SHEETS = "https://sheets.googleapis.com/v4/spreadsheets"
@@ -54,7 +55,11 @@ _FORMAT_JS = r"""
 const tab = $('Config').first().json.tab;
 const rows = $input.all().map(i => i.json);
 const header = rows.length ? Object.keys(rows[0]) : [];
-const values = [header].concat(rows.map(r => header.map(h => r[h] === null || r[h] === undefined ? '' : r[h])));
+// Postgres numeric приходит строкой («7500.00») — в таблице это текст, формулы не считают
+// (владелец, 19.09.2026). Числовые строки отдаём числами: USER_ENTERED примет их как числа
+// при любой локали таблицы.
+const cell = (v) => (v === null || v === undefined) ? '' : (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v);
+const values = [header].concat(rows.map(r => header.map(h => cell(r[h]))));
 return [{ json: { tab, values, count: rows.length } }];
 """
 
@@ -67,12 +72,15 @@ return [{ json: { tab, exists, body: exists ? { requests: [] } : { requests: [{ 
 """
 
 
+CRED_TYPE = "googleApi"  # или googleSheetsOAuth2Api — переопределяется флагом --credential-type
+
+
 def _http(name: str, method: str, url: str, credential_id: str, *, body_expr: str | None = None, pos: tuple[int, int]) -> dict:
     params = {
         "method": method,
         "url": url,
         "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleApi",
+        "nodeCredentialType": CRED_TYPE,
         "options": {},
     }
     if body_expr:
@@ -80,7 +88,7 @@ def _http(name: str, method: str, url: str, credential_id: str, *, body_expr: st
     return {
         "parameters": params, "id": re.sub(r"\W+", "-", name.lower()), "name": name,
         "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": list(pos),
-        "credentials": {"googleApi": {"id": credential_id, "name": "WWC Sheets service account"}},
+        "credentials": {CRED_TYPE: {"id": credential_id, "name": "WWC Sheets"}},
     }
 
 
@@ -128,12 +136,25 @@ def build_workflow(credential_id: str, helper) -> dict:
             "settings": {"executionOrder": "v1", "timezone": "Europe/Moscow"}}
 
 
+def freeze_requests(sheet_titles: list[str], meta: dict) -> list[dict]:
+    """Закрепить шапку и колонку «Имя» на каждой вкладке (владелец: «Имя должен видеть всегда»)."""
+    out = []
+    for sh in meta.get("sheets", []):
+        props = sh["properties"]
+        if props["title"] in sheet_titles:
+            out.append({"updateSheetProperties": {"properties": {"sheetId": props["sheetId"], "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 1}}, "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"}})
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--credential-id", required=True)
+    ap.add_argument("--credential-type", default="googleApi", choices=["googleApi", "googleSheetsOAuth2Api"])
     ap.add_argument("--activate", action="store_true")
     ap.add_argument("--run-now", action="store_true")
     args = ap.parse_args()
+    global CRED_TYPE
+    CRED_TYPE = args.credential_type
     helper = _helper()
     session, api = n8n_api(helper)
     payload = build_workflow(args.credential_id, helper)
