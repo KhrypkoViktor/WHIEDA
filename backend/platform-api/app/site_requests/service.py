@@ -6,11 +6,70 @@ import json
 from typing import Any
 
 from app.db import fetch_one, tenant_connection
+from app.subscriptions.pricing import PaymentLine
 from app.subscriptions.service import (
     SubscriptionError,
-    _record_manual_payment_in_connection,
     normalize_partner_subdomain,
+    record_payment_lines_in_connection,
 )
+
+# Что оформляют (владелец, 14–19.09.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
+#   site   — PRO 3 мес + настройка сайта: 30 + 20 WWC$ = 3 000 + 2 000 ₽
+#   bundle — PRO 3 мес + клуб 3 мес по акции: 105 WWC$ = 10 500 ₽, настройка в подарок
+PLANS: dict[str, dict[str, Any]] = {
+    "site": {
+        "label": "Сайт на 3 месяца + настройка",
+        "lines": (("platform_subscription", 3_000, 3, False, ""), ("site_setup", 2_000, 0, False, "")),
+    },
+    "bundle": {
+        "label": "Платформа + Клуб на 3 месяца",
+        "lines": (("platform_subscription", 3_000, 3, False, ""), ("club_subscription", 7_500, 3, True, "пакет PRO + клуб (первый поток)")),
+    },
+}
+RUB_PER_WWC = 100
+
+
+def plan_lines(plan_code: str, currency: str) -> list[PaymentLine]:
+    scale = RUB_PER_WWC if currency == "RUB" else 1
+    return [
+        PaymentLine(code, minor * scale, currency, months, promo, note)
+        for code, minor, months, promo, note in PLANS[plan_code]["lines"]
+    ]
+
+
+def plan_total_minor(plan_code: str, currency: str) -> int:
+    return sum(line.amount_minor for line in plan_lines(plan_code, currency))
+
+
+async def set_site_request_plan(tenant_id: str, actor_id: str, plan_code: str) -> dict[str, Any]:
+    plan = str(plan_code or "").strip().lower()
+    if plan not in PLANS:
+        raise SiteRequestError("Выберите вариант кнопкой.")
+    async with tenant_connection(tenant_id) as conn:
+        request = await fetch_one(
+            conn,
+            "select country_code from partner_site_requests where tenant_id = %s and actor_id = %s and status = 'awaiting_plan' for update",
+            (tenant_id, actor_id),
+        )
+        if not request:
+            raise SiteRequestError("Сейчас выбор пакета не ожидается.")
+        currency = "RUB" if request["country_code"] == "RU" else "WUSD"
+        lines = plan_lines(plan, currency)
+        subscription = next(l.amount_minor for l in lines if l.product_code == "platform_subscription")
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set plan_code = %s, total_amount_minor = %s, subscription_amount_minor = %s, currency = %s,
+                status = 'awaiting_payment', updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = 'awaiting_plan'
+            returning *
+            """,
+            (plan, plan_total_minor(plan, currency), subscription, currency, tenant_id, actor_id),
+        )
+    if not row:
+        raise SiteRequestError("Не удалось сохранить выбор.")
+    return row
 
 
 class SiteRequestError(ValueError):
@@ -150,23 +209,15 @@ async def set_site_request_intro(
         )
         if not request:
             raise SiteRequestError("Сейчас текст не ожидается.")
-        if request["country_code"] == "RU":
-            # PRO 3 мес 3 000 ₽ + настройка сайта 2 000 ₽ (владелец, 14.09.2026)
-            currency, total, subscription = "RUB", 500_000, 300_000
-        else:
-            # PRO 3 мес 30 WWC$ + настройка сайта 20 WWC$
-            currency, total, subscription = "WUSD", 5_000, 3_000
         row = await fetch_one(
             conn,
             """
             update partner_site_requests
-            set intro_text = %s, total_amount_minor = %s,
-                subscription_amount_minor = %s, currency = %s,
-                status = 'awaiting_payment', updated_at = now()
+            set intro_text = %s, status = 'awaiting_plan', updated_at = now()
             where tenant_id = %s and actor_id = %s and status = 'awaiting_text'
             returning *
             """,
-            (value, total, subscription, currency, tenant_id, actor_id),
+            (value, tenant_id, actor_id),
         )
     if not row:
         raise SiteRequestError("Не удалось сохранить текст.")
@@ -250,18 +301,37 @@ async def confirm_site_request(
         )
         if not created:
             raise SiteRequestError("Имя сайта уже занято. Заявку нужно проверить вручную.")
-        payment = await _record_manual_payment_in_connection(
+        # Профиль до сборки сайта выключен (enabled = false), а строка подписки
+        # создаётся платёжным путём только для включённых — заявка падала на
+        # «active referral profile not found» и подтверждение никогда не проходило
+        # (найдено тестом 19.09.2026). Строку заводим здесь; сроки проставит платёж.
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into partner_subscriptions (tenant_id, ref_code, paid_until)
+                values (%s, %s, null)
+                on conflict (tenant_id, ref_code) do nothing
+                """,
+                (tenant_id, request["requested_subdomain"]),
+            )
+        # Одна оплата — несколько строк (сайт + настройка или сайт + клуб): так же, как
+        # владелец записывает вручную через «оплата ref:… / пакет …». Настройка сайта
+        # раньше в ledger не попадала, и 2 000 ₽ терялись в отчётах.
+        plan = str(request.get("plan_code") or "site")
+        currency = str(request["currency"])
+        result = await record_payment_lines_in_connection(
             conn,
             tenant_id=tenant_id,
             ref_code=str(request["requested_subdomain"]),
-            amount_minor=int(request["subscription_amount_minor"]),
-            currency=str(request["currency"]),
+            lines=plan_lines(plan, currency),
+            received_minor=plan_total_minor(plan, currency),
+            currency=currency,
             telegram_chat_id=int(request["proof_chat_id"]),
             telegram_message_id=int(request["proof_message_id"]),
             telegram_user_id=int(request["telegram_user_id"]),
-            product_code="platform_subscription",
-            access_months=3,
         )
+        pro = next((l for l in result["lines"] if l["product_code"] == "platform_subscription"), result["lines"][0])
+        payment = {**pro, "referral_bonus": result.get("referral_bonus"), "club_paid_until": result.get("club_paid_until")}
         updated = await fetch_one(
             conn,
             """

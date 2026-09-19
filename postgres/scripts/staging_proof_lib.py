@@ -51,6 +51,8 @@ APPLY_ORDER = [
     "platform_partner_products_v7.sql",
     "platform_support_tickets_v8.sql",
     "platform_support_forum_v9.sql",
+    "platform_telegram_consent_v1.sql",
+    "platform_partner_site_request_plans_v10.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

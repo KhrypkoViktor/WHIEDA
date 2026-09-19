@@ -81,7 +81,7 @@ def test_plan_default_is_offline_and_correct():
     assert payload["mode"] == "plan"
     assert payload["ok"] is True
     assert payload["would_apply"] == list(APPLY_ORDER)
-    assert len(payload["would_apply"]) == 31
+    assert len(payload["would_apply"]) == 33
     assert payload["sha256_binding_context"] == EXPECTED_BINDING_CONTEXT_SHA256
     assert payload["preconditions_failed"] == []
     assert "whieda" in payload["tenants_affected"]
@@ -344,5 +344,5 @@ def test_rollback_plan_is_manual_only():
 def test_build_offline_plan_function():
     report = build_offline_plan()
     assert report.ok
-    assert len(report.would_apply) == 31
+    assert len(report.would_apply) == 33
     assert report.sha256_binding_context == EXPECTED_BINDING_CONTEXT_SHA256
