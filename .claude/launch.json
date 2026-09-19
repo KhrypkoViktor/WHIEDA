@@ -2,10 +2,33 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "wwc-dev",
+      "name": "wwc-site-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "D:/Projects/_worktrees/wwc-staging-referral-isolation"],
-      "port": 4321
+      "runtimeArgs": [
+        "--prefix",
+        "D:/Projects/_worktrees/wwc-staging-referral-isolation",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "4322"
+      ],
+      "port": 4322
+    },
+    {
+      "name": "wwc-site-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "--prefix",
+        "D:/Projects/_worktrees/wwc-staging-referral-isolation",
+        "astro",
+        "preview",
+        "--root",
+        "D:/Projects/_worktrees/wwc-staging-referral-isolation",
+        "--port",
+        "4323"
+      ],
+      "port": 4323
     }
   ]
 }
