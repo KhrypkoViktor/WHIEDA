@@ -130,9 +130,9 @@ async def test_private_start_links_actor_before_routing(whieda_tenant, whieda_bo
         "app.telegram.processor.fill_lead_actor_user_id", fill
     ), patch("app.telegram.processor.merge_anonymous_actor_into_partner", merge):
         with patch(
-            "app.telegram.processor.handle_newcomer_panel",
+            "app.telegram.processor.show_referral_dashboard",
             AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
-        ):
+        ), patch("app.telegram.processor.send_telegram_text", AsyncMock()):
             result = await process_core_telegram_update(
                 whieda_tenant, update, "t-link", binding=whieda_bot_binding
             )
@@ -165,7 +165,9 @@ async def test_private_message_merges_anonymous_row_when_username_link_is_blocke
         "app.telegram.processor.handle_advisor_query", AsyncMock(return_value={"ok": True, "route": "advisor"})
     ), patch("app.telegram.processor.handle_onboarding", AsyncMock(return_value=None)), patch(
         "app.telegram.processor.handle_navigation_text", AsyncMock(return_value=None)
-    ), patch("app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=None)):
+    ), patch("app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.show_referral_dashboard", AsyncMock(return_value={"ok": True, "route": "referral"})
+    ), patch("app.telegram.processor.send_telegram_text", AsyncMock()):
         await process_core_telegram_update(whieda_tenant, update, "t-merge", binding=whieda_bot_binding)
     merge.assert_awaited_once_with("whieda", username="Kira_tg", telegram_user_id=6261, telegram_chat_id=6261)
 
@@ -184,9 +186,9 @@ async def test_link_failure_never_blocks_the_reply(whieda_tenant, whieda_bot_bin
         AsyncMock(side_effect=RuntimeError("db down")),
     ):
         with patch(
-            "app.telegram.processor.handle_newcomer_panel",
+            "app.telegram.processor.show_referral_dashboard",
             AsyncMock(return_value={"ok": True, "route": "newcomer_panel"}),
-        ) as panel:
+        ) as panel, patch("app.telegram.processor.send_telegram_text", AsyncMock()):
             result = await process_core_telegram_update(
                 whieda_tenant, update, "t-link-fail", binding=whieda_bot_binding
             )
