@@ -14,7 +14,8 @@ def test_site_offer_text_is_the_owner_wording():
     text = site_offer_text("Игорь Ефименко")
     assert text == (
         "Вас пригласил партнёр WWC: Игорь Ефименко. Такой же сайт — за 1 день, 10 WWC$ в месяц (1 000 ₽ / 35 BYN). "
-        "20 WWC$ (2 000 ₽) — разовая настройка сайта."
+        "20 WWC$ (2 000 ₽) — разовая настройка сайта.\n"
+        "Пакет «Платформа + Клуб» на 3 месяца — 105 WWC$ (10 500 ₽), настройка в подарок: wwc.best/start"
     )
     assert "Баланс" not in text and "реферальн" not in text
     assert site_offer_text("").startswith("Такой же сайт")
@@ -23,13 +24,12 @@ def test_site_offer_text_is_the_owner_wording():
 def test_site_offer_keyboard_has_order_first_and_example_host():
     kb = site_offer_keyboard(telegram_user_id=42, example_url="https://igoref.wwc.best/")
     rows = kb["inline_keyboard"]
-    assert rows[0][0]["text"] == "Заказать сайт" and "docs.google.com/forms" in rows[0][0]["url"]
+    assert rows[0][0] == {"text": "Заказать сайт", "callback_data": "site:create"}
     assert rows[1][0]["text"] == "Посмотреть пример: igoref.wwc.best"
     assert len(site_offer_keyboard(telegram_user_id=None, example_url="")["inline_keyboard"]) == 1
 
 
-def test_order_button_tells_the_owner_who_invited():
-    from urllib.parse import unquote
-
+def test_order_button_starts_the_bot_dialog_whoever_invited():
+    # The inviter is already attributed on /start; the dialog needs no form field for it.
     kb = site_offer_keyboard(telegram_user_id=42, example_url="", inviter_ref="igoref")
-    assert unquote(kb["inline_keyboard"][0][0]["url"]).endswith("новый сайт · бот · 42 · от igoref")
+    assert kb["inline_keyboard"][0][0]["callback_data"] == "site:create"

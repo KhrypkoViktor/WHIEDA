@@ -74,18 +74,20 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     assert len(invitation_text(link)) <= 256
 
 
-def test_cabinet_without_site_offers_the_google_form_not_the_bot_dialog():
-    """Owner, 15.09.2026: a new site is ordered through the Google form; the
-    old country/subdomain/photo dialog in the bot is not offered any more."""
+def test_cabinet_without_site_offers_the_bot_dialog_not_the_google_form():
+    """Owner, 18–19.09.2026: the Google form opened inside Telegram's browser and
+    people lost the order; the bot's own dialog (country → subdomain → photo →
+    text → receipt) is the way. Share text must not carry '+' for spaces."""
     markup = _dashboard_keyboard(
         bot_username="WHIEDA_bot", invite_code="c", site_url="https://wwc.best/", has_site=False, minimal=False,
         telegram_user_id=525317405,
     )
     row = markup["inline_keyboard"][1][0]
-    assert row["text"] == "Заказать сайт WWC"
-    assert row["url"].startswith("https://docs.google.com/forms/d/e/1FAIpQLScu0yDkGGw5uKjRoNDUvzTA6lQBCZywnjSGFmhLv_zcHXPnGw/viewform?usp=pp_url&entry.1166182770=")
-    assert row["url"].endswith("525317405")
-    assert not any(b.get("callback_data") == "site:create" for r in markup["inline_keyboard"] for b in r)
+    assert row == {"text": "Заказать сайт WWC", "callback_data": "site:create"}
+    assert not any("docs.google.com" in str(b.get("url", "")) for r in markup["inline_keyboard"] for b in r)
+    share = markup["inline_keyboard"][3][0]["url"]
+    assert share.startswith("https://t.me/share/url?url=https%3A%2F%2Ft.me%2FWHIEDA_bot%3Fstart%3Dref_c&text=")
+    assert "+" not in share and "%20" in share
 
 
 def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
