@@ -60,7 +60,7 @@ _UNLIMITED_USAGE = "Формат: безлимит ref:code — сайт (PRO) �
 # Pending «безлимит» confirmations, keyed by a token in the button.
 _UNLIMITED_INTENTS: dict[str, dict[str, Any]] = {}
 _PRICE_RE = re.compile(
-    rf"^(?:цена|/price)\s+({_IDENTIFIER})\s+(pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup)\s+"
+    rf"^(?:цена|/price)\s+({_IDENTIFIER})\s+(pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|курс|академия|course)\s+"
     r"(снять|сброс|([0-9]+(?:[.,][0-9]{1,2})?)\s+(WWC\$|W\$|WUSD))(?:\s+(.+))?$",
     re.IGNORECASE,
 )
@@ -500,6 +500,7 @@ _PRICE_PRODUCTS = {
     "pro": "platform_subscription", "платформа": "platform_subscription", "сайт": "platform_subscription",
     "клуб": "club_subscription", "club": "club_subscription",
     "настройка": "site_setup", "настройка сайта": "site_setup", "setup": "site_setup",
+    "курс": "course_academy", "академия": "course_academy", "course": "course_academy",
 }
 
 

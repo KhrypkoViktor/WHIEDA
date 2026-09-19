@@ -34,13 +34,18 @@ PRODUCT_LABELS = {
     "platform_subscription": "PRO (сайт)",
     "club_subscription": "CLUB",
     "site_setup": "настройка сайта",
+    # Курс Академии (владелец, 18–19.09.2026): нейросети, мини контент-завод, SMM —
+    # разовая покупка 100 WWC$, без срока; в ledger как site_setup (access_months 0).
+    "course_academy": "курс Академии",
 }
 RECURRING = {"platform_subscription", "club_subscription"}
+ONE_OFF = {"site_setup", "course_academy"}
 _PRODUCT_WORDS = {
     "pro": "platform_subscription", "платформа": "platform_subscription", "сайт": "platform_subscription",
     "клуб": "club_subscription", "club": "club_subscription",
     "настройка": "site_setup", "настройка сайта": "site_setup", "setup": "site_setup",
     "пакет": "bundle_pro_club", "bundle": "bundle_pro_club",
+    "курс": "course_academy", "академия": "course_academy", "course": "course_academy",
 }
 BUNDLE_LINES = (("platform_subscription", 3000), ("club_subscription", 7500))
 RUB_PER_WWC = 100
@@ -50,7 +55,7 @@ _AMOUNT = r"([0-9]+(?:[.,][0-9]{1,2})?)"
 _CURRENCY = r"(RUB|₽|WUSD|WWC\$|W\$)"
 _HEAD_RE = re.compile(rf"^(?:оплата|/pay)\s+{_IDENTIFIER}(?:\s+{_AMOUNT}\s+{_CURRENCY}(?:\s+(3|6|12))?)?\s*$", re.IGNORECASE)
 _LINE_RE = re.compile(
-    rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle)\s+"
+    rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle|курс|академия|course)\s+"
     rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>3|6|12))?(?:\s+(?P<note>.+))?$",
     re.IGNORECASE,
 )
@@ -166,7 +171,7 @@ def parse_payment_command(text: str) -> ParsedPayment:
             add(PaymentLine("platform_subscription", pro_minor, cur, months, False, note))
             add(PaymentLine("club_subscription", club_minor, cur, months, True, note or "пакет PRO + клуб"))
             continue
-        if product == "site_setup":
+        if product in ONE_OFF:
             months = 0
         add(PaymentLine(product, amount, cur, months, promo, note))
     if not lines:

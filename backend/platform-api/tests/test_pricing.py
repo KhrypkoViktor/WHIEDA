@@ -46,7 +46,7 @@ def test_mixed_currencies_unknown_product_or_garbage_are_rejected():
     with pytest.raises(SubscriptionError):
         parse_payment_command("оплата ref:a\nPRO 30 WWC$ 3\nклуб 12000 RUB 3")
     with pytest.raises(SubscriptionError):
-        parse_payment_command("оплата ref:a\nкурс 10 WWC$")
+        parse_payment_command("оплата ref:a\nтренинг 10 WWC$")
     with pytest.raises(SubscriptionError):
         parse_payment_command("привет")
     with pytest.raises(SubscriptionError):
@@ -97,3 +97,13 @@ def test_bonus_offset_rides_in_the_intent_as_a_marker_not_a_line():
     assert [i["product_code"] for i in stored] == ["platform_subscription", BONUS_OFFSET]
     assert lines_from_json(stored) == lines and bonus_from_json(stored) == 500
     assert with_list_prices(lines, {"platform_subscription": 3000}) == stored[:1] and bonus_from_json(stored[:1]) == 0
+
+
+def test_course_is_a_one_off_product_line():
+    # Курс Академии (100 WWC$): разовая покупка, без срока, в одном платеже с чем угодно.
+    parsed = parse_payment_command("оплата ref:rufa\nкурс 100 WWC$\nполучено 100 WWC$")
+    assert parsed.lines == [PaymentLine("course_academy", 10000, "WUSD", 0, False, "")]
+    mixed = parse_payment_command("оплата ref:rufa\nPRO 3000 RUB 3\nакадемия 10000 RUB\nполучено 13000 RUB")
+    assert [(l.product_code, l.access_months) for l in mixed.lines][-1] == ("course_academy", 0)
+    assert validate_lines(parsed.lines, {"course_academy": 10000}, parsed.received_minor) == []
+    assert describe_lines(parsed.lines, 10000)[0] == "курс Академии: 100 WWC$"
