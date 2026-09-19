@@ -30,7 +30,9 @@ SELECT
   coalesce(la.display_name, p.public_profile->>'display_name', p.ref_code)      AS "Имя",
   p.ref_code                                                                      AS "ref",
   coalesce(p.public_profile->>'public_site_url', 'https://' || p.ref_code || '.wwc.best/') AS "Сайт",
-  CASE WHEN la.telegram_username IS NOT NULL AND la.telegram_username <> '' THEN '@' || la.telegram_username ELSE '' END AS "Telegram",
+  CASE WHEN la.telegram_username IS NULL OR la.telegram_username = '' THEN ''
+       WHEN la.telegram_username LIKE 'http%' THEN la.telegram_username
+       ELSE '@' || la.telegram_username END                                          AS "Telegram",
   CASE p.country_code WHEN 'RU' THEN 'РФ' WHEN 'BY' THEN 'РБ' ELSE coalesce(p.country_code, '') END AS "Страна",
   CASE
     WHEN s.paid_until IS NULL THEN 'нет'
