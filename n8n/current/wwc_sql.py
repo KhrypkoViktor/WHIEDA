@@ -10,6 +10,17 @@ workflow ещё дёргает `ssh_run('n8n publish:workflow')`. Провере
 Плюс прежний путь не умел читать: Respond отдавал статичный `{"status":"ok"}`.
 Здесь Respond возвращает строки узла Postgres — SELECT работает.
 
+Надёжность (19.09.2026, «скрипты запускаются через раз»):
+  * webhook временного workflow появляется не сразу — ждём до ~60 с, а не 30;
+    сетевые обрывы повторяем, а не падаем;
+  * файл с транзакцией и контрольным SELECT после COMMIT выполняется двумя
+    вызовами: узел Postgres на многострочный текст возвращал пустой список, и
+    `[]` выглядел как «ничего не сделано» — теперь строки SELECT приходят;
+  * перед запуском удаляются зависшие `TEMP WWC SQL *` (если прошлый запуск
+    оборвался) — десятки активных TEMP-workflow уже роняли n8n (см.
+    WHIEDA_DEPLOY_HOSTS.md, 01.08.2026);
+  * свой workflow всегда деактивируется и удаляется, даже при ошибке.
+
 Использование из кода:
     from wwc_sql import run_sql
     rows = run_sql("select ref_code, owner_id from referral_profiles limit 5")
@@ -23,6 +34,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import json
+import re
 import sys
 import time
 import uuid
@@ -31,6 +43,10 @@ from pathlib import Path
 import requests
 
 BASE = Path(__file__).resolve().parent
+TEMP_PREFIX = "TEMP WWC SQL "
+WEBHOOK_WAIT_ATTEMPTS = 20   # × 3 с ≈ 60 с на появление webhook
+WEBHOOK_WAIT_SLEEP = 3
+NETWORK_RETRIES = 3
 
 
 def _helper():
@@ -56,14 +72,84 @@ def n8n_api(helper):
     return session, f"{helper.BASE_URL}/api/v1"
 
 
+def split_statements(sql: str) -> list[str]:
+    """Транзакция целиком + всё после последнего COMMIT отдельным вызовом.
+
+    Узел Postgres в n8n на текст из нескольких команд отдаёт строки только
+    первой; SELECT-проверка после COMMIT пропадала. Делим по последнему
+    `COMMIT;` (регистр не важен); без COMMIT — один вызов, как раньше.
+    """
+    text = sql.strip()
+    matches = list(re.finditer(r"\bCOMMIT\s*;", text, re.IGNORECASE))
+    if not matches:
+        return [text] if text else []
+    cut = matches[-1].end()
+    head, tail = text[:cut].strip(), text[cut:].strip()
+    return [chunk for chunk in (head, tail) if chunk]
+
+
+def _cleanup_stale(session: requests.Session, api: str) -> int:
+    """Удалить чужие зависшие TEMP WWC SQL — они остаются, если прошлый запуск
+    оборвали до finally. Активные TEMP-workflow грузят n8n."""
+    removed = 0
+    try:
+        resp = session.get(f"{api}/workflows", params={"limit": 200}, timeout=30)
+        resp.raise_for_status()
+        for wf in resp.json().get("data", []):
+            if not str(wf.get("name", "")).startswith(TEMP_PREFIX):
+                continue
+            wid = wf["id"]
+            try:
+                if wf.get("active"):
+                    session.post(f"{api}/workflows/{wid}/deactivate", timeout=30)
+                session.delete(f"{api}/workflows/{wid}", timeout=30)
+                removed += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return removed
+
+
+def _post_with_retries(url: str, payload: dict, timeout: int) -> list[dict]:
+    last = None
+    network_failures = 0
+    for attempt in range(WEBHOOK_WAIT_ATTEMPTS):
+        if attempt:
+            time.sleep(WEBHOOK_WAIT_SLEEP)
+        try:
+            resp = requests.post(url, json=payload, verify=False, timeout=timeout)
+        except requests.RequestException as exc:  # обрыв сети / таймаут — повторяем
+            network_failures += 1
+            last = f"network: {exc}"
+            if network_failures > NETWORK_RETRIES:
+                break
+            continue
+        if resp.status_code == 404:  # webhook ещё не зарегистрирован
+            last = f"404 on attempt {attempt + 1}"
+            continue
+        if resp.status_code >= 500:
+            last = f"{resp.status_code}: {resp.text[:300]}"
+            break
+        resp.raise_for_status()
+        body = resp.json() if resp.text.strip() else {"rows": []}
+        return body.get("rows", [])
+    raise RuntimeError(f"webhook {url.rsplit('/', 1)[-1]}: {last}")
+
+
 def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
+    """Выполнить SQL; вернуть строки последнего запроса (SELECT после COMMIT — тоже)."""
+    chunks = split_statements(sql)
+    if not chunks:
+        return []
     helper = _helper()
     session, api = n8n_api(helper)
     base = helper.BASE_URL
+    _cleanup_stale(session, api)
     suffix = uuid.uuid4().hex[:10]
     path = f"wwc-sql-{suffix}"
     workflow = {
-        "name": f"TEMP WWC SQL {suffix}",
+        "name": f"{TEMP_PREFIX}{suffix}",
         "active": False,
         "nodes": [
             {"parameters": {"httpMethod": "POST", "path": path, "responseMode": "responseNode", "options": {}},
@@ -94,31 +180,20 @@ def run_sql(sql: str, *, timeout: int = 90) -> list[dict]:
         act = session.post(f"{api}/workflows/{workflow_id}/activate", timeout=60)
         act.raise_for_status()
         url = f"{base}/webhook/{path}"
-        last = None
-        for attempt in range(8):
-            if attempt:
-                time.sleep(4)
-            resp = requests.post(url, json={"sql": sql}, verify=False, timeout=timeout)
-            if resp.status_code == 404:
-                last = f"404 on attempt {attempt + 1}"
-                continue
-            if resp.status_code >= 500:
-                last = f"{resp.status_code}: {resp.text[:300]}"
-                break
-            resp.raise_for_status()
-            body = resp.json() if resp.text.strip() else {"rows": []}
-            return body.get("rows", [])
-        raise RuntimeError(f"webhook {path}: {last}")
+        rows: list[dict] = []
+        for chunk in chunks:
+            rows = _post_with_retries(url, {"sql": chunk}, timeout)
+        return rows
     finally:
         if workflow_id:
-            try:
-                session.post(f"{api}/workflows/{workflow_id}/deactivate", timeout=30)
-            except Exception:
-                pass
-            try:
-                session.delete(f"{api}/workflows/{workflow_id}", timeout=30)
-            except Exception:
-                pass
+            for action in ("deactivate", None):
+                try:
+                    if action:
+                        session.post(f"{api}/workflows/{workflow_id}/{action}", timeout=30)
+                    else:
+                        session.delete(f"{api}/workflows/{workflow_id}", timeout=30)
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":
@@ -127,4 +202,7 @@ if __name__ == "__main__":
         sql = Path(args[args.index("--file") + 1]).read_text(encoding="utf-8")
     else:
         sql = " ".join(args)
-    print(json.dumps(run_sql(sql), ensure_ascii=False, indent=1, default=str))
+    result = run_sql(sql)
+    if not result:
+        print("ok: выполнено, строк в ответе нет", file=sys.stderr)
+    print(json.dumps(result, ensure_ascii=False, indent=1, default=str))
