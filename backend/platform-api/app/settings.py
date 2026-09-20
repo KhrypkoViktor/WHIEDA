@@ -72,6 +72,15 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_TELEGRAM_WEBHOOK_SECRET",
     )
+    # Max (max.ru) — второй канал бота (20.09.2026). Токен/секрет — только из окружения.
+    max_bot_token: str | None = Field(default=None, validation_alias="PLATFORM_MAX_BOT_TOKEN")
+    max_webhook_secret: str | None = Field(default=None, validation_alias="PLATFORM_MAX_WEBHOOK_SECRET")
+    max_bot_username: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_MAX_BOT_USERNAME",
+        description="Имя бота в Max для ссылок https://max.ru/<name>?start=… (без @).",
+    )
+    max_api_base: str = Field(default="https://platform-api2.max.ru", validation_alias="PLATFORM_MAX_API_BASE")
     telegram_bot_username: str | None = Field(
         default=None,
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",

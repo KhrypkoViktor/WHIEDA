@@ -31,6 +31,7 @@ from app.observability import TraceMiddleware, configure_logging
 from app.ref.routes import router as ref_router
 from app.schema_requirements import find_missing_tables, parse_disabled_features
 from app.settings import get_settings
+from app.max.routes import router as max_router
 from app.telegram.routes import router as telegram_router
 from app.telegram.worker import run_outbox_worker_loop
 from app.tenancy import TenantMiddleware
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
     app.include_router(theme_access_router)
     app.include_router(admin_router)
     app.include_router(telegram_router)
+    app.include_router(max_router)
     return app
 
 
