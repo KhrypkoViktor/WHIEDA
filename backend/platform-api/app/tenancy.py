@@ -159,7 +159,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if path.startswith("/health"):
             return await call_next(request)
 
-        if path.startswith("/v1/telegram/"):
+        if path.startswith("/v1/telegram/") or path.startswith("/v1/max/"):
+            # Webhooks мессенджеров приходят с их хостов, тенант задаёт сам маршрут.
             return await call_next(request)
 
         if path == "/v1/admin/auth/telegram-confirm":

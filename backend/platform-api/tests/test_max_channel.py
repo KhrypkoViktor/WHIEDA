@@ -68,3 +68,14 @@ def test_greeting_names_the_inviter_and_site():
     assert "Приглашение сохранено." in text
     assert "Олеся Вселенная" in text and "https://olesya.wwc.best/" in text
     assert "Свою ссылку" in _greeting("self_referral", None)
+
+
+def test_max_webhook_bypasses_tenant_host_resolution():
+    """Webhook Max приходит с хоста Max, не с домена тенанта — как и Telegram."""
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    client = TestClient(create_app())
+    response = client.post("/v1/max/webhook", json={}, headers={"host": "127.0.0.1"})
+    assert response.status_code in {403, 503}  # не 404 от TenantMiddleware
