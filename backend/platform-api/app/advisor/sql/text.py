@@ -137,10 +137,15 @@ COLOR_ELIXIR_SHORTHAND_RE = re.compile(
 PRODUCT_PRICE_NICKNAME_RE = re.compile(r"^сауны?$", re.I)
 
 
+_LEADING_EMOJI_RE = re.compile(r"^[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\s]+")
+
+
 def normalize_text(value: str) -> str:
     text = str(value or "").strip().lower()
+    # Menu labels arrive with their emoji («📦 товары», «📈 бизнес»); the words decide.
+    text = _LEADING_EMOJI_RE.sub("", text)
     text = re.sub(r"\s+", " ", text)
-    return text
+    return text.strip()
 
 
 def detect_service_intent(question: str) -> str | None:
@@ -248,6 +253,14 @@ def has_community_intent(question: str) -> bool:
 def is_unsupported_topic(question: str) -> bool:
     """Recognise plainly external topics without guessing that they are products."""
     return bool(OUT_OF_SCOPE_RE.search(question))
+
+
+_SMALLTALK_OOS_RE = re.compile(r"(пив(?:о|а|ку|очк|ка|ко)\b|\bbeer\b|выпить)", re.I)
+
+
+def is_smalltalk_out_of_scope(question: str) -> bool:
+    """Banter («пивка хочешь?») — answered as a clarification, not as a knowledge gap."""
+    return bool(_SMALLTALK_OOS_RE.search(question))
 
 
 def has_basket_intent(question: str) -> bool:

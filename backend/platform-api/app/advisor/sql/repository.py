@@ -106,8 +106,13 @@ async def resolve_activator_pro_product(conn, tenant_id: str) -> dict[str, Any] 
 
 
 async def fetch_alias_candidates(conn, tenant_id: str, question: str) -> list[dict[str, Any]]:
+    from app.advisor.sql.resolver import question_stems
+
     normalized = question.lower().strip()
     compact = normalized.replace(" ", "")
+    # Word stems let inflected forms («сауны», «красного эликсира») reach the
+    # scorer; the scorer decides, this only widens the candidate set.
+    stems = [f"{s}%" for s in question_stems(normalized)]
     return await fetch_all(
         conn,
         f"""
@@ -122,11 +127,12 @@ async def fetch_alias_candidates(conn, tenant_id: str, question: str) -> list[di
             or %s like ('%%' || lower(a.alias) || '%%')
             or %s like ('%%' || lower(a.alias) || '%%')
             or lower(p.canonical_name) like %s
+            or lower(a.alias) like any(%s)
           )
         order by a.priority desc, length(a.alias) desc
-        limit 40
+        limit 60
         """,
-        (client_id(tenant_id), normalized, normalized, compact, f"%{normalized}%"),
+        (client_id(tenant_id), normalized, normalized, compact, f"%{normalized}%", stems),
     )
 
 

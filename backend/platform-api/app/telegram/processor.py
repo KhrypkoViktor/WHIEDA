@@ -66,6 +66,7 @@ from app.telegram.bindings import (
 )
 from app.telegram.log_safe import chat_ref
 from app.telegram.catalog_browse import (
+    handle_catalog_products,
     handle_callback_query,
     handle_navigation_text,
     handle_newcomer_panel,
@@ -300,6 +301,9 @@ async def handle_advisor_query(
     }
     core_response = await handle_structured_query(tenant, body, trace_id)
     mode = core_response.get("answer_mode")
+    if mode == "navigation_catalog":
+        # «какие есть товары» → the real list with buttons, not a text about it.
+        return await handle_catalog_products(tenant, msg.chat_id, page=1, trace_id=trace_id)
     logger.info(
         "telegram_advisor_response_ready",
         extra={

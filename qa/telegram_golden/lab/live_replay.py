@@ -55,6 +55,11 @@ async def run_case(case, session=None):
 async def main():
     await init_pool()
     results = []
+    # No side effects on the shared DB: gap events are not recorded, golden-*
+    # session rows are removed at the end.
+    from unittest.mock import AsyncMock, patch
+    gap_patch = patch("app.advisor.gap.record_advisor_gap", AsyncMock(return_value=None))
+    gap_patch.start()
     try:
         for case in load("/tmp/whieda_telegram_golden_cases_v1.jsonl"):
             before = case.get("context_before") or {}
@@ -76,6 +81,10 @@ async def main():
                 results.append({"id": turn["case_id"], "class": turn["class"], "prio": turn["priority"], "q": turn["input"]["user_text"],
                                 "expected": turn["expected"]["mode"], "got": mode, "ms": ms, "problems": problems, "text": text[:160], "flow": flow["flow_id"]})
     finally:
+        gap_patch.stop()
+        async with tenant_connection("whieda") as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("delete from platform_session_context where tenant_id = 'whieda' and session_id like 'golden-%%'")
         await close_pool()
     json.dump(results, open("/tmp/golden_results.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     failed = [r for r in results if r["problems"]]

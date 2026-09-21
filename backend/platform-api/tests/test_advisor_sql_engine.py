@@ -35,7 +35,7 @@ async def test_catalog_phrase_returns_catalog_guidance_not_unknown_product(whied
         "catalog-guidance",
     )
 
-    assert result["answer_mode"] == "structured_business"
+    assert result["answer_mode"] == "navigation_catalog"
     assert "📦 Товары" in result["answer_text"]
     assert "Не нашёл" not in result["answer_text"]
 

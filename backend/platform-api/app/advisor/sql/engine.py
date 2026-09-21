@@ -70,6 +70,7 @@ from app.advisor.sql.text import (
     is_product_selection_request,
     is_menu_reprompt,
     is_catalog_list_request,
+    is_smalltalk_out_of_scope,
     normalize_text,
     product_query_text,
     wants_partner_price,
@@ -223,6 +224,7 @@ EXPLICIT_PRODUCT_REQUEST_RE = re.compile(
 )
 ACTIVATOR_BASE_CHOICE_RE = re.compile(r"\b(обычн|базов|стандарт)\w*\b", re.I)
 ACTIVATOR_PRO_CHOICE_RE = re.compile(r"\b(pro|про)\b", re.I)
+ACTIVATOR_SWITCH_WORDS = {"обычный", "обычная", "базовый", "стандартный", "pro", "про"}
 
 
 async def run_structured_query(
@@ -243,9 +245,10 @@ async def run_structured_query(
         return await _service_intent_response(tenant, service_intent, trace_id)
 
     if is_catalog_list_request(question):
+        # Telegram renders the catalog list itself; other surfaces get the text.
         return fmt.ok_response(
             catalog_browse_text(tenant),
-            "structured_business",
+            "navigation_catalog",
             trace_id,
             media=fmt.empty_media(),
         )
@@ -260,7 +263,7 @@ async def run_structured_query(
             gap_kind="unknown_product",
             trace_id=trace_id,
             channel=channel,
-            text=gap_text_for(tenant.tenant_id, "unknown_product"),
+            text=_unknown_product_text(tenant.tenant_id, question),
         )
 
     if is_high_risk_medical_boundary(question):
@@ -285,6 +288,7 @@ async def run_structured_query(
             trace_id=trace_id,
             channel=channel,
             text=gap_text_for(tenant.tenant_id, "unsupported_topic"),
+            answer_mode="clarification" if is_smalltalk_out_of_scope(question) else "knowledge_gap",
         )
 
     if is_calculator_request(question):
@@ -517,6 +521,12 @@ async def run_structured_query(
 
     async with tenant_connection(tenant.tenant_id) as conn:
         stored = await session_ctx.load_session_context(conn, tenant.tenant_id, session)
+        if not stored.get("last_product_sku") and stored.get("last_product_name"):
+            remembered_by_name = await _resolve_product(
+                conn, tenant.tenant_id, str(stored["last_product_name"]), None, None
+            )
+            if remembered_by_name:
+                stored["last_product_sku"] = remembered_by_name["sku"]
         if not is_home_tenant(tenant.tenant_id):
             catalog_size = await repo.count_catalog_products(conn, tenant.tenant_id)
             if catalog_size == 0:
@@ -961,6 +971,14 @@ async def run_structured_query(
         if not product:
             product = await _resolve_product(conn, tenant.tenant_id, question, sku, slug)
 
+        # «обычный» / «pro» right after an activator card switches the variant
+        # even when no clarification is pending.
+        if not product and is_home_tenant(tenant.tenant_id) and normalized in ACTIVATOR_SWITCH_WORDS:
+            last_sku = str(stored.get("last_product_sku") or "")
+            if last_sku in {"M015-00", "EU-N000031-25"}:
+                wanted = "M015-00" if ACTIVATOR_BASE_CHOICE_RE.search(normalized) else "EU-N000031-25"
+                product = await repo.resolve_product_by_sku(conn, tenant.tenant_id, wanted)
+
         if (
             not product
             and (media_request_is_product_followup(question) or is_context_followup(question))
@@ -971,6 +989,21 @@ async def run_structured_query(
             )
             if remembered:
                 product = remembered
+
+        if normalized == "активатор" and is_home_tenant(tenant.tenant_id):
+            base = await repo.resolve_product_by_sku(conn, tenant.tenant_id, "M015-00")
+            if base:
+                card = await repo.load_product_card(conn, tenant.tenant_id, base["sku"])
+                text = fmt.format_product_card(card, base, compact=True) + "\n\nЕсть и усиленная версия — напишите «PRO»."
+                response = fmt.ok_response(
+                    text, "structured_card", trace_id,
+                    product={"sku": base["sku"], "canonical_name": base["canonical_name"]},
+                    media=fmt.build_media_payload(card, [], "photo"),
+                    context={"last_product_sku": base["sku"], "last_product_name": base["canonical_name"],
+                             "pending_product_clarification": None, "pending_base_sku": None, "pending_pro_sku": None},
+                )
+                await session_ctx.merge_session_context(conn, tenant.tenant_id, session, response["context"])
+                return response
 
         ambiguity = await try_ambiguity_clarification(
             conn, tenant.tenant_id, question, best_product=product, repo=repo
@@ -1211,6 +1244,7 @@ async def run_structured_query(
                 gap_kind="unknown_product",
                 trace_id=trace_id,
                 channel=channel,
+                text=_unknown_product_text(tenant.tenant_id, question),
             )
 
     gap_kind = "unknown_product" if EXPLICIT_PRODUCT_REQUEST_RE.search(question) else "unrouted_message"
@@ -1221,7 +1255,26 @@ async def run_structured_query(
         gap_kind=gap_kind,
         trace_id=trace_id,
         channel=channel,
+        text=_unknown_product_text(tenant.tenant_id, question) if gap_kind == "unknown_product" else None,
     )
+
+
+_NOISE_WORDS_RE = re.compile(
+    r"^(?:что такое|расскажи(?:те)? про|покажи(?:те)?|дай(?:те)?|цена|стоимость|сколько стоит|фото|видео|сертификат|"
+    r"посчитай:?|товар|карточка)\s+",
+    re.I,
+)
+
+
+def _unknown_product_text(tenant_id: str, question: str) -> str:
+    """Name what was not found, so the person can fix the name instead of guessing."""
+    from app.advisor.voice import gap_text_for
+
+    base = gap_text_for(tenant_id, "unknown_product")
+    asked = _NOISE_WORDS_RE.sub("", normalize_text(question)).strip(" ?!.,:;«»\"")
+    if not asked or len(asked) > 60:
+        return base
+    return f"«{asked}» — такого товара в каталоге не нашёл. Уточните название или откройте 📦 Товары, покажу список."
 
 
 def _should_use_knowledge_gap(question: str, normalized: str) -> bool:

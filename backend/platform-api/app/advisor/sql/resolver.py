@@ -68,6 +68,35 @@ def levenshtein_distance(left: str, right: str, max_distance: int = 2) -> int:
     return prev_row[-1]
 
 
+def stem(word: str) -> str:
+    """Cheap Russian stem: «сауны»/«сауна» → «саун», «красного»/«красный» → «красн».
+    Words shorter than 4 letters are kept whole."""
+    w = str(word or "")
+    return w[: max(4, len(w) - 2)] if len(w) > 4 else w
+
+
+def stems_match(left: str, right: str) -> bool:
+    a, b = stem(left), stem(right)
+    if len(a) < 4 or len(b) < 4:
+        return a == b
+    return a.startswith(b) or b.startswith(a)
+
+
+def stem_phrase_match(text: str, alias: str) -> bool:
+    """Every alias word has a question word with the same stem — so «цена сауны»
+    finds the alias «сауна» and «зеленый эликсир» finds «зелёный эликсир»."""
+    alias_tokens = [t for t in normalize_text(alias).split() if len(t) >= 3]
+    text_tokens = [t for t in normalize_text(text).split() if len(t) >= 3]
+    if not alias_tokens or not text_tokens or not any(len(t) >= 4 for t in alias_tokens):
+        return False
+    return all(any(stems_match(q, a) for q in text_tokens) for a in alias_tokens)
+
+
+def question_stems(text: str) -> list[str]:
+    """Stems of the question's words (≥4 letters) for the candidate pre-filter."""
+    return sorted({stem(t) for t in normalize_text(text).split() if len(t) >= 4})
+
+
 def fuzzy_single_word_match(text: str, alias: str) -> bool:
     phrase = normalize_text(alias)
     if not phrase or " " in phrase or len(phrase) < 6:
@@ -106,15 +135,18 @@ def score_alias_candidate(row: dict[str, Any], question: str) -> int | None:
     exact = normalized == alias or compact == alias_compact
     partial = alias in normalized or alias_compact in compact
     fuzzy = fuzzy_single_word_match(normalized, alias)
+    stemmed = not (exact or partial) and stem_phrase_match(normalized, alias)
     if match_type == "weak" and not exact:
         return None
-    if not (exact or partial or fuzzy):
+    if not (exact or partial or fuzzy or stemmed):
         return None
     score = int(row.get("priority") or 0)
     if exact:
         score += 10000 + len(alias)
     elif partial:
         score += 2000 + len(alias)
+    elif stemmed:
+        score += 1500 + len(alias)
     else:
         score += 500 + len(alias)
     return score
