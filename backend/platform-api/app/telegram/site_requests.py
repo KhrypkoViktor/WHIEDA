@@ -74,6 +74,43 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
     await _deliver(int(chat_id), "\n".join(lines))
 
 
+_STEP_LABELS = {
+    "awaiting_subdomain": "адрес сайта",
+    "awaiting_photo": "фото",
+    "awaiting_text": "текст о себе",
+    "awaiting_plan": "выбор пакета",
+    "awaiting_payment": "оплата",
+}
+
+
+async def _notify_owner_step(msg: TelegramMessage, request: dict[str, Any], *, done: str) -> None:
+    """Владелец узнаёт о каждом шаге заявки, а не только о чеке: люди бросали
+    анкету на адресе или фото, и об этом никто не знал (владелец, 22.09.2026:
+    «мне нужны алерты в бота, когда заполняют данные»). Фото копируется
+    владельцу сразу — раньше его слали ему в личку отдельно."""
+    owner_id = str(get_settings().platform_billing_owner_telegram_id or "").strip()
+    if not owner_id.isdigit() or int(owner_id) == int(msg.chat_id):
+        return
+    who = f"@{msg.username}" if msg.username else str(msg.chat_id)
+    if done == "фото" and msg.file_id:
+        await copy_telegram_message(
+            chat_id=owner_id,
+            from_chat_id=str(msg.chat_id),
+            message_id=msg.message_id,
+            bot_token=current_bot_binding().bot_token,
+        )
+    subdomain = request.get("requested_subdomain")
+    lines = [
+        f"Заявка на сайт — {who}: {done} получено.",
+        f"Адрес: {subdomain}.wwc.best" if subdomain else "Адрес: ещё не выбран",
+        f"Дальше: {_STEP_LABELS.get(str(request.get('status')), request.get('status'))}.",
+    ]
+    if done == "текст о себе" and request.get("intro_text"):
+        lines.append("")
+        lines.append(str(request["intro_text"])[:700])
+    await _deliver(int(owner_id), chr(10).join(lines))
+
+
 def _payment_text(request: dict[str, Any]) -> str:
     total = both(int(request["total_amount_minor"]), str(request["currency"]))
     rub = request["currency"] == "RUB"
@@ -235,10 +272,13 @@ async def try_handle_site_request_message(
         status = str(request["status"])
         if status == "awaiting_subdomain" and msg.text:
             request = await set_site_request_subdomain(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(msg, request, done="адрес сайта")
         elif status == "awaiting_photo" and msg.file_id:
             request = await set_site_request_photo(tenant.tenant_id, actor_id, msg.file_id)
+            await _notify_owner_step(msg, request, done="фото")
         elif status == "awaiting_text" and msg.text:
             request = await set_site_request_intro(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(msg, request, done="текст о себе")
         elif status == "awaiting_payment" and msg.file_id:
             request = await submit_site_payment_proof(
                 tenant.tenant_id,
