@@ -67,10 +67,14 @@ MAX_CATALOG_PAGE_SIZE = 8
 SKU_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 
 
+_LEADING_EMOJI_RE = re.compile(r"^[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\s]+")
+
+
 def _normalize(value: str) -> str:
     text = str(value or "").strip().lower()
+    text = _LEADING_EMOJI_RE.sub("", text)
     text = re.sub(r"\s+", " ", text)
-    return text.rstrip("?!.,:;…")
+    return text.strip().rstrip("?!.,:;…")
 
 LABEL_PRODUCTS = "📦 Товары"
 LABEL_CALCULATOR = "🧮 Калькулятор"

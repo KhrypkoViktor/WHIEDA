@@ -69,10 +69,15 @@ def levenshtein_distance(left: str, right: str, max_distance: int = 2) -> int:
 
 
 def stem(word: str) -> str:
-    """Cheap Russian stem: «сауны»/«сауна» → «саун», «красного»/«красный» → «красн».
-    Words shorter than 4 letters are kept whole."""
-    w = str(word or "")
-    return w[: max(4, len(w) - 2)] if len(w) > 4 else w
+    """Cheap Russian stem: «сауны»/«сауна» → «саун», «красного»/«красный» → «красн»,
+    «зелёный»/«зеленый» → «зеле». Endings up to three letters are dropped, at
+    least four letters stay; ё folds into е."""
+    w = str(word or "").replace("ё", "е")
+    if len(w) <= 4:
+        return w
+    if len(w) == 5:
+        return w[:4]
+    return w[: max(4, len(w) - 3)]
 
 
 def stems_match(left: str, right: str) -> bool:

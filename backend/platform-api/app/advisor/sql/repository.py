@@ -127,7 +127,7 @@ async def fetch_alias_candidates(conn, tenant_id: str, question: str) -> list[di
             or %s like ('%%' || lower(a.alias) || '%%')
             or %s like ('%%' || lower(a.alias) || '%%')
             or lower(p.canonical_name) like %s
-            or lower(a.alias) like any(%s)
+            or translate(lower(a.alias), 'ё', 'е') like any(%s)
           )
         order by a.priority desc, length(a.alias) desc
         limit 60

@@ -225,6 +225,16 @@ EXPLICIT_PRODUCT_REQUEST_RE = re.compile(
 ACTIVATOR_BASE_CHOICE_RE = re.compile(r"\b(обычн|базов|стандарт)\w*\b", re.I)
 ACTIVATOR_PRO_CHOICE_RE = re.compile(r"\b(pro|про)\b", re.I)
 ACTIVATOR_SWITCH_WORDS = {"обычный", "обычная", "базовый", "стандартный", "pro", "про"}
+# normalize_text() has already stripped the leading emoji.
+MENU_LABEL_QUESTIONS = {
+    "товары": "какие есть товары",
+    "бизнес": "какие виды входа",
+    "компания": "расскажи о компании",
+    "о компании": "расскажи о компании",
+    "подбор": "подбери товар",
+    "встречи": "мероприятия",
+    "калькулятор": "калькулятор",
+}
 
 
 async def run_structured_query(
@@ -239,6 +249,13 @@ async def run_structured_query(
     slug = str(body.get("slug") or "").strip() or None
     normalized = normalize_text(question)
     channel = str(body.get("channel") or body.get("surface") or "advisor").strip()[:32] or "advisor"
+
+    # Menu labels typed or pasted with their emoji («📦 Товары», «📈 Бизнес»):
+    # route by the same questions the Telegram menu uses.
+    menu_question = MENU_LABEL_QUESTIONS.get(normalized)
+    if menu_question and menu_question != normalized:
+        question = menu_question
+        normalized = normalize_text(question)
 
     service_intent = detect_service_intent(question)
     if service_intent:
@@ -975,7 +992,8 @@ async def run_structured_query(
         # even when no clarification is pending.
         if not product and is_home_tenant(tenant.tenant_id) and normalized in ACTIVATOR_SWITCH_WORDS:
             last_sku = str(stored.get("last_product_sku") or "")
-            if last_sku in {"M015-00", "EU-N000031-25"}:
+            last_name = normalize_text(str(stored.get("last_product_name") or ""))
+            if last_sku in {"M015-00", "EU-N000031-25"} or "активатор" in last_name:
                 wanted = "M015-00" if ACTIVATOR_BASE_CHOICE_RE.search(normalized) else "EU-N000031-25"
                 product = await repo.resolve_product_by_sku(conn, tenant.tenant_id, wanted)
 

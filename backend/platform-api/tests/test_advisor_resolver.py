@@ -74,3 +74,15 @@ def test_pick_best_product_prefers_pro_for_full_question():
     best = pick_best_product("что такое активатор клеток pro", rows, allow_pro=True)
     assert best is not None
     assert best["sku"] == "EU-N000031-25"
+
+
+def test_stems_reach_inflected_product_names():
+    from app.advisor.sql.resolver import stem, stem_phrase_match
+
+    assert stem("красного") == stem("красный") == "красн"
+    assert stem("сауны") == stem("сауна") == "саун"
+    assert stem("зелёный") == stem("зеленый")
+    assert stem_phrase_match("цена красного эликсира", "красный эликсир")
+    assert stem_phrase_match("зеленый эликсир", "зелёный эликсир")
+    assert stem_phrase_match("цена сауны", "сауна")
+    assert not stem_phrase_match("активатор клеток", "паста")
