@@ -993,7 +993,8 @@ async def run_structured_query(
         if not product and is_home_tenant(tenant.tenant_id) and normalized in ACTIVATOR_SWITCH_WORDS:
             last_sku = str(stored.get("last_product_sku") or "")
             last_name = normalize_text(str(stored.get("last_product_name") or ""))
-            if last_sku in {"M015-00", "EU-N000031-25"} or "активатор" in last_name:
+            # With no remembered product the only «обычный / PRO» pair is the activator.
+            if last_sku in {"M015-00", "EU-N000031-25"} or "активатор" in last_name or not last_sku:
                 wanted = "M015-00" if ACTIVATOR_BASE_CHOICE_RE.search(normalized) else "EU-N000031-25"
                 product = await repo.resolve_product_by_sku(conn, tenant.tenant_id, wanted)
 
