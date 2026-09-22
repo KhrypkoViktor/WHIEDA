@@ -28,14 +28,18 @@ importer = _load_module("golden_importer", LAB / "importer.py")
 
 
 @pytest.fixture(scope="module")
-def golden_cases():
-    path = TG / "whieda_telegram_golden_cases_v1.jsonl"
+def golden_cases(tmp_path_factory):
+    """Rebuild into a temp folder: the corpus in the repo is curated (its
+    expectations are the bot's contract) and a test run must not replace it."""
     build = TG / "build_golden_corpus.py"
     if build.is_file():
         import subprocess
 
-        subprocess.run([sys.executable, str(build)], cwd=str(ROOT), check=True)
-    return corpus.load_jsonl(path)
+        out = tmp_path_factory.mktemp("golden_build")
+        subprocess.run(
+            [sys.executable, str(build), "--out-dir", str(out)], cwd=str(ROOT), check=True
+        )
+    return corpus.load_jsonl(TG / "whieda_telegram_golden_cases_v1.jsonl")
 
 
 @pytest.fixture(scope="module")

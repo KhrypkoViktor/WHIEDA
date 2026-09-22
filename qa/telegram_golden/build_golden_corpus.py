@@ -38,7 +38,28 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     )
 
 
+def _out_dir() -> Path:
+    """Where the built corpus lands. The curated corpus (the one the bot is
+    measured against) lives next to this script, and a test run used to
+    overwrite it silently — `--out-dir` lets a test build into a temp folder
+    (found 22.09.2026, after a test run replaced 267 curated checks)."""
+    args = sys.argv[1:]
+    for index, arg in enumerate(args):
+        if arg == "--out-dir" and index + 1 < len(args):
+            return Path(args[index + 1])
+        if arg.startswith("--out-dir="):
+            return Path(arg.split("=", 1)[1])
+    return TG
+
+
 def main() -> int:
+    out_dir = _out_dir()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    global OUT_CASES, OUT_FLOWS, OUT_REPORT
+    OUT_CASES = out_dir / OUT_CASES.name
+    OUT_FLOWS = out_dir / OUT_FLOWS.name
+    OUT_REPORT = out_dir / "reports" / OUT_REPORT.name
+
     compile_script = TG / "compile_snapshot_fixtures.py"
     if compile_script.is_file():
         subprocess.run([sys.executable, str(compile_script)], cwd=str(ROOT), check=False)
