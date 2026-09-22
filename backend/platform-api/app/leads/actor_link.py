@@ -17,7 +17,10 @@ and the conflict is logged for an operator.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
+import re
 
 from app.db import fetch_one, tenant_connection
 from app.telegram.log_safe import chat_ref
@@ -265,3 +268,87 @@ async def merge_anonymous_actor_into_partner(
         extra={"tenant_id": tenant_id, "actor_id": partner_id, "merged_from": anonymous_id, "chat_id": chat_ref(telegram_chat_id)},
     )
     return {"partner_actor_id": partner_id, "anonymous_actor_id": anonymous_id}
+
+
+# --- Привязка партнёра без @username ------------------------------------
+#
+# У части партнёров в Telegram нет имени пользователя (Светлана Есенина,
+# 22.09.2026: «подключай ей заявки в телеграм»), и привязка по @username выше
+# для них не срабатывает — чат некуда записать, а заявки без chat_id уходят
+# владельцу. Партнёру отправляют личную ссылку `?start=bind_<ref>_<подпись>`:
+# одно нажатие «Старт» — и её чат встаёт в её же строку.
+#
+# Подпись — HMAC на вебхук-секрете бота: ссылка не подделывается и не
+# угадывается по ref-коду, но живёт вечно, поэтому её шлют лично партнёру.
+
+BIND_START_PREFIX = "bind_"
+_BIND_RE = re.compile(r"^bind_([a-z0-9][a-z0-9_-]{1,38})_([0-9a-f]{12})$", re.IGNORECASE)
+
+
+def bind_signature(ref_code: str, secret: str) -> str:
+    return hmac.new(str(secret).encode(), f"bind:{ref_code}".lower().encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def build_bind_start_token(ref_code: str, secret: str) -> str:
+    ref = str(ref_code).strip().lower()
+    return f"{BIND_START_PREFIX}{ref}_{bind_signature(ref, secret)}"
+
+
+def parse_bind_start_token(token: str, secret: str) -> str | None:
+    """Ref-код из bind_<ref>_<подпись>, "" при неверной подписи, None — не наш токен."""
+    raw = str(token or "").strip()
+    if not raw.lower().startswith(BIND_START_PREFIX):
+        return None
+    match = _BIND_RE.match(raw)
+    if not match:
+        return ""
+    ref, signature = match.group(1).lower(), match.group(2).lower()
+    return ref if hmac.compare_digest(signature, bind_signature(ref, secret)) else ""
+
+
+_BIND_SQL = """
+update lead_actors
+   set telegram_chat_id = %(chat_id)s,
+       telegram_user_id = coalesce(telegram_user_id, %(user_id)s),
+       updated_at = now()
+ where tenant_id = %(tenant_id)s
+   and active
+   and actor_id = (
+       select owner_id from referral_profiles
+        where tenant_id = %(tenant_id)s and ref_code = %(ref_code)s
+   )
+   and coalesce(telegram_chat_id, '') = ''
+   and not exists (
+       select 1 from lead_actors c
+        where c.tenant_id = %(tenant_id)s
+          and c.telegram_chat_id = %(chat_id)s
+          and c.actor_id <> lead_actors.actor_id
+   )
+returning actor_id
+"""
+
+
+async def bind_partner_chat_by_ref(
+    tenant_id: str,
+    *,
+    ref_code: str,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+) -> str | None:
+    """Записать чат в строку партнёра этого ref. None — если чат уже стоит
+    (у неё же или у другого актора): существующая привязка не перетирается."""
+    params = {
+        "tenant_id": tenant_id,
+        "ref_code": str(ref_code).strip().lower(),
+        "chat_id": str(telegram_chat_id),
+        "user_id": int(telegram_user_id),
+    }
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(conn, _BIND_SQL, params)
+    actor_id = str(row.get("actor_id") or "") if row else ""
+    if actor_id:
+        logger.info(
+            "partner_chat_bound_by_token",
+            extra={"tenant_id": tenant_id, "actor_id": actor_id, "chat_id": chat_ref(telegram_chat_id)},
+        )
+    return actor_id or None

@@ -15,9 +15,11 @@ from app.db_feature_readiness import (
 )
 from app.identity.service import exchange_telegram_link_token
 from app.leads.actor_link import (
+    bind_partner_chat_by_ref,
     fill_lead_actor_user_id,
     link_lead_actor_by_username,
     merge_anonymous_actor_into_partner,
+    parse_bind_start_token,
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
@@ -227,6 +229,36 @@ async def handle_referral_start_token(
             trace_id=trace_id,
         )
     return {"ok": result.status == "attributed", "route": "referral_start", "status": result.status, "trace_id": trace_id}
+
+
+async def handle_bind_start_token(
+    tenant: TenantContext, msg: TelegramMessage, ref_code: str, *, trace_id: str
+) -> dict[str, Any]:
+    """Личная ссылка партнёра без @username: «Старт» ставит её чат в её строку,
+    и заявки с сайта идут ей, а не владельцу (Светлана Есенина, 22.09.2026)."""
+    if msg.chat_type != "private":
+        return {"ok": True, "route": "partner_bind", "status": "private_chat_required", "trace_id": trace_id}
+    if not ref_code:
+        await deliver_text(msg.chat_id, "Ссылка не подошла. Попросите у Виктора новую.")
+        return {"ok": True, "route": "partner_bind", "status": "invalid", "trace_id": trace_id}
+    actor_id = await bind_partner_chat_by_ref(
+        tenant.tenant_id,
+        ref_code=ref_code,
+        telegram_user_id=msg.user_id,
+        telegram_chat_id=msg.chat_id,
+    )
+    if actor_id:
+        await deliver_text(
+            msg.chat_id,
+            chr(10).join([
+                f"Готово: заявки с сайта {ref_code}.wwc.best теперь приходят сюда.",
+                "",
+                "Личный кабинет: /cabinet",
+            ]),
+        )
+        return {"ok": True, "route": "partner_bind", "status": "bound", "trace_id": trace_id}
+    await deliver_text(msg.chat_id, "Этот чат уже привязан. Личный кабинет: /cabinet")
+    return {"ok": True, "route": "partner_bind", "status": "already_bound", "trace_id": trace_id}
 
 
 async def handle_site_start_token(
@@ -500,6 +532,11 @@ async def _process_core_telegram_update_scoped(
 
     start_token = parse_start_token(msg.text)
     if start_token:
+        # Подпись ссылки — на секрете вебхука этого бота (не на глобальном
+        # значении настроек: рантайм читает только своё связывание).
+        bind_ref = parse_bind_start_token(start_token, current_bot_binding().webhook_secret)
+        if bind_ref is not None:
+            return await handle_bind_start_token(tenant, msg, bind_ref, trace_id=trace_id)
         if parse_site_start_token(start_token) is not None:
             return await handle_site_start_token(tenant, msg, start_token, trace_id)
         if parse_referral_start_token(start_token) is not None:
