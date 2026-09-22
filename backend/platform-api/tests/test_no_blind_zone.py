@@ -37,6 +37,17 @@ ACTIVATOR = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_solution_bundles():
+    """The engine loads solution bundles from the catalogue on every product
+    question; these unit tests mock the connection, so the bundle query has
+    nothing to talk to. Tests that need bundles patch this themselves."""
+    with patch(
+        "app.advisor.sql.engine.repo.load_active_solution_bundles", AsyncMock(return_value=[])
+    ):
+        yield
+
+
 def _fake_tenant_connection(conn):
     @asynccontextmanager
     async def _cm(_tenant_id: str):
@@ -60,7 +71,7 @@ def test_sanitize_user_text_replaces_prohibited_seed():
     bad = "Пока нет подтверждённого ответа в базе WHIEDA. Передам вопрос команде."
     cleaned = sanitize_user_text(bad, fallback_kind="unknown_product")
     assert "передам" not in cleaned.lower()
-    assert "выберите направление" in cleaned.lower()
+    assert "каталоге whieda не нашёл" in cleaned.lower()
 
 
 def test_gap_deduplication_expires_after_short_window():
@@ -138,7 +149,7 @@ async def test_emit_gap_response_returns_text_on_persist_failure():
             gap_kind="unknown_product",
             trace_id="trace-x",
         )
-    assert response["answer_mode"] == "knowledge_gap"
+    assert response["answer_mode"] == "clarification"
     assert response["gap_kind"] == "unknown_product"
     assert response["next_steps"]
 
@@ -171,7 +182,7 @@ async def test_unknown_product_no_prohibited_fragments():
                                             "trace-nbz-1",
                                         )
 
-    assert result["answer_mode"] == "knowledge_gap"
+    assert result["answer_mode"] == "clarification"
     assert result["gap_kind"] == "unknown_product"
     lowered = result["answer_text"].lower()
     for fragment in PROHIBITED_USER_FRAGMENTS:
@@ -196,7 +207,7 @@ async def test_unknown_product_like_phrase_uses_catalogue_gap():
                                         "trace-nbz-unknown",
                                     )
 
-    assert result["answer_mode"] == "knowledge_gap"
+    assert result["answer_mode"] == "clarification"
     assert result["gap_kind"] == "unknown_product"
     assert "каталог" in result["answer_text"].casefold()
 

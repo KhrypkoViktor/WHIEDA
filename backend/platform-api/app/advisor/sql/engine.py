@@ -70,7 +70,6 @@ from app.advisor.sql.text import (
     is_product_selection_request,
     is_menu_reprompt,
     is_catalog_list_request,
-    is_smalltalk_out_of_scope,
     normalize_text,
     product_query_text,
     wants_partner_price,
@@ -305,7 +304,9 @@ async def run_structured_query(
             trace_id=trace_id,
             channel=channel,
             text=gap_text_for(tenant.tenant_id, "unsupported_topic"),
-            answer_mode="clarification" if is_smalltalk_out_of_scope(question) else "knowledge_gap",
+            # An external topic is not a hole in our knowledge: we redirect, we do
+            # not queue it for someone to write an article about (owner, 22.09.2026).
+            answer_mode="clarification",
         )
 
     if is_calculator_request(question):

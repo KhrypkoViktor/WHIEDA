@@ -39,6 +39,17 @@ async def _fake_conn(_tenant_id: str):
     yield object()
 
 
+@pytest.fixture(autouse=True)
+def _no_solution_bundles():
+    """These tests hand the engine a stub connection; the catalogue's solution
+    bundles are loaded with a real query, so keep that query out of the way."""
+    with patch(
+        "app.advisor.sql.engine.repo.load_active_solution_bundles", AsyncMock(return_value=[])
+    ):
+        yield
+
+
+
 @pytest.mark.asyncio
 async def test_typo_greeting_prive(whieda_tenant):
     with patch("app.advisor.sql.engine.tenant_connection", _fake_conn):
@@ -128,7 +139,7 @@ async def test_beer_request_is_out_of_scope_not_capabilities(whieda_tenant):
                 "tg-3",
             )
     assert result["gap_kind"] == "unsupported_topic"
-    assert "Выберите направление" in result["answer_text"]
+    assert "выберите направление" in result["answer_text"].casefold()
 
 
 @pytest.mark.asyncio
@@ -207,17 +218,21 @@ async def test_discomfort_boundary_not_catalogue_miss(whieda_tenant, question):
                 "tg-8",
             )
     assert result["gap_kind"] == "medical_or_safety_boundary"
-    assert "выберите направление" in result["answer_text"].casefold()
-    assert "каталог" not in result["answer_text"].casefold()
+    lowered = result["answer_text"].casefold()
+    # Since 21.09.2026 the answer opens with the boundary and then offers directions.
+    assert "не ставлю диагноз" in lowered or "не заменяет" in lowered
+    assert "сон и восстановление" in lowered
+    assert "каталог" not in lowered
 
 
 @pytest.mark.asyncio
 async def test_product_selection_is_a_safe_goal_prompt_not_catalogue_miss(whieda_tenant):
-    result = await run_structured_query(
-        whieda_tenant,
-        {"question": "подобрать товар", "session": "tg-select", "surface": "telegram"},
-        "tg-select",
-    )
+    with patch("app.advisor.sql.engine.tenant_connection", _fake_conn):
+        result = await run_structured_query(
+            whieda_tenant,
+            {"question": "подобрать товар", "session": "tg-select", "surface": "telegram"},
+            "tg-select",
+        )
     assert result["answer_mode"] == "clarification"
     assert result["answer_text"] == PRODUCT_SELECTION_FALLBACK
     assert "выберите направление" in result["answer_text"].casefold()

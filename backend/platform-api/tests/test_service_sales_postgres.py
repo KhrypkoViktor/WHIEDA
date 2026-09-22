@@ -77,7 +77,7 @@ def test_sale_lifecycle_deposit_and_partner_share():
 
             # 5. Nameless labels: e-mail when known, a short hash otherwise.
             assert await partner_label("whieda", "elena") == "elena@example.com"
-            assert (await partner_label("whieda", "olga")).startswith("партнёр без почты · ")
+            assert await partner_label("whieda", "olga") == "olga"  # no e-mail yet: the site login
 
             # 6. Activation happens once; the month report sums it all.
             from datetime import datetime, timezone

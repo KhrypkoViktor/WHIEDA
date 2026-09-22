@@ -17,6 +17,16 @@ async def _fake_conn(_tenant_id: str):
     yield object()
 
 
+@pytest.fixture(autouse=True)
+def _no_solution_bundles():
+    """The stub connection cannot answer the catalogue's solution-bundle query."""
+    with patch(
+        "app.advisor.sql.engine.repo.load_active_solution_bundles", AsyncMock(return_value=[])
+    ):
+        yield
+
+
+
 INTENT_CASES: list[tuple[str, str | None]] = [
     ("привет", "greeting"),
     ("здарова", "greeting"),
@@ -112,7 +122,7 @@ async def test_casual_oos_beer_not_capabilities(whieda_tenant, phrase: str) -> N
                 "tg-oos",
             )
     assert result["gap_kind"] == "unsupported_topic"
-    assert "Выберите направление" in result["answer_text"]
+    assert "выберите направление" in result["answer_text"].casefold()
     assert SERVICE_FALLBACKS["capabilities"].casefold() not in result["answer_text"].casefold()
 
 

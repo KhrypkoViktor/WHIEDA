@@ -13,7 +13,6 @@ The numbers live in ``service_tariffs`` and change by a bot command.
 
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -127,8 +126,10 @@ async def suggest_partner_for_client(tenant_id: str, *, client_telegram_user_id:
 
 
 async def partner_label(tenant_id: str, partner_ref: str | None) -> str:
-    """Nameless partner identifier for the administrator's group: e-mail login,
-    or a short hash until the e-mail is known (owner, 15.09.2026)."""
+    """Nameless partner identifier for the administrator's group: the e-mail
+    login when we know it, otherwise the partner's site login (ref code) —
+    the administrator cannot find a person by it, and we no longer wait for
+    the e-mails to arrive (owner, 22.09.2026)."""
     if not partner_ref:
         return "Виктор (прямая продажа)"
     async with tenant_connection(tenant_id) as conn:
@@ -144,8 +145,7 @@ async def partner_label(tenant_id: str, partner_ref: str | None) -> str:
     email = str((row or {}).get("email") or "").strip()
     if email:
         return email
-    short = hashlib.sha256(f"{tenant_id}:{partner_ref}".encode("utf-8")).hexdigest()[:6]
-    return f"партнёр без почты · {short}"
+    return str(partner_ref)
 
 
 # ----------------------------------------------------------------------------

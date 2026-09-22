@@ -255,14 +255,6 @@ def is_unsupported_topic(question: str) -> bool:
     return bool(OUT_OF_SCOPE_RE.search(question))
 
 
-_SMALLTALK_OOS_RE = re.compile(r"(пив(?:о|а|ку|очк|ка|ко)\b|\bbeer\b|выпить)", re.I)
-
-
-def is_smalltalk_out_of_scope(question: str) -> bool:
-    """Banter («пивка хочешь?») — answered as a clarification, not as a knowledge gap."""
-    return bool(_SMALLTALK_OOS_RE.search(question))
-
-
 def has_basket_intent(question: str) -> bool:
     return bool(BASKET_RE.search(question))
 
