@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 _IDENTIFIER = r"(?:@[A-Za-z0-9_]{1,32}|ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62})"
+_IDENTIFIER_RE = re.compile(_IDENTIFIER, re.IGNORECASE)
 _PAY_RE = re.compile(
     rf"^(?:оплата|/pay)\s+({_IDENTIFIER})\s+([0-9]+(?:[.,][0-9]{{1,2}})?)\s+(RUB|WUSD|WWC\$|W\$)(?:\s+(3|6|12))?$",
     re.IGNORECASE,
@@ -139,15 +140,17 @@ async def notify_payment_participants(payment: dict[str, Any]) -> None:
 
 
 def is_billing_command_candidate(text: str) -> bool:
-    """Owner billing commands. A bare «цена» / «статус» (no arguments) is a
-    partner's follow-up to a product card and belongs to the advisor — on
-    19.09.2026 every guest typing «цена» got the billing «forbidden» reply."""
+    """Owner billing commands. «цена» / «статус» are billing only when the next
+    word names a partner («ref:code» or «@username»): a bare «цена» is a
+    follow-up to a product card (fixed 19.09.2026), and «цена спирулина» is a
+    question to the advisor — both used to get «Команда недоступна»."""
     stripped = str(text or "").strip()
     head = _first_token(stripped)
     if head in {"оплата", "/pay", "/due", "/status", "/price", "безлимит", "/unlimited"}:
         return True
     if head in {"статус", "цена"}:
-        return len(stripped.split()) > 1
+        parts = stripped.split()
+        return len(parts) > 1 and bool(_IDENTIFIER_RE.fullmatch(parts[1]))
     return False
 
 

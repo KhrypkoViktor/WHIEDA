@@ -93,8 +93,28 @@ def test_billing_candidate_does_not_capture_free_text():
     assert not is_billing_command_candidate("оплатапотом @name 10 RUB")
 
 
-def test_internal_whieda_dollar_code_is_displayed_as_w_dollar():
-    assert _amount(3000, "WUSD") == "30 W$"
+@pytest.mark.parametrize(
+    "text",
+    ["цена спирулина", "цена активатора клеток", "цена", "статус заказа", "статус моей подписки"],
+)
+def test_price_and_status_questions_belong_to_the_advisor(text: str):
+    """22.09.2026: «цена спирулина» answered «Команда недоступна» to everyone
+    except the owner, because any argument made it look like a billing command."""
+    assert not is_billing_command_candidate(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["цена ref:olga PRO 15 WWC$", "статус @olga_samtsova", "статус ref:makarova"],
+)
+def test_owner_price_and_status_commands_still_route_to_billing(text: str):
+    assert is_billing_command_candidate(text)
+
+
+def test_internal_whieda_dollar_code_is_displayed_as_wwc_dollar():
+    # The internal code stayed WUSD; the money in messages is WWC$ since the
+    # currency naming of 14.09.2026 (1 W$ = 1 WWC$ = 100 ₽).
+    assert _amount(3000, "WUSD") == "30 WWC$"
 
 
 def test_callback_payload_fits_telegram_limit():

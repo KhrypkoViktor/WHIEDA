@@ -483,7 +483,14 @@ async def try_relay_user_message(
         return None
     if msg.text.startswith("/"):
         return None
-    ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id)
+    try:
+        ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id)
+    except RuntimeError as exc:
+        # Routing checks run without a database pool; a live Core always has one
+        # before it accepts Telegram updates (same rule as site_requests.py).
+        if "database pool is not initialized" in str(exc):
+            return None
+        raise
     if not ticket:
         return None
     return await _relay_user_to_admin(tenant, msg, ticket, trace_id=trace_id)

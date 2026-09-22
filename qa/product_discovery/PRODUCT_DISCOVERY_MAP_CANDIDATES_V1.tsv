@@ -33,8 +33,8 @@ magic	magic	bem_magic	1	EU-N000021-24	Набор Массажёра Magic Foherb
 капсулы	капсулы	supplements	1	F028-00	Капсулы линчжи ФОХОУ	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
 капсулы	капсулы	supplements	2	F024-00	Капсулы Сюэчинфу	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
 капсулы	капсулы	supplements	3	F007-00	Капсулы Железо, Кальций, Цинк, Селен	medium	generic_category	products.tsv capsule products	20260811T172219Z	multiple capsule SKUs
-чай	чай	supplements	1	F031-00	Чай Лювэй	high	ready_for_core_review	aliases.tsv alias='чай лювэй' -> F031-00	20260811T172219Z
-кофе	кофе	supplements	1	F034-00	Кофейный напиток с кордицепсом и коллагеном	high	ready_for_core_review	aliases.tsv alias='кофе с кордицепсом' -> F034-00	20260811T172219Z
+чай	чай	supplements	1	F031-00	Чай Лювэй	high	ready_for_core_review	aliases.tsv alias='чай лювэй' -> F031-00	20260811T172219Z	
+кофе	кофе	supplements	1	F034-00	Кофейный напиток с кордицепсом и коллагеном	high	ready_for_core_review	aliases.tsv alias='кофе с кордицепсом' -> F034-00	20260811T172219Z	
 бад	бад	supplements	1			low	generic_category	products.tsv multiple supplement SKUs; no single БАД alias	20260811T172219Z	Open category — show capsule/supplement family, not one random SKU
 сауна	сауна	lifestyle	1	M014-00	"МИНИСАУНА ""БА-ГУА"""	medium	ready_for_core_review	aliases.tsv alias='сауна' -> M014-00; priority=88; match_type=alias; answer_scope=price+description	20260811T172219Z	Короткий живой запрос по минисауне
 сон	сон	lifestyle	1	EU-N000014-24	Система для здорового сна 4 в 1	high	ready_for_core_review	products.tsv Система для здорового сна 4 в 1	20260811T172219Z	sleep kit

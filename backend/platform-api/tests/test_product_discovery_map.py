@@ -98,10 +98,17 @@ def test_policy_skus_exist_in_map():
 
 
 def test_triage_uses_live_hlr_report():
+    """The triage must come from the newest live HLR run, whichever it is: the
+    run id used to be hard-coded here and broke on every later report."""
+    import json
+
+    latest = json.loads(
+        (ROOT / "qa" / "human_language_rails" / "reports" / "latest.json").read_text(encoding="utf-8")
+    )
     triage = (PKG / "HLR_DISCOVERY_TRIAGE_V1.md").read_text(encoding="utf-8")
     assert "corpus_proxy" not in triage.casefold()
     assert "HLR_HTTP_REPORT_" in triage
-    assert "20260814T154952Z-f5e9841f" in triage
+    assert str(latest["run_id"]) in triage
 
 
 def test_lint_rejects_pодарок_ready():

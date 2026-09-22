@@ -8,6 +8,23 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+
+INTERNAL_SECRET = "test-internal-secret"
+INTERNAL_HEADERS = {"host": "wwc.best", "X-Platform-Internal-Secret": INTERNAL_SECRET}
+
+
+@pytest.fixture()
+def _internal_secret(monkeypatch):
+    """Gated since the 17.09.2026 security audit (F021): the route acts on a
+    named identity, so the caller proves it is Core."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_INTERNAL_API_SECRET", INTERNAL_SECRET)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import create_escalation, handle_onboarding_text
 
@@ -70,7 +87,7 @@ async def test_escalation_deduplicated():
 
 
 @pytest.mark.asyncio
-async def test_onboarding_command_http(client, monkeypatch):
+async def test_onboarding_command_http(client, monkeypatch, _internal_secret):
     monkeypatch.setattr(
         "app.onboarding.routes.handle_onboarding_text",
         AsyncMock(return_value={"ok": True, "answer_text": "План", "enrollment_id": "e1"}),
@@ -78,7 +95,7 @@ async def test_onboarding_command_http(client, monkeypatch):
     resp = await client.post(
         "/v1/onboarding/command",
         json={"telegram_user_id": 42, "text": "мой план"},
-        headers={"host": "wwc.best"},
+        headers=INTERNAL_HEADERS,
     )
     assert resp.status_code == 200
     assert "План" in resp.json()["answer_text"]

@@ -1,1 +1,4 @@
 *.sh text eol=lf
+# Snapshot fixtures are hashed byte for byte in their manifest.json: git must
+# not convert their line endings on Windows, or every hash check fails.
+qa/product_card_wording_audit/fixtures/** -text

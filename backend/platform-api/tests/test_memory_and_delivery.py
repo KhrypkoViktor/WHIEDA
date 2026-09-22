@@ -6,6 +6,23 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+
+INTERNAL_SECRET = "test-internal-secret"
+INTERNAL_HEADERS = {"host": "wwc.best", "X-Platform-Internal-Secret": INTERNAL_SECRET}
+
+
+@pytest.fixture()
+def _internal_secret(monkeypatch):
+    """Gated since the 17.09.2026 security audit (F021): the route acts on a
+    named identity, so the caller proves it is Core."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_INTERNAL_API_SECRET", INTERNAL_SECRET)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 from app.reports.delivery import format_leader_digest_message
 
 
@@ -31,7 +48,7 @@ def test_format_leader_digest_message():
 
 
 @pytest.mark.asyncio
-async def test_memory_fact_http(client, monkeypatch):
+async def test_memory_fact_http(client, monkeypatch, _internal_secret):
     monkeypatch.setattr(
         "app.memory.routes.upsert_memory_fact",
         AsyncMock(return_value={"ok": True, "fact_id": "f1", "fact_key": "preferred_product"}),
@@ -44,7 +61,7 @@ async def test_memory_fact_http(client, monkeypatch):
             "fact_key": "preferred_product",
             "fact_value": {"sku": "SKU-1"},
         },
-        headers={"host": "wwc.best"},
+        headers=INTERNAL_HEADERS,
     )
     assert resp.status_code == 200
     assert resp.json()["fact_key"] == "preferred_product"

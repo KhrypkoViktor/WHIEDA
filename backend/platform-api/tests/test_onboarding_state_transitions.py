@@ -7,6 +7,22 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+INTERNAL_SECRET = "test-internal-secret"
+INTERNAL_HEADERS = {"host": "wwc.best", "X-Platform-Internal-Secret": INTERNAL_SECRET}
+
+
+@pytest.fixture(autouse=True)
+def _internal_secret(monkeypatch):
+    """These routes act on a named identity and are gated since the 17.09.2026
+    security audit (F021); the tests call them as Core itself does."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_INTERNAL_API_SECRET", INTERNAL_SECRET)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.mark.asyncio
 async def test_onboarding_enroll_returns_state(client):
     with patch(
@@ -15,7 +31,7 @@ async def test_onboarding_enroll_returns_state(client):
     ):
         resp = await client.post(
             "/v1/onboarding/enroll",
-            headers={"host": "wwc.best"},
+            headers=INTERNAL_HEADERS,
             json={"telegram_user_id": 999, "idempotency_key": "en1"},
         )
     assert resp.status_code == 200
@@ -30,7 +46,7 @@ async def test_onboarding_command_postpone(client):
     ):
         resp = await client.post(
             "/v1/onboarding/command",
-            headers={"host": "wwc.best"},
+            headers=INTERNAL_HEADERS,
             json={"telegram_user_id": 999, "text": "перенести"},
         )
     assert resp.json()["status"] == "paused"
