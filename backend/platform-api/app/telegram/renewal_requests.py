@@ -252,3 +252,35 @@ async def try_handle_renewal_message(
     except RenewalRequestError as exc:
         await _deliver(msg.chat_id, str(exc))
         return {"ok": False, "route": "renewal", "status": "rejected", "trace_id": trace_id}
+
+
+# Партнёры пишут словами, а не жмут кнопки: «оплата», «продлить», «продление».
+# До 22.09.2026 такое сообщение попадало в командную ветку владельца и партнёр
+# получал «Команда недоступна». Теперь слово открывает то же продление, что и
+# кнопка в кабинете; у кого персонального сайта нет — отвечает советник.
+_RENEWAL_WORDS_RE = re.compile(
+    r"^(?:оплат(?:а|ить|у)|продл(?:ить|ение|и)|продлить\s+платформу|оплатить\s+сайт)[\s!.?]*$",
+    re.IGNORECASE,
+)
+
+
+def is_renewal_request_text(text: str) -> bool:
+    return bool(_RENEWAL_WORDS_RE.match(str(text or "").strip()))
+
+
+async def try_start_renewal_by_text(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any] | None:
+    if msg.chat_type != "private" or not is_renewal_request_text(msg.text):
+        return None
+    if _owner_allowed(msg.user_id):
+        # У владельца «оплата …» — команда биллинга, её разбирает billing.py.
+        return None
+    actor_id = await _actor(tenant, msg)
+    try:
+        request = await begin_renewal_request(tenant.tenant_id, actor_id)
+    except RenewalRequestError:
+        # Сайта нет — это не партнёр, пусть отвечает советник.
+        return None
+    await _prompt(msg.chat_id, request)
+    return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}

@@ -39,6 +39,7 @@ from app.telegram.referral_bonus import (
 from app.telegram.renewal_requests import (
     try_handle_renewal_callback,
     try_handle_renewal_message,
+    try_start_renewal_by_text,
 )
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
@@ -516,6 +517,13 @@ async def _process_core_telegram_update_scoped(
         site_request_result = await try_handle_site_request_message(tenant, msg, trace_id=trace_id)
         if site_request_result is not None:
             return site_request_result
+
+        # «оплата» / «продлить» словом от партнёра — то же продление, что и
+        # кнопка в кабинете (22.09.2026: раньше партнёр получал «Команда
+        # недоступна», потому что это команда владельца).
+        renewal_by_text = await try_start_renewal_by_text(tenant, msg, trace_id=trace_id)
+        if renewal_by_text is not None:
+            return renewal_by_text
 
     if not msg.text:
         return {"ok": True, "route": "ignored_media"}
