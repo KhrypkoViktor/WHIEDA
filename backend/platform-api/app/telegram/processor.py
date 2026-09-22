@@ -41,6 +41,7 @@ from app.telegram.renewal_requests import (
     try_handle_renewal_message,
     try_start_renewal_by_text,
 )
+from app.telegram.wwc_services import try_handle_wwc_service_text
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
     try_handle_site_request_message,
@@ -133,7 +134,9 @@ async def _remove_legacy_reply_keyboard(chat_id: int) -> None:
     binding = current_bot_binding()
     await send_telegram_text(
         chat_id=str(chat_id),
-        text="Меню обновлено. Открываю личный кабинет.",
+        # A first-time visitor has no old keyboard to replace, so the line must
+        # make sense to him too (owner, 22.09.2026).
+        text="Открываю личный кабинет.",
         bot_token=binding.bot_token,
         reply_markup=main_menu_reply_keyboard(),
     )
@@ -586,5 +589,11 @@ async def _process_core_telegram_update_scoped(
     relay_result = await try_relay_user_message(tenant, msg, trace_id=trace_id)
     if relay_result is not None:
         return relay_result
+
+    # Our own offer («закажу сайт», «сколько стоит подписка») — the advisor knows
+    # the WHIEDA catalogue, not what WWC sells (owner, 22.09.2026).
+    wwc_service_result = await try_handle_wwc_service_text(tenant, msg, trace_id=trace_id)
+    if wwc_service_result is not None:
+        return wwc_service_result
 
     return await handle_advisor_query(tenant, msg, trace_id)

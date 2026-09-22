@@ -110,7 +110,11 @@ PRO_MARKER_RE = re.compile(r"(?:^|\s)pro(?:\s|$)", re.I)
 
 def has_pro_marker(value: str) -> bool:
     return bool(PRO_MARKER_RE.search(str(value or "")))
+
+
 SMALLTALK_STATUS_RE = re.compile(r"^(как дела|как ты|как жизнь|ты живой)\??$", re.I)
+# «спасибо», «благодарю», «спс» — a courtesy, not an unrouted message.
+THANKS_RE = re.compile("^(спасибо|спасибочки|спс|благодарю|благодарствую|thanks|thank you)", re.I)
 PV_DEFINITION_RE = re.compile(
     r"что\s+(?:такое|это|значит)\s+(?:pv|балл|баллы|баллов?)\b",
     re.I,
@@ -160,6 +164,8 @@ def detect_service_intent(question: str) -> str | None:
         return "greeting"
     if SMALLTALK_STATUS_RE.match(normalized):
         return "smalltalk_status"
+    if THANKS_RE.match(normalized):
+        return "thanks"
     if normalized in {"помощь", "помоги", "меню", "команды", "help"}:
         return "help"
     if CAPABILITY_RE.search(normalized):

@@ -108,6 +108,7 @@ SERVICE_FALLBACKS = {
         "Напишите название товара или вопрос своими словами."
     ),
     "smalltalk_status": "Спасибо, я на связи. Задайте вопрос по товару или бизнесу WHIEDA.",
+    "thanks": "Пожалуйста! Если что-то ещё нужно — про товар, цену или бизнес WHIEDA — спрашивайте.",
     "capabilities": (
         "Я могу помочь с WHIEDA:\n\n"
         "📦 Товары\n"
@@ -138,6 +139,7 @@ CAPABILITY_INTENT_ALIASES = {
     "greeting": ("greeting", "hello"),
     "help": ("help", "menu"),
     "smalltalk_status": ("smalltalk_status", "status"),
+    "thanks": ("thanks", "thank_you"),
 }
 
 PV_DEFINITION_FALLBACK = (
