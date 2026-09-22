@@ -75,6 +75,7 @@ async def admin_auth_telegram_confirm(
 @router.get("/auth/challenge/{challenge_id}")
 async def admin_auth_challenge_poll(
     challenge_id: str,
+    request: Request,
     response: Response,
     x_browser_nonce: Annotated[str | None, Header(alias="X-Browser-Nonce")] = None,
 ) -> dict:
@@ -85,7 +86,7 @@ async def admin_auth_challenge_poll(
         browser_nonce=x_browser_nonce,
     )
     if raw_session:
-        set_session_cookie(response, raw_session)
+        set_session_cookie(response, raw_session, request)
     return payload
 
 
@@ -94,7 +95,7 @@ async def admin_auth_logout(request: Request, response: Response) -> dict:
     raw = read_session_cookie(request)
     if raw:
         await revoke_session(raw)
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     return {"ok": True, "logged_out": True}
 
 

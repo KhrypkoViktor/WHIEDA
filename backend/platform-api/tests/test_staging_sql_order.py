@@ -87,7 +87,7 @@ def test_apply_script_lists_each_expected_file_once():
     listed = apply_script_files()
     assert listed == EXPECTED_ORDER
     assert len(listed) == len(set(listed))
-    assert len(listed) == 31
+    assert len(listed) == 34  # +telegram_consent_v1, +site_request_plans_v10 (19.09.2026), +lead_actor_channels_v11 (20.09.2026)
 
 
 def test_core_apply_sql_does_not_seed_nsp_maxim():

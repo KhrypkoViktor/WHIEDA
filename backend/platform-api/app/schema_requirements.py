@@ -37,11 +37,14 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # identity and journey
             "identity_link_tokens",
             "telegram_identity_links",
+            "telegram_consents",
             "visitor_sessions",
             "journey_attributions",
             "interaction_events",
             # leads and partners
             "lead_actors",
+            # Каналы связи актора (telegram/max/...): миграция V11, канал Max.
+            "lead_actor_channels",
             "referral_profiles",
             "service_locations",
             "website_leads",

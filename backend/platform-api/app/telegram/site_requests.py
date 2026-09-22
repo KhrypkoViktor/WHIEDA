@@ -19,6 +19,7 @@ from app.site_requests.service import (
     set_site_request_country,
     set_site_request_intro,
     set_site_request_photo,
+    set_site_request_plan,
     set_site_request_subdomain,
     submit_site_payment_proof,
 )
@@ -34,7 +35,7 @@ from app.tenancy import TenantContext
 
 
 _CALLBACK_RE = re.compile(
-    r"^site:(create|country:(?:BY|RU)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^site:(create|country:(?:BY|RU)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -73,20 +74,59 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
     await _deliver(int(chat_id), "\n".join(lines))
 
 
-def _payment_text(request: dict[str, Any]) -> str:
-    # PRO 3 мес + настройка сайта; суммы приходят из site_requests.service.
-    total = both(int(request["total_amount_minor"]), str(request["currency"]))
-    if request["currency"] == "RUB":
-        return (
-            f"Сайт на 3 месяца (PRO 3 000 ₽) и его настройка (2 000 ₽): {total}.\n"
-            f"{PAYMENT_RU}\n"
-            "После перевода пришлите сюда скриншот чека."
+_STEP_LABELS = {
+    "awaiting_subdomain": "адрес сайта",
+    "awaiting_photo": "фото",
+    "awaiting_text": "текст о себе",
+    "awaiting_plan": "выбор пакета",
+    "awaiting_payment": "оплата",
+}
+
+
+async def _notify_owner_step(msg: TelegramMessage, request: dict[str, Any], *, done: str) -> None:
+    """Владелец узнаёт о каждом шаге заявки, а не только о чеке: люди бросали
+    анкету на адресе или фото, и об этом никто не знал (владелец, 22.09.2026:
+    «мне нужны алерты в бота, когда заполняют данные»). Фото копируется
+    владельцу сразу — раньше его слали ему в личку отдельно."""
+    owner_id = str(get_settings().platform_billing_owner_telegram_id or "").strip()
+    if not owner_id.isdigit() or int(owner_id) == int(msg.chat_id):
+        return
+    who = f"@{msg.username}" if msg.username else str(msg.chat_id)
+    if done == "фото" and msg.file_id:
+        await copy_telegram_message(
+            chat_id=owner_id,
+            from_chat_id=str(msg.chat_id),
+            message_id=msg.message_id,
+            bot_token=current_bot_binding().bot_token,
         )
-    return (
-        f"Сайт на 3 месяца (PRO 30 WWC$) и его настройка (20 WWC$): {total}.\n"
-        f"{PAYMENT_BY}\n"
-        "После перевода пришлите сюда скриншот чека."
-    )
+    subdomain = request.get("requested_subdomain")
+    lines = [
+        f"Заявка на сайт — {who}: {done} получено.",
+        f"Адрес: {subdomain}.wwc.best" if subdomain else "Адрес: ещё не выбран",
+        f"Дальше: {_STEP_LABELS.get(str(request.get('status')), request.get('status'))}.",
+    ]
+    if done == "текст о себе" and request.get("intro_text"):
+        lines.append("")
+        lines.append(str(request["intro_text"])[:700])
+    await _deliver(int(owner_id), chr(10).join(lines))
+
+
+def _payment_text(request: dict[str, Any]) -> str:
+    total = both(int(request["total_amount_minor"]), str(request["currency"]))
+    rub = request["currency"] == "RUB"
+    if str(request.get("plan_code") or "site") == "bundle":
+        what = (
+            "Платформа + Клуб на 3 месяца (сайт 3 000 ₽ + клуб 7 500 ₽ по акции, настройка в подарок)"
+            if rub else
+            "Платформа + Клуб на 3 месяца (сайт 30 WWC$ + клуб 75 WWC$ по акции, настройка в подарок)"
+        )
+    else:
+        what = (
+            "Сайт на 3 месяца (PRO 3 000 ₽) и его настройка (2 000 ₽)"
+            if rub else
+            "Сайт на 3 месяца (PRO 30 WWC$) и его настройка (20 WWC$)"
+        )
+    return f"{what}: {total}.\n{PAYMENT_RU if rub else PAYMENT_BY}\nПосле перевода пришлите сюда скриншот чека."
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None) -> None:
@@ -133,6 +173,16 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             chat_id,
             "Напишите 2-7 предложений о себе, своём опыте и о том, с чем к вам можно обратиться. "
             "Мы сократим и приведём текст к формату сайта.",
+        )
+    elif status == "awaiting_plan":
+        rub = request.get("country_code") == "RU"
+        await _deliver(
+            chat_id,
+            "Что оформляем?",
+            reply_markup={"inline_keyboard": [
+                [{"text": "Сайт + настройка — 5 000 ₽" if rub else "Сайт + настройка — 50 WWC$", "callback_data": "site:plan:site"}],
+                [{"text": "Платформа + Клуб — 10 500 ₽" if rub else "Платформа + Клуб — 105 WWC$", "callback_data": "site:plan:bundle"}],
+            ]},
         )
     elif status == "awaiting_payment":
         await _deliver(chat_id, _payment_text(request))
@@ -187,6 +237,8 @@ async def try_handle_site_request_callback(
         actor_id = await _actor(tenant, callback)
         if action == "create":
             request = await begin_site_request(tenant.tenant_id, actor_id)
+        elif action.startswith("plan:"):
+            request = await set_site_request_plan(tenant.tenant_id, actor_id, action.rsplit(":", 1)[1])
         else:
             request = await set_site_request_country(
                 tenant.tenant_id, actor_id, action.rsplit(":", 1)[1]
@@ -220,10 +272,13 @@ async def try_handle_site_request_message(
         status = str(request["status"])
         if status == "awaiting_subdomain" and msg.text:
             request = await set_site_request_subdomain(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(msg, request, done="адрес сайта")
         elif status == "awaiting_photo" and msg.file_id:
             request = await set_site_request_photo(tenant.tenant_id, actor_id, msg.file_id)
+            await _notify_owner_step(msg, request, done="фото")
         elif status == "awaiting_text" and msg.text:
             request = await set_site_request_intro(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(msg, request, done="текст о себе")
         elif status == "awaiting_payment" and msg.file_id:
             request = await submit_site_payment_proof(
                 tenant.tenant_id,
@@ -247,6 +302,7 @@ async def try_handle_site_request_message(
                             "Новая заявка на сайт.",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
                             f"Страна: {request['country_code']}",
+                            f"Пакет: {'Платформа + Клуб' if str(request.get('plan_code') or 'site') == 'bundle' else 'сайт + настройка'}",
                             f"Оплата: {money(int(request['total_amount_minor']), str(request['currency']))}",
                             "Чек выше.",
                         ]

@@ -40,6 +40,8 @@ MIGRATIONS = (
     "platform_partner_renewal_requests_v5.sql",
     "platform_partner_subscription_reminders_v6.sql",
     "platform_partner_products_v7.sql",
+    "platform_partner_site_request_plans_v10.sql",
+    "platform_lead_actor_channels_v11.sql",
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 
@@ -62,6 +64,9 @@ create table referral_profiles (
   owner_id text not null references lead_actors(actor_id),
   display_mode text not null check (display_mode in ('anonymous', 'named')),
   public_profile jsonb not null default '{}'::jsonb,
+  country_code text,
+  region_code text,
+  profile_version integer not null default 1,
   enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

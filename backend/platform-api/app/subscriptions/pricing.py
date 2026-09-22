@@ -34,13 +34,18 @@ PRODUCT_LABELS = {
     "platform_subscription": "PRO (сайт)",
     "club_subscription": "CLUB",
     "site_setup": "настройка сайта",
+    # Курс Академии (владелец, 18–19.09.2026): нейросети, мини контент-завод, SMM —
+    # разовая покупка 100 WWC$, без срока; в ledger как site_setup (access_months 0).
+    "course_academy": "курс Академии",
 }
 RECURRING = {"platform_subscription", "club_subscription"}
+ONE_OFF = {"site_setup", "course_academy"}
 _PRODUCT_WORDS = {
     "pro": "platform_subscription", "платформа": "platform_subscription", "сайт": "platform_subscription",
     "клуб": "club_subscription", "club": "club_subscription",
     "настройка": "site_setup", "настройка сайта": "site_setup", "setup": "site_setup",
     "пакет": "bundle_pro_club", "bundle": "bundle_pro_club",
+    "курс": "course_academy", "академия": "course_academy", "course": "course_academy",
 }
 BUNDLE_LINES = (("platform_subscription", 3000), ("club_subscription", 7500))
 RUB_PER_WWC = 100
@@ -50,11 +55,16 @@ _AMOUNT = r"([0-9]+(?:[.,][0-9]{1,2})?)"
 _CURRENCY = r"(RUB|₽|WUSD|WWC\$|W\$)"
 _HEAD_RE = re.compile(rf"^(?:оплата|/pay)\s+{_IDENTIFIER}(?:\s+{_AMOUNT}\s+{_CURRENCY}(?:\s+(3|6|12))?)?\s*$", re.IGNORECASE)
 _LINE_RE = re.compile(
-    rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle)\s+"
+    rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle|курс|академия|course)\s+"
     rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>3|6|12))?(?:\s+(?P<note>.+))?$",
     re.IGNORECASE,
 )
 _RECEIVED_RE = re.compile(rf"^получено\s+{_AMOUNT}\s+{_CURRENCY}\s*$", re.IGNORECASE)
+# Part of the sum paid with the partner's own bonus points (always WWC$):
+# «бонусами 5 WWC$» → «получено» is short of the lines by exactly that.
+_BONUS_RE = re.compile(rf"^бонусами\s+{_AMOUNT}\s+(WUSD|WWC\$|W\$)\s*$", re.IGNORECASE)
+# Marker item stored next to the lines in the intent; never a ledger row.
+BONUS_OFFSET = "bonus_offset"
 
 USAGE = (
     "Формат: оплата ref:code 30 WWC$ [3|6|12]\n"
@@ -64,7 +74,8 @@ USAGE = (
     "клуб 120 WWC$ 3\n"
     "настройка 20 WWC$\n"
     "получено 170 WWC$\n"
-    "Пакет PRO+клуб: строка «пакет 105 WWC$». Цена не по тарифу — добавьте слово «акция»."
+    "Пакет PRO+клуб: строка «пакет 105 WWC$». Цена не по тарифу — добавьте слово «акция».\n"
+    "Часть суммы бонусами партнёра: строка «бонусами 5 WWC$» — тогда «получено» меньше строк ровно на неё."
 )
 
 
@@ -84,6 +95,12 @@ class ParsedPayment:
     lines: list[PaymentLine]
     received_minor: int | None
     currency: str
+    bonus_minor: int = 0  # WWC$ minor units taken from the partner's bonus balance
+
+
+def bonus_in_currency(bonus_minor: int, currency: str) -> int:
+    """Bonus points are WWC$; against rouble lines they count at RUB_PER_WWC."""
+    return int(bonus_minor) * (RUB_PER_WWC if currency == "RUB" else 1)
 
 
 def _minor(amount: str) -> int:
@@ -109,6 +126,7 @@ def parse_payment_command(text: str) -> ParsedPayment:
     identifier = head.group(1)
     lines: list[PaymentLine] = []
     received: int | None = None
+    bonus: int = 0
     currency: str | None = None
 
     def add(line: PaymentLine) -> None:
@@ -127,6 +145,12 @@ def parse_payment_command(text: str) -> ParsedPayment:
             received = _minor(received_match.group(1))
             if currency is not None and _currency(received_match.group(2)) != currency:
                 raise SubscriptionError("«получено» должно быть в той же валюте, что и строки.")
+            continue
+        bonus_match = _BONUS_RE.fullmatch(raw)
+        if bonus_match:
+            bonus = _minor(bonus_match.group(1))
+            if bonus <= 0:
+                raise SubscriptionError("«бонусами» — сумма больше нуля, в WWC$.")
             continue
         m = _LINE_RE.fullmatch(raw)
         if not m:
@@ -147,12 +171,12 @@ def parse_payment_command(text: str) -> ParsedPayment:
             add(PaymentLine("platform_subscription", pro_minor, cur, months, False, note))
             add(PaymentLine("club_subscription", club_minor, cur, months, True, note or "пакет PRO + клуб"))
             continue
-        if product == "site_setup":
+        if product in ONE_OFF:
             months = 0
         add(PaymentLine(product, amount, cur, months, promo, note))
     if not lines:
         raise SubscriptionError(USAGE)
-    return ParsedPayment(identifier=identifier, lines=lines, received_minor=received, currency=currency or "WUSD")
+    return ParsedPayment(identifier=identifier, lines=lines, received_minor=received, currency=currency or "WUSD", bonus_minor=bonus)
 
 
 async def effective_price_minor(
@@ -186,9 +210,12 @@ async def effective_price_minor(
     return int(plan["price_rub_minor"] if currency == "RUB" else plan["price_wusd_minor"]), None
 
 
-def validate_lines(lines: list[PaymentLine], prices: dict[str, int | None], received_minor: int | None) -> list[str]:
-    """Human-readable problems; empty list means the payment adds up."""
-    from app.telegram.money import money
+def validate_lines(
+    lines: list[PaymentLine], prices: dict[str, int | None], received_minor: int | None, bonus_minor: int = 0
+) -> list[str]:
+    """Human-readable problems; empty list means the payment adds up:
+    lines == received + bonus (bonus is WWC$, counted at RUB_PER_WWC against rouble lines)."""
+    from app.telegram.money import money, wwc
 
     problems: list[str] = []
     for line in lines:
@@ -203,16 +230,20 @@ def validate_lines(lines: list[PaymentLine], prices: dict[str, int | None], rece
                 "Добавьте слово «акция» или исправьте сумму."
             )
     total = sum(line.amount_minor for line in lines)
-    if received_minor is not None and received_minor != total:
-        problems.append(
-            f"Сумма не сходится: строки {money(total, lines[0].currency)}, получено {money(received_minor, lines[0].currency)}."
-        )
+    if lines and received_minor is not None:
+        covered = received_minor + bonus_in_currency(bonus_minor, lines[0].currency)
+        if covered != total:
+            tail = f", бонусами {wwc(bonus_minor)}" if bonus_minor else ""
+            problems.append(
+                f"Сумма не сходится: строки {money(total, lines[0].currency)}, получено {money(received_minor, lines[0].currency)}{tail}."
+            )
     return problems
 
 
-def with_list_prices(lines: list[PaymentLine], prices: dict[str, int | None]) -> list[dict[str, Any]]:
-    """Serialisable lines with the list price attached (stored in the intent)."""
-    return [
+def with_list_prices(lines: list[PaymentLine], prices: dict[str, int | None], bonus_minor: int = 0) -> list[dict[str, Any]]:
+    """Serialisable lines with the list price attached (stored in the intent).
+    A bonus offset rides along as a marker item so the intent table needs no new column."""
+    items = [
         {
             "product_code": line.product_code,
             "amount_minor": line.amount_minor,
@@ -224,6 +255,12 @@ def with_list_prices(lines: list[PaymentLine], prices: dict[str, int | None]) ->
         }
         for line in lines
     ]
+    if bonus_minor:
+        items.append({
+            "product_code": BONUS_OFFSET, "amount_minor": int(bonus_minor), "currency": "WUSD",
+            "access_months": 0, "promo": False, "note": "", "list_price_minor": None,
+        })
+    return items
 
 
 def lines_from_json(raw: list[dict[str, Any]]) -> list[PaymentLine]:
@@ -233,11 +270,16 @@ def lines_from_json(raw: list[dict[str, Any]]) -> list[PaymentLine]:
             access_months=int(item.get("access_months") or 0), promo=bool(item.get("promo")), note=str(item.get("note") or ""),
         )
         for item in raw
+        if str(item.get("product_code")) != BONUS_OFFSET
     ]
 
 
-def describe_lines(lines: list[PaymentLine], received_minor: int | None) -> list[str]:
-    from app.telegram.money import money
+def bonus_from_json(raw: list[dict[str, Any]]) -> int:
+    return sum(int(item.get("amount_minor") or 0) for item in raw if str(item.get("product_code")) == BONUS_OFFSET)
+
+
+def describe_lines(lines: list[PaymentLine], received_minor: int | None, bonus_minor: int = 0) -> list[str]:
+    from app.telegram.money import money, wwc
 
     out = []
     for line in lines:
@@ -247,6 +289,8 @@ def describe_lines(lines: list[PaymentLine], received_minor: int | None) -> list
         out.append(f"{label}: {money(line.amount_minor, line.currency)}{term}{promo}")
     if received_minor is not None:
         out.append(f"Получено: {money(received_minor, lines[0].currency)}")
+    if bonus_minor:
+        out.append(f"Бонусами: {wwc(bonus_minor)}")
     return out
 
 

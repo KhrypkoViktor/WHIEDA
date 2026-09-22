@@ -119,7 +119,7 @@ def content_app(monkeypatch):
     async def resolve(host: str) -> TenantContext:
         from app.tenancy import normalize_host
 
-        if normalize_host(host) in {"wwc.best", "test"}:
+        if normalize_host(host) in {"wwc.best", "test", "samtsova.wwc.best", "cabinet.staging.wwc.best"}:
             return TenantContext(
                 tenant_id="whieda",
                 status="active",
@@ -242,6 +242,37 @@ async def test_poll_approved_sets_http_only_cookie_not_in_body(content_client):
     assert "wwc_content_session=" in cookie
     assert "HttpOnly" in cookie
     assert "wwc_admin_session" not in cookie
+    # One login for the whole family: wwc.best and every partner subdomain.
+    assert "Domain=.wwc.best" in cookie
+
+
+@pytest.mark.asyncio
+async def test_cookie_domain_follows_the_shared_family_only(content_client):
+    expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    approved = AsyncMock(return_value=({"ok": True, "status": "authenticated", "expires_at": expires}, "raw-session-token"))
+    with patch("app.content_access.routes.poll_content_challenge", approved):
+        partner = await content_client.get(
+            "/api/v1/content-access/challenges/11111111-1111-1111-1111-111111111111",
+            headers={"host": "samtsova.wwc.best", "X-Browser-Nonce": NONCE},
+        )
+        forwarded = await content_client.get(
+            "/api/v1/content-access/challenges/11111111-1111-1111-1111-111111111111",
+            headers={"host": "cabinet.staging.wwc.best", "x-forwarded-host": "cabinet.staging.wwc.best", "X-Browser-Nonce": NONCE},
+        )
+        other = await content_client.get(
+            "/api/v1/content-access/challenges/11111111-1111-1111-1111-111111111111",
+            headers={"host": "test", "X-Browser-Nonce": NONCE},
+        )
+    assert "Domain=.wwc.best" in partner.headers.get("set-cookie", "")
+    assert "Domain=.wwc.best" in forwarded.headers.get("set-cookie", "")
+    # A host outside the family keeps a host-only cookie.
+    assert "wwc_content_session=" in other.headers.get("set-cookie", "") and "Domain=" not in other.headers.get("set-cookie", "")
+    # Logout clears the same cookie (same Domain), otherwise the browser keeps the old one.
+    with patch("app.content_access.routes.revoke_content_session", AsyncMock(return_value=True)):
+        logout = await content_client.post(
+            "/api/v1/content-access/logout", headers={"host": "wwc.best"}, cookies={"wwc_content_session": "opaque"}
+        )
+    assert "Domain=.wwc.best" in logout.headers.get("set-cookie", "")
 
 
 @pytest.mark.asyncio

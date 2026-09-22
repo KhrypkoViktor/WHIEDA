@@ -135,8 +135,33 @@ def render_env_file(client: paramiko.SSHClient | None = None) -> str:
         lines.append(f"PLATFORM_TELEGRAM_BOT_USERNAME={bot_username.lstrip('@')}")
     lines.append("PLATFORM_TELEGRAM_LEGACY_TIMEOUT_SEC=180")
     lines.append("PLATFORM_LEGACY_REQUEST_TIMEOUT_SEC=30")
+    # Всё, что на сервере есть сверх шаблона (PLATFORM_BILLING_OWNER_TELEGRAM_ID,
+    # ключи cookie и т.п.), переносится как есть — иначе каждая выкладка стирала бы
+    # настройки, добавленные руками (18.09.2026).
+    rendered = {line.split("=", 1)[0] for line in lines if "=" in line}
+    for extra in fetch_remote_extra_env_lines(client, rendered):
+        lines.append(extra)
     lines.append("")
     return "\n".join(lines)
+
+
+def fetch_remote_extra_env_lines(client: paramiko.SSHClient | None, known: set[str]) -> list[str]:
+    if client is None:
+        return []
+    env_path = f"{REMOTE_DIR}/src/deploy/core/.env"
+    try:
+        raw = ssh_exec(client, f"cat {env_path} 2>/dev/null || true", timeout=15)
+    except Exception:
+        return []
+    extra: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key and key not in known:
+            extra.append(stripped)
+    return extra
 
 
 def main() -> int:
@@ -162,17 +187,30 @@ def main() -> int:
         )
         return 0
 
-    cfg = ssh_config()
+    # Ключ — основной путь (пароль root менялся и падал «Authentication failed», 18.09.2026):
+    # тот же ключ, что у `ssh whieda-n8n` и деплоя сайта. Пароль остаётся запасным.
+    key_path = Path(os.environ.get("WHIEDA_SSH_KEY", Path.home() / ".ssh" / "wwc_deploy_ed25519"))
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        cfg["host"],
-        username=cfg["user"],
-        password=cfg["password"],
-        look_for_keys=False,
-        allow_agent=False,
-        timeout=30,
-    )
+    if key_path.exists():
+        client.connect(
+            os.environ.get("WHIEDA_SSH_HOST", "185.252.232.93"),
+            username=os.environ.get("WHIEDA_SSH_USER", "root"),
+            key_filename=str(key_path),
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=30,
+        )
+    else:
+        cfg = ssh_config()
+        client.connect(
+            cfg["host"],
+            username=cfg["user"],
+            password=cfg["password"],
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=30,
+        )
     env_content = render_env_file(client)
     try:
         ssh_exec(client, f"mkdir -p {REMOTE_DIR}")

@@ -144,12 +144,11 @@ def _dashboard_keyboard(
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
-    share_url = "https://t.me/share/url?" + urlencode(
-        {"url": link, "text": invitation_text("")}
-    )
-    # Сайт заказывается через Google-форму (владелец, 15.09.2026), а не диалогом
-    # в боте; Gemini — карточка сервисов (тоннель к администратору).
-    order_site = [{"text": "Заказать сайт WWC", "url": site_form_url(telegram_user_id)}]
+    share_url = _share_url(link)
+    # Сайт заказывается диалогом в боте (страна → адрес → фото → текст → чек):
+    # гугл-форма из Telegram открывалась во встроенном браузере и терялась
+    # (владелец, 18–19.09.2026). Gemini — карточка сервисов (тоннель к администратору).
+    order_site = [{"text": "Заказать сайт WWC", "callback_data": "site:create"}]
     gemini = [{"text": "Подключить Gemini Pro", "callback_data": SERVICES_CARD_CALLBACK}]
     wwc_bot = [{"text": WWC_BOT_BUTTON_LABEL, "callback_data": WWC_BOT_CALLBACK}]
     if minimal:
@@ -180,11 +179,15 @@ def _dashboard_keyboard(
     return {"inline_keyboard": rows}
 
 
+def _share_url(link: str) -> str:
+    """t.me/share/url не раскодирует «+» в пробел — в пересланном тексте были
+    плюсы между словами (скрин владельца, 19.09.2026). Кодируем через %20."""
+    return "https://t.me/share/url?" + urlencode({"url": link, "text": invitation_text("")}, quote_via=quote)
+
+
 def _invitation_keyboard(link: str) -> dict[str, Any]:
     invite = invitation_text(link)
-    share_url = "https://t.me/share/url?" + urlencode(
-        {"url": link, "text": invitation_text("")}
-    )
+    share_url = _share_url(link)
     return {
         "inline_keyboard": [
             [{"text": "Скопировать приглашение", "copy_text": {"text": invite}}],
@@ -222,12 +225,13 @@ def site_offer_text(inviter_name: str) -> str:
     head = f"Вас пригласил партнёр WWC: {inviter_name}. " if inviter_name else ""
     return (
         f"{head}Такой же сайт — за 1 день, 10 WWC$ в месяц (1 000 ₽ / 35 BYN). "
-        "20 WWC$ (2 000 ₽) — разовая настройка сайта."
+        "20 WWC$ (2 000 ₽) — разовая настройка сайта.\n"
+        "Пакет «Платформа + Клуб» на 3 месяца — 105 WWC$ (10 500 ₽), настройка в подарок: wwc.best/start"
     )
 
 
 def site_offer_keyboard(*, telegram_user_id: int | None, example_url: str, inviter_ref: str | None = None) -> dict:
-    rows = [[{"text": "Заказать сайт", "url": site_form_url(telegram_user_id, inviter_ref=inviter_ref)}]]
+    rows = [[{"text": "Заказать сайт", "callback_data": "site:create"}]]
     if example_url:
         host = example_url.split("//", 1)[-1].strip("/")
         rows.append([{"text": f"Посмотреть пример: {host}", "url": example_url}])

@@ -32,7 +32,7 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
         async def proof() -> None:
             from app.db import fetch_all, fetch_one, tenant_connection
             from app.subscriptions.pricing import PaymentLine, effective_price_minor, parse_payment_command
-            from app.subscriptions.service import PaymentIdempotencyConflictError, record_payment_lines
+            from app.subscriptions.service import PaymentIdempotencyConflictError, SubscriptionError, record_payment_lines
 
             async def rows(sql: str, params: tuple = ()) -> list[dict]:
                 async with tenant_connection("whieda") as conn:
@@ -91,5 +91,36 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
             bonus = await rows("select amount_minor from partner_bonus_ledger where actor_id = 'proof-olesya' order by created_at")
             # Bonus base is the PRO list price in WWC$ (30) whatever the currency paid: 6 WWC$ each.
             assert [b["amount_minor"] for b in bonus] == [600, 600]
+
+            # Olesya (18.09.2026): bundle 105 WWC$ = 10 000 ₽ received + 5 WWC$ of her own 12 WWC$ bonus.
+            # Too much bonus first: refused, and nothing of the payment survives the rollback.
+            olesya = parse_payment_command("оплата ref:olesya\nпакет 10500 RUB\nполучено 10000 RUB\nбонусами 5 WWC$")
+            with pytest.raises(SubscriptionError):
+                await record_payment_lines(
+                    "whieda", ref_code="olesya", lines=olesya.lines, received_minor=1000000, currency="RUB",
+                    telegram_chat_id=1, telegram_message_id=103, telegram_user_id=1, bonus_minor=5000,
+                )
+            assert await rows("select 1 as x from partner_payments where ref_code = 'olesya'") == []
+            o = await record_payment_lines(
+                "whieda", ref_code="olesya", lines=olesya.lines, received_minor=1000000, currency="RUB",
+                telegram_chat_id=1, telegram_message_id=103, telegram_user_id=1, bonus_minor=olesya.bonus_minor,
+            )
+            assert o["bonus_offset"]["bonus_offset_minor"] == 500 and o["bonus_offset"]["bonus_balance_minor"] == 700
+            assert o["pro_paid_until"] is not None and o["club_paid_until"] is not None
+            header = await rows("select received_amount_minor, note from partner_payments where ref_code = 'olesya'")
+            assert header[0]["received_amount_minor"] == 1000000 and "бонусами 5 WWC$" in header[0]["note"]
+            debit = await rows("select entry_type, amount_minor, source_payment_id, idempotency_key from partner_bonus_ledger where actor_id = 'proof-olesya' and entry_type = 'debit'")
+            pro_line = await rows("select payment_id from partner_payment_ledger where ref_code = 'olesya' and product_code = 'platform_subscription'")
+            assert debit[0]["amount_minor"] == -500 and debit[0]["source_payment_id"] == pro_line[0]["payment_id"]
+            assert debit[0]["idempotency_key"].endswith(":bonus_offset")
+            balance = await rows("select coalesce(sum(amount_minor), 0) as total from partner_bonus_ledger where actor_id = 'proof-olesya'")
+            assert balance[0]["total"] == 700
+            # Same message again: idempotent, no second debit.
+            again_o = await record_payment_lines(
+                "whieda", ref_code="olesya", lines=olesya.lines, received_minor=1000000, currency="RUB",
+                telegram_chat_id=1, telegram_message_id=103, telegram_user_id=1, bonus_minor=olesya.bonus_minor,
+            )
+            assert again_o["idempotent"] is True
+            assert len(await rows("select 1 as x from partner_bonus_ledger where actor_id = 'proof-olesya' and entry_type = 'debit'")) == 1
 
         db.run_with_app(proof)

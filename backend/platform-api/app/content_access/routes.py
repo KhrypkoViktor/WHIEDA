@@ -92,7 +92,7 @@ async def _poll(
         browser_nonce=x_browser_nonce,
     )
     if raw_session:
-        set_session_cookie(response, raw_session)
+        set_session_cookie(response, raw_session, request)
     return payload
 
 
@@ -176,7 +176,7 @@ async def _logout(request: Request, response: Response) -> dict:
     raw = read_session_cookie(request)
     if raw:
         await revoke_content_session(tenant.tenant_id, raw)
-    clear_session_cookie(response)
+    clear_session_cookie(response, request)
     return {"ok": True}
 
 

@@ -65,6 +65,7 @@ from app.telegram.bindings import (
     tenant_from_binding,
 )
 from app.telegram.log_safe import chat_ref
+from app.telegram.consent import first_start_consent_notice, is_start_command
 from app.telegram.catalog_browse import (
     handle_catalog_products,
     handle_callback_query,
@@ -455,6 +456,15 @@ async def _process_core_telegram_update_scoped(
 
     if msg.chat_type == "private":
         await _link_partner_chat(tenant, msg, trace_id)
+        if is_start_command(msg.text):
+            notice = await first_start_consent_notice(
+                tenant.tenant_id,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+                trace_id=trace_id,
+            )
+            if notice:
+                await deliver_text(msg.chat_id, notice)
 
     # Services card, the support administrator's replies, and attachments from
     # a subscriber inside an open support ticket.
