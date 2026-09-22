@@ -30,7 +30,9 @@ from staging_proof_lib import (
     validate_proof_port,
 )
 
-MANIFEST = ROOT / "WHIEDA_LOCAL_BUILD_BLOCKS_V1.json"
+# Archived by the root cleanup (8b19a68); the manifest itself is still the
+# source for block statuses.
+MANIFEST = ROOT / "99_Archive" / "Superseded_Root_Docs" / "WHIEDA_LOCAL_BUILD_BLOCKS_V1.json"
 PROOF_SCRIPT = SCRIPTS / "run_local_staging_proof.py"
 VERIFY_SCRIPT = SCRIPTS / "verify_staging_apply_empty.py"
 COMPOSE = ROOT / "postgres" / "docker-compose.local-staging.yml"
@@ -121,10 +123,18 @@ def test_legacy_rls_covers_all_tenant_lead_tables():
 
 
 def test_rls_proof_tables_are_covered_by_legacy_rls():
+    """Every proven table needs a tenant-isolation policy — but a table added
+    after the legacy file (partner_subscriptions and friends) carries its policy
+    in its own migration, so look through all of them."""
     covered = legacy_rls_covers_lead_tables()
-    legacy_tables = tuple(t for t in RLS_PROOF_TABLES if not t.startswith("wwc_"))
-    for table in legacy_tables:
-        assert table in covered
+    sql_text = "\n".join(
+        path.read_text(encoding="utf-8").lower()
+        for path in sorted((ROOT / "postgres" / "sql").glob("*.sql"))
+    )
+    for table in (t for t in RLS_PROOF_TABLES if not t.startswith("wwc_")):
+        if table in covered:
+            continue
+        assert f"create policy {table}_tenant_isolation on {table}" in sql_text, table
 
 
 def test_wwc_rls_policies_defined_in_markets_migration():

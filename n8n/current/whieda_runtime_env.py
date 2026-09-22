@@ -55,6 +55,22 @@ def ssh_config() -> dict[str, str]:
     return {"host": host, "user": user, "password": password}
 
 
+def site_ssh_config() -> dict[str, str]:
+    """The site VPS (173.249.45.83). Lost in the 31.08.2026 consolidation and
+    restored 22.09.2026: two live scripts import it — the staging cabinet smoke
+    and the nginx theme-access patch."""
+    host = os.environ.get("WHIEDA_SITE_SSH_HOST", "173.249.45.83")
+    user = os.environ.get("WHIEDA_SITE_SSH_USER", "root")
+    password = (
+        os.environ.get("WHIEDA_SITE_SSH_PASSWORD")
+        or os.environ.get("WHIEDA_SSH_PASSWORD_SITE")
+        or ""
+    ).strip()
+    if not password:
+        raise RuntimeError("Set WHIEDA_SITE_SSH_PASSWORD or WHIEDA_SSH_PASSWORD_SITE")
+    return {"host": host, "user": user, "password": password}
+
+
 def pg_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     for key, value in DEFAULT_PG.items():

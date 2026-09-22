@@ -189,7 +189,13 @@ def check_env_local_example_safe() -> CheckResult:
                     "FAIL",
                     "Production-style database password in .env.local.example",
                 )
-    if PRODUCTION_URL.search(text.replace("host.docker.internal", "127.0.0.1")):
+    # Only live settings count: a commented-out sample line («# …=https://s3.example.com»)
+    # is documentation, not an endpoint this lab would call.
+    live_lines = "\n".join(
+        line for line in text.replace("host.docker.internal", "127.0.0.1").splitlines()
+        if not line.strip().startswith("#")
+    )
+    if PRODUCTION_URL.search(live_lines):
         return CheckResult(
             "env_local_example_safe",
             "FAIL",
