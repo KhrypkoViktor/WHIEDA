@@ -118,6 +118,10 @@ def build(folder: Path) -> dict:
         # Разделители «---» в начале/конце урока на сайте лишние.
         text = re.sub(r"^(?:---\s*\n)+|(?:\n---\s*)+$", "", text).strip()
         body_html = markdown.markdown(text, extensions=["tables", "sane_lists"], output_format="html")
+        # Скриншоты урока лежат в Obsidian рядом (img/…) и на сайте в /academy/img/
+        # (site: scripts/academy-shots.mjs); внешние ссылки — в новой вкладке.
+        body_html = re.sub(r'<img alt="([^"]*)" src="img/', r'<img loading="lazy" alt="\1" src="/academy/img/', body_html)
+        body_html = re.sub(r'<a href="(https?://[^"]+)">', r'<a href="\1" target="_blank" rel="noopener">', body_html)
         lessons.append(
             {
                 "slug": item["slug"],

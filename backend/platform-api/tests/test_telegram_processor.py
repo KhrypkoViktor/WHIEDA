@@ -330,7 +330,7 @@ async def test_content_access_start_runs_after_admin_before_identity(
     )
     start_token.assert_not_called()
     message = deliver.await_args.args[1]
-    assert "Доступ к материалам подтверждён" in message
+    assert "Вход подтверждён" in message
     assert "стельк" not in message.lower()
     assert "стать" not in message.lower()
 

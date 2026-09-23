@@ -14,7 +14,7 @@ from app.telegram.update_parser import parse_start_token, parse_telegram_message
 
 logger = logging.getLogger(__name__)
 
-_SUCCESS_MESSAGE = "Доступ к материалам подтверждён. Вернитесь в браузер."
+_SUCCESS_MESSAGE = "✅ Вход подтверждён. Вернитесь на сайт — всё уже открыто."
 
 _NEUTRAL_ERRORS: dict[str, str] = {
     "challenge_expired": "Ссылка истекла. Создайте новую на странице материала.",
