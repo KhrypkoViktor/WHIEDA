@@ -12,6 +12,7 @@ COPY scripts/check_schema_compatibility.py /app/scripts/check_schema_compatibili
 COPY scripts/send_telegram_command_canary.py /app/scripts/send_telegram_command_canary.py
 COPY scripts/send_due_partner_reminders.py /app/scripts/send_due_partner_reminders.py
 COPY scripts/send_partner_payment_reminder.py /app/scripts/send_partner_payment_reminder.py
+COPY scripts/academy/load_bundle.py /app/scripts/academy/load_bundle.py
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
