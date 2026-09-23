@@ -19,15 +19,6 @@ from app.settings import get_settings
 CONTENT_START_PREFIX = "content_access_"
 ALLOWED_SCOPES = frozenset({"telegram_verified"})
 SCOPE_ALIASES = {"theme_customization": "telegram_verified"}
-ALLOWED_RETURN_PREFIXES = (
-    "/articles/",
-    "/reviews",
-    "/partner/",
-    "/catalog/",
-    "/settings/",
-    "/en/",
-)
-ALLOWED_RETURN_EXACT = frozenset({"/", "/en", "/en/"})
 CONTENT_KEY_RE = re.compile(r"^[a-z0-9]+(?:/[a-z0-9._-]+){1,6}$")
 
 
@@ -64,10 +55,11 @@ def sanitize_return_to(raw: str) -> str:
     lowered = path.lower()
     if lowered.startswith(("/cabinet", "/admin", "/api")):
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
-    if path not in ALLOWED_RETURN_EXACT and not any(
-        path.startswith(prefix) for prefix in ALLOWED_RETURN_PREFIXES
-    ):
-        raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
+    # Any page of the same site is a valid place to come back to after the
+    # Telegram sign-in. The old allow-list (articles, reviews, catalog…) made the
+    # header «Войти» fail with 400 on /otvety/, /price/, /about/, /de/… (owner:
+    # «кнопка войти глючит», 23.09.2026). External, protocol-relative and
+    # backslash tricks are rejected above; service areas below.
     if len(value) > 500:
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
     return value

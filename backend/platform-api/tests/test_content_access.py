@@ -76,6 +76,17 @@ def test_sanitize_content_key_allows_product_evidence():
     assert sanitize_content_key("product/evidence/awards-patents") == "product/evidence/awards-patents"
 
 
+def test_sanitize_return_to_allows_any_site_page():
+    for path in ("/otvety/", "/price/", "/about/", "/de/about/", "/academy/?course=zapusk-wwc&lesson=vhod"):
+        assert sanitize_return_to(path) == path
+
+
+def test_sanitize_return_to_rejects_backslash_trick():
+    with pytest.raises(HTTPException) as exc:
+        sanitize_return_to("/\evil.example/")
+    assert exc.value.status_code == 400
+
+
 def test_sanitize_return_to_rejects_cabinet():
     with pytest.raises(HTTPException) as exc:
         sanitize_return_to("/cabinet/overview/")
