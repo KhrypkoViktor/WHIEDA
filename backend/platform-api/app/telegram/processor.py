@@ -23,6 +23,7 @@ from app.leads.actor_link import (
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
+from app.telegram.academy import try_handle_academy_callback, try_handle_academy_text
 from app.referral_bonus.service import (
     accept_referral_start,
     inviter_card,
@@ -469,6 +470,11 @@ async def _process_core_telegram_update_scoped(
         )
         if site_request_callback_result is not None:
             return site_request_callback_result
+        academy_callback_result = await try_handle_academy_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if academy_callback_result is not None:
+            return academy_callback_result
         referral_callback_result = await try_handle_referral_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -560,6 +566,11 @@ async def _process_core_telegram_update_scoped(
                 return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
             return await handle_pro_start(tenant, msg, trace_id)
         return await handle_start_token(tenant, msg, start_token, trace_id)
+
+    if msg.chat_type == "private":
+        academy_result = await try_handle_academy_text(tenant, msg, trace_id=trace_id)
+        if academy_result:
+            return academy_result
 
     onboarding_result = await handle_onboarding(tenant, msg)
     if onboarding_result:

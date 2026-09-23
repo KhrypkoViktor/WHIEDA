@@ -21,6 +21,7 @@ from app.referral_bonus.service import (
     referral_dashboard,
 )
 from app.settings import get_settings
+from app.telegram.academy import academy_button_rows
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import wwc, wwc_signed
 from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
@@ -141,6 +142,7 @@ def _dashboard_keyboard(
     has_site: bool,
     minimal: bool,
     telegram_user_id: int | None = None,
+    academy_rows: list[list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
@@ -163,6 +165,7 @@ def _dashboard_keyboard(
         ]
         if not has_site:
             rows.insert(1, order_site)
+        rows[2:2] = academy_rows or []
         return {"inline_keyboard": rows}
 
     rows: list[list[dict[str, Any]]] = [
@@ -176,6 +179,8 @@ def _dashboard_keyboard(
         [{"text": "Поддержка", "url": SUPPORT_URL}],
     ]
     rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)
+    # «Академия» — сразу под «Мой сайт» и продлением (курс «Запуск WWC»).
+    rows[2:2] = academy_rows or []
     return {"inline_keyboard": rows}
 
 
@@ -328,6 +333,7 @@ async def show_referral_dashboard(
             has_site=bool(site),
             minimal=minimal,
             telegram_user_id=telegram_user_id,
+            academy_rows=await academy_button_rows(tenant.tenant_id, telegram_user_id),
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}

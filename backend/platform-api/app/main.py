@@ -24,6 +24,7 @@ from app.partner_library.routes import router as partner_library_router
 from app.subscriptions.edge_routes import router as subscription_edge_router
 from app.memory.routes import router as memory_router
 from app.onboarding.routes import router as onboarding_router
+from app.academy.routes import router as academy_router
 from app.pilot.routes import router as pilot_router
 from app.retention.routes import router as retention_router
 from app.reports.routes import router as reports_router
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(identity_router)
     app.include_router(journey_router)
     app.include_router(onboarding_router)
+    app.include_router(academy_router)
     app.include_router(reports_router)
     # Optional features: unmounted when listed in PLATFORM_DISABLED_FEATURES, so a
     # feature whose tables are not in this database returns 404, not 500.

@@ -170,6 +170,19 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_BILLING_OWNER_TELEGRAM_ID",
         description="Single Telegram user ID allowed to confirm manual partner payments.",
     )
+    platform_academy_open: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_ACADEMY_OPEN",
+        description=(
+            "Academy for every partner with paid PRO. False = preview: only the "
+            "billing owner and super admins see courses on the site and in the bot."
+        ),
+    )
+    platform_academy_site_base: str = Field(
+        default="https://dev.wwc.best",
+        validation_alias="PLATFORM_ACADEMY_SITE_BASE",
+        description="Site host the bot links lessons to (preview host until the Academy opens).",
+    )
     platform_support_admin_telegram_id: int | None = Field(
         default=None,
         validation_alias="PLATFORM_SUPPORT_ADMIN_TELEGRAM_ID",
