@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
-from app.db import fetch_one, tenant_connection
+from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
 
 CONTENT_START_PREFIX = "content_access_"
@@ -449,6 +449,35 @@ async def revoke_content_session(tenant_id: str, raw_session: str) -> bool:
             (session_hash, tenant_id),
         )
     return bool(row)
+
+
+async def load_review_originals(tenant_id: str, *, scope: str) -> dict[str, Any]:
+    """All published ``review/<id>/original`` materials in one response.
+
+    /reviews/ shows every original to a signed-in visitor; 156 separate
+    material requests took ~10 s on a phone (owner, 23.09.2026). Same access
+    rule as ``load_material``: published rows whose scope matches the session.
+    """
+    async with tenant_connection(tenant_id) as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            select content_key, title, body_html
+            from content_access_materials
+            where tenant_id = %s
+              and content_key like 'review/%%/original'
+              and status = 'published'
+              and coalesce(scope, 'telegram_verified') = %s
+            order by content_key
+            """,
+            (tenant_id, scope),
+        )
+    items: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = str(row["content_key"])
+        review_id = key[len("review/"):-len("/original")]
+        items[review_id] = {"title": row.get("title"), "body_html": row["body_html"]}
+    return {"ok": True, "scope": scope, "items": items}
 
 
 async def load_material(tenant_id: str, content_key: str, *, scope: str) -> dict[str, Any]:

@@ -448,3 +448,32 @@ async def test_logout_clears_content_cookie_not_admin(content_client):
     cookie = response.headers.get("set-cookie", "")
     assert "wwc_content_session=" in cookie
     assert "wwc_admin_session" not in cookie
+
+
+@pytest.mark.asyncio
+async def test_review_originals_without_cookie_is_unauthorized(content_client):
+    response = await content_client.get("/api/v1/content-access/review-originals", headers=HOST)
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_review_originals_returns_all_in_one_response(content_client):
+    payload = {"ok": True, "scope": "telegram_verified", "items": {
+        "insoles-1": {"title": "T1", "body_html": "<p>one</p>"},
+        "bem-6": {"title": "T2", "body_html": "<p>two</p>"},
+    }}
+    loader = AsyncMock(return_value=payload)
+    with patch("app.content_access.routes.read_session_cookie", return_value="raw-session-token"), patch(
+        "app.content_access.routes.validate_content_session",
+        AsyncMock(return_value={
+            "session_id": "s1", "tenant_id": "whieda", "scope": "telegram_verified",
+            "expires_at": datetime.now(timezone.utc) + timedelta(days=30), "telegram_user_id": 999001,
+        }),
+    ), patch("app.content_access.routes.load_review_originals", loader):
+        response = await content_client.get("/api/v1/content-access/review-originals", headers=HOST)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, no-store"
+    assert set(response.json()["items"]) == {"insoles-1", "bem-6"}
+    assert loader.await_args.kwargs["scope"] == "telegram_verified"
+    assert "999001" not in response.text
+

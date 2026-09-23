@@ -14,6 +14,7 @@ from app.content_access.service import (
     create_content_challenge,
     format_me_payload,
     load_material,
+    load_review_originals,
     poll_content_challenge,
     revoke_content_session,
     validate_content_session,
@@ -188,6 +189,26 @@ async def logout_v1(request: Request, response: Response) -> dict:
 @router.post("/api/v1/content-access/logout")
 async def logout_site(request: Request, response: Response) -> dict:
     return await _logout(request, response)
+
+
+async def _review_originals(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "private, no-store"
+    session = await _current_session(request)
+    tenant = get_request_tenant(request)
+    return await load_review_originals(
+        tenant.tenant_id,
+        scope=str(session.get("scope") or "telegram_verified"),
+    )
+
+
+@router.get("/v1/content-access/review-originals")
+async def review_originals_v1(request: Request, response: Response) -> dict:
+    return await _review_originals(request, response)
+
+
+@router.get("/api/v1/content-access/review-originals")
+async def review_originals_site(request: Request, response: Response) -> dict:
+    return await _review_originals(request, response)
 
 
 async def _materials(content_key: str, request: Request) -> dict:
