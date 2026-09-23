@@ -118,11 +118,14 @@ async def _process_telegram_update_body(
             return
         return
 
+    # Фото и файлы без подписи — тоже сообщения: шаг «фото» в заявке на сайт и
+    # чек об оплате приходят именно так. Раньше здесь пропускался только текст,
+    # и такие сообщения молча терялись (23.09.2026: ни одна заявка не прошла
+    # шаг «фото»). parse_telegram_message сам отбрасывает пустое.
     message = (update or {}).get("message") or {}
-    text = str(message.get("text") or "").strip()
     chat = message.get("chat") or {}
     chat_id = chat.get("id")
-    if not text or not chat_id:
+    if not chat_id:
         return
 
     parsed_message = parse_telegram_message(update)
@@ -140,8 +143,11 @@ async def _process_telegram_update_body(
     if content_result is not None:
         return
 
+    # Советнику (legacy/shadow) нужен текст вопроса; медиа без подписи ему не шлём.
+    text = parsed_message.text
     if route_mode == "legacy":
-        await _forward_to_legacy_consultant(update, trace_id)
+        if text:
+            await _forward_to_legacy_consultant(update, trace_id)
         return
 
     if route_mode == "core":
@@ -160,6 +166,9 @@ async def _process_telegram_update_body(
                     text="Не удалось обработать сообщение. Попробуйте ещё раз.",
                     bot_token=binding.bot_token,
                 )
+        return
+
+    if not text:
         return
 
     body: dict[str, Any] = {

@@ -22,7 +22,7 @@ PRO_COURSE = {"access_rule": "pro"}
 
 @pytest.fixture
 def academy_closed(monkeypatch):
-    monkeypatch.delenv("PLATFORM_ACADEMY_OPEN", raising=False)
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -64,7 +64,7 @@ def test_objection_practice_and_other_text_stay(text):
 
 
 def test_lesson_url_points_to_preview_host(academy_closed):
-    assert lesson_url("zapusk-wwc", "vhod") == "https://dev.wwc.best/academy/?course=zapusk-wwc&lesson=vhod"
+    assert lesson_url("zapusk-wwc", "vhod") == "https://wwc.best/academy/?course=zapusk-wwc&lesson=vhod"
 
 
 @pytest.mark.asyncio
@@ -112,9 +112,9 @@ async def test_site_login_link_goes_into_the_fragment():
 
     with patch("app.telegram.site_login.create_bot_login", AsyncMock(return_value="cid.nonce")) as create:
         url = await with_site_login(
-            "https://dev.wwc.best/academy/?course=zapusk-wwc&lesson=vhod", tenant_id="whieda", telegram_user_id=7
+            "https://wwc.best/academy/?course=zapusk-wwc&lesson=vhod", tenant_id="whieda", telegram_user_id=7
         )
-    assert url == "https://dev.wwc.best/academy/?course=zapusk-wwc&lesson=vhod#wwc-login=cid.nonce"
+    assert url == "https://wwc.best/academy/?course=zapusk-wwc&lesson=vhod#wwc-login=cid.nonce"
     assert create.await_args.kwargs["return_to"] == "/academy/?course=zapusk-wwc&lesson=vhod"
     assert create.await_args.kwargs["telegram_user_id"] == 7
 

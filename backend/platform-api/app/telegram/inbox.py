@@ -44,6 +44,15 @@ def compact_telegram_payload(update: dict[str, Any] | None) -> dict[str, Any] | 
             "chat": {"id": chat.get("id"), "type": chat.get("type")},
             "from": {"id": sender.get("id")},
         }
+        # Фото и файл без подписи — шаг «фото» заявки и чек об оплате.
+        if message.get("caption"):
+            payload["message"]["caption"] = message.get("caption")
+        photos = message.get("photo")
+        if isinstance(photos, list) and photos and isinstance(photos[-1], dict):
+            payload["message"]["photo"] = [{"file_id": photos[-1].get("file_id")}]
+        document = message.get("document")
+        if isinstance(document, dict) and document.get("file_id"):
+            payload["message"]["document"] = {"file_id": document.get("file_id")}
     callback = update.get("callback_query")
     if isinstance(callback, dict):
         cb_message = callback.get("message") if isinstance(callback.get("message"), dict) else {}

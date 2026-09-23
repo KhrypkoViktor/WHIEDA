@@ -60,6 +60,24 @@ async def test_core_route_never_forwards_legacy(whieda_bot_binding):
 
 
 @pytest.mark.asyncio
+async def test_photo_without_caption_reaches_core(whieda_bot_binding):
+    # Шаг «фото» в заявке на сайт и чек об оплате — фото без подписи.
+    update = {
+        "update_id": 7003,
+        "message": {
+            "message_id": 11,
+            "photo": [{"file_id": "small"}, {"file_id": "big"}],
+            "chat": {"id": 501, "type": "private"},
+            "from": {"id": 9001},
+        },
+    }
+
+    with patch("app.telegram.routes.process_core_telegram_update", AsyncMock()) as core:
+        await _process_telegram_update_body(whieda_bot_binding, update, "trace-photo")
+    core.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_legacy_route_forwards_consultant(whieda_bot_binding):
     update = _private_chat_update()
     binding = replace(whieda_bot_binding, processing_mode="legacy")
