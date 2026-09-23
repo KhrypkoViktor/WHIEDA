@@ -169,6 +169,66 @@ async def create_content_challenge(
     }
 
 
+BOT_LOGIN_FRAGMENT = "wwc-login"
+BOT_LOGIN_TTL_MINUTES = 30
+
+
+async def create_bot_login(
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    return_to: str,
+    ttl_minutes: int = BOT_LOGIN_TTL_MINUTES,
+) -> str:
+    """Pre-approved sign-in for a link the bot sends (owner, 23.09.2026:
+    «нелепо просить авторизацию» у человека, который уже в боте).
+
+    The bot knows who the person is, so it creates an already approved
+    challenge and puts `<challenge_id>.<nonce>` into the URL fragment
+    (#wwc-login=…): fragments never reach server logs or the Referer. The site
+    redeems it through the ordinary poll endpoint, which sets the session
+    cookie and marks the challenge used — single use, expires in ttl_minutes.
+    """
+    safe_return = sanitize_return_to(return_to)
+    nonce = secrets.token_urlsafe(24)
+    challenge_id = str(uuid.uuid4())
+    visitor_session_id = str(uuid.uuid4())
+    expires_at = _utcnow() + timedelta(minutes=ttl_minutes)
+    async with tenant_connection(tenant_id) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into visitor_sessions (tenant_id, session_id, journey_type, context)
+                values (%s, %s::uuid, 'organic', '{"source": "bot_login"}'::jsonb)
+                """,
+                (tenant_id, visitor_session_id),
+            )
+            await cur.execute(
+                """
+                insert into content_access_challenges (
+                  challenge_id, tenant_id, visitor_session_id, challenge_hash,
+                  browser_nonce_hash, return_to, requested_scope, status,
+                  telegram_user_id, approved_at, expires_at
+                ) values (
+                  %s::uuid, %s, %s::uuid, %s,
+                  %s, %s, 'telegram_verified', 'approved',
+                  %s, now(), %s
+                )
+                """,
+                (
+                    challenge_id,
+                    tenant_id,
+                    visitor_session_id,
+                    _hash_value(secrets.token_urlsafe(24)),
+                    _hash_value(nonce),
+                    safe_return,
+                    int(telegram_user_id),
+                    expires_at,
+                ),
+            )
+    return f"{challenge_id}.{nonce}"
+
+
 async def confirm_content_from_telegram(
     *,
     tenant_id: str,

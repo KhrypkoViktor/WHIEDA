@@ -35,6 +35,7 @@ from app.academy.service import (
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, send_telegram_text
+from app.telegram.site_login import with_site_login
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
@@ -91,7 +92,9 @@ def _progress_bar(done: int, total: int) -> str:
     return "▰" * filled + "▱" * (10 - filled)
 
 
-def _lesson_card(course: dict[str, Any], lesson: dict[str, Any], lessons_total: int, lessons_done: int) -> tuple[str, dict]:
+def _lesson_card(
+    course: dict[str, Any], lesson: dict[str, Any], lessons_total: int, lessons_done: int, *, open_url: str | None = None
+) -> tuple[str, dict]:
     lines = [
         f"🎓 {course['title']} · урок {lesson['position']} из {lessons_total}",
         "",
@@ -109,7 +112,7 @@ def _lesson_card(course: dict[str, Any], lesson: dict[str, Any], lessons_total: 
     slug = course["slug"]
     keyboard = {
         "inline_keyboard": [
-            [{"text": "📖 Открыть урок", "url": lesson_url(slug, lesson["slug"])}],
+            [{"text": "📖 Открыть урок", "url": open_url or lesson_url(slug, lesson["slug"])}],
             [{"text": "✅ Сделал — дальше", "callback_data": f"acad:d:{slug}:{lesson['position']}"}],
             [{"text": "📋 Все уроки", "callback_data": f"acad:all:{slug}"}],
         ]
@@ -162,7 +165,11 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
         if lesson is None:
             await _send(chat_id, "Такого урока нет.")
             return {"status": "lesson_not_found"}
-    text, keyboard = _lesson_card(course, lesson, course["lessons_total"], course["lessons_done"])
+    # Ссылка сразу входит на сайт (#wwc-login): человек уже в боте, второй вход не нужен.
+    open_url = await with_site_login(
+        lesson_url(course["slug"], lesson["slug"]), tenant_id=tenant_id, telegram_user_id=viewer.telegram_user_id
+    )
+    text, keyboard = _lesson_card(course, lesson, course["lessons_total"], course["lessons_done"], open_url=open_url)
     await _send(chat_id, text, keyboard)
     return {"status": "lesson", "lesson": lesson["slug"]}
 

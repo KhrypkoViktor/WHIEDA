@@ -104,3 +104,26 @@ async def test_site_api_lists_courses_for_owner(content_app, academy_closed):  #
     assert response.headers["cache-control"] == "private, no-store"
     assert response.json()["courses"][0]["slug"] == "zapusk-wwc"
     assert response.json()["open"] is True
+
+
+@pytest.mark.asyncio
+async def test_site_login_link_goes_into_the_fragment():
+    from app.telegram.site_login import with_site_login
+
+    with patch("app.telegram.site_login.create_bot_login", AsyncMock(return_value="cid.nonce")) as create:
+        url = await with_site_login(
+            "https://dev.wwc.best/academy/?course=zapusk-wwc&lesson=vhod", tenant_id="whieda", telegram_user_id=7
+        )
+    assert url == "https://dev.wwc.best/academy/?course=zapusk-wwc&lesson=vhod#wwc-login=cid.nonce"
+    assert create.await_args.kwargs["return_to"] == "/academy/?course=zapusk-wwc&lesson=vhod"
+    assert create.await_args.kwargs["telegram_user_id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_site_login_skips_foreign_hosts_and_survives_failures():
+    from app.telegram.site_login import with_site_login
+
+    assert await with_site_login("https://t.me/x", tenant_id="whieda", telegram_user_id=7) == "https://t.me/x"
+    assert await with_site_login("https://wwc.best/", tenant_id="whieda", telegram_user_id=None) == "https://wwc.best/"
+    with patch("app.telegram.site_login.create_bot_login", AsyncMock(side_effect=RuntimeError("db"))):
+        assert await with_site_login("https://lebedeva.wwc.best/", tenant_id="whieda", telegram_user_id=7) == "https://lebedeva.wwc.best/"

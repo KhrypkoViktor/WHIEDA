@@ -23,6 +23,7 @@ from app.referral_bonus.service import (
 from app.settings import get_settings
 from app.telegram.academy import academy_button_rows
 from app.telegram.bindings import current_bot_binding
+from app.telegram.site_login import with_site_login
 from app.telegram.money import wwc, wwc_signed
 from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
 from app.telegram.support import SERVICES_CARD_CALLBACK
@@ -143,6 +144,7 @@ def _dashboard_keyboard(
     minimal: bool,
     telegram_user_id: int | None = None,
     academy_rows: list[list[dict[str, Any]]] | None = None,
+    site_login_url: str | None = None,
 ) -> dict[str, Any]:
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
@@ -155,7 +157,7 @@ def _dashboard_keyboard(
     wwc_bot = [{"text": WWC_BOT_BUTTON_LABEL, "callback_data": WWC_BOT_CALLBACK}]
     if minimal:
         rows = [
-            [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
+            [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_login_url or site_url}],
             [{"text": "Скопировать реферальную ссылку", "copy_text": {"text": link}}],
             [{"text": "Отправить приглашение", "url": share_url}],
             [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
@@ -169,7 +171,7 @@ def _dashboard_keyboard(
         return {"inline_keyboard": rows}
 
     rows: list[list[dict[str, Any]]] = [
-        [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_url}],
+        [{"text": "Мой сайт" if has_site else "Посмотреть WWC", "url": site_login_url or site_url}],
         [{"text": "Скопировать приглашение", "copy_text": {"text": invite}}],
         [{"text": "Отправить приглашение", "url": share_url}],
         [{"text": "Мои рефералы", "callback_data": "referral:list"}],
@@ -334,6 +336,8 @@ async def show_referral_dashboard(
             minimal=minimal,
             telegram_user_id=telegram_user_id,
             academy_rows=await academy_button_rows(tenant.tenant_id, telegram_user_id),
+            # «Мой сайт» входит на сайт сам — партнёру не нужно второй раз подтверждать Telegram.
+            site_login_url=await with_site_login(site_url, tenant_id=tenant.tenant_id, telegram_user_id=telegram_user_id),
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}
