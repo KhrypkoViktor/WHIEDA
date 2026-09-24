@@ -98,6 +98,9 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             await set_site_request_subdomain("whieda", "proof-two", "kira2")
             await set_site_request_photo("whieda", "proof-two", "file-2")
             await set_site_request_intro("whieda", "proof-two", "Помогаю людям спокойно разбираться в продуктах и привычках.")
+            # «нет» — тоже ответ на шаг контактов (V12).
+            req2 = await set_site_request_contacts("whieda", "proof-two", "нет")
+            assert req2["status"] == "awaiting_plan" and req2["contacts"] == {}
             req2 = await set_site_request_plan("whieda", "proof-two", "site")
             assert req2["currency"] == "WUSD" and req2["total_amount_minor"] == 5_000
             req2 = await submit_site_payment_proof("whieda", "proof-two", chat_id=5003, message_id=78, file_id="receipt-2")
