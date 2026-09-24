@@ -45,6 +45,13 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "lead_actors",
             # Каналы связи актора (telegram/max/...): миграция V11, канал Max.
             "lead_actor_channels",
+            # Академия (platform_academy_v1.sql): курсы, уроки, доступ и прогресс —
+            # общие для сайта и бота. Таблицы есть на бою; без этой строки
+            # релизный гейт не пускал master (24.09.2026).
+            "academy_courses",
+            "academy_lessons",
+            "academy_access",
+            "academy_progress",
             "referral_profiles",
             "service_locations",
             "website_leads",
