@@ -56,7 +56,7 @@ async def test_start_callback_begins_renewal(whieda_tenant, whieda_bot_binding):
                             whieda_tenant, _callback("renew:start"), trace_id="renew-start"
                         )
     assert result and result["status"] == "awaiting_period"
-    prompt.assert_awaited_once_with(7001, request)
+    prompt.assert_awaited_once_with(7001, request, whieda_tenant.tenant_id)
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,7 @@ RELEASE_PACKAGE_SQL = "platform_tenant_release_package_v1.sql"
 PRICE_PLANE_SQL = "platform_tenant_release_price_plane_v1.sql"
 OUTBOX_SQL = "platform_telegram_durable_outbox_v1.sql"
 BINDING_CONTEXT_PATH = SQL_DIR / BINDING_CONTEXT_SQL
-EXPECTED_APPLY_COUNT = 35  # +telegram_consent_v1, +site_request_plans_v10 (19.09.2026), +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12 (24.09.2026)
+EXPECTED_APPLY_COUNT = 36  # +telegram_consent_v1, +site_request_plans_v10 (19.09.2026), +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026)
 BACKFILL_PLAN = SCRIPTS_DIR / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 # Pinned in Gate B1 manifest. A dirty tree that rewrites the file must fail.

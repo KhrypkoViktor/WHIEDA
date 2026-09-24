@@ -8,6 +8,9 @@ from typing import Any
 
 from app.referral_bonus.service import ensure_telegram_actor
 from app.renewal_requests.service import (
+    set_renewal_plan,
+    plan_title,
+    list_renewal_offers,
     RenewalRequestError,
     begin_renewal_request,
     cancel_renewal_request,
@@ -29,7 +32,7 @@ from app.tenancy import TenantContext
 logger = logging.getLogger(__name__)
 
 _CALLBACK_RE = re.compile(
-    r"^renew:(start|cancel|months:(?:3|6|12)|country:(?:BY|RU)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^renew:(start|cancel|months:(?:3|6|12)|plan:[a-z0-9_]{2,40}|country:(?:BY|RU)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -74,32 +77,43 @@ async def _actor(
     )
 
 
+def _what(request: dict[str, Any]) -> str:
+    """Что оплачивается — для партнёра и для владельца."""
+    title = str(request.get("plan_title") or "").strip()
+    return title or f"Сайт на {request['access_months']} мес."
+
+
 def _payment_text(request: dict[str, Any]) -> str:
     amount = both(int(request["amount_minor"]), str(request["currency"]))
     details = PAYMENT_RU if request["country_code"] == "RU" else PAYMENT_BY
     return "\n".join(
         [
-            f"Продление платформы на {request['access_months']} мес.: {amount}.",
+            f"{_what(request)}: {amount}.",
             details,
             "После перевода пришлите сюда скриншот чека.",
         ]
     )
 
 
-async def _prompt(chat_id: int, request: dict[str, Any]) -> None:
+def _offer_button(offer: dict[str, Any]) -> list[dict[str, str]]:
+    wusd = int(offer["price_wusd_minor"]) // 100
+    rub = int(offer["price_rub_minor"]) // 100
+    rub_text = f"{rub:,}".replace(",", " ")
+    return [{
+        "text": f"{offer['title']} — {wusd} W$ / {rub_text} ₽",
+        "callback_data": f"renew:plan:{offer['plan_code']}",
+    }]
+
+
+async def _prompt(chat_id: int, request: dict[str, Any], tenant_id: str) -> None:
     status = str(request["status"])
     if status == "awaiting_period":
+        # Все услуги из каталога тарифов (V13): сайт на 3/6/12, сайт + клуб, курсы.
+        offers = await list_renewal_offers(tenant_id)
         await _deliver(
             chat_id,
-            "На какой срок продлить платформу?",
-            reply_markup={
-                "inline_keyboard": [
-                    [{"text": "3 месяца", "callback_data": "renew:months:3"}],
-                    [{"text": "6 месяцев", "callback_data": "renew:months:6"}],
-                    [{"text": "12 месяцев", "callback_data": "renew:months:12"}],
-                    _cancel_row(),
-                ]
-            },
+            "Что оплачиваете?",
+            reply_markup={"inline_keyboard": [_offer_button(o) for o in offers] + [_cancel_row()]},
         )
     elif status == "awaiting_country":
         await _deliver(
@@ -113,6 +127,7 @@ async def _prompt(chat_id: int, request: dict[str, Any]) -> None:
             },
         )
     elif status == "awaiting_payment":
+        request = {**request, "plan_title": await plan_title(tenant_id, request.get("plan_code"))}
         await _deliver(
             chat_id,
             _payment_text(request),
@@ -181,7 +196,10 @@ async def try_handle_renewal_callback(
             await cancel_renewal_request(tenant.tenant_id, actor_id)
             await _deliver(callback.chat_id, "Продление отменено. Вернуться можно через личный кабинет.")
             return {"ok": True, "route": "renewal_cancel", "status": "cancelled", "trace_id": trace_id}
+        elif action.startswith("plan:"):
+            request = await set_renewal_plan(tenant.tenant_id, actor_id, action.split(":", 1)[1])
         elif action.startswith("months:"):
+            # Старые кнопки «3/6/12 месяцев», уже разосланные в чатах.
             request = await set_renewal_period(
                 tenant.tenant_id, actor_id, int(action.rsplit(":", 1)[1])
             )
@@ -189,7 +207,7 @@ async def try_handle_renewal_callback(
             request = await set_renewal_country(
                 tenant.tenant_id, actor_id, action.rsplit(":", 1)[1]
             )
-        await _prompt(callback.chat_id, request)
+        await _prompt(callback.chat_id, request, tenant.tenant_id)
         return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}
     except RenewalRequestError as exc:
         await _deliver(callback.chat_id, str(exc))
@@ -221,6 +239,8 @@ async def try_handle_renewal_message(
                 message_id=msg.message_id,
                 file_id=msg.file_id,
             )
+            what = await plan_title(tenant.tenant_id, request.get("plan_code"))
+            what = what or "Сайт на %s мес." % request["access_months"]
             owner_id = str(get_settings().platform_billing_owner_telegram_id or "").strip()
             if owner_id.isdigit():
                 await copy_telegram_message(
@@ -233,9 +253,9 @@ async def try_handle_renewal_message(
                     int(owner_id),
                     "\n".join(
                         [
-                            "Продление платформы.",
+                            "Оплата услуги.",
                             f"Партнёр: {request['ref_code']}",
-                            f"Срок: {request['access_months']} мес.",
+                            f"Что: {what}",
                             f"Оплата: {_amount(int(request['amount_minor']), str(request['currency']))}",
                             "Чек выше.",
                         ]
@@ -247,7 +267,7 @@ async def try_handle_renewal_message(
                         ]]
                     },
                 )
-        await _prompt(msg.chat_id, request)
+        await _prompt(msg.chat_id, request, tenant.tenant_id)
         return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}
     except RenewalRequestError as exc:
         await _deliver(msg.chat_id, str(exc))
@@ -282,5 +302,5 @@ async def try_start_renewal_by_text(
     except RenewalRequestError:
         # Сайта нет — это не партнёр, пусть отвечает советник.
         return None
-    await _prompt(msg.chat_id, request)
+    await _prompt(msg.chat_id, request, tenant.tenant_id)
     return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}

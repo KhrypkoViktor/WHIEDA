@@ -36,17 +36,26 @@ async def test_partner_word_opens_the_period_question():
     async def deliver(chat_id, text, *, reply_markup=None):
         sent.append((text, reply_markup))
 
+    offers = [
+        {"plan_code": "platform_3m", "title": "Сайт на 3 месяца", "price_wusd_minor": 3000, "price_rub_minor": 300000},
+        {"plan_code": "bundle_pro_club_3m", "title": "Сайт + Клуб на 3 месяца", "price_wusd_minor": 10500, "price_rub_minor": 1050000},
+    ]
     with patch.object(rr, "_deliver", deliver), patch.object(
         rr, "_actor", AsyncMock(return_value="ladnaya")
     ), patch.object(
         rr, "begin_renewal_request", AsyncMock(return_value={"status": "awaiting_period"})
-    ), patch.object(rr, "_owner_allowed", lambda user_id: False):
+    ), patch.object(rr, "list_renewal_offers", AsyncMock(return_value=offers)), patch.object(
+        rr, "_owner_allowed", lambda user_id: False
+    ):
         result = await rr.try_start_renewal_by_text(_tenant(), _msg("оплата"), trace_id="t")
 
     assert result["status"] == "awaiting_period"
     text, markup = sent[0]
-    assert "продлить платформу" in text.lower()
-    assert markup["inline_keyboard"][0][0]["callback_data"] == "renew:months:3"
+    assert text == "Что оплачиваете?"
+    buttons = [row[0] for row in markup["inline_keyboard"]]
+    assert buttons[0] == {"text": "Сайт на 3 месяца — 30 W$ / 3 000 ₽", "callback_data": "renew:plan:platform_3m"}
+    assert buttons[1]["callback_data"] == "renew:plan:bundle_pro_club_3m"
+    assert buttons[-1]["callback_data"] == "renew:cancel"
 
 
 @pytest.mark.asyncio
