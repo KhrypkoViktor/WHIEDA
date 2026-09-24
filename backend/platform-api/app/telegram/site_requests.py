@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -25,6 +26,7 @@ from app.site_requests.service import (
     submit_site_payment_proof,
 )
 from app.site_requests.contacts import contacts_summary
+from app.telegram.club_group import NEWS_CHANNEL_TEXT, invite_to_club
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc, wwc_signed
 from app.telegram.delivery import (
@@ -34,6 +36,8 @@ from app.telegram.delivery import (
 )
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
+
+logger = logging.getLogger(__name__)
 
 
 _CALLBACK_RE = re.compile(
@@ -267,6 +271,7 @@ async def try_handle_site_request_callback(
                     "Оплата подтверждена. Данные приняты в работу. Напишем, когда "
                     f"{request['requested_subdomain']}.wwc.best будет готов.",
                 )
+                await _welcome_to_club_and_channel(request, trace_id)
             await _deliver(callback.chat_id, "Оплата записана. Заявка добавлена в очередь создания сайта.")
             return {"ok": True, "route": "site_request_confirm", "trace_id": trace_id}
 
@@ -284,6 +289,18 @@ async def try_handle_site_request_callback(
     except SiteRequestError as exc:
         await _deliver(callback.chat_id, str(exc))
         return {"ok": False, "route": "site_request", "status": "rejected", "trace_id": trace_id}
+
+
+async def _welcome_to_club_and_channel(request: dict[str, Any], trace_id: str) -> None:
+    """Пакет с клубом — ссылка в группу клуба; всем — официальный канал."""
+    chat_id = int(request["proof_chat_id"])
+    try:
+        if str(request.get("plan_code") or "") == "bundle":
+            await invite_to_club(chat_id, chat_id, str(request.get("requested_subdomain") or ""))
+        else:
+            await _deliver(chat_id, NEWS_CHANNEL_TEXT)
+    except Exception:
+        logger.exception("site_request_club_invite_failed", extra={"trace_id": trace_id})
 
 
 async def try_handle_site_request_message(

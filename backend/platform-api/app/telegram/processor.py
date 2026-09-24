@@ -63,6 +63,7 @@ from app.telegram.support import (
     try_handle_support_message,
     try_relay_user_message,
 )
+from app.telegram.club_group import try_handle_club_join
 from app.telegram.bindings import (
     BotBindingContext,
     binding_context_scope,
@@ -481,6 +482,11 @@ async def _process_core_telegram_update_scoped(
         if referral_callback_result is not None:
             return referral_callback_result
         return await handle_callback_query(tenant, callback, trace_id)
+
+    # Группа клуба: «вступил» приходит без текста — ловим до разбора сообщения.
+    club_join_result = await try_handle_club_join(update, trace_id=trace_id)
+    if club_join_result is not None:
+        return club_join_result
 
     msg = parse_telegram_message(update)
     if not msg:

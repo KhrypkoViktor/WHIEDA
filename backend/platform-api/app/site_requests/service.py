@@ -13,6 +13,7 @@ from app.subscriptions.service import (
     normalize_partner_subdomain,
     record_payment_lines_in_connection,
 )
+from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF
 
 # Что оформляют (владелец, 14–19.09.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
 #   site   — PRO 3 мес + настройка сайта: 30 + 20 WWC$ = 3 000 + 2 000 ₽
@@ -132,6 +133,32 @@ async def set_site_request_country(
     return row
 
 
+async def subdomain_taken(conn: Any, tenant_id: str, subdomain: str, actor_id: str = "") -> bool:
+    """Занят ли адрес <subdomain>.wwc.best.
+
+    Сверяем не только ref_code: адрес сайта может отличаться от него (elena.wwc.best
+    ведёт на onlineelena). 24.09.2026 бот принял elena от нового партнёра, а на сайте
+    этот адрес давно у другого человека.
+    """
+    if subdomain in ISSUED_SUBDOMAIN_TO_REF:
+        return True
+    row = await fetch_one(
+        conn,
+        """
+        select 1 as taken from referral_profiles
+        where ref_code = %s or public_profile->>'subdomain' = %s
+           or public_profile->>'public_site_url' like %s
+        union all
+        select 1 as taken from partner_site_requests
+        where tenant_id = %s and requested_subdomain = %s and actor_id <> %s
+          and status not in ('rejected', 'cancelled')
+        limit 1
+        """,
+        (subdomain, subdomain, f"https://{subdomain}.wwc.best%", tenant_id, subdomain, actor_id),
+    )
+    return bool(row)
+
+
 async def set_site_request_subdomain(
     tenant_id: str, actor_id: str, subdomain: str
 ) -> dict[str, Any]:
@@ -142,20 +169,11 @@ async def set_site_request_subdomain(
             "Напишите другое имя: латинские буквы, цифры и дефис, без пробелов."
         ) from exc
     async with tenant_connection(tenant_id) as conn:
-        occupied = await fetch_one(
-            conn,
-            """
-            select 1 as occupied from referral_profiles where ref_code = %s
-            union all
-            select 1 as occupied from partner_site_requests
-            where tenant_id = %s and requested_subdomain = %s and actor_id <> %s
-              and status not in ('rejected', 'cancelled')
-            limit 1
-            """,
-            (normalized, tenant_id, normalized, actor_id),
-        )
-        if occupied:
-            raise SiteRequestError("Это имя уже занято. Напишите другой вариант.")
+        if await subdomain_taken(conn, tenant_id, normalized, actor_id):
+            raise SiteRequestError(
+                f"Адрес {normalized}.wwc.best уже занят. Напишите другой вариант — "
+                "например, добавьте фамилию или город."
+            )
         row = await fetch_one(
             conn,
             """
@@ -303,6 +321,9 @@ async def confirm_site_request(
             return {**request, "idempotent": True}
         if request["status"] != "pending_confirmation":
             raise SiteRequestError("Эту заявку сейчас нельзя подтвердить.")
+        # Адрес могли занять, пока заявка ждала оплаты, — ловим до записи денег.
+        if await subdomain_taken(conn, tenant_id, str(request["requested_subdomain"]), str(request["actor_id"])):
+            raise SiteRequestError("Имя сайта уже занято. Заявку нужно проверить вручную.")
         profile = json.dumps(
             {
                 "subdomain": request["requested_subdomain"],

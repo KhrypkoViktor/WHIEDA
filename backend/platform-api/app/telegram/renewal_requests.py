@@ -22,6 +22,7 @@ from app.renewal_requests.service import (
     submit_renewal_payment_proof,
 )
 from app.settings import get_settings
+from app.telegram.club_group import invite_to_club
 from app.telegram.billing import notify_payment_participants
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money
@@ -178,6 +179,12 @@ async def try_handle_renewal_callback(
                         "renewal_participant_notification_failed",
                         extra={"trace_id": trace_id, "payment_id": str(payment.get("payment_id"))},
                     )
+            if not request.get("idempotent") and str(request.get("plan_code") or "").startswith("bundle"):
+                try:
+                    chat_id = int(request["proof_chat_id"])
+                    await invite_to_club(chat_id, chat_id, str(request.get("ref_code") or ""))
+                except Exception:
+                    logger.exception("renewal_club_invite_failed", extra={"trace_id": trace_id})
             await _deliver(
                 callback.chat_id,
                 "Продление подтверждено." if not request.get("idempotent") else "Продление уже было подтверждено.",
