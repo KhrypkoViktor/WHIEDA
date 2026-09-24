@@ -45,6 +45,7 @@ alter table partner_product_access
   drop constraint if exists partner_product_access_product_code_check;
 alter table partner_product_access
   add constraint partner_product_access_product_code_check
-  check (product_code = 'club_subscription' or product_code ~ '^course_[a-z0-9_]+$');
+  -- \Z вместо знака доллара: боевые правки идут через n8n, а он режет этот знак.
+  check (product_code = 'club_subscription' or product_code ~ '^course_[a-z0-9_]+\Z');
 
 commit;
