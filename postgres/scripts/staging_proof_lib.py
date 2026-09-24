@@ -54,6 +54,7 @@ APPLY_ORDER = [
     "platform_telegram_consent_v1.sql",
     "platform_partner_site_request_plans_v10.sql",
     "platform_lead_actor_channels_v11.sql",
+    "platform_partner_site_request_contacts_v12.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

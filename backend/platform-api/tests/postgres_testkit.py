@@ -42,6 +42,7 @@ MIGRATIONS = (
     "platform_partner_products_v7.sql",
     "platform_partner_site_request_plans_v10.sql",
     "platform_lead_actor_channels_v11.sql",
+    "platform_partner_site_request_contacts_v12.sql",
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

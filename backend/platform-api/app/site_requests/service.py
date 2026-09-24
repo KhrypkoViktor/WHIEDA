@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.site_requests.contacts import parse_contacts
 from app.db import fetch_one, tenant_connection
 from app.subscriptions.pricing import PaymentLine
 from app.subscriptions.service import (
@@ -213,7 +214,7 @@ async def set_site_request_intro(
             conn,
             """
             update partner_site_requests
-            set intro_text = %s, status = 'awaiting_plan', updated_at = now()
+            set intro_text = %s, status = 'awaiting_contacts', updated_at = now()
             where tenant_id = %s and actor_id = %s and status = 'awaiting_text'
             returning *
             """,
@@ -221,6 +222,34 @@ async def set_site_request_intro(
         )
     if not row:
         raise SiteRequestError("Не удалось сохранить текст.")
+    return row
+
+
+async def set_site_request_contacts(
+    tenant_id: str, actor_id: str, contacts_text: str
+) -> dict[str, Any]:
+    """Контакты для сайта одним сообщением (V12, 24.09.2026). «Нет» — тоже ответ:
+    шаг закрывается с пустым разбором, сайт соберётся из Telegram."""
+    value = str(contacts_text or "").strip()
+    if not value:
+        raise SiteRequestError("Пришлите контакты сообщением или напишите «нет».")
+    if len(value) > 2000:
+        raise SiteRequestError("Сообщение длиннее 2000 знаков. Пришлите покороче.")
+    parsed = parse_contacts(value)
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set contacts_text = %s, contacts = %s::jsonb,
+                status = 'awaiting_plan', updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = 'awaiting_contacts'
+            returning *
+            """,
+            (value, json.dumps(parsed, ensure_ascii=False), tenant_id, actor_id),
+        )
+    if not row:
+        raise SiteRequestError("Сейчас контакты не ожидаются.")
     return row
 
 

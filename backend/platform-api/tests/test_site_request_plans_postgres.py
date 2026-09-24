@@ -37,6 +37,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 SiteRequestError,
                 begin_site_request,
                 confirm_site_request,
+                set_site_request_contacts,
                 set_site_request_country,
                 set_site_request_intro,
                 set_site_request_photo,
@@ -55,6 +56,10 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             await set_site_request_subdomain("whieda", "proof-new", "anastasy")
             await set_site_request_photo("whieda", "proof-new", "file-1")
             req = await set_site_request_intro("whieda", "proof-new", "Косметолог-эстетист, семь лет в сфере красоты и омоложения.")
+            # V12: после текста — контакты одним сообщением, потом пакет.
+            assert req["status"] == "awaiting_contacts"
+            req = await set_site_request_contacts("whieda", "proof-new", "Телефон и WhatsApp: 8 928 672 92 88")
+            assert req["contacts"]["whatsapp"] == ["+79286729288"]
             # After the text comes the plan, not the payment.
             assert req["status"] == "awaiting_plan" and req["total_amount_minor"] is None
             with pytest.raises(SiteRequestError):

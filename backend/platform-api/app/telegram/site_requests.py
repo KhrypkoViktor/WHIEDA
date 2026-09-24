@@ -16,6 +16,7 @@ from app.site_requests.service import (
     confirm_site_request,
     get_open_site_request,
     reject_site_request,
+    set_site_request_contacts,
     set_site_request_country,
     set_site_request_intro,
     set_site_request_photo,
@@ -23,6 +24,7 @@ from app.site_requests.service import (
     set_site_request_subdomain,
     submit_site_payment_proof,
 )
+from app.site_requests.contacts import contacts_summary
 from app.telegram.bindings import current_bot_binding
 from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc, wwc_signed
 from app.telegram.delivery import (
@@ -78,6 +80,7 @@ _STEP_LABELS = {
     "awaiting_subdomain": "адрес сайта",
     "awaiting_photo": "фото",
     "awaiting_text": "текст о себе",
+    "awaiting_contacts": "контакты",
     "awaiting_plan": "выбор пакета",
     "awaiting_payment": "оплата",
 }
@@ -108,6 +111,16 @@ async def _notify_owner_step(msg: TelegramMessage, request: dict[str, Any], *, d
     if done == "текст о себе" and request.get("intro_text"):
         lines.append("")
         lines.append(str(request["intro_text"])[:700])
+    if done == "контакты":
+        # Владельцу — и как прислали, и как бот разобрал: разбор подсказка,
+        # а исходник решает (V12, 24.09.2026).
+        lines.append("")
+        lines.append(str(request.get("contacts_text") or "")[:1000])
+        parsed = contacts_summary(request.get("contacts") or {})
+        if parsed:
+            lines.append("")
+            lines.append("Бот разобрал:")
+            lines.extend(parsed)
     await _deliver(int(owner_id), chr(10).join(lines))
 
 
@@ -173,6 +186,29 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             chat_id,
             "Напишите 2-7 предложений о себе, своём опыте и о том, с чем к вам можно обратиться. "
             "Мы сократим и приведём текст к формату сайта.",
+        )
+    elif status == "awaiting_contacts":
+        # Люди присылают контакты одним сообщением — так и спрашиваем
+        # (владелец, 24.09.2026). Разбор по полям делает бот.
+        await _deliver(
+            chat_id,
+            chr(10).join([
+                "Какие контакты показать на вашем сайте? Пришлите одним сообщением, каждый с новой строки:",
+                "",
+                "• телефон",
+                "• WhatsApp",
+                "• MAX",
+                "• e-mail",
+                "• ВКонтакте, Instagram, TikTok — ссылкой",
+                "• ваш канал или группа — ссылкой (Telegram, ВКонтакте)",
+                "",
+                "Например:",
+                "Телефон и WhatsApp: +7 900 123-45-67",
+                "Почта: name@mail.ru",
+                "Канал: t.me/mychannel",
+                "",
+                "Telegram возьмём этот. Чего нет — пропустите. Если ничего добавлять не нужно, напишите «нет».",
+            ]),
         )
     elif status == "awaiting_plan":
         rub = request.get("country_code") == "RU"
@@ -279,6 +315,9 @@ async def try_handle_site_request_message(
         elif status == "awaiting_text" and msg.text:
             request = await set_site_request_intro(tenant.tenant_id, actor_id, msg.text)
             await _notify_owner_step(msg, request, done="текст о себе")
+        elif status == "awaiting_contacts" and msg.text:
+            request = await set_site_request_contacts(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(msg, request, done="контакты")
         elif status == "awaiting_payment" and msg.file_id:
             request = await submit_site_payment_proof(
                 tenant.tenant_id,
