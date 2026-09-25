@@ -11,6 +11,9 @@
 -- platform_outbox.due_at — плановые уведомления (утро CRM в 09:00 по времени
 --   аккаунта). Таблицу раньше создавал только код (app/jobs/outbox.py); теперь
 --   она создаётся и здесь (если её нет), чтобы колонка и индекс были до выката кода.
+--   Плановые строки живут в своём статусе 'scheduled': обработчик обычной очереди
+--   (process_pending_outbox, в том числе старые сборки на общей базе staging/бой)
+--   берёт только 'pending'/'failed' и не «закроет» утро без отправки.
 --
 -- Идемпотентно. Знака доллара в файле нет: боевые правки идут через n8n.
 
@@ -100,7 +103,7 @@ create table if not exists platform_outbox (
   idempotency_key text not null,
   payload jsonb not null default '{}'::jsonb,
   status text not null default 'pending'
-    check (status in ('pending', 'processing', 'done', 'failed', 'dead')),
+    check (status in ('pending', 'processing', 'done', 'failed', 'dead', 'scheduled')),
   attempts integer not null default 0,
   last_error text,
   due_at timestamptz,
@@ -110,6 +113,10 @@ create table if not exists platform_outbox (
 );
 
 alter table platform_outbox add column if not exists due_at timestamptz;
+
+alter table platform_outbox drop constraint if exists platform_outbox_status_check;
+alter table platform_outbox add constraint platform_outbox_status_check
+  check (status in ('pending', 'processing', 'done', 'failed', 'dead', 'scheduled'));
 
 create index if not exists platform_outbox_due
   on platform_outbox (status, due_at)

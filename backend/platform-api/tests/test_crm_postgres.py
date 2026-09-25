@@ -14,6 +14,7 @@ are mocks.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -186,6 +187,10 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                 "whieda", igor, anna["id"], {"status": "client", "next_step": "ping", "next_at": today}
             )
             assert (manual["status"], manual["next_step"], manual["next_at"]) == ("client", "ping", today.isoformat())
+            # A meeting from an earlier round is not reused: «Приглашён» needs a new one.
+            with pytest.raises(crm.CrmError) as stale_meeting:
+                await crm.update_contact("whieda", igor, anna["id"], {"status": "invited"})
+            assert stale_meeting.value.code == "meeting_at_required"
 
             note = await crm.add_note("whieda", igor, anna["id"], "Была на презентации, думает")
             detail = await crm.get_contact("whieda", igor, anna["id"])
@@ -255,7 +260,10 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert notes == [{"body": "Заявка с сайта.\nИнтерес: Стельки\nКомментарий: вечером"}]
 
             await save_lead(lead("crm-lead-1", "+7 999 111-22-33"))  # same request again
+            admin(f"update crm_contacts set next_at = current_date + 30 where contact_id = '{card['id']}'")
             await save_lead(lead("crm-lead-2", "8 999 111 22 33"))  # same person, new request
+            bumped = await rows("select next_step, next_at from crm_contacts where contact_id = %s::uuid", (card["id"],))
+            assert bumped == [{"next_step": "invite", "next_at": igor["today"]}]  # back on «Сегодня»
             assert len(await rows("select 1 from crm_contacts where phone_e164 = '+79991112233'")) == 1
             assert len(await rows("select 1 from crm_notes where contact_id = %s::uuid", (card["id"],))) == 2
 
@@ -296,7 +304,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert len(digests) == 1
             digest = digests[0]
             assert digest["idempotency_key"] == f"crm_digest:{igor['account_id']}:{igor['today'].isoformat()}"
-            assert digest["status"] == "pending" and digest["due_at"] is not None
+            assert digest["status"] == "scheduled" and digest["due_at"] is not None
             assert digest["payload"]["chat_id"] == "7001"
             assert digest["payload"]["url"] == "https://igor.wwc.best/crm/#today"
             assert digest["payload"]["text"].startswith("Сегодня в ежедневнике: пригласить на встречу — ")
@@ -312,7 +320,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                                 ("crm-proof-old-event", digest["idempotency_key"]))
             assert {r["idempotency_key"]: r["status"] for r in status} == {
                 "crm-proof-old-event": "done",
-                digest["idempotency_key"]: "pending",
+                digest["idempotency_key"]: "scheduled",
             }
 
             # Rows planned for another bot (staging) are not claimed by this process.
@@ -337,7 +345,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             done = await rows("select status, attempts from platform_outbox where outbox_id = %s", (digest["outbox_id"],))
             assert done == [{"status": "done", "attempts": 1}]
             staging = await rows("select status from platform_outbox where idempotency_key = 'proof:staging-bot'")
-            assert staging == [{"status": "pending"}]
+            assert staging == [{"status": "scheduled"}]
 
             # A transient failure is retried later; «blocked» (403) is final.
             admin("update platform_outbox set due_at = now() - interval '1 minute' where idempotency_key = 'proof:retry'")
@@ -346,14 +354,73 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                 assert await process_due_notifications({"whieda": _binding()}) == 0
             retry = await rows("select status, attempts, due_at > now() as later from platform_outbox "
                                "where idempotency_key = 'proof:retry'")
-            assert retry == [{"status": "pending", "attempts": 1, "later": True}]
+            assert retry == [{"status": "scheduled", "attempts": 1, "later": True}]
             admin("update platform_outbox set due_at = now() - interval '1 minute' where idempotency_key = 'proof:retry'")
             with patch("app.jobs.worker.send_telegram_text",
                        AsyncMock(side_effect=TelegramDeliveryError("telegram_send_failed:403"))):
                 assert await process_due_notifications({"whieda": _binding()}) == 0
             final = await rows("select status, attempts from platform_outbox where idempotency_key = 'proof:retry'")
-            assert final == [{"status": "failed", "attempts": 2}]
+            assert final == [{"status": "dead", "attempts": 2}]
             last_error = await rows("select last_error from platform_outbox where idempotency_key = 'proof:retry'")
             assert "test-token" not in (last_error[0]["last_error"] or "")
 
+            # The worker is stopped in the middle of a batch: the row being sent stays
+            # «processing» (never resent), the rows it did not reach go back to «scheduled».
+            async with tenant_connection("whieda") as conn:
+                for key in ("proof:stop-1", "proof:stop-2"):
+                    await enqueue_outbox_event(conn, tenant_id="whieda", event_type="crm_daily_digest",
+                                               idempotency_key=key,
+                                               payload={"chat_id": "3", "text": key, "binding_id": "whieda-advisor-bot"},
+                                               due_at=now - timedelta(minutes=1))
+            with patch("app.jobs.worker.send_telegram_text", AsyncMock(side_effect=asyncio.CancelledError())):
+                with pytest.raises(asyncio.CancelledError):
+                    await process_due_notifications({"whieda": _binding()})
+            stopped = await rows("select idempotency_key, status from platform_outbox "
+                                 "where idempotency_key like 'proof:stop-%%' order by idempotency_key")
+            assert stopped == [
+                {"idempotency_key": "proof:stop-1", "status": "processing"},
+                {"idempotency_key": "proof:stop-2", "status": "scheduled"},
+            ]
+
         db.run_with_app(proof)
+
+
+OLD_CODE_OUTBOX = """
+create table platform_outbox (
+  outbox_id bigserial primary key,
+  tenant_id text not null,
+  event_type text not null,
+  idempotency_key text not null,
+  payload jsonb not null default '{}'::jsonb,
+  status text not null default 'pending'
+    check (status in ('pending', 'processing', 'done', 'failed', 'dead')),
+  attempts integer not null default 0,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, idempotency_key)
+);
+insert into platform_outbox (tenant_id, event_type, idempotency_key, payload)
+values ('whieda', 'lead_created', 'lead_delivery:old', '{"lead_id": "x"}');
+"""
+
+
+@pytest.mark.integration
+def test_v14_upgrades_the_outbox_that_code_created():
+    """On production platform_outbox was created by app/jobs/outbox.py (old
+    status check, no due_at). V14 must add due_at and the «scheduled» status there."""
+    with temporary_database("whieda_crm_outbox") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn, names=("platform_tenant_registry_v1.sql", "platform_tenant_rls_v1.sql"))
+            conn.execute(OLD_CODE_OUTBOX)
+            db.apply_migrations(conn, names=("platform_tenant_registry_v1.sql", "platform_tenant_rls_v1.sql",
+                                              "platform_crm_v14.sql", "platform_crm_v14.sql"))
+            conn.execute(
+                "insert into platform_outbox (tenant_id, event_type, idempotency_key, status, due_at) "
+                "values ('whieda', 'crm_daily_digest', 'crm_digest:a:2026-09-25', 'scheduled', now())"
+            )
+            rows = conn.execute("select idempotency_key, status, due_at is not null from platform_outbox order by outbox_id").fetchall()
+            assert rows == [("lead_delivery:old", "pending", False), ("crm_digest:a:2026-09-25", "scheduled", True)]
+            with pytest.raises(psycopg.errors.CheckViolation):
+                conn.execute("insert into platform_outbox (tenant_id, event_type, idempotency_key, status) "
+                             "values ('whieda', 'x', 'bad', 'later')")

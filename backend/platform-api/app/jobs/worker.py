@@ -44,9 +44,6 @@ async def process_pending_outbox(batch_size: int = 20) -> int:
                 from platform_outbox
                 where status in ('pending', 'failed')
                   and attempts < %s
-                  -- Rows with due_at belong to process_due_notifications. to_jsonb
-                  -- instead of the column: works before and after the V14 migration.
-                  and to_jsonb(platform_outbox) ->> 'due_at' is null
                 order by created_at
                 limit %s
                 for update skip locked
@@ -191,17 +188,35 @@ async def _finish_due(outbox_id: int, *, status: str, attempts: int, error: str 
             )
 
 
+async def _return_unattempted(outbox_ids: list[int]) -> None:
+    """Rows claimed but never tried (worker stopped mid-batch) go back to the queue."""
+    if not outbox_ids:
+        return
+    settings = get_settings()
+    async with get_pool().connection(timeout=settings.database_timeout_sec) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update platform_outbox set status = 'scheduled', updated_at = now()
+                where outbox_id = any(%s) and status = 'processing'
+                """,
+                (outbox_ids,),
+            )
+
+
 async def process_due_notifications(
     bindings: dict[str, BotBindingContext] | None = None,
     *,
     batch_size: int = DUE_BATCH_SIZE,
 ) -> int:
-    """Send platform_outbox rows whose due_at has come; status done / failed.
+    """Send the scheduled platform_outbox rows whose due_at has come.
 
-    Only rows planned for a bot of this process (payload.binding_id) are
-    claimed. Separate from process_pending_outbox, which has other semantics.
-    A failed send is retried in 10 minutes, up to DUE_MAX_ATTEMPTS; an ambiguous
-    delivery or a 400/403 from Telegram is final (no double message).
+    Scheduled rows have their own status, «scheduled», so process_pending_outbox
+    (other semantics, and older builds of it on the shared database) never
+    claims them. Only rows planned for a bot of this process (payload.binding_id)
+    are taken. Outcome: «done»; a failed send goes back to «scheduled» in
+    10 minutes, up to DUE_MAX_ATTEMPTS; an ambiguous delivery, a 400/403 from
+    Telegram or the last attempt is «dead» (no double message).
     """
     if bindings is None:
         bindings = await scheduled_notify_bindings()
@@ -216,7 +231,7 @@ async def process_due_notifications(
                 """
                 select outbox_id, tenant_id, event_type, payload, attempts
                 from platform_outbox
-                where status = 'pending'
+                where status = 'scheduled'
                   and due_at is not null
                   and due_at <= now()
                   and payload ->> 'binding_id' = any(%s)
@@ -234,30 +249,38 @@ async def process_due_notifications(
                     )
 
     sent = 0
-    for row in rows:
-        payload = row["payload"] if isinstance(row["payload"], dict) else {}
-        binding = by_id.get(str(payload.get("binding_id") or ""))
-        attempts = int(row["attempts"] or 0) + 1
-        try:
-            if binding is None or binding.tenant.tenant_id != row["tenant_id"]:
-                raise TelegramDeliveryUnknown("binding_mismatch")
-            await _send_due_notification(binding, payload)
-        except Exception as exc:
-            final = _final_delivery_error(exc) or attempts >= DUE_MAX_ATTEMPTS
-            await _finish_due(
-                row["outbox_id"],
-                status="failed" if final else "pending",
-                attempts=attempts,
-                error=safe_error_summary(exc)[:500],
-                retry=not final,
-            )
-            logger.warning(
-                "due_notification_failed",
-                extra={"outbox_id": row["outbox_id"], "event_type": row["event_type"], "final": final},
-            )
-            continue
-        await _finish_due(row["outbox_id"], status="done", attempts=attempts, error=None, retry=False)
-        sent += 1
+    attempted: set[int] = set()
+    try:
+        for row in rows:
+            attempted.add(row["outbox_id"])
+            payload = row["payload"] if isinstance(row["payload"], dict) else {}
+            binding = by_id.get(str(payload.get("binding_id") or ""))
+            attempts = int(row["attempts"] or 0) + 1
+            try:
+                if binding is None or binding.tenant.tenant_id != row["tenant_id"]:
+                    raise TelegramDeliveryUnknown("binding_mismatch")
+                await _send_due_notification(binding, payload)
+            except Exception as exc:
+                final = _final_delivery_error(exc) or attempts >= DUE_MAX_ATTEMPTS
+                outcome = {
+                    "status": "dead" if final else "scheduled",
+                    "error": safe_error_summary(exc)[:500],
+                    "retry": not final,
+                }
+                logger.warning(
+                    "due_notification_failed",
+                    extra={"outbox_id": row["outbox_id"], "event_type": row["event_type"], "final": final},
+                )
+            else:
+                outcome = {"status": "done", "error": None, "retry": False}
+                sent += 1
+            try:
+                await _finish_due(row["outbox_id"], attempts=attempts, **outcome)
+            except Exception:
+                # The row stays «processing»: never resent, a message at most once.
+                logger.exception("due_notification_finish_failed", extra={"outbox_id": row["outbox_id"]})
+    finally:
+        await _return_unattempted([row["outbox_id"] for row in rows if row["outbox_id"] not in attempted])
     return sent
 
 

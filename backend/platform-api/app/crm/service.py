@@ -421,13 +421,8 @@ async def update_contact(
                 )
             elif meeting_given:
                 values["meeting_at"] = None
-            elif current.get("meeting_at") is not None:
-                meeting_row = await fetch_one(
-                    conn,
-                    "select (%s::timestamptz at time zone %s)::date as d",
-                    (current["meeting_at"], account["timezone"]),
-                )
-                meeting_date = meeting_row["d"] if meeting_row else None
+            # Смена статуса на «Приглашён» требует время встречи в том же запросе:
+            # старая встреча из прошлого круга дала бы дату шага в прошлом.
 
             new_status = changes.get("status") if "status" in changes else None
             if "status" in changes and new_status not in STATUSES:
@@ -613,8 +608,20 @@ async def add_lead_card(
             )
             existing = await _duplicate_of(conn, tenant_id, account["account_id"], phone_e164)
             if existing:
-                # Человек уже в ежедневнике — новая заявка становится заметкой, без дубля.
+                # Человек уже в ежедневнике — новая заявка становится заметкой, без дубля,
+                # а карточка поднимается на «Сегодня» (шаг не позже сегодняшнего дня).
                 contact_id = existing
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        update crm_contacts
+                        set next_step = coalesce(next_step, 'invite'),
+                            next_at = least(coalesce(next_at, %s), %s),
+                            updated_at = now()
+                        where tenant_id = %s and contact_id = %s::uuid
+                        """,
+                        (account["today"], account["today"], tenant_id, contact_id),
+                    )
             else:
                 created = await fetch_one(
                     conn,

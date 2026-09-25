@@ -26,7 +26,7 @@ async def ensure_outbox_table(conn: AsyncConnection) -> None:
           idempotency_key text not null,
           payload jsonb not null default '{}'::jsonb,
           status text not null default 'pending'
-            check (status in ('pending', 'processing', 'done', 'failed', 'dead')),
+            check (status in ('pending', 'processing', 'done', 'failed', 'dead', 'scheduled')),
           attempts integer not null default 0,
           last_error text,
           due_at timestamptz,
@@ -48,10 +48,11 @@ async def enqueue_outbox_event(
 ) -> dict[str, Any] | None:
     """Queue an event once per (tenant_id, idempotency_key).
 
-    ``due_at`` makes it a scheduled notification: the job worker's
-    ``process_due_notifications`` sends it when the time comes, and
-    ``process_pending_outbox`` leaves it alone. Without ``due_at`` the insert is
-    the same as before V14, so old databases keep working.
+    ``due_at`` makes it a scheduled notification (status «scheduled»): the job
+    worker's ``process_due_notifications`` sends it when the time comes, and
+    ``process_pending_outbox`` — including older builds of it running against
+    the shared database — never touches it. Without ``due_at`` the insert is the
+    same as before V14.
     """
     await ensure_outbox_table(conn)
     if due_at is not None:
@@ -59,9 +60,9 @@ async def enqueue_outbox_event(
             await cur.execute(
                 """
                 insert into platform_outbox (
-                  tenant_id, event_type, idempotency_key, payload, due_at
+                  tenant_id, event_type, idempotency_key, payload, due_at, status
                 )
-                values (%s, %s, %s, %s::jsonb, %s)
+                values (%s, %s, %s, %s::jsonb, %s, 'scheduled')
                 on conflict (tenant_id, idempotency_key) do update
                   set updated_at = now()
                 returning outbox_id, status, (xmax = 0) as created
