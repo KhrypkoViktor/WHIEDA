@@ -57,6 +57,8 @@ APPLY_ORDER = [
     "platform_partner_site_request_contacts_v12.sql",
     "platform_renewal_services_v13.sql",
     "platform_crm_v14.sql",
+    "platform_academy_v1.sql",
+    "platform_academy_shelf_v15.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

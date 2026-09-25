@@ -9,16 +9,16 @@ from app.subscriptions.pricing import PaymentLine
 from app.subscriptions.service import record_payment_lines_in_connection
 
 # Каталог услуг продления (V13, 24.09.2026) — строки partner_subscription_plans:
-# сайт на 3/6/12 месяцев, пакет «сайт + клуб» и любые курсы course_<slug>.
+# сайт на 3/6/12 месяцев, пакет «сайт + клуб», любые курсы course_<slug> и
+# полка Академии для авторов (academy_shelf, V15 25.09.2026).
 # Клуб отдельно не продаётся: только пакетом с сайтом (владелец). Курс
 # добавляется одной строкой в таблицу тарифов — здесь ничего менять не надо.
 _OFFER_FILTER = """
     active = true and valid_from <= now()
     and (valid_until is null or valid_until > now())
-    and (product_code in ('platform_subscription', 'bundle_pro_club')
+    and (product_code in ('platform_subscription', 'bundle_pro_club', 'academy_shelf')
          or product_code like 'course!_%%' escape '!')
 """
-COURSE_ACCESS_UNTIL = "2099-12-31 20:59:59+00"  # курс покупается навсегда
 
 
 class RenewalRequestError(ValueError):
@@ -181,6 +181,9 @@ async def renewal_lines(conn: Any, tenant_id: str, request: dict[str, Any]) -> l
         ]
     if product.startswith("course_"):
         return [PaymentLine(product, amount, currency, 0, False, "")]
+    if product == "academy_shelf":
+        # Полка автора — свой срок (academy_shelf.paid_until), не продление сайта.
+        return [PaymentLine("academy_shelf", amount, currency, int(offer["access_months"]), False, "")]
     return [PaymentLine("platform_subscription", amount, currency, int(offer["access_months"]), False, "")]
 
 
@@ -325,7 +328,9 @@ async def confirm_renewal_request(
             return {**request, "idempotent": True}
         if request["status"] != "pending_confirmation":
             raise RenewalRequestError("Эту заявку сейчас нельзя подтвердить.")
-        # Одна оплата — столько строк, сколько в услуге: сайт; сайт + клуб; курс.
+        # Одна оплата — столько строк, сколько в услуге: сайт; сайт + клуб; курс; полка.
+        # Курс открывается в Академии, полка продлевается — там же, в
+        # record_payment_lines_in_connection (единый писатель academy_access / academy_shelf).
         lines = await renewal_lines(conn, tenant_id, request)
         result = await record_payment_lines_in_connection(
             conn,
@@ -338,18 +343,6 @@ async def confirm_renewal_request(
             telegram_message_id=int(request["proof_message_id"]),
             telegram_user_id=int(request["telegram_user_id"]),
         )
-        for line in lines:
-            if line.product_code.startswith("course_"):
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        """
-                        insert into partner_product_access (tenant_id, ref_code, product_code, paid_until)
-                        values (%s, %s, %s, %s::timestamptz)
-                        on conflict (tenant_id, ref_code, product_code)
-                        do update set paid_until = excluded.paid_until, updated_at = now()
-                        """,
-                        (tenant_id, str(request["ref_code"]), line.product_code, COURSE_ACCESS_UNTIL),
-                    )
         main = next(
             (l for l in result["lines"] if l["product_code"] == "platform_subscription"),
             result["lines"][0],

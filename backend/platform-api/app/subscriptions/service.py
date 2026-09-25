@@ -1125,6 +1125,8 @@ async def record_payment_lines_in_connection(
             raise SubscriptionError("Все строки одной оплаты должны быть в одной валюте.")
         if line.product_code in TERM_PRODUCTS and line.access_months not in {3, 6, 12}:
             raise SubscriptionError("access_months must be 3, 6 or 12")
+        if line.product_code == "academy_shelf" and line.access_months not in {3, 6, 12}:
+            raise SubscriptionError("access_months must be 3, 6 or 12")
     bonus_minor = int(bonus_minor or 0)
     if bonus_minor < 0:
         raise SubscriptionError("bonus_minor must not be negative")
@@ -1197,6 +1199,13 @@ async def record_payment_lines_in_connection(
                 conn, tenant_id=tenant_id, ref_code=ref_code, product_code=line.product_code,
                 access_months=line.access_months, current=current,
             )
+        elif line.product_code == "academy_shelf":
+            # Полка Академии (25.09.2026): срок автора в academy_shelf, не в partner_product_access.
+            from app.academy.service import extend_shelf_in_connection
+
+            period_start, period_end, previous = await extend_shelf_in_connection(
+                conn, tenant_id=tenant_id, ref_code=ref_code, access_months=line.access_months, current=current,
+            )
         else:
             period_start, period_end, previous = current, current, None
         promo_note = (line.note or "акция") if line.promo else None
@@ -1218,6 +1227,15 @@ async def record_payment_lines_in_connection(
             ),
         )
         recorded.append(ledger)
+        if line.product_code.startswith("course_"):
+            # Покупка курса → доступ в Академии (решение 5): курс по course_slug тарифа.
+            # Нет курса или Telegram у владельца профиля — предупреждение, платёж остаётся.
+            from app.academy.service import grant_course_access_for_product
+
+            await grant_course_access_for_product(
+                conn, tenant_id=tenant_id, ref_code=ref_code, product_code=line.product_code,
+                payment_ref=str(ledger["payment_id"]),
+            )
         if line.product_code == "platform_subscription" and int(line.amount_minor) > 0:
             # Referral reward rules exist for PRO only; other products earn nothing.
             referral_bonus = await award_referral_bonus_for_payment(conn, tenant_id=tenant_id, payment=ledger)

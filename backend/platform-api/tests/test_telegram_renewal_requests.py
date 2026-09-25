@@ -149,3 +149,42 @@ async def test_payment_proof_is_forwarded_for_owner_confirmation(
     callbacks = [button["callback_data"] for button in owner_markup["inline_keyboard"][0]]
     assert callbacks[0].startswith("renew:confirm:")
     assert callbacks[1].startswith("renew:reject:")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("product_code", "academy_notice"),
+    [("academy_shelf", True), ("course_neuro", True), ("platform_subscription", False)],
+)
+async def test_confirm_sends_academy_notice_for_shelf_and_course(
+    whieda_tenant, whieda_bot_binding, monkeypatch, product_code, academy_notice
+):
+    """Полка/курс (25.09.2026): не «Сайт… Доступ до» с датой полки, а свой текст."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", "1")
+    get_settings.cache_clear()
+    request = {
+        "status": "confirmed", "idempotent": False, "proof_chat_id": 7001, "plan_code": "x", "ref_code": "igoref",
+        "payment": {"tenant_id": "whieda", "product_code": product_code, "payment_id": "p1"},
+    }
+    token = "0" * 32
+    try:
+        with patch("app.telegram.renewal_requests.answer_callback_query", AsyncMock()), patch(
+            "app.telegram.renewal_requests.confirm_renewal_request", AsyncMock(return_value=request)
+        ), patch("app.telegram.renewal_requests.plan_title", AsyncMock(return_value="Полка")), patch(
+            "app.telegram.renewal_requests.notify_academy_payment", AsyncMock()
+        ) as academy, patch(
+            "app.telegram.renewal_requests.notify_payment_participants", AsyncMock()
+        ) as generic, patch("app.telegram.renewal_requests._deliver", AsyncMock()):
+            with binding_context_scope(whieda_bot_binding):
+                result = await try_handle_renewal_callback(
+                    whieda_tenant, _callback(f"renew:confirm:{token}", user_id=1), trace_id="renew-confirm"
+                )
+    finally:
+        get_settings.cache_clear()
+    assert result["route"] == "renewal_confirm"
+    assert academy.await_count == (1 if academy_notice else 0)
+    assert generic.await_count == (0 if academy_notice else 1)
+    if academy_notice:
+        assert academy.await_args.kwargs == {"chat_id": 7001, "title": "Полка"}

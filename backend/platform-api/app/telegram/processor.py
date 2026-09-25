@@ -23,7 +23,12 @@ from app.leads.actor_link import (
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
-from app.telegram.academy import try_handle_academy_callback, try_handle_academy_text
+from app.telegram.academy import (
+    handle_course_start_token,
+    parse_course_start_token,
+    try_handle_academy_callback,
+    try_handle_academy_text,
+)
 from app.crm.bot import try_handle_crm_text
 from app.referral_bonus.service import (
     accept_referral_start,
@@ -565,6 +570,9 @@ async def _process_core_telegram_update_scoped(
             return await handle_site_start_token(tenant, msg, start_token, trace_id)
         if parse_referral_start_token(start_token) is not None:
             return await handle_referral_start_token(tenant, msg, start_token, trace_id)
+        if parse_course_start_token(start_token) is not None:
+            # Ключ автора курса (полка Академии): /start course_<код>.
+            return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
         if is_services_start_token(start_token):
             return await show_services(msg.chat_id, trace_id=trace_id)
         if is_pro_start_token(start_token):
