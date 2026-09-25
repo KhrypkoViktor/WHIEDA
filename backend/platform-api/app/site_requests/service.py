@@ -148,13 +148,15 @@ async def subdomain_taken(conn: Any, tenant_id: str, subdomain: str, actor_id: s
         select 1 as taken from referral_profiles
         where ref_code = %s or public_profile->>'subdomain' = %s
            or public_profile->>'public_site_url' like %s
+           -- Старые адреса партнёра (svelaya → doronina, 25.09.2026) ведут на него же.
+           or coalesce(public_profile->'retired_subdomains', '[]'::jsonb) ? %s
         union all
         select 1 as taken from partner_site_requests
         where tenant_id = %s and requested_subdomain = %s and actor_id <> %s
           and status not in ('rejected', 'cancelled')
         limit 1
         """,
-        (subdomain, subdomain, f"https://{subdomain}.wwc.best%", tenant_id, subdomain, actor_id),
+        (subdomain, subdomain, f"https://{subdomain}.wwc.best%", subdomain, tenant_id, subdomain, actor_id),
     )
     return bool(row)
 

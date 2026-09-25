@@ -31,7 +31,8 @@ def test_profile_subdomain_and_site_url_are_checked():
         assert asyncio.run(service.subdomain_taken(object(), "whieda", "billteam", "a"))
     sql, params = fetch.await_args.args[1], fetch.await_args.args[2]
     assert "public_profile->>'subdomain'" in sql and "public_site_url" in sql
-    assert params[:3] == ("billteam", "billteam", "https://billteam.wwc.best%")
+    assert "retired_subdomains" in sql
+    assert params[:4] == ("billteam", "billteam", "https://billteam.wwc.best%", "billteam")
 
 
 def test_free_name_passes():
