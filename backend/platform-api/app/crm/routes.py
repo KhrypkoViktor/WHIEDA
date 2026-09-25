@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.content_access.routes import _current_session
 from app.crm.service import (
     CrmError,
+    add_lead_card_for_public_id,
     add_note,
     create_contact,
     delete_contact,
@@ -40,6 +41,7 @@ from app.crm.service import (
     update_contact,
 )
 from app.errors import http_exception_handler
+from app.internal_auth import InternalSecretHeader, require_internal_secret
 from app.settings import get_settings
 from app.tenancy import get_request_tenant, require_entitlement
 
@@ -250,3 +252,20 @@ async def crm_note_delete(contact_id: str, note_id: str, request: Request) -> Re
     except CrmError as exc:
         _raise(exc)
     return Response(status_code=204)
+
+
+@router.post("/api/v1/leads/{public_id}/crm-card")
+async def lead_crm_card_internal(
+    public_id: str,
+    request: Request,
+    response: Response,
+    internal_secret: InternalSecretHeader = None,
+) -> dict[str, Any]:
+    """Сервер-сервер: n8n после записи заявки просит карточку в ежедневнике
+    владельца. Публично не проксируется (на сайте location = /api/v1/leads —
+    точное совпадение), доступ только с секретом PLATFORM_INTERNAL_API_SECRET;
+    тенант — по X-Forwarded-Host, который n8n передаёт явно."""
+    response.headers["Cache-Control"] = NO_STORE
+    require_internal_secret(internal_secret)
+    tenant = get_request_tenant(request)
+    return await add_lead_card_for_public_id(tenant.tenant_id, public_id)

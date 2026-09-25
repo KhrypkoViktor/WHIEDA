@@ -624,6 +624,20 @@ async def add_lead_card(
             )
             if account is None:
                 return None
+            # Повтор той же заявки (ретрай n8n или сайта) — ничего не делаем: иначе
+            # поиск по телефону находил человека и дописывал вторую заметку. Метка
+            # обработанной заявки — в её же metadata (crm_card = id карточки).
+            seen = await fetch_one(
+                conn,
+                """
+                select 1 as seen from website_leads
+                where tenant_id = %s and lead_id = %s::uuid and coalesce(metadata, '{}'::jsonb) ? 'crm_card'
+                limit 1
+                """,
+                (tenant_id, lead_id),
+            )
+            if seen is not None:
+                return None
             phone_e164, phone_raw = phone_from_lead_contact(contact)
             note = lead_note_text(
                 contact=contact, product_name=product_name, comment=comment, phone_known=phone_e164 is not None
@@ -639,10 +653,11 @@ async def add_lead_card(
                         update crm_contacts
                         set next_step = coalesce(next_step, 'invite'),
                             next_at = least(coalesce(next_at, %s), %s),
+                            lead_id = coalesce(lead_id, %s::uuid),
                             updated_at = now()
                         where tenant_id = %s and contact_id = %s::uuid
                         """,
-                        (account["today"], account["today"], tenant_id, contact_id),
+                        (account["today"], account["today"], lead_id, tenant_id, contact_id),
                     )
             else:
                 created = await fetch_one(
@@ -674,7 +689,55 @@ async def add_lead_card(
                     "insert into crm_notes (tenant_id, contact_id, body) values (%s, %s::uuid, %s)",
                     (tenant_id, contact_id, note),
                 )
+                await cur.execute(
+                    """
+                    update website_leads
+                    set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('crm_card', %s::text)
+                    where tenant_id = %s and lead_id = %s::uuid
+                    """,
+                    (contact_id, tenant_id, lead_id),
+                )
             return contact_id
     except Exception as exc:
         logger.warning("crm_lead_card_failed", extra={"tenant_id": tenant_id, "lead_id": str(lead_id), **safe_error(exc)})
         return None
+
+
+async def add_lead_card_for_public_id(tenant_id: str, public_id: str) -> dict[str, Any]:
+    """Карточка для заявки, сохранённой не через save_lead.
+
+    На бою заявки с сайта пишет n8n (workflow wwc-website-leads-p0), а не Core,
+    поэтому хук в save_lead там не срабатывает. n8n после записи заявки зовёт
+    внутренний роут, а он — тот же add_lead_card. Идемпотентно: карточка на
+    заявку одна (on conflict do nothing), повтор по телефону — заметка.
+
+    Заявки со staging-хостов не превращаем в карточки: staging делит базу с
+    боем, а тестовая заявка не должна попасть в живой ежедневник.
+    """
+    async with tenant_connection(tenant_id) as conn:
+        lead = await fetch_one(
+            conn,
+            """
+            select lead_id::text as lead_id, name, contact, product_name, comment, page_url, assigned_owner_id
+            from website_leads
+            where tenant_id = %s and public_id = %s and deleted_at is null
+            limit 1
+            """,
+            (tenant_id, public_id),
+        )
+        if lead is None:
+            return {"ok": False, "error": "lead_not_found"}
+        host = (urlsplit(str(lead.get("page_url") or "")).hostname or "").lower()
+        if host.startswith("staging.") or host.startswith("admin") or host.startswith("cabinet."):
+            return {"ok": True, "card_id": None, "reason": "staging_lead"}
+        card_id = await add_lead_card(
+            conn,
+            tenant_id=tenant_id,
+            lead_id=lead["lead_id"],
+            owner_actor_id=lead.get("assigned_owner_id"),
+            name=lead.get("name"),
+            contact=lead.get("contact"),
+            product_name=lead.get("product_name"),
+            comment=lead.get("comment"),
+        )
+    return {"ok": True, "card_id": card_id, "reason": None if card_id else "skipped"}
