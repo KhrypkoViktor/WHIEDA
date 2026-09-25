@@ -18,8 +18,10 @@ Someone else's course is checked before students see it (owner, 25.09.2026):
              author's course keeps its rule (re-loading without flags must not
              open it to every PRO partner); a platform course takes the bundle's
              own ``access_rule`` (the platform course stays ``pro``).
-  --author   lead_actors.actor_id of the author (a WHIEDA partner). Not given:
-             an existing course keeps its author, a new one has none (platform).
+  --author   lead_actors.actor_id of the author: a WHIEDA partner linked to Telegram
+             (telegram_user_id — the bot commands and the shelf payment use it)
+             and owning an enabled referral profile (the shelf is paid on it).
+             Not given: an existing course keeps its author, a new one has none.
 """
 
 from __future__ import annotations
@@ -60,10 +62,21 @@ def load(
         conn.execute("select set_config('app.tenant_id', %s, true)", (tenant_id,))
         if author:
             known = conn.execute(
-                "select 1 from lead_actors where tenant_id = %s and actor_id = %s", (tenant_id, author)
+                """
+                select 1 from lead_actors la
+                join referral_profiles rp
+                  on rp.tenant_id = la.tenant_id and rp.owner_id = la.actor_id and rp.enabled = true
+                where la.tenant_id = %s and la.actor_id = %s and la.active = true
+                  and la.telegram_user_id is not null
+                limit 1
+                """,
+                (tenant_id, author),
             ).fetchone()
             if not known:
-                raise SystemExit(f"author {author!r} is not a lead_actors row of tenant {tenant_id!r}")
+                raise SystemExit(
+                    f"author {author!r}: no active lead_actors row with Telegram and an enabled"
+                    f" referral profile in {tenant_id!r}"
+                )
         course_id, course_status, access_rule = conn.execute(
             """
             insert into academy_courses (tenant_id, slug, title, subtitle, access_rule, author_actor_id, status)

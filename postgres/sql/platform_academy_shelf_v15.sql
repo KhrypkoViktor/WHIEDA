@@ -37,6 +37,9 @@ create table if not exists academy_access_keys (
   used_count int not null default 0 check (used_count >= 0),
   expires_at timestamptz,
   revoked_at timestamptz,
+  -- Пачка на одно сообщение автора («ключи …»): повтор того же апдейта отдаёт
+  -- уже выпущенные коды, а не новую пачку. Формат: <binding>:<chat>:<message>.
+  issued_for_message text,
   created_at timestamptz not null default now(),
   unique (tenant_id, code),
   check (used_count <= max_uses),
@@ -46,7 +49,13 @@ create table if not exists academy_access_keys (
 create index if not exists academy_access_keys_course
   on academy_access_keys (tenant_id, course_id);
 
--- 3. Полка автора: пока paid_until в будущем и status = 'active', автор выдаёт ключи.
+create index if not exists academy_access_keys_issued_for_message
+  on academy_access_keys (tenant_id, issued_for_message)
+  where issued_for_message is not null;
+
+-- 3. Полка автора: пока paid_until в будущем и status = 'active', автор выдаёт ключи,
+--    а ученики гасят их. Полка — у человека: любой его actor (тот же telegram_user_id).
+--    Оплата продлевает срок, но status не трогает: приостановка — ручное решение.
 create table if not exists academy_shelf (
   tenant_id text not null,
   actor_id text not null,
