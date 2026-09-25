@@ -52,6 +52,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "academy_lessons",
             "academy_access",
             "academy_progress",
+            # Полка авторов и ключи доступа (platform_academy_shelf_v15.sql, 25.09.2026).
+            "academy_access_keys",
+            "academy_shelf",
             "referral_profiles",
             "service_locations",
             "website_leads",

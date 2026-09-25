@@ -3,7 +3,8 @@
 Красочко оплатила 105 WUSD пакетом «сайт + клуб», а диалог продления знал
 только «платформу на 3/6/12 месяцев» и записал 30 WUSD за сайт. Теперь:
   * пакет раскладывается на сайт и клуб, оба срока продлеваются;
-  * курс — разовая покупка, добавляется одной строкой в тарифы, даёт доступ;
+  * курс — разовая покупка, добавляется одной строкой в тарифы, даёт доступ
+    в Академии (course_slug тарифа → academy_access, полка V15 25.09.2026);
   * клуб отдельно не предлагается, только пакетом с сайтом.
 """
 
@@ -32,9 +33,11 @@ def test_bundle_and_course_renewals_record_every_line():
                   ('whieda', 'petrovna', now() - interval '1 day');
                 -- Новый курс — одна строка в тарифах, без правки кода.
                 insert into partner_subscription_plans
-                  (tenant_id, plan_code, product_code, access_months, price_wusd_minor, price_rub_minor, active, valid_from, title, sort_order)
+                  (tenant_id, plan_code, product_code, access_months, price_wusd_minor, price_rub_minor, active, valid_from, title, sort_order, course_slug)
                 values
-                  ('whieda', 'course_neuro', 'course_neuro', 0, 15000, 1500000, true, now() - interval '1 day', 'Курс «Нейросети для запуска»', 110);
+                  ('whieda', 'course_neuro', 'course_neuro', 0, 15000, 1500000, true, now() - interval '1 day', 'Курс «Нейросети для запуска»', 110, 'neuro');
+                insert into academy_courses (tenant_id, slug, title, access_rule, status)
+                values ('whieda', 'neuro', 'Нейросети для запуска', 'purchase', 'published');
                 """
             )
             db.grant_api_role(conn)
@@ -89,7 +92,7 @@ def test_bundle_and_course_renewals_record_every_line():
             )
             assert club == [{"ok": True}]
 
-            # Курс за W$: разовая строка без срока и доступ навсегда.
+            # Курс за W$: разовая строка без срока и доступ в Академии.
             req = await begin_renewal_request("whieda", "proof-partner")
             req = await set_renewal_plan("whieda", "proof-partner", "course_neuro")
             assert req["access_months"] == 0
@@ -98,9 +101,13 @@ def test_bundle_and_course_renewals_record_every_line():
             req = await submit_renewal_payment_proof("whieda", "proof-partner", chat_id=6001, message_id=2, file_id="r2")
             await confirm_renewal_request("whieda", request_id=str(req["request_id"]), admin_telegram_user_id=1)
             course = await rows(
-                "select extract(year from paid_until)::int as year from partner_product_access"
-                " where ref_code = 'petrovna' and product_code = 'course_neuro'"
+                "select a.source, a.telegram_user_id, a.revoked_at from academy_access a"
+                " join academy_courses c on c.tenant_id = a.tenant_id and c.course_id = a.course_id"
+                " where c.slug = 'neuro'"
             )
-            assert course == [{"year": 2099}]
+            assert course == [{"source": "purchase", "telegram_user_id": 6001, "revoked_at": None}]
+            assert await rows(
+                "select 1 from partner_product_access where ref_code = 'petrovna' and product_code = 'course_neuro'"
+            ) == []
 
         db.run_with_app(proof)

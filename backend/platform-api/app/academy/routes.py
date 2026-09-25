@@ -42,7 +42,8 @@ async def _viewer(request: Request, response: Response):
 
 
 def _raise(exc: AcademyError) -> None:
-    raise HTTPException(status_code=exc.status, detail={"error": exc.code}) from exc
+    # purchase_required несёт author_contact: доступ выдаёт автор курса (ключом).
+    raise HTTPException(status_code=exc.status, detail={"error": exc.code, **exc.extra}) from exc
 
 
 @router.get("/api/v1/content-access/academy/courses")

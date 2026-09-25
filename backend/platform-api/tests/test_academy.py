@@ -127,3 +127,36 @@ async def test_site_login_skips_foreign_hosts_and_survives_failures():
     assert await with_site_login("https://wwc.best/", tenant_id="whieda", telegram_user_id=None) == "https://wwc.best/"
     with patch("app.telegram.site_login.create_bot_login", AsyncMock(side_effect=RuntimeError("db"))):
         assert await with_site_login("https://lebedeva.wwc.best/", tenant_id="whieda", telegram_user_id=7) == "https://lebedeva.wwc.best/"
+
+
+@pytest.mark.asyncio
+async def test_site_api_purchase_lock_names_the_author(content_app, academy_opened):  # noqa: F811
+    """Полка (25.09.2026): замок платного курса ведёт к автору, а не в поддержку."""
+    from app.academy.service import AcademyError
+
+    contact = {"telegram": "igor_wwc", "site_url": "https://igoref.wwc.best"}
+    student = AcademyViewer(telegram_user_id=5, is_preview_admin=False, partner_paid=False)
+    session = {
+        "session_id": "s5", "tenant_id": "whieda", "scope": "telegram_verified",
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=30), "telegram_user_id": 5,
+    }
+    courses = [{
+        "slug": "kurs-igorya", "title": "Курс Игоря", "locked": True, "lock_reason": "purchase_required",
+        "lessons_total": 5, "lessons_done": 0, "author_contact": contact,
+    }]
+    transport = ASGITransport(app=content_app)
+    with patch("app.content_access.routes.read_session_cookie", return_value="raw"), patch(
+        "app.content_access.routes.validate_content_session", AsyncMock(return_value=session)
+    ), patch("app.academy.routes.load_viewer", AsyncMock(return_value=student)), patch(
+        "app.academy.routes.list_courses", AsyncMock(return_value=courses)
+    ), patch(
+        "app.academy.routes.course_outline",
+        AsyncMock(side_effect=AcademyError(403, "purchase_required", {"author_contact": contact})),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            listing = await client.get("/api/v1/content-access/academy/courses", headers=HOST)
+            locked = await client.get("/api/v1/content-access/academy/courses/kurs-igorya", headers=HOST)
+    assert listing.json()["courses"][0]["author_contact"] == contact
+    assert locked.status_code == 403
+    assert locked.json()["error"] == "purchase_required"
+    assert locked.json()["author_contact"] == contact

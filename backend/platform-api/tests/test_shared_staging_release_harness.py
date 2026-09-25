@@ -81,7 +81,7 @@ def test_plan_default_is_offline_and_correct():
     assert payload["mode"] == "plan"
     assert payload["ok"] is True
     assert payload["would_apply"] == list(APPLY_ORDER)
-    assert len(payload["would_apply"]) == 36  # +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026)
+    assert len(payload["would_apply"]) == 38  # +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026), +academy_v1, +academy_shelf_v15 (25.09.2026)
     assert payload["sha256_binding_context"] == EXPECTED_BINDING_CONTEXT_SHA256
     assert payload["preconditions_failed"] == []
     assert "whieda" in payload["tenants_affected"]
@@ -344,5 +344,5 @@ def test_rollback_plan_is_manual_only():
 def test_build_offline_plan_function():
     report = build_offline_plan()
     assert report.ok
-    assert len(report.would_apply) == 36  # +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026)
+    assert len(report.would_apply) == 38  # +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026), +academy_v1, +academy_shelf_v15 (25.09.2026)
     assert report.sha256_binding_context == EXPECTED_BINDING_CONTEXT_SHA256
