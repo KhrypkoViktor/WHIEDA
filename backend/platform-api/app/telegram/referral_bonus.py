@@ -22,6 +22,7 @@ from app.referral_bonus.service import (
 )
 from app.settings import get_settings
 from app.telegram.academy import academy_button_rows
+from app.crm.bot import crm_button_rows
 from app.telegram.bindings import current_bot_binding
 from app.telegram.site_login import with_site_login
 from app.telegram.money import wwc, wwc_signed
@@ -335,7 +336,9 @@ async def show_referral_dashboard(
             has_site=bool(site),
             minimal=minimal,
             telegram_user_id=telegram_user_id,
-            academy_rows=await academy_button_rows(tenant.tenant_id, telegram_user_id),
+            # «Академия» и рядом «Ежедневник» (CRM v1) — только тем, кому они открыты.
+            academy_rows=await academy_button_rows(tenant.tenant_id, telegram_user_id)
+            + await crm_button_rows(tenant, telegram_user_id),
             # «Мой сайт» входит на сайт сам — партнёру не нужно второй раз подтверждать Telegram.
             site_login_url=await with_site_login(site_url, tenant_id=tenant.tenant_id, telegram_user_id=telegram_user_id),
         ),

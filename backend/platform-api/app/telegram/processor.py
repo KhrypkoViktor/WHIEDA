@@ -24,6 +24,7 @@ from app.leads.actor_link import (
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
 from app.telegram.academy import try_handle_academy_callback, try_handle_academy_text
+from app.crm.bot import try_handle_crm_text
 from app.referral_bonus.service import (
     accept_referral_start,
     inviter_card,
@@ -577,6 +578,10 @@ async def _process_core_telegram_update_scoped(
         academy_result = await try_handle_academy_text(tenant, msg, trace_id=trace_id)
         if academy_result:
             return academy_result
+        # «ежедневник», «crm», «мои контакты» → кнопка на /crm/ (CRM v1, 25.09.2026).
+        crm_result = await try_handle_crm_text(tenant, msg, trace_id=trace_id)
+        if crm_result:
+            return crm_result
 
     onboarding_result = await handle_onboarding(tenant, msg)
     if onboarding_result:

@@ -183,6 +183,27 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ACADEMY_SITE_BASE",
         description="Site host the bot links lessons to. Academy opened to every PRO partner 23.09.2026.",
     )
+    # Ежедневник партнёра (CRM v1, 25.09.2026).
+    platform_crm_pilot_telegram_ids: str = Field(
+        default="",
+        validation_alias="PLATFORM_CRM_PILOT_TELEGRAM_IDS",
+        description=(
+            "Comma-separated Telegram user IDs of the CRM pilot. Set: only they (and "
+            "preview admins) open the CRM, others get 403 crm_pilot_only. Empty: every "
+            "partner with paid PRO."
+        ),
+    )
+    platform_scheduled_notify_bindings: str = Field(
+        default="",
+        validation_alias="PLATFORM_SCHEDULED_NOTIFY_BINDINGS",
+        description=(
+            "Comma-separated bot binding ids this process uses for scheduled "
+            "notifications (platform_outbox rows with due_at; the CRM morning message). "
+            "Production and staging share one database and both run the job worker, so "
+            "only the production worker sets it (whieda-advisor-bot). Empty: this "
+            "process neither plans nor sends them."
+        ),
+    )
     platform_support_admin_telegram_id: int | None = Field(
         default=None,
         validation_alias="PLATFORM_SUPPORT_ADMIN_TELEGRAM_ID",
@@ -372,6 +393,21 @@ class Settings(BaseSettings):
             if part.isdigit():
                 ids.add(int(part))
         return frozenset(ids)
+
+    def parsed_crm_pilot_telegram_ids(self) -> frozenset[int]:
+        return frozenset(
+            int(part.strip())
+            for part in self.platform_crm_pilot_telegram_ids.split(",")
+            if part.strip().isdigit()
+        )
+
+    def parsed_scheduled_notify_bindings(self) -> tuple[str, ...]:
+        seen: list[str] = []
+        for part in self.platform_scheduled_notify_bindings.split(","):
+            name = part.strip()
+            if name and name not in seen:
+                seen.append(name)
+        return tuple(seen)
 
     @property
     def parsed_telegram_durable_inbox_bindings(self) -> frozenset[str]:

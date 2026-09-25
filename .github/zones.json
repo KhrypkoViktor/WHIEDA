@@ -14,6 +14,8 @@
         "backend/platform-api/app/content_access/",
         "backend/platform-api/app/identity/",
         "backend/platform-api/app/site_requests/",
+        "backend/platform-api/app/crm/",
+        "postgres/sql/platform_crm_",
         "backend/platform-api/app/db.py",
         "backend/platform-api/app/main.py",
         "backend/platform-api/scripts/",
