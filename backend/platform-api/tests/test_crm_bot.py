@@ -24,7 +24,7 @@ UNPAID = CrmViewer(telegram_user_id=5, is_preview_admin=False, partner_paid=Fals
 
 @pytest.fixture(autouse=True)
 def _clean_settings(monkeypatch):
-    monkeypatch.delenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", raising=False)
+    monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "*")
     monkeypatch.delenv("PLATFORM_DISABLED_FEATURES", raising=False)
     get_settings.cache_clear()
     yield

@@ -15,6 +15,7 @@ are mocks.
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -116,6 +117,8 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                  "PLATFORM_BILLING_OWNER_TELEGRAM_ID"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("PLATFORM_ORGANIC_OWNER_ID", "organic")
+    monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "*")
+    monkeypatch.setenv("PLATFORM_CRM_LEAD_CARDS", "false")  # the proof turns it on; restored after
 
     with temporary_database("whieda_crm") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
@@ -143,6 +146,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             from app.jobs.outbox import enqueue_outbox_event
             from app.jobs.worker import process_due_notifications, process_pending_outbox
             from app.leads.service import parse_lead_body, save_lead
+            from app.settings import get_settings
             from app.telegram.delivery import TelegramDeliveryError
 
             async def rows(query: str, params: tuple = (), tenant: str = "whieda") -> list[dict]:
@@ -160,6 +164,9 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert anna["phone_e164"] == "+79286729288" and anna["phone_raw"] == "8 928 672-92-88"
             assert (anna["status"], anna["next_step"], anna["next_at"]) == ("new", "invite", today.isoformat())
             boris = await crm.create_contact("whieda", igor, name="Борис", phone="12-34")
+            wide = await crm.create_contact("whieda", igor, name="Вера", phone="+７ ９１６ １２３-４５-６７")
+            assert wide["phone_e164"] == "+79161234567"  # full-width digits no longer hit the CHECK
+            await crm.delete_contact("whieda", igor, wide["id"])
             assert boris["phone_e164"] is None and boris["phone"] == "12-34"
 
             with pytest.raises(crm.CrmError) as dup:
@@ -203,7 +210,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
 
             csv_text = await crm.export_csv("whieda", igor)
             assert csv_text.startswith("﻿Имя;Телефон;Откуда знакомы;Статус;Следующий шаг;Дата;Заметки\r\n")
-            assert "Анна Петрова;'+79286729288;соседка;Клиент;Напомнить о себе;" in csv_text
+            assert "Анна Петрова;+79286729288;соседка;Клиент;Напомнить о себе;" in csv_text
             assert "Была на презентации, думает" in csv_text
 
             petr = await crm.get_or_create_account("whieda", 7002)
@@ -243,6 +250,12 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                      "idempotency_key": key, "initial_ref": ref, "active_ref": ref},
                     tenant_id="whieda",
                 )
+
+            # Off by default: staging shares the database, its test leads stay out of live diaries.
+            await save_lead(lead("crm-lead-off", "+7 999 111-00-00"))
+            assert await rows("select 1 from crm_contacts where phone_e164 = '+79991110000'") == []
+            os.environ["PLATFORM_CRM_LEAD_CARDS"] = "true"
+            get_settings.cache_clear()
 
             saved = await save_lead(lead("crm-lead-1", "+7 999 111-22-33"))
             assert saved["assigned_owner_id"] == "igor-actor"
@@ -380,6 +393,24 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert stopped == [
                 {"idempotency_key": "proof:stop-1", "status": "processing"},
                 {"idempotency_key": "proof:stop-2", "status": "scheduled"},
+            ]
+
+            # A pass has a time budget: rows it does not reach stay «scheduled» for the next one.
+            with patch("app.jobs.worker.send_telegram_text", AsyncMock(return_value={"ok": True})) as quick:
+                assert await process_due_notifications({"whieda": _binding()}, budget_sec=0) == 0
+            quick.assert_not_awaited()
+            assert await rows("select status from platform_outbox where idempotency_key = 'proof:stop-2'") == [
+                {"status": "scheduled"}]
+
+            # Rows a killed worker left «processing» for over an hour become «dead».
+            admin("update platform_outbox set updated_at = now() - interval '2 hours' where idempotency_key = 'proof:stop-1'")
+            with patch("app.jobs.worker.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 5})):
+                assert await process_due_notifications({"whieda": _binding()}) == 1  # stop-2 goes out now
+            swept = await rows("select idempotency_key, status, last_error from platform_outbox "
+                               "where idempotency_key like 'proof:stop-%%' order by idempotency_key")
+            assert swept == [
+                {"idempotency_key": "proof:stop-1", "status": "dead", "last_error": "stuck_processing"},
+                {"idempotency_key": "proof:stop-2", "status": "done", "last_error": None},
             ]
 
         db.run_with_app(proof)

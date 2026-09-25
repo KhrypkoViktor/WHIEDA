@@ -42,6 +42,7 @@ from app.settings import get_settings
 from app.subscriptions.service import (
     resolve_partner_hostname,
     resolve_partner_subscription_by_telegram_user_id,
+    subscription_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,12 @@ class CrmError(Exception):
         self.code = code
         self.status = status
         self.extra = extra
+
+
+def safe_error(exc: BaseException) -> dict[str, Any]:
+    """What may go to the logs: the class and SQLSTATE, never the message — a
+    psycopg message carries the failing row (a person's name and phone)."""
+    return {"error_class": type(exc).__name__, "sqlstate": getattr(exc, "sqlstate", None)}
 
 
 def crm_feature_enabled() -> bool:
@@ -87,8 +94,20 @@ async def load_viewer(tenant_id: str, telegram_user_id: int) -> CrmViewer:
     )
 
 
+def viewer_from_row(telegram_user_id: int, ref_code: Any, public_profile: Any, paid_until: Any) -> CrmViewer:
+    """The same viewer as load_viewer, from a row the caller already has (digest)."""
+    state = subscription_state(paid_until) if ref_code else "no_subscription"
+    return CrmViewer(
+        telegram_user_id=int(telegram_user_id),
+        is_preview_admin=int(telegram_user_id) in preview_admin_ids(),
+        partner_paid=state in {"active", "grace"},
+        ref_code=ref_code,
+        public_profile=public_profile,
+    )
+
+
 def lock_reason(viewer: CrmViewer) -> str | None:
-    return access_lock_reason(viewer, get_settings().parsed_crm_pilot_telegram_ids())
+    return access_lock_reason(viewer, get_settings().parsed_crm_pilot())
 
 
 def site_host(viewer: CrmViewer) -> str:
@@ -583,8 +602,11 @@ async def add_lead_card(
     """A new site lead becomes a «Новый контакт» card of its owner — if the owner
     has already opened the diary (has a platform_accounts row). Runs inside the
     lead's transaction under a savepoint: any failure here is logged and the
-    lead is saved as before. Returns the card id or None."""
-    if not owner_actor_id or not crm_feature_enabled():
+    lead is saved as before. Returns the card id or None.
+
+    Off unless PLATFORM_CRM_LEAD_CARDS is on (production API only): staging
+    shares the database, and its test leads must not reach a live diary."""
+    if not owner_actor_id or not crm_feature_enabled() or not get_settings().platform_crm_lead_cards:
         return None
     try:
         async with conn.transaction():
@@ -653,6 +675,6 @@ async def add_lead_card(
                     (tenant_id, contact_id, note),
                 )
             return contact_id
-    except Exception:
-        logger.exception("crm_lead_card_failed", extra={"tenant_id": tenant_id, "lead_id": str(lead_id)})
+    except Exception as exc:
+        logger.warning("crm_lead_card_failed", extra={"tenant_id": tenant_id, "lead_id": str(lead_id), **safe_error(exc)})
         return None

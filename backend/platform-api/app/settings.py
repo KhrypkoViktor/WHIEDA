@@ -188,9 +188,19 @@ class Settings(BaseSettings):
         default="",
         validation_alias="PLATFORM_CRM_PILOT_TELEGRAM_IDS",
         description=(
-            "Comma-separated Telegram user IDs of the CRM pilot. Set: only they (and "
-            "preview admins) open the CRM, others get 403 crm_pilot_only. Empty: every "
-            "partner with paid PRO."
+            "Who opens the CRM, fail-closed. Comma-separated Telegram user IDs: only "
+            "they (and preview admins) with paid PRO; others get 403 crm_pilot_only. "
+            "'*': every partner with paid PRO. Empty: nobody but preview admins, so a "
+            "forgotten variable never opens the diary to everyone."
+        ),
+    )
+    platform_crm_lead_cards: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_CRM_LEAD_CARDS",
+        description=(
+            "Site lead -> «Новый контакт» card in the owner's diary (save_lead hook). "
+            "Off by default: staging and production share one database, so a test lead "
+            "on staging would land in a live partner's diary. Production API only."
         ),
     )
     platform_scheduled_notify_bindings: str = Field(
@@ -394,12 +404,12 @@ class Settings(BaseSettings):
                 ids.add(int(part))
         return frozenset(ids)
 
-    def parsed_crm_pilot_telegram_ids(self) -> frozenset[int]:
-        return frozenset(
-            int(part.strip())
-            for part in self.platform_crm_pilot_telegram_ids.split(",")
-            if part.strip().isdigit()
-        )
+    def parsed_crm_pilot(self) -> frozenset[int] | None:
+        """None — every partner with paid PRO ('*'); otherwise the listed IDs (empty = nobody)."""
+        raw = self.platform_crm_pilot_telegram_ids.strip()
+        if raw == "*":
+            return None
+        return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
 
     def parsed_scheduled_notify_bindings(self) -> tuple[str, ...]:
         seen: list[str] = []
