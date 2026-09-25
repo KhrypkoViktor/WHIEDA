@@ -105,6 +105,10 @@ def _author_contact_from_row(row: dict[str, Any] | None) -> dict[str, str | None
     return {"telegram": username or None, "site_url": site_url}
 
 
+async def author_contact(conn: Any, tenant_id: str, actor_id: str) -> dict[str, str | None] | None:
+    return (await _author_contacts(conn, tenant_id, {str(actor_id)})).get(str(actor_id))
+
+
 async def _author_contacts(conn: Any, tenant_id: str, actor_ids: set[str]) -> dict[str, dict[str, str | None]]:
     if not actor_ids:
         return {}

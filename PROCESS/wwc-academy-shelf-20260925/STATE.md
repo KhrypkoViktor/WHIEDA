@@ -7,11 +7,11 @@
 
 | Repo | Worktree | Ветка | База | Commits |
 |---|---|---|---|---|
-| Core (корень WHIEDA) | `D:\Projects\_worktrees\whieda-core-academy-shelf` | `core/academy-shelf-v1` | origin/master 99562dc | 2592a54 код+тесты; следующий — правки ревью + этот STATE |
+| Core (корень WHIEDA) | `D:\Projects\_worktrees\whieda-core-academy-shelf` | `core/academy-shelf-v1` | origin/master 99562dc | 2592a54 код+тесты; fc0c7d1 правки ревью; затем правки ревью лида |
 | Сайт wwc-best | `D:\Projects\_worktrees\wwc-academy-shelf` | `site/academy-shelf-v1` | origin/master 939007c | 69c091f |
 
-Ветки не запушены (push по команде лида/владельца). Прод и staging не трогались,
-миграция никуда не применялась.
+Ветки запушены в origin по просьбе лида (он сливает в master сам). Прод и staging не
+трогались, миграция никуда не применялась.
 
 ## Что сделано
 
@@ -62,12 +62,24 @@
    открыт в Академии») вместо «Сайт… Доступ до» — правка в `app/telegram/renewal_requests.py`
    (зона core, за пределами узкого списка ТЗ). Один человек с двумя ключами одновременно
    тратит один (advisory-lock). «ключи kurs 0» — отказ, а не один ключ.
+6. Ревью лида (25.09), внесено:
+   - выдача ключей идемпотентна на сообщение: `academy_access_keys.issued_for_message`
+     (`<binding>:<chat>:<message>`), повтор апдейта отдаёт ту же пачку; `sendDocument` в
+     try — сбой уходит в запасной путь (ссылки сообщениями), обработчик не падает;
+   - полка — у человека: `shelf_active` учитывает все строки того же человека.
+     `telegram_user_id` уникален в тенанте (`idx_lead_actors_tenant_telegram_user`), поэтому
+     вторая строка — только старая chat-only; связь по user id или chat id, как в
+     `_find_telegram_actor`. `load_bundle --author` требует активного actor с Telegram-id и
+     включённым профилем (тот, кто платит полку в боте);
+   - погашение проверяет полку автора: истекла → «Автор курса не продлил размещение —
+     напишите ему: <контакт>», ключ не тратится; открытый доступ не отзывается;
+   - даты в боте по Москве; «адрес курса» вместо «slug»; оплата не снимает `suspended`.
 
 ## Проверки (локально)
 
-- Unit Core: 22 failed / 1615 passed / 4 errors; master до правок: 22 / 1567 / 4 —
+- Unit Core: 22 failed / 1618 passed / 4 errors; master до правок: 22 / 1567 / 4 —
   набор падений тот же (golden/fixtures), новых нет.
-- Фокус-гейт CI + academy: 236 passed (до правок ревью). `check_zone.py`: OK (zone core).
+- Фокус-гейт CI: 179 passed. `check_zone.py`: OK (zone core).
 - Независимое ревью Core-diff: две находки (доступ при перезаливке, текст после оплаты
   полки) и две мелкие — исправлены, тесты добавлены.
 - `run_postgres_integration_tests.ps1`: 12 passed (новый `test_academy_shelf_postgres.py`

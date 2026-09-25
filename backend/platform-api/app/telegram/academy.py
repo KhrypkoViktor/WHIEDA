@@ -30,6 +30,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -59,7 +60,7 @@ from app.academy.service import (
 )
 from app.db import tenant_connection
 from app.settings import get_settings
-from app.telegram.api_base import telegram_bot_api_url
+from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.site_login import with_site_login
@@ -67,6 +68,8 @@ from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
+
+MOSCOW = ZoneInfo("Europe/Moscow")  # даты в сообщениях бота — по Москве, как в billing
 
 ACADEMY_BUTTON_LABEL = "🎓 Академия"
 ACADEMY_HOME_CALLBACK = "acad:home"
@@ -106,6 +109,14 @@ def author_contact_label(contact: dict[str, Any] | None) -> str:
     if contact.get("telegram"):
         return f"@{contact['telegram']}"
     return str(contact.get("site_url") or "")
+
+
+def key_error_text(exc: AcademyKeyError) -> str:
+    if exc.code == "author_shelf_expired":
+        who = author_contact_label(exc.extra.get("author_contact"))
+        if who:
+            return f"Автор курса не продлил размещение — напишите ему: {who}. Ключ не потрачен."
+    return KEY_ERROR_TEXT.get(exc.code, KEY_ERROR_TEXT["key_not_found"])
 
 
 def purchase_lock_text(contact: dict[str, Any] | None) -> str:
@@ -329,21 +340,26 @@ async def try_handle_academy_text(tenant: TenantContext, msg: TelegramMessage, *
 
 
 def _date(value: datetime | None) -> str:
-    return value.strftime("%d.%m.%Y") if value else ""
+    return value.astimezone(MOSCOW).strftime("%d.%m.%Y") if value else ""
 
 
 async def _send_text_file(chat_id: int, filename: str, content: str, caption: str) -> dict[str, Any]:
     """sendDocument with an in-memory text file (Bot API needs multipart for uploads)."""
     binding = current_bot_binding()
-    url = telegram_bot_api_url(binding.bot_token, "sendDocument")
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(
-            url,
-            data={"chat_id": str(chat_id), "caption": caption[:1024]},
-            files={"document": (filename, content.encode("utf-8"), "text/plain")},
-        )
-    data = response.json() if response.text else {}
-    if response.status_code >= 400 or not data.get("ok"):
+    try:
+        url = telegram_bot_api_url(binding.bot_token, "sendDocument")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                url,
+                data={"chat_id": str(chat_id), "caption": caption[:1024]},
+                files={"document": (filename, content.encode("utf-8"), "text/plain")},
+            )
+        data = response.json() if response.text else {}
+    except (httpx.HTTPError, ValueError, TelegramApiBaseError):
+        # Ключи уже созданы: не роняем обработчик (повтор апдейта), отдаём сообщениями.
+        logger.warning("academy_keys_file_failed", exc_info=True)
+        return {"ok": False}
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("ok"):
         logger.warning("academy_keys_file_failed", extra={"status": response.status_code})
         return {"ok": False, "status_code": response.status_code}
     return {"ok": True}
@@ -370,15 +386,18 @@ async def handle_keys_command(
     if not slug:
         await _send(msg.chat_id, await _usage_text(tenant_id, msg.user_id, is_admin))
         return {"ok": True, "route": "academy_keys", "status": "usage", "trace_id": trace_id}
+    binding = current_bot_binding()
+    # Повтор того же апдейта (inbox-воркер) отдаёт ту же пачку, а не новую.
+    batch = f"{binding.binding_id}:{msg.chat_id}:{msg.message_id}" if msg.message_id else None
     try:
         issued = await issue_keys_for_telegram(
-            tenant_id, slug, msg.user_id, 1 if count is None else count, is_admin=is_admin
+            tenant_id, slug, msg.user_id, 1 if count is None else count, is_admin=is_admin,
+            issued_for_message=batch,
         )
     except AcademyKeyError as exc:
         await _send(msg.chat_id, KEY_ERROR_TEXT.get(exc.code, KEY_ERROR_TEXT["course_not_found"]))
         return {"ok": False, "route": "academy_keys", "status": exc.code, "trace_id": trace_id}
-    bot_username = current_bot_binding().bot_username
-    links = [course_start_link(bot_username, code) for code in issued.codes]
+    links = [course_start_link(binding.bot_username, code) for code in issued.codes]
     head = (
         f"🔑 Ключи к курсу «{issued.course_title}»: {len(links)} шт.\n"
         "Каждый ключ — для одного ученика: отправьте ему его ссылку. "
@@ -444,7 +463,7 @@ async def handle_course_start_token(
     try:
         result = await redeem_key(tenant_id, code, msg.user_id)
     except AcademyKeyError as exc:
-        await _send(msg.chat_id, KEY_ERROR_TEXT.get(exc.code, KEY_ERROR_TEXT["key_not_found"]))
+        await _send(msg.chat_id, key_error_text(exc))
         return {"ok": False, "route": "academy_key", "status": exc.code, "trace_id": trace_id}
     if result.status == "already_open":
         text = f"Курс «{result.course_title}» у вас уже открыт — ключ не потрачен."

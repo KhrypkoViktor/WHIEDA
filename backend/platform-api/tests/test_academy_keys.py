@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.academy import keys
@@ -203,7 +204,9 @@ async def test_keys_command_lists_links(whieda_tenant, sent):
     ):
         result = await try_handle_academy_text(whieda_tenant, _msg("ключи kurs 3"), trace_id="k1")
     assert result["route"] == "academy_keys" and result["count"] == 3
-    issue.assert_awaited_once_with("whieda", "kurs", 700, 3, is_admin=False)
+    issue.assert_awaited_once_with(
+        "whieda", "kurs", 700, 3, is_admin=False, issued_for_message="whieda-test-binding:700:1"
+    )
     text = sent.await_args.kwargs["text"]
     assert "«Курс Игоря»" in text
     assert text.count("https://t.me/WHIEDA_Advisor_bot?start=course_") == 3
@@ -355,3 +358,35 @@ async def test_course_payment_notice(sent, course_slug, expected):
         await notify_academy_payment(payment, chat_id=6001, title="Курс «Нейросети»")
     text = sent.await_args.kwargs["text"]
     assert expected in text and "Осталось дней" not in text
+
+
+@pytest.mark.asyncio
+async def test_file_send_failure_falls_back_to_messages(whieda_tenant, sent):
+    """Таймаут sendDocument не роняет обработчик: ключи уже созданы, уходят сообщениями."""
+    codes = [generate_key_code() for _ in range(25)]
+    issued = IssuedKeys("kurs", "Курс", codes)
+    with patch("app.telegram.academy.issue_keys_for_telegram", AsyncMock(return_value=issued)), patch(
+        "app.telegram.academy.preview_admin_ids", return_value=frozenset()
+    ), patch("httpx.AsyncClient.post", AsyncMock(side_effect=httpx.ConnectTimeout("timeout"))):
+        result = await handle_keys_command(whieda_tenant, _msg("ключи kurs 25"), "kurs", 25, trace_id="kf")
+    assert result["ok"] and result["status"] == "issued_file"
+    texts = [call.kwargs["text"] for call in sent.await_args_list]
+    assert len(texts) == 2 and sum(text.count("?start=course_") for text in texts) == 25
+
+
+@pytest.mark.asyncio
+async def test_expired_author_shelf_sends_student_to_the_author(whieda_tenant, sent):
+    error = AcademyKeyError("author_shelf_expired", {"author_contact": {"telegram": "igor_wwc", "site_url": None}})
+    with patch("app.telegram.academy.redeem_key", AsyncMock(side_effect=error)):
+        result = await handle_course_start_token(
+            whieda_tenant, _msg("/start course_abcdefghjkmn"), "course_abcdefghjkmn", trace_id="se"
+        )
+    assert result["status"] == "author_shelf_expired"
+    text = sent.await_args.kwargs["text"]
+    assert "Автор курса не продлил размещение — напишите ему: @igor_wwc" in text and "не потрачен" in text
+
+
+def test_bot_dates_are_moscow():
+    from app.telegram.academy import _date
+
+    assert _date(datetime(2026, 12, 24, 22, 30, tzinfo=timezone.utc)) == "25.12.2026"

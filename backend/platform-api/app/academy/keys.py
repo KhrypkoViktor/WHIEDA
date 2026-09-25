@@ -6,12 +6,18 @@ from an alphabet without look-alikes (no o/0/l/1); the student opens
 ``t.me/<bot>?start=course_<code>`` and the course opens on the site and in the bot.
 
 Who issues keys: the course author while the shelf is paid and active, or the
-owner / a preview admin (``preview_admin_ids``). A lapsed shelf stops new keys
-(``shelf_expired``); students who already have access keep learning.
+owner / a preview admin (``preview_admin_ids``). The shelf belongs to the person:
+it is paid on ``referral_profiles.owner_id``, and any actor row with the same
+``telegram_user_id`` counts. A lapsed shelf stops new keys (``shelf_expired``) and
+redeeming (``author_shelf_expired``, nothing spent); students who already have
+access keep learning.
 
 Redeeming is one transaction: the key row is locked (``for update``), then
 ``used_count + 1`` and the ``academy_access`` row (source ``key``) are written
 together. The same person redeeming again gets «уже открыт» and spends nothing.
+
+A batch asked by one Telegram message (``issued_for_message``) is issued once: a
+retried update gets the same codes back instead of a new batch.
 """
 
 from __future__ import annotations
@@ -32,13 +38,14 @@ COURSE_START_PREFIX = "course_"
 class AcademyKeyError(Exception):
     """A key could not be issued or redeemed; ``code`` is machine-readable."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, extra: dict[str, Any] | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.extra = dict(extra or {})
 
 
 KEY_ERROR_TEXT = {
-    "course_not_found": "Курса с таким адресом нет. Проверьте slug в «мои курсы».",
+    "course_not_found": "Курса с таким адресом нет. Проверьте адрес курса в «мои курсы».",
     "course_not_published": "Курс ещё не опубликован — ключи можно выдать после публикации.",
     "not_author": "Выдавать ключи к этому курсу может только его автор.",
     "shelf_expired": "Полка Академии не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться. Продлите полку в кабинете.",
@@ -48,6 +55,7 @@ KEY_ERROR_TEXT = {
     "key_expired": "Срок действия ключа истёк. Попросите у автора новый.",
     "key_exhausted": "Этот ключ уже использован. Попросите у автора свой ключ.",
     "course_unavailable": "Курс сейчас недоступен. Напишите автору курса.",
+    "author_shelf_expired": "Автор курса не продлил размещение — напишите ему. Ключ не потрачен.",
 }
 
 
@@ -80,6 +88,7 @@ class IssuedKeys:
     codes: list[str] = field(default_factory=list)
     max_uses: int = 1
     expires_at: datetime | None = None
+    reused: bool = False  # the same message asked again: the batch issued before
 
 
 @dataclass(frozen=True)
@@ -90,28 +99,47 @@ class RedeemResult:
 
 
 async def shelf_active(conn: Any, tenant_id: str, actor_id: str) -> bool:
+    """The person's shelf is paid and active: this actor or any other actor row of
+    the same Telegram person. The shelf is paid on the referral profile's owner;
+    ``telegram_user_id`` is unique per tenant, so a second row of one person is a
+    chat-only legacy row — linked by user id or private chat id, as in the bot."""
     row = await fetch_one(
         conn,
         """
-        select 1 as ok from academy_shelf
-        where tenant_id = %s and actor_id = %s and status = 'active'
-          and paid_until is not null and paid_until > now()
+        select 1 as ok from academy_shelf s
+        where s.tenant_id = %s and s.status = 'active'
+          and s.paid_until is not null and s.paid_until > now()
+          and s.actor_id in (
+            select %s::text
+            union
+            select other.actor_id from lead_actors me
+            join lead_actors other
+              on other.tenant_id = me.tenant_id
+             and (other.telegram_user_id = me.telegram_user_id
+                  or other.telegram_chat_id = me.telegram_user_id::text
+                  or other.telegram_user_id::text = me.telegram_chat_id
+                  or other.telegram_chat_id = me.telegram_chat_id)
+            where me.tenant_id = %s and me.actor_id = %s
+          )
+        limit 1
         """,
-        (tenant_id, actor_id),
+        (tenant_id, actor_id, tenant_id, actor_id),
     )
     return bool(row)
 
 
 async def actor_ids_for_telegram(conn: Any, tenant_id: str, telegram_user_id: int) -> list[str]:
-    """All actor rows of one Telegram person (a partner may own two rows by history)."""
+    """All actor rows of one Telegram person: the row with this user id and a
+    chat-only legacy row with the same private chat id (as ``_find_telegram_actor``)."""
     rows = await fetch_all(
         conn,
         """
         select actor_id from lead_actors
-        where tenant_id = %s and telegram_user_id = %s and active = true
+        where tenant_id = %s and active = true
+          and (telegram_user_id = %s or telegram_chat_id = %s)
         order by actor_id
         """,
-        (tenant_id, int(telegram_user_id)),
+        (tenant_id, int(telegram_user_id), str(int(telegram_user_id))),
     )
     return [str(row["actor_id"]) for row in rows]
 
@@ -125,11 +153,14 @@ async def issue_keys(
     expires_at: datetime | None = None,
     *,
     as_admin: bool = False,
+    issued_for_message: str | None = None,
 ) -> IssuedKeys:
     """Create ``count`` keys to a published course.
 
     ``as_admin`` — the owner or a preview admin: no author or shelf check.
-    Otherwise ``by_actor_id`` must be the course author with an active shelf."""
+    Otherwise ``by_actor_id`` must be the course author with an active shelf.
+    ``issued_for_message`` — the Telegram message behind the batch: asked again
+    (a retried update), it returns the batch issued before and creates nothing."""
     count = int(count)
     if count < 1 or count > MAX_KEYS_PER_BATCH:
         raise AcademyKeyError("bad_count")
@@ -153,6 +184,27 @@ async def issue_keys(
                 raise AcademyKeyError("shelf_expired")
         if course["status"] != "published":
             raise AcademyKeyError("course_not_published")
+        if issued_for_message:
+            await fetch_one(
+                conn,
+                "select pg_advisory_xact_lock(hashtext(%s)) as locked",
+                (f"academy_keys_batch:{tenant_id}:{issued_for_message}",),
+            )
+            earlier = await fetch_all(
+                conn,
+                """
+                select code from academy_access_keys
+                where tenant_id = %s and issued_for_message = %s
+                order by created_at, code
+                """,
+                (tenant_id, issued_for_message),
+            )
+            if earlier:
+                return IssuedKeys(
+                    course_slug=str(course["slug"]), course_title=str(course["title"]),
+                    codes=[str(row["code"]) for row in earlier], max_uses=int(max_uses),
+                    expires_at=expires_at, reused=True,
+                )
         codes: list[str] = []
         attempts = 0
         while len(codes) < count:
@@ -162,12 +214,16 @@ async def issue_keys(
             row = await fetch_one(
                 conn,
                 """
-                insert into academy_access_keys (tenant_id, course_id, code, created_by_actor_id, max_uses, expires_at)
-                values (%s, %s::uuid, %s, %s, %s, %s)
+                insert into academy_access_keys (
+                  tenant_id, course_id, code, created_by_actor_id, max_uses, expires_at, issued_for_message
+                ) values (%s, %s::uuid, %s, %s, %s, %s, %s)
                 on conflict (tenant_id, code) do nothing
                 returning code
                 """,
-                (tenant_id, course["course_id"], generate_key_code(), str(by_actor_id), int(max_uses), expires_at),
+                (
+                    tenant_id, course["course_id"], generate_key_code(), str(by_actor_id), int(max_uses),
+                    expires_at, issued_for_message,
+                ),
             )
             if row:
                 codes.append(str(row["code"]))
@@ -183,7 +239,13 @@ async def author_actor_ids(tenant_id: str, telegram_user_id: int) -> list[str]:
 
 
 async def issue_keys_for_telegram(
-    tenant_id: str, course_slug: str, telegram_user_id: int, count: int, *, is_admin: bool
+    tenant_id: str,
+    course_slug: str,
+    telegram_user_id: int,
+    count: int,
+    *,
+    is_admin: bool,
+    issued_for_message: str | None = None,
 ) -> IssuedKeys:
     """The bot command «ключи <slug> <N>»: the person is the author (one of their
     actor rows authored the course) or the owner / a preview admin."""
@@ -201,7 +263,9 @@ async def issue_keys_for_telegram(
         by_actor_id = author
     else:
         by_actor_id = actor_ids[0] if actor_ids else f"telegram:{int(telegram_user_id)}"
-    return await issue_keys(tenant_id, course_slug, by_actor_id, count, as_admin=is_admin)
+    return await issue_keys(
+        tenant_id, course_slug, by_actor_id, count, as_admin=is_admin, issued_for_message=issued_for_message
+    )
 
 
 async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> RedeemResult:
@@ -216,7 +280,7 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
             select k.key_id::text as key_id, k.course_id::text as course_id, k.max_uses, k.used_count,
                    (k.revoked_at is not null) as revoked,
                    (k.expires_at is not null and k.expires_at <= now()) as expired,
-                   c.slug, c.title, c.status
+                   c.slug, c.title, c.status, c.author_actor_id
             from academy_access_keys k
             join academy_courses c on c.tenant_id = k.tenant_id and c.course_id = k.course_id
             where k.tenant_id = %s and k.code = %s
@@ -253,6 +317,12 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
             raise AcademyKeyError("key_exhausted")
         if key["status"] != "published":
             raise AcademyKeyError("course_unavailable")
+        author = str(key.get("author_actor_id") or "")
+        if author and not await shelf_active(conn, tenant_id, author):
+            # Решение лида 25.09: полка автора истекла — ключ не гасится, ученик идёт к автору.
+            from app.academy.service import author_contact
+
+            raise AcademyKeyError("author_shelf_expired", {"author_contact": await author_contact(conn, tenant_id, author)})
         async with conn.cursor() as cur:
             await cur.execute(
                 "update academy_access_keys set used_count = used_count + 1 where tenant_id = %s and key_id = %s::uuid",

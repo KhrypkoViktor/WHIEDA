@@ -7,7 +7,10 @@ paid ``course_<код>`` line opens the course (``partner_subscription_plans.cou
     the partner's site term is untouched;
   * three keys; one opens the course; the same person again — «уже открыт», no use spent;
     a second person on the same one-time key — refused;
-  * a lapsed shelf — no new keys, the student keeps learning;
+  * the shelf belongs to the person: paid on a chat-only legacy row of the author
+    (telegram_user_id is unique per tenant), it still counts; a batch asked by the
+    same message is issued once;
+  * a lapsed shelf — no new keys and no redeeming (nothing spent), the student keeps learning;
   * a paid course line with ``course_slug`` → ``academy_access``; without it — the payment stays.
 """
 
@@ -52,19 +55,26 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             conn.execute(
                 """
                 insert into lead_actors (actor_id, tenant_id, display_name, telegram_chat_id, telegram_username) values
-                  ('igor', 'whieda', 'Игорь', '7001', 'igor_wwc'),
+                  ('igor', 'whieda', 'Игорь', null, 'igor_wwc'),
                   ('proof-partner', 'whieda', 'Валентина', '6001', null),
-                  ('no-telegram', 'whieda', 'Без телеграма', null, null);
+                  ('no-telegram', 'whieda', 'Без телеграма', null, null),
+                  -- Старая строка того же человека (Игорь): только chat id, без user id —
+                  -- telegram_user_id уникален в тенанте. Её профиль igor2ref.
+                  ('igor2', 'whieda', 'Игорь (старая строка)', '7001', null),
+                  ('bare-actor', 'whieda', 'Без профиля', '7201', null);
                 update lead_actors set telegram_user_id = 7001 where actor_id = 'igor';
+                update lead_actors set telegram_user_id = 7201 where actor_id = 'bare-actor';
                 update lead_actors set telegram_user_id = 6001 where actor_id = 'proof-partner';
                 insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode, enabled) values
                   ('igoref', 'whieda', 'igor', 'named', true),
                   ('petrovna', 'whieda', 'proof-partner', 'named', true),
-                  ('nobody', 'whieda', 'no-telegram', 'named', true);
+                  ('nobody', 'whieda', 'no-telegram', 'named', true),
+                  ('igor2ref', 'whieda', 'igor2', 'named', true);
                 insert into partner_subscriptions (tenant_id, ref_code, paid_until) values
                   ('whieda', 'igoref', now() + interval '40 days'),
                   ('whieda', 'petrovna', now() - interval '1 day'),
-                  ('whieda', 'nobody', now() - interval '1 day');
+                  ('whieda', 'nobody', now() - interval '1 day'),
+                  ('whieda', 'igor2ref', now() + interval '10 days');
                 -- Тестовые цены только в этой одноразовой базе: у боевой полки цену назначит владелец.
                 insert into partner_subscription_plans
                   (tenant_id, plan_code, product_code, access_months, price_wusd_minor, price_rub_minor,
@@ -85,8 +95,10 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
         # Владелец грузит курс автора: черновик, продаёт автор (purchase).
         loaded = loader.load("whieda", BUNDLE, author="igor", dsn=db.admin_dsn)
         assert (loaded["status"], loaded["access_rule"], loaded["author"]) == ("draft", "purchase", "igor")
-        with pytest.raises(SystemExit):
-            loader.load("whieda", BUNDLE, author="stranger", dsn=db.admin_dsn)
+        # Нет actor / нет включённого профиля / профиль есть, но нет Telegram (не заплатит в боте).
+        for not_an_author in ("stranger", "bare-actor", "no-telegram"):
+            with pytest.raises(SystemExit):
+                loader.load("whieda", BUNDLE, author=not_an_author, dsn=db.admin_dsn)
 
         async def proof() -> None:
             from app.academy.keys import (
@@ -115,7 +127,7 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
                 await begin_renewal_request("whieda", actor_id)
                 await set_renewal_plan("whieda", actor_id, plan_code)
                 req = await set_renewal_country("whieda", actor_id, "RU")
-                chat = {"igor": 7001, "proof-partner": 6001}[actor_id]
+                chat = {"igor": 7001, "igor2": 7001, "proof-partner": 6001}[actor_id]
                 req = await submit_renewal_payment_proof(
                     "whieda", actor_id, chat_id=chat, message_id=message_id, file_id=f"proof-{message_id}"
                 )
@@ -148,7 +160,8 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
                 await issue_keys("whieda", "kurs-igorya", "igor", 3)
             assert unpaid.value.code == "shelf_expired"
 
-            # 4. Полка оплачивается продлением; сайт автора не продлевается.
+            # 4. Полка оплачивается продлением (полка — на referral_profiles.owner_id = igor);
+            #    сайт автора не продлевается.
             assert "academy_shelf_3m" in [o["plan_code"] for o in await list_renewal_offers("whieda")]
             site_before = await rows("select paid_until from partner_subscriptions where ref_code = 'igoref'")
             done = await pay("igor", "academy_shelf_3m", 11)
@@ -165,14 +178,46 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             )
             assert ledger == [{"product_code": "academy_shelf", "amount_minor": 111100, "access_months": 3, "same_end": True}]
             assert await rows("select paid_until from partner_subscriptions where ref_code = 'igoref'") == site_before
-            # Вторая оплата продлевает от конца, а не от сегодня.
+            # Вторая оплата продлевает от конца, а не от сегодня; приостановку оплата не снимает.
             await pay("igor", "academy_shelf_3m", 12)
             extended = await rows("select paid_until > now() + interval '175 days' as ok from academy_shelf")
             assert extended == [{"ok": True}]
+            async with tenant_connection("whieda") as conn:
+                await conn.execute("update academy_shelf set status = 'suspended'")
+            await pay("igor", "academy_shelf_3m", 13)
+            assert await rows("select status from academy_shelf") == [{"status": "suspended"}]
+            with pytest.raises(AcademyKeyError) as suspended:
+                await issue_keys("whieda", "kurs-igorya", "igor", 1)
+            assert suspended.value.code == "shelf_expired"
 
-            # 5. Автор выдаёт 3 ключа (бот: «ключи kurs-igorya 3»).
-            issued = await issue_keys_for_telegram("whieda", "kurs-igorya", 7001, 3, is_admin=False)
-            assert len(issued.codes) == 3 and len(set(issued.codes)) == 3
+            # 4b. Полка на старой строке того же человека (профиль igor2ref, оплата владельцем):
+            #     своя полка igor приостановлена, а ключи всё равно выдаются — полка у человека.
+            from app.subscriptions.pricing import PaymentLine
+            from app.subscriptions.service import record_payment_lines_in_connection
+
+            async with tenant_connection("whieda") as conn:
+                await record_payment_lines_in_connection(
+                    conn, tenant_id="whieda", ref_code="igor2ref",
+                    lines=[PaymentLine("academy_shelf", 1111, "WUSD", 3, False, "")],
+                    received_minor=1111, currency="WUSD", telegram_chat_id=1, telegram_message_id=14,
+                    telegram_user_id=1,
+                )
+            assert await rows("select actor_id, status from academy_shelf order by actor_id") == [
+                {"actor_id": "igor", "status": "suspended"}, {"actor_id": "igor2", "status": "active"},
+            ]
+
+            # 5. Автор (course.author = igor, полка на igor2 — один человек) выдаёт 3 ключа.
+            #    Повтор того же сообщения (inbox-воркер) — та же пачка, новых ключей нет.
+            batch = "whieda-test-binding:7001:55"
+            issued = await issue_keys_for_telegram(
+                "whieda", "kurs-igorya", 7001, 3, is_admin=False, issued_for_message=batch
+            )
+            assert len(issued.codes) == 3 and len(set(issued.codes)) == 3 and not issued.reused
+            retried = await issue_keys_for_telegram(
+                "whieda", "kurs-igorya", 7001, 3, is_admin=False, issued_for_message=batch
+            )
+            assert retried.reused and sorted(retried.codes) == sorted(issued.codes)
+            assert await rows("select count(*)::int as n from academy_access_keys") == [{"n": 3}]
             first, second, third = issued.codes
 
             # 6. Ученик гасит ключ — курс открыт.
@@ -209,16 +254,21 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
                 ("kurs-igorya", 1, 3, 1)
             ]
 
-            # 10. Полка истекла: ключи не выдаются, ученик продолжает учиться.
+            # 10. Полка истекла: ключи не выдаются и не гасятся (ключ не тратится),
+            #     у ученика с доступом курс остаётся открыт.
             async with tenant_connection("whieda") as conn:
                 await conn.execute("update academy_shelf set paid_until = now() - interval '1 day'")
             with pytest.raises(AcademyKeyError) as lapsed:
                 await issue_keys("whieda", "kurs-igorya", "igor", 1)
             assert lapsed.value.code == "shelf_expired"
             assert (await course_outline("whieda", "kurs-igorya", student))["course"]["slug"] == "kurs-igorya"
-            # Ключ, выданный до истечения, по-прежнему открывает курс.
-            late = await redeem_key("whieda", second, SECOND_STUDENT)
-            assert late.status == "opened"
+            with pytest.raises(AcademyKeyError) as late:
+                await redeem_key("whieda", second, SECOND_STUDENT)
+            assert late.value.code == "author_shelf_expired"
+            assert late.value.extra["author_contact"]["telegram"] == "igor_wwc"
+            assert await rows("select used_count from academy_access_keys where code = %s", (second,)) == [
+                {"used_count": 0}
+            ]
             # Владелец выдаёт ключи без полки.
             owner_keys = await issue_keys_for_telegram("whieda", "kurs-igorya", 1, 2, is_admin=True)
             assert len(owner_keys.codes) == 2
