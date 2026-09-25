@@ -22,6 +22,7 @@ from app.renewal_requests.service import (
     submit_renewal_payment_proof,
 )
 from app.settings import get_settings
+from app.telegram.academy import is_academy_payment, notify_academy_payment
 from app.telegram.club_group import invite_to_club
 from app.telegram.billing import notify_payment_participants
 from app.telegram.bindings import current_bot_binding
@@ -173,7 +174,15 @@ async def try_handle_renewal_callback(
             payment = request.get("payment") or {}
             if payment and not request.get("idempotent"):
                 try:
-                    await notify_payment_participants(payment)
+                    if is_academy_payment(payment):
+                        # Полка/курс: свой текст (срок полки, доступ к курсу), не «Сайт… Доступ до».
+                        await notify_academy_payment(
+                            payment,
+                            chat_id=int(request["proof_chat_id"]),
+                            title=await plan_title(tenant.tenant_id, request.get("plan_code")),
+                        )
+                    else:
+                        await notify_payment_participants(payment)
                 except Exception:
                     logger.exception(
                         "renewal_participant_notification_failed",

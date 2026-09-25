@@ -46,15 +46,18 @@ from app.academy.keys import (
     shelf_paid_until,
 )
 from app.academy.service import (
+    SHELF_PRODUCT_CODE,
     AcademyError,
     AcademyViewer,
     academy_visible,
     course_outline,
+    course_slug_for_product,
     list_courses,
     load_viewer,
     preview_admin_ids,
     set_lesson_done,
 )
+from app.db import tenant_connection
 from app.settings import get_settings
 from app.telegram.api_base import telegram_bot_api_url
 from app.telegram.bindings import current_bot_binding
@@ -368,7 +371,9 @@ async def handle_keys_command(
         await _send(msg.chat_id, await _usage_text(tenant_id, msg.user_id, is_admin))
         return {"ok": True, "route": "academy_keys", "status": "usage", "trace_id": trace_id}
     try:
-        issued = await issue_keys_for_telegram(tenant_id, slug, msg.user_id, count or 1, is_admin=is_admin)
+        issued = await issue_keys_for_telegram(
+            tenant_id, slug, msg.user_id, 1 if count is None else count, is_admin=is_admin
+        )
     except AcademyKeyError as exc:
         await _send(msg.chat_id, KEY_ERROR_TEXT.get(exc.code, KEY_ERROR_TEXT["course_not_found"]))
         return {"ok": False, "route": "academy_keys", "status": exc.code, "trace_id": trace_id}
@@ -467,3 +472,31 @@ async def handle_course_start_token(
         keyboard = None
     await _send(msg.chat_id, text, keyboard)
     return {"ok": True, "route": "academy_key", "status": result.status, "course": result.course_slug, "trace_id": trace_id}
+
+
+def is_academy_payment(payment: dict[str, Any] | None) -> bool:
+    product = str((payment or {}).get("product_code") or "")
+    return product == SHELF_PRODUCT_CODE or product.startswith("course_")
+
+
+async def notify_academy_payment(payment: dict[str, Any], *, chat_id: int, title: str) -> None:
+    """Оплата полки или курса подтверждена. Общее «Сайт: … Доступ до: …» здесь
+    врёт: у полки свой срок, курс — без срока."""
+    product = str(payment.get("product_code") or "")
+    head = f"Оплата подтверждена: {title}." if title else "Оплата подтверждена."
+    if product == SHELF_PRODUCT_CODE:
+        lines = [
+            head,
+            f"Полка Академии оплачена до {_date(payment.get('period_end'))}.",
+            "Ключи ученикам: «ключи <адрес курса> <сколько>». Статистика: «мои курсы».",
+        ]
+    else:
+        async with tenant_connection(str(payment["tenant_id"])) as conn:
+            course_slug = await course_slug_for_product(conn, str(payment["tenant_id"]), product)
+        lines = [
+            head,
+            "Курс открыт в Академии: /cabinet → «🎓 Академия»."
+            if course_slug
+            else "Курс появится в Академии, как только будет готов, — мы сообщим.",
+        ]
+    await _send(chat_id, "\n".join(lines))

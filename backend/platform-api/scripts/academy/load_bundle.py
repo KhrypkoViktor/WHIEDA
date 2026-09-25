@@ -13,9 +13,11 @@ Someone else's course is checked before students see it (owner, 25.09.2026):
   --status   draft | published. Not given: a NEW course lands as ``draft``, an
              existing one keeps its status (re-loading a live course to fix a
              typo does not hide it). ``publish <slug>`` opens a checked draft.
-  --access   free | purchase | pro. Not given: ``purchase`` for an author's course
-             (``--author``: students get keys from the author), otherwise the
-             bundle's own ``access_rule`` (the platform course stays ``pro``).
+  --access   free | purchase | pro. Not given: a new course with ``--author`` is
+             ``purchase`` (students get keys from the author); an existing
+             author's course keeps its rule (re-loading without flags must not
+             open it to every PRO partner); a platform course takes the bundle's
+             own ``access_rule`` (the platform course stays ``pro``).
   --author   lead_actors.actor_id of the author (a WHIEDA partner). Not given:
              an existing course keeps its author, a new one has none (platform).
 """
@@ -53,7 +55,7 @@ def load(
         raise SystemExit(f"--access must be one of {ACCESS_RULES}")
     course = bundle["course"]
     lessons = bundle["lessons"]
-    access_rule = access or ("purchase" if author else course.get("access_rule", "pro"))
+    new_access = access or ("purchase" if author else course.get("access_rule", "pro"))
     with psycopg.connect(_dsn(dsn)) as conn:
         conn.execute("select set_config('app.tenant_id', %s, true)", (tenant_id,))
         if author:
@@ -62,21 +64,25 @@ def load(
             ).fetchone()
             if not known:
                 raise SystemExit(f"author {author!r} is not a lead_actors row of tenant {tenant_id!r}")
-        course_id, course_status = conn.execute(
+        course_id, course_status, access_rule = conn.execute(
             """
             insert into academy_courses (tenant_id, slug, title, subtitle, access_rule, author_actor_id, status)
             values (%s, %s, %s, %s, %s, %s, coalesce(%s, 'draft'))
             on conflict (tenant_id, slug) do update set
               title = excluded.title, subtitle = excluded.subtitle,
-              access_rule = excluded.access_rule,
+              access_rule = case
+                when %s::text is not null then %s::text
+                when academy_courses.author_actor_id is not null then academy_courses.access_rule
+                else excluded.access_rule
+              end,
               author_actor_id = coalesce(%s, academy_courses.author_actor_id),
               status = coalesce(%s, academy_courses.status),
               updated_at = now()
-            returning course_id, status
+            returning course_id, status, access_rule
             """,
             (
-                tenant_id, course["slug"], course["title"], course.get("subtitle"), access_rule, author, status,
-                author, status,
+                tenant_id, course["slug"], course["title"], course.get("subtitle"), new_access, author, status,
+                access, access, author, status,
             ),
         ).fetchone()
         slugs = []

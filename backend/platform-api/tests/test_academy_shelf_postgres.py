@@ -133,6 +133,9 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             # 2. Публикация → курс виден с замком и контактом автора.
             published = loader.publish("whieda", "kurs-igorya", dsn=db.admin_dsn)
             assert published["status"] == "published"
+            # Перезаливка без флагов (опечатка): курс автора не прячется и не открывается всем PRO.
+            reloaded = loader.load("whieda", BUNDLE, dsn=db.admin_dsn)
+            assert (reloaded["status"], reloaded["access_rule"]) == ("published", "purchase")
             course = next(c for c in await list_courses("whieda", student) if c["slug"] == "kurs-igorya")
             assert course["locked"] and course["lock_reason"] == "purchase_required"
             assert course["author_contact"] == {"telegram": "igor_wwc", "site_url": "https://igoref.wwc.best"}

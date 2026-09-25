@@ -226,6 +226,13 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
         )
         if not key:
             raise AcademyKeyError("key_not_found")
+        # One person redeeming two keys of the same course at once: the second waits
+        # here and then sees the access row, so only one key is spent.
+        await fetch_one(
+            conn,
+            "select pg_advisory_xact_lock(hashtext(%s)) as locked",
+            (f"academy_key:{tenant_id}:{key['course_id']}:{int(telegram_user_id)}",),
+        )
         # Already open for this person (same key again, or bought earlier): the key
         # is not spent — it stays for the next student.
         existing = await fetch_one(

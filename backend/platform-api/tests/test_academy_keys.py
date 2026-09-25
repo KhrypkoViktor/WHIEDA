@@ -7,6 +7,7 @@ The live-SQL proof is tests/test_academy_shelf_postgres.py.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -29,7 +30,9 @@ from app.telegram.academy import (
     handle_course_start_token,
     handle_keys_command,
     handle_my_courses,
+    is_academy_payment,
     is_academy_text,
+    notify_academy_payment,
     purchase_lock_text,
     try_handle_academy_text,
 )
@@ -308,3 +311,47 @@ async def test_processor_routes_course_start_token(whieda_tenant, whieda_bot_bin
     assert result["route"] == "academy_key"
     assert handler.await_args.args[2] == "course_abcdefghjkmn"
     identity.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_keys_zero_is_refused_not_one(whieda_tenant, sent):
+    issue = AsyncMock(side_effect=AcademyKeyError("bad_count"))
+    with patch("app.telegram.academy.issue_keys_for_telegram", issue), patch(
+        "app.telegram.academy.preview_admin_ids", return_value=frozenset()
+    ):
+        result = await try_handle_academy_text(whieda_tenant, _msg("ключи kurs 0"), trace_id="k0")
+    assert result["status"] == "bad_count"
+    assert issue.await_args.args[3] == 0
+
+
+def test_academy_payment_lines_are_recognised():
+    assert is_academy_payment({"product_code": "academy_shelf"})
+    assert is_academy_payment({"product_code": "course_neuro"})
+    assert not is_academy_payment({"product_code": "platform_subscription"})
+    assert not is_academy_payment(None)
+
+
+@pytest.mark.asyncio
+async def test_shelf_payment_notice_names_the_shelf_term_not_the_site(sent):
+    payment = {"tenant_id": "whieda", "product_code": "academy_shelf",
+               "period_end": datetime(2026, 12, 25, 10, tzinfo=timezone.utc)}
+    await notify_academy_payment(payment, chat_id=7001, title="Полка Академии на 3 месяца")
+    text = sent.await_args.kwargs["text"]
+    assert "Полка Академии оплачена до 25.12.2026" in text and "ключи" in text
+    assert "Сайт:" not in text and "Доступ до" not in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("course_slug", "expected"), [("neuro", "Курс открыт в Академии"), (None, "как только будет готов")])
+async def test_course_payment_notice(sent, course_slug, expected):
+    @asynccontextmanager
+    async def connection(tenant_id):
+        yield object()
+
+    payment = {"tenant_id": "whieda", "product_code": "course_neuro", "period_end": datetime.now(timezone.utc)}
+    with patch("app.telegram.academy.tenant_connection", connection), patch(
+        "app.telegram.academy.course_slug_for_product", AsyncMock(return_value=course_slug)
+    ):
+        await notify_academy_payment(payment, chat_id=6001, title="Курс «Нейросети»")
+    text = sent.await_args.kwargs["text"]
+    assert expected in text and "Осталось дней" not in text
