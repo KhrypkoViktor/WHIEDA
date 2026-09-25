@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 
+from app.crm.service import add_lead_card
 from app.db import fetch_one, tenant_connection
 from app.jobs.outbox import enqueue_outbox_event
 from app.settings import get_settings
@@ -316,6 +317,18 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
                     "lead_id": str(row["lead_id"]),
                     "public_id": row["public_id"],
                 },
+            )
+            # Ежедневник партнёра: заявка → карточка «Новый контакт» у владельца,
+            # если он уже открывал ежедневник. Сбой здесь не роняет заявку.
+            await add_lead_card(
+                conn,
+                tenant_id=lead.tenant_id,
+                lead_id=str(row["lead_id"]),
+                owner_actor_id=row.get("assigned_owner_id"),
+                name=lead.name,
+                contact=lead.contact,
+                product_name=lead.product_name,
+                comment=lead.comment,
             )
             if lead.visitor_session_id:
                 async with conn.cursor() as cur:

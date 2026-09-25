@@ -24,6 +24,8 @@ OPTIONAL_FEATURE_PACKAGES: dict[str, tuple[str, ...]] = {
     "pilot": ("pilot",),
     "retention": ("retention",),
     "partner_library": ("partner_library",),
+    # Ежедневник партнёра (platform_crm_v14.sql), 25.09.2026.
+    "crm": ("crm",),
 }
 
 FEATURE_TABLES: dict[str, frozenset[str]] = {
@@ -60,6 +62,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "website_lead_watchers",
             "website_events",
             "lead_delivery_attempts",
+            # Очередь событий и плановых уведомлений (due_at, V14). Раньше таблицу
+            # создавал только код (app/jobs/outbox.py); теперь есть и в миграции.
+            "platform_outbox",
             # onboarding
             "onboarding_programs",
             "onboarding_steps",
@@ -142,6 +147,7 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
     "pilot": frozenset({"pilot_daily_metrics", "pilot_outcome_events"}),
     "retention": frozenset({"data_export_requests", "data_retention_registry"}),
     "partner_library": frozenset({"partner_library_items"}),
+    "crm": frozenset({"platform_accounts", "crm_contacts", "crm_notes"}),
 }
 
 

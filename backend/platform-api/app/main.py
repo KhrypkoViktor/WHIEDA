@@ -13,6 +13,7 @@ from app.admin.routes import router as admin_router
 from app.advisor.routes import router as advisor_router
 from app.cart.routes import router as cart_router
 from app.content_access.routes import router as content_access_router
+from app.crm.routes import router as crm_router
 from app.db import check_postgres, close_pool, get_pool, init_pool
 from app.health import runtime_health
 from app.errors import http_exception_handler, unhandled_exception_handler
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
         ("pilot", pilot_router),
         ("retention", retention_router),
         ("partner_library", partner_library_router),
+        ("crm", crm_router),
     ):
         if feature not in disabled:
             app.include_router(router)
