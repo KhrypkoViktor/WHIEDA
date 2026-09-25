@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 # Ответ «контактов не будет».
@@ -38,8 +39,14 @@ _LABELS = {
 
 
 def normalize_phone(raw: str) -> str | None:
-    """«8 928 672-92-88» → «+79286729288». 10–15 цифр, иначе не телефон."""
-    digits = re.sub(r"\D", "", raw)
+    """«8 928 672-92-88» → «+79286729288». 10–15 цифр, иначе не телефон.
+
+    Результат — только ASCII: полноширинные «＋７ ９１６…» и другие десятичные
+    цифры Unicode приводятся к 0–9 (иначе «+７…» проходил дальше и падал на
+    CHECK в базе, 25.09.2026).
+    """
+    text = unicodedata.normalize("NFKC", str(raw or ""))
+    digits = "".join(str(unicodedata.decimal(ch)) for ch in text if ch.isdecimal())
     if len(digits) == 11 and digits.startswith("8"):
         digits = "7" + digits[1:]
     elif len(digits) == 10 and digits.startswith("9"):

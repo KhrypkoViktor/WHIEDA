@@ -12,7 +12,7 @@ import logging
 import re
 from typing import Any
 
-from app.crm.service import crm_feature_enabled, crm_url, load_viewer, lock_reason
+from app.crm.service import crm_feature_enabled, crm_url, load_viewer, lock_reason, safe_error
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import send_telegram_text
 from app.telegram.site_login import with_site_login
@@ -59,8 +59,8 @@ async def crm_button_rows(tenant: TenantContext, telegram_user_id: int | None) -
         if lock_reason(viewer) is not None:
             return []
         url = await with_site_login(crm_url(viewer), tenant_id=tenant.tenant_id, telegram_user_id=int(telegram_user_id))
-    except Exception:  # the cabinet must open even if the diary lookup fails
-        logger.warning("crm_button_unavailable", exc_info=True)
+    except Exception as exc:  # the cabinet must open even if the diary lookup fails
+        logger.warning("crm_button_unavailable", extra=safe_error(exc))
         return []
     return [[{"text": CRM_BUTTON_LABEL, "url": url}]]
 
@@ -70,8 +70,8 @@ async def try_handle_crm_text(tenant: TenantContext, msg: TelegramMessage, *, tr
         return None
     try:
         viewer = await load_viewer(tenant.tenant_id, msg.user_id)
-    except Exception:
-        logger.warning("crm_viewer_unavailable", exc_info=True)
+    except Exception as exc:
+        logger.warning("crm_viewer_unavailable", extra=safe_error(exc))
         return None
     binding = current_bot_binding()
     reason = lock_reason(viewer)

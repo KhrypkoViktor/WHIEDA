@@ -31,6 +31,12 @@ Core:
   общей базе их не видят.
 - `app/jobs/outbox.py`: `due_at` и `scheduled` в ensure_outbox_table; enqueue с due_at пишет
   `scheduled`; DDL только если таблицы нет.
+- Правки лида (ревью 30c039c): телефон — любые цифры Unicode → ASCII (`normalize_phone`: NFKC +
+  `unicodedata.decimal`), E.164 проверяется перед базой; отказ базы на данных → 400 `invalid_input`;
+  в логах CRM только класс исключения и SQLSTATE; флаг `PLATFORM_CRM_LEAD_CARDS`; пилот fail-closed;
+  утро — один запрос на тенант + одно соединение на запись; проход отправки не дольше 20 с
+  (остаток — следующему); `processing` старше часа → `dead`; в миграции `lock_timeout = 5s`;
+  телефон E.164 в CSV без апострофа. Сайт ищет и фильтрует список в браузере — `q` в URL не уходит.
 - Бот: «ежедневник», «crm», «срм», «мои контакты» → кнопка на `/crm/` со входом; кнопка
   «📒 Ежедневник» в кабинете рядом с «Академией» (только тем, кому открыт).
 - `.github/zones.json`: `app/crm/` и `postgres/sql/platform_crm_` в зоне core.
@@ -41,7 +47,10 @@ Core:
 
 ## Настройки для выпуска (новые env Core)
 
-- `PLATFORM_CRM_PILOT_TELEGRAM_IDS` — пилот (Игорь, Макарова, Олеся, Доронина). Пусто = все с PRO.
+- `PLATFORM_CRM_PILOT_TELEGRAM_IDS` — пилот (Игорь, Макарова, Олеся, Доронина). Закрыто по умолчанию:
+  пусто = никому (кроме владельца и суперадминов), `*` = всем с PRO.
+- `PLATFORM_CRM_LEAD_CARDS=true` — заявка → карточка; **только на боевом API** (по умолчанию выкл.:
+  тестовая заявка на staging иначе попадёт в живой ежедневник через общую базу).
 - `PLATFORM_SCHEDULED_NOTIFY_BINDINGS=whieda-advisor-bot` — **только на боевом воркере**. Staging и бой
   работают на одной базе и оба запускают `app.jobs.worker`; без этой переменной процесс утро не
   планирует и не отправляет. На staging не ставить (иначе staging-бот заберёт боевые строки).
@@ -53,7 +62,7 @@ Core:
 - Core Postgres integration (`run_postgres_integration_tests.ps1`): 13/13 зелёные, в т. ч. два теста
   test_crm_postgres (полный цикл + обновление outbox, созданного кодом, на бою).
 - `check_zone.py --base origin/master`: OK.
-- Сайт: `npm run test:unit` 299/299, `npm run build` OK; staging выкладывался 12a2017 (проверены
+- Сайт: `npm run test:unit` 300/300, `npm run build` OK; staging выкладывался 12a2017 (проверены
   страница, noindex, нет EN/DE, 390 px без горизонтальной прокрутки). Дальше staging выкладывает
   лид сайта (попросил не выкладывать без него).
 - Независимое ревью обеих веток: утечек между аккаунтами, XSS и ошибок SQL не найдено; найденные

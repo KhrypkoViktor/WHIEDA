@@ -19,6 +19,10 @@
 
 begin;
 
+-- ALTER platform_outbox ждёт за транзакцией доставки лида: не висеть на блокировке
+-- дольше 5 секунд (упасть и повторить лучше, чем держать очередь за собой).
+set local lock_timeout = '5s';
+
 create table if not exists platform_accounts (
   tenant_id text not null,
   account_id uuid not null default gen_random_uuid(),

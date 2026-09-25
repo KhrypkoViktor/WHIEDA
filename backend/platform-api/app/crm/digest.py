@@ -1,13 +1,15 @@
 """Morning message of the partner diary (worker step, every 5 minutes).
 
 For every account whose local time is in [09:00, 09:10) and who has something
-due today: one ``platform_outbox`` row ``crm_daily_digest`` with ``due_at = now``
-and the key ``crm_digest:<account_id>:<local date>`` — the second pass inside the
-window finds the key and adds nothing. Sending is the generic
-``app.jobs.worker.process_due_notifications``; nothing is sent from here.
+due today: one ``platform_outbox`` row ``crm_daily_digest`` (status «scheduled»,
+``due_at = now``) with the key ``crm_digest:<account_id>:<local date>`` — the
+second pass inside the window finds the key and adds nothing. Sending is the
+generic ``app.jobs.worker.process_due_notifications``; nothing is sent here.
 
-Nothing due → nothing is queued. A person who lost access (PRO ended, not in
-the pilot) gets no message: the link would only show a lock.
+One query per tenant reads everything a pass needs — each account's local time,
+chat, what is due today by step and the partner subscription — and one
+connection writes the rows. Nothing due → nothing is queued. A person who lost
+access (PRO ended, not in the pilot) gets no message: the link would show a lock.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from datetime import datetime, time, timezone
 from typing import Any
 
 from app.crm.rules import digest_idempotency_key, digest_text, in_digest_window
-from app.crm.service import crm_url, load_viewer, lock_reason
+from app.crm.service import crm_url, lock_reason, safe_error, viewer_from_row
 from app.db import fetch_all, tenant_connection
 from app.jobs.outbox import enqueue_outbox_event
 
@@ -27,48 +29,97 @@ logger = logging.getLogger(__name__)
 EVENT_TYPE = "crm_daily_digest"
 
 
-async def _accounts_with_contacts(tenant_id: str) -> list[dict[str, Any]]:
+async def _accounts_due(tenant_id: str) -> list[dict[str, Any]]:
+    """Accounts with something due today (by their own timezone), in one query."""
     async with tenant_connection(tenant_id) as conn:
         return await fetch_all(
             conn,
             """
-            select a.account_id::text as account_id, a.telegram_user_id, a.timezone,
-                   (now() at time zone a.timezone) as local_now,
-                   coalesce(la.telegram_chat_id, a.telegram_user_id::text) as chat_id
-            from platform_accounts a
+            with acc as (
+              select a.account_id, a.telegram_user_id, (now() at time zone a.timezone) as local_now
+              from platform_accounts a
+              where a.tenant_id = %(tenant_id)s
+            ),
+            due as (
+              select c.account_id, coalesce(c.next_step, 'ping') as step, count(*)::int as n
+              from crm_contacts c
+              join acc on acc.account_id = c.account_id
+              where c.tenant_id = %(tenant_id)s
+                and c.next_at is not null
+                and c.next_at <= acc.local_now::date
+              group by 1, 2
+            ),
+            counts as (
+              select account_id, jsonb_object_agg(step, n) as counts
+              from due
+              group by account_id
+            )
+            select acc.account_id::text as account_id, acc.telegram_user_id, acc.local_now,
+                   coalesce(chat.telegram_chat_id, acc.telegram_user_id::text) as chat_id,
+                   counts.counts,
+                   sub.ref_code, sub.public_profile, sub.paid_until
+            from acc
+            join counts on counts.account_id = acc.account_id
             left join lateral (
               select l.telegram_chat_id
               from lead_actors l
-              where l.tenant_id = a.tenant_id
-                and l.telegram_user_id = a.telegram_user_id
+              where l.tenant_id = %(tenant_id)s
+                and l.telegram_user_id = acc.telegram_user_id
                 and l.telegram_chat_id is not null
               order by l.active desc
               limit 1
-            ) la on true
-            where a.tenant_id = %s
-              and exists (
-                select 1 from crm_contacts c
-                where c.tenant_id = a.tenant_id and c.account_id = a.account_id
-              )
+            ) chat on true
+            left join lateral (
+              -- the same «best profile» as resolve_partner_subscription_by_telegram_user_id
+              select rp.ref_code, rp.public_profile, ps.paid_until
+              from lead_actors la
+              join referral_profiles rp
+                on rp.tenant_id = la.tenant_id and rp.owner_id = la.actor_id and rp.enabled = true
+              left join partner_subscriptions ps
+                on ps.tenant_id = rp.tenant_id and ps.ref_code = rp.ref_code
+              where la.tenant_id = %(tenant_id)s
+                and la.telegram_user_id = acc.telegram_user_id
+                and la.active = true
+              order by ps.paid_until desc nulls last, rp.ref_code
+              limit 1
+            ) sub on true
             """,
-            (tenant_id,),
+            {"tenant_id": tenant_id},
         )
 
 
-async def _due_counts(tenant_id: str, account_id: str, local_date: Any) -> dict[str, int]:
-    async with tenant_connection(tenant_id) as conn:
-        rows = await fetch_all(
-            conn,
-            """
-            select coalesce(next_step, 'ping') as step, count(*) as n
-            from crm_contacts
-            where tenant_id = %s and account_id = %s::uuid
-              and next_at is not null and next_at <= %s
-            group by 1
-            """,
-            (tenant_id, account_id, local_date),
+def plan_digests(
+    rows: list[dict[str, Any]],
+    binding_id: str,
+    *,
+    in_window: Callable[[time], bool] = in_digest_window,
+) -> list[dict[str, Any]]:
+    """Rows of one tenant → outbox events to queue (no I/O)."""
+    planned = []
+    for row in rows:
+        local_now: datetime = row["local_now"]
+        if not in_window(local_now.time()):
+            continue
+        viewer = viewer_from_row(row["telegram_user_id"], row.get("ref_code"), row.get("public_profile"), row.get("paid_until"))
+        if lock_reason(viewer) is not None:
+            continue
+        url = crm_url(viewer, "today")
+        text = digest_text(dict(row.get("counts") or {}), url)
+        if text is None:
+            continue
+        planned.append(
+            {
+                "idempotency_key": digest_idempotency_key(row["account_id"], local_now.date()),
+                "payload": {
+                    "chat_id": str(row["chat_id"]),
+                    "text": text,
+                    "url": url,
+                    "binding_id": binding_id,
+                    "account_id": row["account_id"],
+                },
+            }
         )
-    return {row["step"]: int(row["n"]) for row in rows}
+    return planned
 
 
 async def enqueue_crm_digests(
@@ -80,44 +131,22 @@ async def enqueue_crm_digests(
     how many new rows were queued."""
     queued = 0
     for tenant_id, binding_id in tenant_bindings.items():
-        for account in await _accounts_with_contacts(tenant_id):
-            local_now: datetime = account["local_now"]
-            if not in_window(local_now.time()):
+        try:
+            planned = plan_digests(await _accounts_due(tenant_id), binding_id, in_window=in_window)
+            if not planned:
                 continue
-            try:
-                queued += await _plan_one(tenant_id, binding_id, account, local_now)
-            except Exception:
-                logger.exception(
-                    "crm_digest_plan_failed", extra={"tenant_id": tenant_id, "account_id": account["account_id"]}
-                )
+            now = datetime.now(timezone.utc)
+            async with tenant_connection(tenant_id) as conn:
+                for item in planned:
+                    row = await enqueue_outbox_event(
+                        conn,
+                        tenant_id=tenant_id,
+                        event_type=EVENT_TYPE,
+                        idempotency_key=item["idempotency_key"],
+                        payload=item["payload"],
+                        due_at=now,
+                    )
+                    queued += 1 if row and row.get("created") else 0
+        except Exception as exc:
+            logger.warning("crm_digest_plan_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
     return queued
-
-
-async def _plan_one(tenant_id: str, binding_id: str, account: dict[str, Any], local_now: datetime) -> int:
-    local_date = local_now.date()
-    counts = await _due_counts(tenant_id, account["account_id"], local_date)
-    if not counts:
-        return 0
-    viewer = await load_viewer(tenant_id, int(account["telegram_user_id"]))
-    if lock_reason(viewer) is not None:
-        return 0
-    url = crm_url(viewer, "today")
-    text = digest_text(counts, url)
-    if text is None:
-        return 0
-    async with tenant_connection(tenant_id) as conn:
-        row = await enqueue_outbox_event(
-            conn,
-            tenant_id=tenant_id,
-            event_type=EVENT_TYPE,
-            idempotency_key=digest_idempotency_key(account["account_id"], local_date),
-            payload={
-                "chat_id": str(account["chat_id"]),
-                "text": text,
-                "url": url,
-                "binding_id": binding_id,
-                "account_id": account["account_id"],
-            },
-            due_at=datetime.now(timezone.utc),
-        )
-    return 1 if row and row.get("created") else 0

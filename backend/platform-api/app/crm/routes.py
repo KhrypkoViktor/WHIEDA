@@ -9,10 +9,12 @@ Every response, errors included, is ``Cache-Control: private, no-store``.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable
 
+import psycopg
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -32,6 +34,7 @@ from app.crm.service import (
     list_contacts,
     load_viewer,
     lock_reason,
+    safe_error,
     set_timezone,
     today_view,
     update_contact,
@@ -43,9 +46,16 @@ from app.tenancy import get_request_tenant, require_entitlement
 PREFIX = "/api/v1/content-access/crm"
 NO_STORE = "private, no-store"
 
+logger = logging.getLogger(__name__)
+
 
 class _PrivateRoute(APIRoute):
-    """Errors raised in dependencies and handlers get the same no-store header."""
+    """Errors raised in dependencies and handlers get the same no-store header.
+
+    Data the database refuses (a CHECK, a too long value) is a 400, not a 500:
+    a 500 would put the psycopg message — the person's name and phone — into
+    the traceback. Only the class and SQLSTATE are logged.
+    """
 
     def get_route_handler(self) -> Callable:
         original = super().get_route_handler()
@@ -57,6 +67,11 @@ class _PrivateRoute(APIRoute):
                 response = await http_exception_handler(request, exc)
             except RequestValidationError as exc:
                 response = await request_validation_exception_handler(request, exc)
+            except (psycopg.errors.IntegrityError, psycopg.errors.DataError) as exc:
+                logger.warning("crm_invalid_input", extra={"path": self.path, **safe_error(exc)})
+                response = await http_exception_handler(
+                    request, HTTPException(status_code=400, detail={"error": "invalid_input"})
+                )
             response.headers["Cache-Control"] = NO_STORE
             return response
 
@@ -129,7 +144,7 @@ def _me(ctx: CrmContext) -> dict[str, Any]:
         "account_id": ctx.account["account_id"],
         "timezone": ctx.account["timezone"],
         "today": ctx.account["today"].isoformat(),
-        "pilot": bool(get_settings().parsed_crm_pilot_telegram_ids()),
+        "pilot": get_settings().parsed_crm_pilot() is not None,
     }
 
 

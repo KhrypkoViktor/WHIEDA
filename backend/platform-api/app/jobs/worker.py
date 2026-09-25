@@ -27,6 +27,11 @@ DUE_NOTIFY_INTERVAL_SEC = 30.0
 CRM_DIGEST_INTERVAL_SEC = 300.0
 DUE_BATCH_SIZE = 50
 DUE_MAX_ATTEMPTS = 3
+# One pass may not hold the ordinary queue longer than this (a slow Telegram:
+# 50 rows x 10 s). Rows it does not reach go back to «scheduled» for the next pass.
+DUE_PASS_BUDGET_SEC = 20.0
+# A worker killed mid-send (SIGTERM) leaves rows «processing»; older than this — dead.
+DUE_STUCK_AFTER = "1 hour"
 
 
 async def process_pending_outbox(batch_size: int = 20) -> int:
@@ -204,10 +209,28 @@ async def _return_unattempted(outbox_ids: list[int]) -> None:
             )
 
 
+async def _bury_stuck(binding_ids: list[str]) -> None:
+    settings = get_settings()
+    async with get_pool().connection(timeout=settings.database_timeout_sec) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                update platform_outbox
+                set status = 'dead', last_error = 'stuck_processing', updated_at = now()
+                where status = 'processing'
+                  and due_at is not null
+                  and updated_at < now() - interval '{DUE_STUCK_AFTER}'
+                  and payload ->> 'binding_id' = any(%s)
+                """,
+                (binding_ids,),
+            )
+
+
 async def process_due_notifications(
     bindings: dict[str, BotBindingContext] | None = None,
     *,
     batch_size: int = DUE_BATCH_SIZE,
+    budget_sec: float = DUE_PASS_BUDGET_SEC,
 ) -> int:
     """Send the scheduled platform_outbox rows whose due_at has come.
 
@@ -216,13 +239,17 @@ async def process_due_notifications(
     claims them. Only rows planned for a bot of this process (payload.binding_id)
     are taken. Outcome: «done»; a failed send goes back to «scheduled» in
     10 minutes, up to DUE_MAX_ATTEMPTS; an ambiguous delivery, a 400/403 from
-    Telegram or the last attempt is «dead» (no double message).
+    Telegram or the last attempt is «dead» (no double message). A pass stops
+    after ``budget_sec``; rows left «processing» by a killed worker for over
+    an hour become «dead».
     """
     if bindings is None:
         bindings = await scheduled_notify_bindings()
     by_id = {binding.binding_id: binding for binding in bindings.values()}
     if not by_id:
         return 0
+    await _bury_stuck(list(by_id))
+    started = time.monotonic()
     settings = get_settings()
     async with get_pool().connection(timeout=settings.database_timeout_sec) as conn:
         async with conn.transaction():
@@ -252,6 +279,8 @@ async def process_due_notifications(
     attempted: set[int] = set()
     try:
         for row in rows:
+            if time.monotonic() - started > budget_sec:
+                break
             attempted.add(row["outbox_id"])
             payload = row["payload"] if isinstance(row["payload"], dict) else {}
             binding = by_id.get(str(payload.get("binding_id") or ""))
@@ -276,9 +305,12 @@ async def process_due_notifications(
                 sent += 1
             try:
                 await _finish_due(row["outbox_id"], attempts=attempts, **outcome)
-            except Exception:
+            except Exception as exc:
                 # The row stays «processing»: never resent, a message at most once.
-                logger.exception("due_notification_finish_failed", extra={"outbox_id": row["outbox_id"]})
+                logger.warning(
+                    "due_notification_finish_failed",
+                    extra={"outbox_id": row["outbox_id"], "error_class": type(exc).__name__},
+                )
     finally:
         await _return_unattempted([row["outbox_id"] for row in rows if row["outbox_id"] not in attempted])
     return sent

@@ -194,12 +194,16 @@ def test_today_groups_follow_step_order_and_count_overdue():
     assert view["overdue"] == 2
 
 
-def test_access_pilot_pro_and_preview_admin():
+def test_access_pilot_is_fail_closed():
     paid = CrmViewer(telegram_user_id=10, is_preview_admin=False, partner_paid=True)
     unpaid = CrmViewer(telegram_user_id=11, is_preview_admin=False, partner_paid=False)
     admin = CrmViewer(telegram_user_id=1, is_preview_admin=True, partner_paid=False)
-    assert access_lock_reason(paid, frozenset()) is None
-    assert access_lock_reason(unpaid, frozenset()) == "pro_required"
+    # '*' → None: every partner with paid PRO
+    assert access_lock_reason(paid, None) is None
+    assert access_lock_reason(unpaid, None) == "pro_required"
+    assert access_lock_reason(admin, None) is None
+    # empty list → nobody but preview admins (a forgotten variable opens nothing)
+    assert access_lock_reason(paid, frozenset()) == "crm_pilot_only"
     assert access_lock_reason(admin, frozenset()) is None
     pilot = frozenset({11, 12})
     assert access_lock_reason(paid, pilot) == "crm_pilot_only"
@@ -207,9 +211,39 @@ def test_access_pilot_pro_and_preview_admin():
     assert access_lock_reason(admin, pilot) is None
 
 
+def test_pilot_setting_parsing(monkeypatch):
+    from app.settings import get_settings
+
+    for raw, expected in (("*", None), ("", frozenset()), ("7, 8,x", frozenset({7, 8})), (" * ", None)):
+        monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", raw)
+        get_settings.cache_clear()
+        assert get_settings().parsed_crm_pilot() == expected, raw
+    monkeypatch.delenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS")
+    get_settings.cache_clear()
+    assert get_settings().parsed_crm_pilot() == frozenset()
+    assert get_settings().platform_crm_lead_cards is False
+    get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["+７ ９１６ １２３-４５-６７", "＋７９１６１２３４５６７", "٨٩١٦١٢٣٤٥٦٧", "８ (９１６) １２３ ４５ ６７"],
+)
+def test_unicode_digits_become_ascii_or_nothing(raw):
+    """Full-width and other Unicode digits used to pass as «+７…» and hit the CHECK."""
+    e164, kept = split_phone(raw)
+    assert e164 == "+79161234567"
+    assert kept == " ".join(raw.split())
+    assert phone_from_lead_contact(raw)[0] == "+79161234567"
+    assert (kept or "").isprintable()
+
+
 def test_export_cells_are_spreadsheet_safe():
     assert csv_cell("=HYPERLINK(\"x\")").startswith("'=")
     assert csv_cell("+79286729288") == "'+79286729288"
+    # A normalized phone is not a formula: the phone column has no apostrophe.
+    assert export_row({"name": "Б", "phone_e164": "+79286729288", "status": "new"})[1] == "+79286729288"
+    assert export_row({"name": "Б", "phone_raw": "=1+2", "status": "new"})[1] == "'=1+2"
     assert csv_cell("Анна") == "Анна"
     row = export_row(
         {

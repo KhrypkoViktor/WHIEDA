@@ -22,6 +22,7 @@ explicitly in the same PATCH wins.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, time, timedelta
 from typing import Any
@@ -59,6 +60,14 @@ DIGEST_WINDOW_START = time(9, 0)
 DIGEST_WINDOW_END = time(9, 10)
 
 _TIMEZONE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+){0,2}$")
+# The same shape as the CHECK on crm_contacts.phone_e164: ASCII digits only.
+E164_RE = re.compile(r"\+[0-9]{10,15}")
+
+
+def as_e164(value: Any) -> str | None:
+    """A normalized number that the database accepts, or None."""
+    text = str(value or "")
+    return text if E164_RE.fullmatch(text) else None
 
 
 class CrmRuleError(ValueError):
@@ -169,7 +178,7 @@ def split_phone(value: Any) -> tuple[str | None, str | None]:
     raw = " ".join(str(value or "").split())[:PHONE_RAW_MAX]
     if not raw:
         return None, None
-    return normalize_phone(raw), raw
+    return as_e164(normalize_phone(raw)), raw
 
 
 def looks_like_timezone(value: Any) -> bool:
@@ -229,15 +238,17 @@ class CrmViewer:
     public_profile: Any = None
 
 
-def access_lock_reason(viewer: CrmViewer, pilot_ids: frozenset[int]) -> str | None:
+def access_lock_reason(viewer: CrmViewer, pilot_ids: frozenset[int] | None) -> str | None:
     """None — the diary is open; otherwise the API error code.
 
+    Fail-closed: ``pilot_ids`` None means «every partner with paid PRO» ('*' in
+    the setting); a set — only those people, and an empty set — nobody.
     Preview admins (billing owner, super admins) always pass: the owner checks
-    the pilot. With a pilot list only its people pass; then paid PRO decides.
+    the pilot. Then paid PRO decides.
     """
     if viewer.is_preview_admin:
         return None
-    if pilot_ids and int(viewer.telegram_user_id) not in pilot_ids:
+    if pilot_ids is not None and int(viewer.telegram_user_id) not in pilot_ids:
         return "crm_pilot_only"
     return None if viewer.partner_paid else "pro_required"
 
@@ -250,10 +261,10 @@ _PHONEISH_RE = re.compile(r"[\d\s()+\-.]{7,25}")
 def phone_from_lead_contact(contact: Any) -> tuple[str | None, str | None]:
     """A lead's «contact» is a phone, a @handle or an e-mail. Only a phone-shaped
     string becomes phone_e164/phone_raw; anything else goes to the first note."""
-    raw = " ".join(str(contact or "").split())
+    raw = " ".join(unicodedata.normalize("NFKC", str(contact or "")).split())
     if not raw or not _PHONEISH_RE.fullmatch(raw):
         return None, None
-    e164 = normalize_phone(raw)
+    e164 = as_e164(normalize_phone(raw))
     return (e164, raw[:PHONE_RAW_MAX]) if e164 else (None, None)
 
 
@@ -288,7 +299,8 @@ def export_row(row: dict[str, Any]) -> list[str]:
     next_at = row.get("next_at")
     return [
         csv_cell(row.get("name")),
-        csv_cell(row.get("phone_e164") or row.get("phone_raw") or ""),
+        # A normalized number is not a formula: written as is (+79286729288).
+        as_e164(row.get("phone_e164")) or csv_cell(row.get("phone_raw") or ""),
         csv_cell(row.get("source") or ""),
         STATUS_TITLES.get(str(row.get("status")), str(row.get("status") or "")),
         STEP_TITLES.get(str(row.get("next_step")), "") if row.get("next_step") else "",

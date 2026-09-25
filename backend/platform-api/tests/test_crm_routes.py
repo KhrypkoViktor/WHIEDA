@@ -33,7 +33,7 @@ CONTACT = {"id": "c1", "name": "Анна", "phone": "+79286729288", "status": "n
 @pytest.fixture
 def crm_app(monkeypatch):
     monkeypatch.setenv("PLATFORM_CONTENT_COOKIE_SECURE", "false")
-    monkeypatch.delenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", raising=False)
+    monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "*")
     monkeypatch.delenv("PLATFORM_DISABLED_FEATURES", raising=False)
     get_settings.cache_clear()
     monkeypatch.setattr("app.main.init_pool", AsyncMock())
@@ -128,11 +128,40 @@ async def test_outside_pilot_403_inside_pilot_ok(crm_app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_empty_pilot_means_nobody(crm_app, monkeypatch):
+    monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "")
+    get_settings.cache_clear()
+    response = await _call(crm_app, "GET", "/me")
+    assert response.status_code == 403
+    assert response.json()["error"] == "crm_pilot_only"
+
+
+@pytest.mark.asyncio
+async def test_data_the_database_refuses_is_400_without_the_row_in_logs(crm_app, caplog):
+    import psycopg
+
+    class Refused(psycopg.errors.CheckViolation):
+        def __str__(self):
+            return 'new row violates check constraint DETAIL: Failing row contains (Анна, +７９１６)'
+
+    create = AsyncMock(side_effect=Refused())
+    response = await _call(
+        crm_app, "POST", "/contacts", json={"name": "Анна", "phone": "+７ ９１６"},
+        extra=[patch("app.crm.routes.create_contact", create)],
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_input"
+    assert "Анна" not in response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "Анна" not in caplog.text and "Failing row" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_preview_admin_without_pro_passes(crm_app):
     admin = CrmViewer(telegram_user_id=42, is_preview_admin=True, partner_paid=False)
     response = await _call(crm_app, "GET", "/me", viewer=admin)
     assert response.status_code == 200
-    assert response.json()["pilot"] is False
+    assert response.json()["pilot"] is False  # '*' — open to every PRO partner
 
 
 @pytest.mark.asyncio
