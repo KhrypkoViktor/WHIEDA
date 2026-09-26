@@ -69,7 +69,7 @@ async def list_leads(
             select lead_id, public_id, status, delivery_status, name, contact,
                    product_name, product_sku, initial_ref_code, first_ref_code, active_ref_code,
                    attributed_owner_id, assigned_owner_id, country_code, city,
-                   metadata, created_at, updated_at
+                   metadata, marketing_consent, created_at, updated_at
             from website_leads
             where {where}
             order by created_at desc

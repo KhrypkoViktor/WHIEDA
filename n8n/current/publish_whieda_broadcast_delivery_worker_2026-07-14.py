@@ -2,6 +2,12 @@
 
 The worker is intentionally separate from the advisor workflow: ordinary product
 answers must not depend on a long-running Telegram fan-out.
+
+Recipients (38-ФЗ ст. 18, 26.09.2026): only people with an explicit opt-in in
+``telegram_marketing_consents`` (Core, migration platform_marketing_consent_v17.sql);
+the legacy ``is_subscribed`` flag no longer decides. Live instance patched by
+``patch_whieda_broadcast_marketing_consent_2026-09-26.py``; this script re-publishes
+the same SQL.
 """
 import json
 import os
@@ -47,7 +53,8 @@ WITH draft AS (
   FROM draft d
   JOIN advisor_telegram_subscriptions s ON s.client_id = d.client_id
   JOIN advisor_structured_users_access a ON a.client_id = s.client_id AND a.telegram_user_id = s.telegram_user_id
-  WHERE s.is_subscribed IS TRUE AND s.blocked_at IS NULL
+  JOIN telegram_marketing_consents mc ON mc.tenant_id = s.client_id AND mc.telegram_user_id::text = s.telegram_user_id AND mc.opted_in IS TRUE
+  WHERE s.blocked_at IS NULL
     AND COALESCE(a.structure_code, 'general') = ANY(string_to_array(d.structure_code, '|'))
     AND ((d.audience = 'candidates' AND lower(COALESCE(a.access_status, '')) = 'candidate')
       OR (d.audience = 'partners' AND lower(COALESCE(a.access_status, '')) = 'approved' AND lower(COALESCE(a.role, 'partner')) = 'partner')

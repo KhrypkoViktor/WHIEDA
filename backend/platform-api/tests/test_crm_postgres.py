@@ -60,6 +60,8 @@ create table website_leads (
   idempotency_key text not null,
   consent_version text not null,
   metadata jsonb not null default '{}'::jsonb,
+  marketing_consent boolean not null default false,
+  marketing_consent_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, idempotency_key)

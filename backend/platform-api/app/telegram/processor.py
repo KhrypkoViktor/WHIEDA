@@ -77,7 +77,13 @@ from app.telegram.bindings import (
     tenant_from_binding,
 )
 from app.telegram.log_safe import chat_ref
-from app.telegram.consent import first_start_consent_notice, is_start_command
+from app.telegram.consent import (
+    first_start_consent_notice,
+    is_start_command,
+    offer_marketing_consent,
+    try_handle_marketing_consent_callback,
+    try_handle_marketing_consent_message,
+)
 from app.telegram.catalog_browse import (
     handle_catalog_products,
     handle_callback_query,
@@ -462,6 +468,12 @@ async def _process_core_telegram_update_scoped(
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
             return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
+        # «Хочу получать новости и предложения» / «Не сейчас» (38-ФЗ ст. 18).
+        marketing_callback_result = await try_handle_marketing_consent_callback(
+            tenant, callback, trace_id=trace_id
+        )
+        if marketing_callback_result is not None:
+            return marketing_callback_result
         support_callback_result = await try_handle_support_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -519,6 +531,22 @@ async def _process_core_telegram_update_scoped(
             )
             if notice:
                 await deliver_text(msg.chat_id, notice)
+            # Рассылка — отдельный необязательный вопрос, пока человек не ответил
+            # (владелец, 26.09.2026). Сбой здесь /start не ломает.
+            await offer_marketing_consent(
+                tenant.tenant_id,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+                trace_id=trace_id,
+            )
+        else:
+            # /news, /news_on, /news_off, «рассылка» — до всего остального:
+            # отказ от рассылки должен срабатывать всегда.
+            marketing_result = await try_handle_marketing_consent_message(
+                tenant, msg, trace_id=trace_id
+            )
+            if marketing_result is not None:
+                return marketing_result
 
     # Services card, the support administrator's replies, and attachments from
     # a subscriber inside an open support ticket.
