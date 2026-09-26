@@ -71,7 +71,9 @@ def test_cabinet_keyboard_opens_site_and_copies_full_invitation():
     assert rows[4][0]["callback_data"] == "referral:list"
     assert rows[6][0] == {"text": "Подключить Gemini Pro", "callback_data": "svc:card:gemini"}
     assert rows[7][0] == {"text": "🤖 WWC Bot", "callback_data": "nav:wwcbot"}
-    assert rows[8][0] == {"text": "Поддержка", "url": SUPPORT_URL}
+    # 26.09.2026: «Поддержка» opens a «site» support ticket, not the owner's private chat.
+    assert rows[8][0] == {"text": "Поддержка", "callback_data": "svc:support:site"}
+    assert SUPPORT_URL == "https://t.me/sunraysword"
     assert len(invitation_text(link)) <= 256
 
 
@@ -112,8 +114,9 @@ def test_minimal_cabinet_keyboard_contains_only_ready_partner_actions():
     assert rows[1][0]["copy_text"]["text"] == (
         "https://t.me/WHIEDA_bot?start=ref_invite-code-123"
     )
-    # The only callback on production is the services card (owner signed it off 15.09.2026).
-    assert [row[0]["callback_data"] for row in rows if "callback_data" in row[0]] == ["svc:card:gemini", "nav:wwcbot"]
+    # Callbacks on production: the services card (owner signed it off 15.09.2026),
+    # the advisor menu, and «Поддержка» as a support ticket (owner, 26.09.2026).
+    assert [row[0]["callback_data"] for row in rows if "callback_data" in row[0]] == ["svc:card:gemini", "nav:wwcbot", "svc:support:site"]
 
 
 @pytest.mark.asyncio
@@ -215,20 +218,39 @@ async def test_referral_command_routes_before_onboarding_and_advisor(whieda_tena
 
 
 @pytest.mark.asyncio
-async def test_platform_command_routes_before_open_site_request(whieda_tenant, whieda_bot_binding):
+async def test_platform_command_routes_before_open_site_request(whieda_tenant, whieda_bot_binding, monkeypatch):
+    """«/support» is a support ticket to the owner (26.09.2026) and is handled
+    before an open site-request dialog can swallow it."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", "688931415")
+    get_settings.cache_clear()
     update = {
         "message": {
+            "message_id": 7,
             "text": "/support",
             "chat": {"id": 101, "type": "private"},
-            "from": {"id": 201},
+            "from": {"id": 201, "first_name": "Партнёр"},
         }
     }
-    referral = AsyncMock(return_value={"ok": True, "route": "support"})
-    with patch("app.telegram.processor.try_handle_referral_message", referral):
-        with patch("app.telegram.processor.try_handle_site_request_message", AsyncMock()) as request:
+    ticket = {
+        "ticket_id": "33333333-3333-3333-3333-333333333333", "ticket_no": 7, "channel_code": "site", "offer_code": None,
+        "offer_title": None, "user_telegram_user_id": 201, "user_chat_id": 101, "user_display": "Партнёр",
+        "admin_telegram_user_id": 688931415, "status": "open", "created": True,
+    }
+    try:
+        with patch("app.telegram.processor.try_handle_site_request_message", AsyncMock()) as request, patch(
+            "app.telegram.support.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 1})
+        ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=ticket)) as opened, patch(
+            "app.telegram.support.get_forum", AsyncMock(return_value=None)
+        ), patch("app.telegram.support.partner_site_for_telegram_user", AsyncMock(return_value=None)), patch(
+            "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
+        ):
             result = await process_core_telegram_update(
                 whieda_tenant, update, "support-route", binding=whieda_bot_binding
             )
-    assert result["route"] == "support"
-    referral.assert_awaited_once()
+    finally:
+        get_settings.cache_clear()
+    assert result["route"] == "support" and result["status"] == "ticket_opened"
+    assert opened.await_args.kwargs["channel_code"] == "site"
     request.assert_not_called()

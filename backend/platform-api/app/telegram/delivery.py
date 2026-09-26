@@ -102,6 +102,11 @@ def _bot_api_url(bot_token: str, method: str) -> str:
 
 
 _ALLOWED_HTML_TAGS = ("b", "strong", "i", "em", "code")
+# A balanced link to a person (tg://user?id=…, the support «site» forum) or to a
+# page; any other href stays escaped text.
+_ALLOWED_LINK_RE = re.compile(
+    r'&lt;a href="(tg://user\?id=\d+|https?://[^"\s&<>]+)"&gt;(.*?)&lt;/a&gt;', re.IGNORECASE | re.DOTALL
+)
 
 
 def format_telegram_html(text: str) -> str:
@@ -114,7 +119,7 @@ def format_telegram_html(text: str) -> str:
             escaped,
             flags=re.IGNORECASE,
         )
-    return escaped
+    return _ALLOWED_LINK_RE.sub(r'<a href="\1">\2</a>', escaped)
 
 
 async def send_telegram_text(

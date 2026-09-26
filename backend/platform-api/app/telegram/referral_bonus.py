@@ -27,7 +27,7 @@ from app.telegram.bindings import current_bot_binding
 from app.telegram.site_login import with_site_login
 from app.telegram.money import wwc, wwc_signed
 from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
-from app.telegram.support import SERVICES_CARD_CALLBACK
+from app.telegram.support import SERVICES_CARD_CALLBACK, SUPPORT_SITE_CALLBACK, open_site_support
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -38,7 +38,12 @@ _CALLBACK_RE = re.compile(
     r"^referral:(history|list|redeem:platform_(?:3|6|12)m|confirm|cancel)(?::([0-9a-f]{32}))?$"
 )
 
+# Owner's private chat — the old «Поддержка» target. Since 26.09.2026 the button
+# opens a «site» support ticket instead (app/telegram/support.py); the link stays
+# for texts that still name it.
 SUPPORT_URL = "https://t.me/sunraysword"
+# «Поддержка» in the cabinet — the same «site» ticket as /support and the word.
+SUPPORT_BUTTON = {"text": "Поддержка", "callback_data": SUPPORT_SITE_CALLBACK}
 
 
 def is_referral_command(text: str) -> bool:
@@ -164,7 +169,7 @@ def _dashboard_keyboard(
             [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
             gemini,
             wwc_bot,
-            [{"text": "Поддержка", "url": SUPPORT_URL}],
+            [dict(SUPPORT_BUTTON)],
         ]
         if not has_site:
             rows.insert(1, order_site)
@@ -179,7 +184,7 @@ def _dashboard_keyboard(
         [{"text": "История WWC$", "callback_data": "referral:history"}],
         gemini,
         wwc_bot,
-        [{"text": "Поддержка", "url": SUPPORT_URL}],
+        [dict(SUPPORT_BUTTON)],
     ]
     rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)
     # «Академия» — сразу под «Мой сайт» и продлением (курс «Запуск WWC»).
@@ -374,15 +379,6 @@ async def show_invitation(
     return {"ok": True, "route": "referral_invite", "actor_id": actor_id, "trace_id": trace_id}
 
 
-async def show_support(telegram_chat_id: int, *, trace_id: str) -> dict[str, Any]:
-    await _deliver(
-        telegram_chat_id,
-        "Есть вопрос по платформе, оплате или личному сайту? Напишите Виктору.",
-        reply_markup={"inline_keyboard": [[{"text": "Написать Виктору", "url": SUPPORT_URL}]]},
-    )
-    return {"ok": True, "route": "support", "trace_id": trace_id}
-
-
 async def try_handle_referral_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -392,7 +388,8 @@ async def try_handle_referral_message(
     if msg.chat_type != "private":
         return {"ok": True, "route": "referral", "status": "private_chat_required", "trace_id": trace_id}
     if command == "support":
-        return await show_support(msg.chat_id, trace_id=trace_id)
+        # Normally handled earlier by the support hook (processor); kept as a safety net.
+        return await open_site_support(tenant, msg, trace_id=trace_id)
     if command == "invite":
         return await show_invitation(
             tenant,
