@@ -398,7 +398,13 @@ async def open_site_support(
     tenant: TenantContext, source: TelegramMessage | TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any]:
     """«Поддержка» (menu, /support, the word, the cabinet button): a «site» ticket
-    to the owner — site changes, contacts, photos, any question."""
+    to the owner — site changes, contacts, photos, any question.
+
+    Только у тенанта с правом ``site_support`` (seed в V16): иначе бот другой
+    компании открывал бы обращение к владельцу WWC (ревью 26.09.2026)."""
+    if not tenant.entitlements.get("site_support", False):
+        await _send(source.chat_id, "Поддержка в этом боте не подключена.")
+        return {"ok": False, "route": "support", "status": "feature_disabled", "trace_id": trace_id}
     return await _open_tunnel(tenant, source, offer=None, trace_id=trace_id, channel=CHANNEL_SITE)
 
 

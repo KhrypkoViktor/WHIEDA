@@ -403,3 +403,18 @@ def test_cabinet_support_button_opens_the_site_ticket_on_both_profiles():
         rows = _dashboard_keyboard(bot_username="WHIEDA_bot", invite_code="x", site_url="https://olga.wwc.best/", has_site=True, minimal=minimal)["inline_keyboard"]
         assert rows[-1][0] == {"text": "Поддержка", "callback_data": SUPPORT_SITE_CALLBACK}
         assert not [b for row in rows for b in row if b.get("url") == "https://t.me/sunraysword"]
+
+
+@pytest.mark.asyncio
+async def test_support_is_closed_for_a_tenant_without_site_support(whieda_bot_binding, two_admins, no_forums, quiet_linking):
+    """Бот другой компании (NSP): «Поддержка» не открывает тикет к владельцу WWC (ревью 26.09.2026)."""
+    from app.tenancy import TenantContext
+
+    other = TenantContext(tenant_id="other", status="active", display_name="Other", entitlements={"structure_basic": True})
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    open_ticket = AsyncMock()
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.open_or_reuse_ticket", open_ticket):
+        result = await process_core_telegram_update(other, _message("/support"), "s9", binding=whieda_bot_binding)
+    assert result["status"] == "feature_disabled"
+    open_ticket.assert_not_awaited()
+    assert "не подключена" in send.await_args.kwargs["text"]

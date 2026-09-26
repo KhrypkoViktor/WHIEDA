@@ -25,4 +25,10 @@ alter table support_forums drop constraint if exists support_forums_binding_kind
 alter table support_forums add constraint support_forums_binding_kind_pkey
   primary key (tenant_id, binding_id, kind);
 
+-- Право «Поддержка» (тикеты site к владельцу) — только у WWC; бот другой
+-- компании без этой строки получает «Поддержка в этом боте не подключена».
+insert into tenant_entitlements (tenant_id, feature_key, enabled)
+values ('whieda', 'site_support', true)
+on conflict (tenant_id, feature_key) do update set enabled = excluded.enabled;
+
 commit;

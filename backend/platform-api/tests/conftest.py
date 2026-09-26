@@ -75,6 +75,7 @@ def whieda_tenant() -> TenantContext:
             "structure_basic": True,
             "partner_leads": True,
             "deep_coach": False,
+            "site_support": True,
         },
     )
 

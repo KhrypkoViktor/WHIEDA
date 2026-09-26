@@ -154,7 +154,7 @@ def test_support_button_opens_a_named_topic_and_relays_while_gemini_stays_anonym
             from app.telegram.processor import process_core_telegram_update
             from app.tenancy import TenantContext
 
-            tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"structure_basic": True, "partner_leads": True})
+            tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"structure_basic": True, "partner_leads": True, "site_support": True})
             binding = BotBindingContext(
                 binding_id=BINDING, tenant=tenant, bot_token_ref="env:PROOF", webhook_secret_ref="env:PROOF", bot_username="WHIEDA_Advisor_bot",
                 status="active", processing_mode="core", bot_token="proof-token", webhook_secret="proof-secret",
