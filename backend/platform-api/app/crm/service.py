@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 CONTACTS_LIMIT = 300
 TODAY_LIMIT = 500
+BULK_LIMIT = 500  # contacts per import request (phone book, .vcf, .csv)
 
 _CONTACT_COLUMNS = """
     c.contact_id::text as contact_id, c.name, c.phone_e164, c.phone_raw, c.source,
@@ -370,6 +371,100 @@ async def create_contact(
             ),
         )
     return contact_out(row)
+
+
+async def _existing_by_phone(
+    conn: Any, tenant_id: str, account_id: str, phones: list[str]
+) -> dict[str, str]:
+    """phone_e164 → the oldest card of this account with that number."""
+    if not phones:
+        return {}
+    rows = await fetch_all(
+        conn,
+        """
+        select phone_e164, contact_id::text as contact_id
+        from crm_contacts
+        where tenant_id = %s and account_id = %s::uuid and phone_e164 = any(%s::text[])
+        order by created_at, contact_id
+        """,
+        (tenant_id, account_id, phones),
+    )
+    found: dict[str, str] = {}
+    for row in rows:
+        found.setdefault(row["phone_e164"], row["contact_id"])
+    return found
+
+
+async def bulk_create_contacts(
+    tenant_id: str, account: dict[str, Any], items: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Import from the phone book, a .vcf or a .csv: one transaction for the batch.
+
+    Each item is ``{name, phone?, source?}`` cleaned like a single create. A row
+    whose number is already in this account's diary — or earlier in the same
+    batch — is skipped and reported with the existing card; an empty name is
+    skipped with ``name_required``. Rows without a recognised number are never
+    duplicates of each other. A row the database refuses raises and rolls the
+    whole batch back (the route answers 400): nothing is half-imported.
+    """
+    if len(items) > BULK_LIMIT:
+        raise CrmError("too_many_contacts", 400, limit=BULK_LIMIT)
+    cleaned: list[dict[str, Any]] = []
+    for item in items:
+        phone_e164, phone_raw = split_phone(item.get("phone"))
+        try:
+            name, error = clean_name(item.get("name")), None
+        except CrmRuleError as exc:
+            name, error = "", exc.code
+        cleaned.append({
+            "name": name, "error": error, "phone_e164": phone_e164, "phone_raw": phone_raw,
+            "source": clean_source(item.get("source")),
+        })
+    phones = sorted({row["phone_e164"] for row in cleaned if row["phone_e164"]})
+
+    skipped: list[dict[str, Any]] = []
+    created: list[tuple[str, dict[str, Any]]] = []
+    async with tenant_connection(tenant_id) as conn:
+        seen = await _existing_by_phone(conn, tenant_id, account["account_id"], phones)
+        for row in cleaned:
+            shown_phone = row["phone_raw"] or ""
+            if row["error"]:
+                skipped.append({"name": row["name"], "phone": shown_phone, "contact_id": None, "reason": row["error"]})
+                continue
+            phone = row["phone_e164"]
+            if phone and phone in seen:
+                skipped.append({"name": row["name"], "phone": shown_phone, "contact_id": seen[phone], "reason": "duplicate"})
+                continue
+            contact_id = str(uuid.uuid4())
+            if phone:
+                seen[phone] = contact_id
+            created.append((contact_id, row))
+        if created:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    insert into crm_contacts (
+                      tenant_id, contact_id, account_id, name, phone_e164, phone_raw, source,
+                      status, next_step, next_at
+                    )
+                    select %(tenant_id)s, t.contact_id::uuid, %(account_id)s::uuid,
+                           t.name, t.phone_e164, t.phone_raw, t.source, 'new', 'invite', %(today)s
+                    from unnest(
+                      %(ids)s::text[], %(names)s::text[], %(e164)s::text[], %(raws)s::text[], %(sources)s::text[]
+                    ) as t(contact_id, name, phone_e164, phone_raw, source)
+                    """,
+                    {
+                        "tenant_id": tenant_id,
+                        "account_id": account["account_id"],
+                        "today": account["today"],
+                        "ids": [contact_id for contact_id, _ in created],
+                        "names": [row["name"] for _, row in created],
+                        "e164": [row["phone_e164"] for _, row in created],
+                        "raws": [row["phone_raw"] for _, row in created],
+                        "sources": [row["source"] for _, row in created],
+                    },
+                )
+    return {"created": len(created), "skipped": skipped}
 
 
 async def get_contact(tenant_id: str, account: dict[str, Any], contact_id: str) -> dict[str, Any]:

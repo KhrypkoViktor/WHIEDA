@@ -276,3 +276,89 @@ async def test_disabled_feature_unmounts_router(monkeypatch):
         assert not any(path.startswith(BASE) for path in paths)
     finally:
         get_settings.cache_clear()
+
+
+# ---- bulk import (contacts from the phone book, .vcf, .csv) ------------------------
+
+
+def _bulk_items(count: int) -> list[dict]:
+    return [{"name": f"Имя {i}", "phone": f"+7999{i:07d}"} for i in range(count)]
+
+
+@pytest.mark.asyncio
+async def test_bulk_without_session_401(crm_app):
+    response = await _call(crm_app, "POST", "/contacts/bulk", viewer=None, json={"contacts": _bulk_items(1)})
+    assert response.status_code == 401
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.asyncio
+async def test_bulk_without_pro_402(crm_app):
+    response = await _call(crm_app, "POST", "/contacts/bulk", viewer=UNPAID, json={"contacts": _bulk_items(1)})
+    assert response.status_code == 402
+    assert response.json()["error"] == "pro_required"
+
+
+@pytest.mark.asyncio
+async def test_bulk_201_returns_created_and_skipped(crm_app):
+    result = {"created": 2, "skipped": [{"name": "Аня", "phone": "+79286729288", "contact_id": "c-old", "reason": "duplicate"}]}
+    bulk = AsyncMock(return_value=result)
+    response = await _call(
+        crm_app, "POST", "/contacts/bulk",
+        json={"contacts": [{"name": "Анна", "phone": "8 928 672-92-88"}, {"name": "Борис", "phone": "", "source": "спортзал"},
+                           {"name": "Аня", "phone": "+79286729288"}]},
+        extra=[patch("app.crm.routes.bulk_create_contacts", bulk)],
+    )
+    assert response.status_code == 201
+    assert response.json() == {"ok": True, **result}
+    assert response.headers["cache-control"] == "private, no-store"
+    assert bulk.await_args.args[:2] == ("whieda", ACCOUNT)
+    assert bulk.await_args.args[2] == [
+        {"name": "Анна", "phone": "8 928 672-92-88", "source": None},
+        {"name": "Борис", "phone": "", "source": "спортзал"},
+        {"name": "Аня", "phone": "+79286729288", "source": None},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_over_500_is_400_and_nothing_is_written(crm_app):
+    bulk = AsyncMock()
+    response = await _call(
+        crm_app, "POST", "/contacts/bulk", json={"contacts": _bulk_items(501)},
+        extra=[patch("app.crm.routes.bulk_create_contacts", bulk)],
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "too_many_contacts"
+    assert response.json()["limit"] == 500
+    bulk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_empty_list_is_400(crm_app):
+    bulk = AsyncMock()
+    response = await _call(
+        crm_app, "POST", "/contacts/bulk", json={"contacts": []},
+        extra=[patch("app.crm.routes.bulk_create_contacts", bulk)],
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "contacts_required"
+    bulk.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_data_the_database_refuses_is_400_without_the_rows_in_logs(crm_app, caplog):
+    import psycopg
+
+    class Refused(psycopg.errors.CheckViolation):
+        def __str__(self):
+            return 'new row violates check constraint DETAIL: Failing row contains (Анна, +７９１６)'
+
+    bulk = AsyncMock(side_effect=Refused())
+    response = await _call(
+        crm_app, "POST", "/contacts/bulk", json={"contacts": [{"name": "Анна", "phone": "+７ ９１６"}]},
+        extra=[patch("app.crm.routes.bulk_create_contacts", bulk)],
+    )
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_input"
+    assert "Анна" not in response.text
+    assert "Анна" not in caplog.text and "Failing row" not in caplog.text

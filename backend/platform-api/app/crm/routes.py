@@ -23,9 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.content_access.routes import _current_session
 from app.crm.service import (
+    BULK_LIMIT,
     CrmError,
     add_lead_card_for_public_id,
     add_note,
+    bulk_create_contacts,
     create_contact,
     delete_contact,
     delete_note,
@@ -124,6 +126,10 @@ class ContactCreateBody(BaseModel):
     source: str | None = Field(default=None, max_length=500)
 
 
+class ContactsBulkBody(BaseModel):
+    contacts: list[ContactCreateBody]
+
+
 class ContactPatchBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -189,6 +195,23 @@ async def crm_contact_create(body: ContactCreateBody, request: Request) -> dict[
     except CrmError as exc:
         _raise(exc)
     return {"ok": True, "contact": contact}
+
+
+@router.post(f"{PREFIX}/contacts/bulk", status_code=201)
+async def crm_contacts_bulk(body: ContactsBulkBody, request: Request) -> dict[str, Any]:
+    """Import from the phone book, a .vcf or a .csv — up to BULK_LIMIT rows in one
+    transaction; duplicates by number and rows without a name come back in
+    ``skipped`` with a reason, nothing is written twice."""
+    ctx = await _context(request)
+    if not body.contacts:
+        raise HTTPException(status_code=400, detail={"error": "contacts_required"})
+    if len(body.contacts) > BULK_LIMIT:
+        raise HTTPException(status_code=400, detail={"error": "too_many_contacts", "limit": BULK_LIMIT})
+    try:
+        result = await bulk_create_contacts(ctx.tenant_id, ctx.account, [item.model_dump() for item in body.contacts])
+    except CrmError as exc:
+        _raise(exc)
+    return {"ok": True, **result}
 
 
 @router.get(f"{PREFIX}/export.csv")
