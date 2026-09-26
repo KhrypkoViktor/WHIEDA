@@ -47,6 +47,9 @@ MIGRATIONS = (
     "platform_crm_v14.sql",
     "platform_academy_v1.sql",
     "platform_academy_shelf_v15.sql",
+    "platform_support_tickets_v8.sql",
+    "platform_support_forum_v9.sql",
+    "platform_support_site_forum_v16.sql",
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

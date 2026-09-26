@@ -8,9 +8,11 @@ message can be mapped back to the ticket (see app/telegram/support.py).
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from app.db import fetch_all, fetch_one, tenant_connection
+from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
 
 Direction = Literal["user_to_admin", "admin_to_user", "system"]
 
@@ -28,6 +30,18 @@ _TICKET_COLUMNS_T = ", ".join(f"t.{col.strip()}" for col in _TICKET_COLUMNS.spli
 
 def ticket_label(ticket: dict[str, Any]) -> str:
     return f"#S-{int(ticket['ticket_no'])}"
+
+
+# Two forums per bot (owner, 26.09.2026): «services» — Gemini orders, names hidden
+# from the administrator; «site» — «Поддержка» from the menu, the owner sees who
+# writes. A ticket's forum follows its channel.
+FORUM_KIND_SERVICES = "services"
+FORUM_KIND_SITE = "site"
+CHANNEL_SITE = "site"
+
+
+def forum_kind_for_channel(channel_code: str | None) -> str:
+    return FORUM_KIND_SITE if str(channel_code or "").strip().lower() == CHANNEL_SITE else FORUM_KIND_SERVICES
 
 
 async def open_or_reuse_ticket(
@@ -121,8 +135,10 @@ async def get_ticket(tenant_id: str, *, ticket_id: str) -> dict[str, Any] | None
 
 
 async def list_open_tickets_for_admin(
-    tenant_id: str, *, admin_telegram_user_id: int, limit: int = 10
+    tenant_id: str, *, admin_telegram_user_id: int, limit: int = 10, forum_kind: str | None = None
 ) -> list[dict[str, Any]]:
+    """Open tickets still in private-chat mode; ``forum_kind`` narrows to the
+    tickets that belong to one forum («site» or «services»)."""
     async with tenant_connection(tenant_id) as conn:
         return await fetch_all(
             conn,
@@ -130,11 +146,46 @@ async def list_open_tickets_for_admin(
             select {_TICKET_COLUMNS} from support_tickets
             where tenant_id = %s and admin_telegram_user_id = %s and status = 'open'
               and forum_thread_id is null
+              and (%s::text is null or (case when channel_code = %s then %s else %s end) = %s)
             order by last_message_at desc
             limit %s
             """,
-            (tenant_id, int(admin_telegram_user_id), max(1, min(limit, 50))),
+            (
+                tenant_id, int(admin_telegram_user_id),
+                forum_kind, CHANNEL_SITE, FORUM_KIND_SITE, FORUM_KIND_SERVICES, forum_kind,
+                max(1, min(limit, 50)),
+            ),
         )
+
+
+async def partner_site_for_telegram_user(tenant_id: str, *, telegram_user_id: int) -> dict[str, Any] | None:
+    """The partner's own site (``referral_profiles`` by owner) for the «site» forum:
+    ``{"ref_code", "url"}`` or None when the person has no site yet."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select rp.ref_code, rp.public_profile
+            from referral_profiles rp
+            join lead_actors la on la.tenant_id = rp.tenant_id and la.actor_id = rp.owner_id
+            where rp.tenant_id = %s and la.telegram_user_id = %s and rp.enabled = true
+            order by rp.ref_code
+            limit 1
+            """,
+            (tenant_id, int(telegram_user_id)),
+        )
+    if not row:
+        return None
+    ref_code = str(row["ref_code"] or "").strip().lower()
+    profile = row.get("public_profile")
+    if isinstance(profile, str):
+        try:
+            profile = json.loads(profile)
+        except json.JSONDecodeError:
+            profile = {}
+    profile = profile if isinstance(profile, dict) else {}
+    subdomain = str(profile.get("subdomain") or REF_TO_ISSUED_SUBDOMAIN.get(ref_code) or ref_code).strip().lower()
+    return {"ref_code": ref_code, "url": f"https://{subdomain}.wwc.best/"}
 
 
 async def find_ticket_by_admin_message(
@@ -226,32 +277,36 @@ async def close_ticket(
 # ----------------------------------------------------------------------------
 
 async def register_forum(
-    tenant_id: str, *, binding_id: str, chat_id: int, title: str | None, registered_by: int
+    tenant_id: str, *, binding_id: str, chat_id: int, title: str | None, registered_by: int, kind: str = FORUM_KIND_SERVICES
 ) -> dict[str, Any]:
-    """Remember the forum group for this bot; a later registration replaces it."""
+    """Remember the forum group of this ``kind`` for this bot; a later registration
+    of the same kind replaces it (v16: one row per bot and kind)."""
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,
             """
-            insert into support_forums (tenant_id, binding_id, chat_id, title, registered_by_telegram_user_id)
-            values (%s, %s, %s, %s, %s)
-            on conflict (tenant_id, binding_id) do update
+            insert into support_forums (tenant_id, binding_id, kind, chat_id, title, registered_by_telegram_user_id)
+            values (%s, %s, %s, %s, %s, %s)
+            on conflict (tenant_id, binding_id, kind) do update
               set chat_id = excluded.chat_id, title = excluded.title,
                   registered_by_telegram_user_id = excluded.registered_by_telegram_user_id,
                   updated_at = now()
-            returning tenant_id, binding_id, chat_id, title
+            returning tenant_id, binding_id, kind, chat_id, title
             """,
-            (tenant_id, binding_id, int(chat_id), (title or "")[:200] or None, int(registered_by)),
+            (tenant_id, binding_id, kind, int(chat_id), (title or "")[:200] or None, int(registered_by)),
         )
     return dict(row)
 
 
-async def get_forum(tenant_id: str, *, binding_id: str) -> dict[str, Any] | None:
+async def get_forum(tenant_id: str, *, binding_id: str, kind: str = FORUM_KIND_SERVICES) -> dict[str, Any] | None:
     async with tenant_connection(tenant_id) as conn:
         return await fetch_one(
             conn,
-            "select tenant_id, binding_id, chat_id, title, bonuses_thread_id, reports_thread_id from support_forums where tenant_id = %s and binding_id = %s",
-            (tenant_id, binding_id),
+            """
+            select tenant_id, binding_id, kind, chat_id, title, bonuses_thread_id, reports_thread_id
+            from support_forums where tenant_id = %s and binding_id = %s and kind = %s
+            """,
+            (tenant_id, binding_id, kind),
         )
 
 
@@ -267,10 +322,10 @@ async def set_forum_service_threads(
                set bonuses_thread_id = coalesce(%s, bonuses_thread_id),
                    reports_thread_id = coalesce(%s, reports_thread_id),
                    updated_at = now()
-             where tenant_id = %s and binding_id = %s
+             where tenant_id = %s and binding_id = %s and kind = %s
             returning binding_id
             """,
-            (bonuses_thread_id, reports_thread_id, tenant_id, binding_id),
+            (bonuses_thread_id, reports_thread_id, tenant_id, binding_id, FORUM_KIND_SERVICES),
         )
 
 
