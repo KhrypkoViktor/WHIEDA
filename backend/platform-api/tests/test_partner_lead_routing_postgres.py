@@ -71,6 +71,8 @@ create table website_leads (
   idempotency_key text not null,
   consent_version text not null,
   metadata jsonb not null default '{}'::jsonb,
+  marketing_consent boolean not null default false,
+  marketing_consent_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, idempotency_key)
@@ -172,6 +174,8 @@ def test_active_grace_and_suspended_lead_routing_and_public_ref():
                             "idempotency_key": f"routing-{ref_code}",
                             "initial_ref": ref_code,
                             "active_ref": ref_code,
+                            # Галочка рассылки (38-ФЗ ст. 18): только у одной заявки.
+                            **({"marketing_consent": "on"} if ref_code == "active-ref" else {}),
                         },
                         tenant_id="whieda",
                     )
@@ -181,7 +185,8 @@ def test_active_grace_and_suspended_lead_routing_and_public_ref():
                     rows = await conn.execute(
                         """
                         select name, initial_ref_code, first_ref_code, active_ref_code,
-                               attributed_owner_id, assigned_owner_id
+                               attributed_owner_id, assigned_owner_id,
+                               marketing_consent, marketing_consent_at
                         from website_leads
                         order by name
                         """
@@ -196,6 +201,12 @@ def test_active_grace_and_suspended_lead_routing_and_public_ref():
                 assert suspended["active_ref_code"] is None
                 assert suspended["assigned_owner_id"] == "organic-owner"
                 assert suspended["attributed_owner_id"] == "organic-owner"
+
+                assert saved["active-ref"]["marketing_consent"] is True
+                assert saved["active-ref"]["marketing_consent_at"] is not None
+                for name in ("grace-ref", "suspended-ref"):
+                    assert saved[name]["marketing_consent"] is False
+                    assert saved[name]["marketing_consent_at"] is None
 
                 assert await load_public_ref("whieda", "active-ref") is not None
                 assert await load_public_ref("whieda", "grace-ref") is not None

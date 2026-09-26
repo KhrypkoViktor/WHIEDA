@@ -60,6 +60,7 @@ APPLY_ORDER = [
     "platform_academy_v1.sql",
     "platform_academy_shelf_v15.sql",
     "platform_support_site_forum_v16.sql",
+    "platform_marketing_consent_v17.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

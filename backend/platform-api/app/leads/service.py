@@ -43,11 +43,26 @@ class LeadInput:
     country_code: str
     consent_version: str
     metadata: dict[str, Any]
+    # Отдельная необязательная галочка «Хочу получать новости и предложения»
+    # (38-ФЗ ст. 18, 26.09.2026). Не согласие на обработку ПДн и не условие заявки.
+    marketing_consent: bool = False
 
 
 def clean(value: Any, max_len: int = 1000) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip())
     return text[:max_len]
+
+
+_TRUE_WORDS = {"true", "1", "on", "yes", "да"}
+
+
+def parse_marketing_consent(value: Any) -> bool:
+    """Checkbox value from the form: only an explicit yes counts (unchecked → False)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value or "").strip().lower() in _TRUE_WORDS
 
 
 def ref_from_host(hostname: str) -> str:
@@ -148,6 +163,7 @@ def parse_lead_body(body: dict[str, Any], tenant_id: str) -> LeadInput:
         idempotency_key=idempotency,
         country_code=country,
         consent_version=consent,
+        marketing_consent=parse_marketing_consent(body.get("marketing_consent")),
         metadata={
             "routing_version": "platform-core-v1",
             "country_source": clean(body.get("country_source"), 80),
@@ -233,7 +249,8 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         tenant_id, name, contact, comment, product_name, product_sku, product_variant,
         page_url, initial_ref_code, first_ref_code, active_ref_code,
         attributed_owner_id, assigned_owner_id, ref_profile_version,
-        service_location_id, country_code, city, idempotency_key, consent_version, metadata
+        service_location_id, country_code, city, idempotency_key, consent_version, metadata,
+        marketing_consent, marketing_consent_at
       )
       select
         %(tenant_id)s,
@@ -255,7 +272,9 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         service_route.city,
         %(idempotency_key)s,
         %(consent_version)s,
-        %(metadata)s::jsonb
+        %(metadata)s::jsonb,
+        %(marketing_consent)s,
+        case when %(marketing_consent)s then now() else null end
       from routing
       left join service_route on true
       on conflict (tenant_id, idempotency_key) do update
@@ -300,6 +319,7 @@ async def save_lead(lead: LeadInput) -> dict[str, Any]:
         "idempotency_key": lead.idempotency_key,
         "consent_version": lead.consent_version,
         "metadata": json.dumps(lead.metadata),
+        "marketing_consent": bool(lead.marketing_consent),
     }
 
     async with tenant_connection(lead.tenant_id) as conn:
