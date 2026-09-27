@@ -64,7 +64,7 @@ async def test_site_header_links_the_partner_and_has_no_paid_button(whieda_tenan
 @pytest.mark.asyncio
 async def test_header_is_resent_without_the_direct_button_when_privacy_blocks_it(whieda_tenant, whieda_bot_binding, two_admins, both_forums, quiet_linking):
     send = AsyncMock(side_effect=[{"ok": False, "status_code": 400}, {"ok": True, "message_id": 502}, {"ok": True, "message_id": 503}])
-    ticket = _site_ticket(user_display="Ольга Злобина", forum_chat_id=SITE_FORUM, forum_thread_id=8, created=False)
+    ticket = _site_ticket(user_display="Ольга Злобина", forum_chat_id=SITE_FORUM, forum_thread_id=8, created=True)
     with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=ticket)), patch(
         "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
     ):
@@ -76,7 +76,7 @@ async def test_header_is_resent_without_the_direct_button_when_privacy_blocks_it
 
 
 @pytest.mark.asyncio
-async def test_gemini_user_message_gets_a_move_to_wwc_support_button(whieda_tenant, whieda_bot_binding, two_admins, both_forums, quiet_linking):
+async def test_client_messages_carry_no_buttons_in_either_forum(whieda_tenant, whieda_bot_binding, two_admins, both_forums, quiet_linking):
     send = AsyncMock(return_value={"ok": True, "message_id": 601})
     with patch("app.telegram.support.send_telegram_text", send), patch(
         "app.telegram.support.get_open_ticket_for_user", AsyncMock(return_value=_gemini_ticket(forum_chat_id=SERVICES_FORUM, forum_thread_id=69))
@@ -86,9 +86,8 @@ async def test_gemini_user_message_gets_a_move_to_wwc_support_button(whieda_tena
         "app.telegram.processor.handle_navigation_text", AsyncMock(return_value=None)
     ):
         await process_core_telegram_update(whieda_tenant, _message("В Одноклассниках ссылка не кликабельна", message_id=4567), "u3", binding=whieda_bot_binding)
-    rows = _keyboards(send, SERVICES_FORUM)[0]["inline_keyboard"]
-    assert rows[-1] == [{"text": "↪ В поддержку WWC", "callback_data": f"svc:move:{USER}_4567"}]
-    assert rows[0][0]["callback_data"].startswith("sale:paid:"), "Gemini keeps «Оплачено»"
+    # Владелец: «очень много лишнего» — кнопки только в шапке темы.
+    assert _keyboards(send, SERVICES_FORUM) == [None]
 
 
 def test_group_filter_lets_move_and_site_confirm_through():
@@ -236,3 +235,47 @@ async def test_confirm_from_another_group_is_refused(whieda_tenant, whieda_bot_b
         result = await process_core_telegram_update(whieda_tenant, callback, "u7", binding=whieda_bot_binding)
     assert result["status"] == "private_chat_required"
     confirm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reply_word_in_a_gemini_topic_moves_the_message_and_is_not_relayed(whieda_tenant, whieda_bot_binding, two_admins, both_forums):
+    from tests.test_telegram_support_site import _forum_message
+
+    origin = _gemini_ticket(ticket_no=5, forum_chat_id=SERVICES_FORUM, forum_thread_id=69, user_display="Елена Антонова (@lite77777)")
+    row = {"message_id": "m1", "ticket_id": origin["ticket_id"], "direction": "user_to_admin", "created_at": datetime(2026, 9, 27, 16, 5, tzinfo=timezone.utc),
+           "source_chat_id": USER, "source_message_id": 4567, "text": "В Одноклассниках ссылка не кликабельна"}
+    site_ticket = _site_ticket(ticket_no=8, user_display="Елена Антонова (@lite77777)", forum_chat_id=SITE_FORUM, forum_thread_id=12, created=False)
+    send = AsyncMock(return_value={"ok": True, "message_id": 900})
+    update = _forum_message("в поддержку", chat=SERVICES_FORUM, user=KARINA, thread_id=69, message_id=333)
+    update["message"]["reply_to_message"] = {"message_id": 82}
+    by_delivery = AsyncMock(return_value=row)
+    with patch("app.telegram.support.send_telegram_text", send), patch(
+        "app.telegram.support.find_ticket_by_forum_thread", AsyncMock(return_value=origin)
+    ), patch("app.telegram.support.get_message_by_delivery", by_delivery), patch("app.telegram.support.get_ticket", AsyncMock(return_value=origin)), patch(
+        "app.telegram.support.list_user_burst", AsyncMock(return_value=[row])
+    ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=site_ticket)), patch(
+        "app.telegram.support.copy_telegram_message", AsyncMock(return_value={"ok": True, "message_id": 901})
+    ), patch("app.telegram.support.move_message_to_ticket", AsyncMock()) as move, patch(
+        "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "h"})
+    ):
+        result = await process_core_telegram_update(whieda_tenant, update, "u8", binding=whieda_bot_binding)
+    assert result["status"] == "moved" and result["to"] == "#S-8"
+    by_delivery.assert_awaited_once_with("whieda", delivered_chat_id=SERVICES_FORUM, delivered_message_id=82)
+    move.assert_awaited_once()
+    to_user = [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
+    assert to_user and all("в поддержку" != t for t in to_user) and "#S-8" in to_user[0]
+    assert not any(t.startswith("Ответ администратора") for t in to_user), "the word is a command, not an answer"
+
+
+@pytest.mark.asyncio
+async def test_pressing_order_again_adds_one_line_not_a_second_header(whieda_tenant, whieda_bot_binding, two_admins, both_forums):
+    existing = _gemini_ticket(ticket_no=5, forum_chat_id=SERVICES_FORUM, forum_thread_id=69, created=False)
+    send = AsyncMock(return_value={"ok": True, "message_id": 950})
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()), patch(
+        "app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=existing)
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
+        await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "u9", binding=whieda_bot_binding)
+    to_forum = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(SERVICES_FORUM)]
+    assert len(to_forum) == 1
+    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-5 · клиент снова нажал «Заказать»")
+    assert to_forum[0].get("reply_markup") is None
