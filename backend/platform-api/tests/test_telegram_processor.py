@@ -311,16 +311,21 @@ async def test_content_access_start_runs_after_admin_before_identity(
             "from": {"id": 210},
         },
     }
-    confirm = AsyncMock(return_value={"ok": True, "status": "approved", "challenge_id": "c-content"})
+    confirm = AsyncMock(return_value={
+        "ok": True, "status": "approved", "challenge_id": "c-content",
+        "return_to": "https://lara.wwc.best/reviews/?story=bem-1",
+    })
+    bot_login = AsyncMock(return_value="cid-1.nonce-1")
     with patch("app.telegram.content_access.confirm_content_from_telegram", confirm):
-        with patch("app.telegram.content_access.deliver_text", AsyncMock()) as deliver:
-            with patch("app.telegram.processor.handle_start_token", AsyncMock()) as start_token:
-                result = await process_core_telegram_update(
-                    whieda_tenant,
-                    update,
-                    "t-content",
-                    binding=whieda_bot_binding,
-                )
+        with patch("app.telegram.site_login.create_bot_login", bot_login):
+            with patch("app.telegram.content_access.deliver_text", AsyncMock()) as deliver:
+                with patch("app.telegram.processor.handle_start_token", AsyncMock()) as start_token:
+                    result = await process_core_telegram_update(
+                        whieda_tenant,
+                        update,
+                        "t-content",
+                        binding=whieda_bot_binding,
+                    )
     assert result["route"] == "content_access"
     confirm.assert_awaited_once_with(
         tenant_id="whieda",
@@ -333,6 +338,46 @@ async def test_content_access_start_runs_after_admin_before_identity(
     assert "Вход подтверждён" in message
     assert "стельк" not in message.lower()
     assert "стать" not in message.lower()
+    # Кнопка «Вернуться на сайт» ведёт на тот же хост и путь, с готовым входом:
+    # вкладка во встроенном браузере Telegram к этому моменту часто уже закрыта.
+    bot_login.assert_awaited_once_with("whieda", telegram_user_id=210, return_to="/reviews/?story=bem-1")
+    markup = deliver.await_args.args[2]
+    button = markup["inline_keyboard"][0][0]
+    assert button["text"] == "Вернуться на сайт"
+    assert button["url"] == "https://lara.wwc.best/reviews/?story=bem-1#wwc-login=cid-1.nonce-1"
+
+
+@pytest.mark.asyncio
+async def test_content_access_path_only_return_to_goes_to_family_root(whieda_tenant, whieda_bot_binding):
+    # Старый клиент прислал только путь: кнопка ведёт на главный домен семьи.
+    update = {
+        "update_id": 555012,
+        "message": {"text": "/start content_access_tokOLD", "chat": {"id": 111}, "from": {"id": 211}},
+    }
+    confirm = AsyncMock(return_value={"ok": True, "status": "approved", "challenge_id": "c-old", "return_to": "/academy/"})
+    with patch("app.telegram.content_access.confirm_content_from_telegram", confirm):
+        with patch("app.telegram.site_login.create_bot_login", AsyncMock(return_value="cid-2.nonce-2")):
+            with patch("app.telegram.content_access.deliver_text", AsyncMock()) as deliver:
+                with patch("app.telegram.processor.handle_start_token", AsyncMock()):
+                    await process_core_telegram_update(whieda_tenant, update, "t-old", binding=whieda_bot_binding)
+    button = deliver.await_args.args[2]["inline_keyboard"][0][0]
+    assert button["url"] == "https://wwc.best/academy/#wwc-login=cid-2.nonce-2"
+
+
+@pytest.mark.asyncio
+async def test_content_access_without_return_to_sends_plain_success(whieda_tenant, whieda_bot_binding):
+    update = {
+        "update_id": 555013,
+        "message": {"text": "/start content_access_tokNONE", "chat": {"id": 113}, "from": {"id": 213}},
+    }
+    confirm = AsyncMock(return_value={"ok": True, "status": "approved", "challenge_id": "c-none"})
+    with patch("app.telegram.content_access.confirm_content_from_telegram", confirm):
+        with patch("app.telegram.site_login.create_bot_login", AsyncMock()) as bot_login:
+            with patch("app.telegram.content_access.deliver_text", AsyncMock()) as deliver:
+                with patch("app.telegram.processor.handle_start_token", AsyncMock()):
+                    await process_core_telegram_update(whieda_tenant, update, "t-none", binding=whieda_bot_binding)
+    bot_login.assert_not_called()
+    assert deliver.await_args.args[2] is None
 
 
 @pytest.mark.asyncio

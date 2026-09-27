@@ -32,6 +32,33 @@ def test_sanitize_return_to_allows_article_path():
     assert sanitize_return_to(RETURN_TO) == RETURN_TO
 
 
+def test_sanitize_return_to_keeps_family_host_drops_fragment():
+    # Партнёрский поддомен своей семьи: бот вернёт человека на тот же хост.
+    assert (
+        sanitize_return_to("https://lara.wwc.best/reviews/?story=bem-1#top")
+        == "https://lara.wwc.best/reviews/?story=bem-1"
+    )
+    assert sanitize_return_to("https://wwc.best/") == "https://wwc.best/"
+    assert sanitize_return_to("https://WWC.best/academy/") == "https://wwc.best/academy/"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://evil.example/reviews/",
+        "https://wwc.best.evil.example/",
+        "http://wwc.best/reviews/",
+        "https://user@wwc.best/reviews/",
+        "https://wwc.best/cabinet/",
+        "https://wwc.best//evil.example/",
+    ],
+)
+def test_sanitize_return_to_rejects_foreign_or_service_absolute(value):
+    with pytest.raises(HTTPException) as info:
+        sanitize_return_to(value)
+    assert info.value.status_code == 400
+
+
 def test_repeat_price_catalog_has_stable_server_schema():
     catalog = load_repeat_price_catalog()
     rows = [row for section in catalog["sections"] for row in section["rows"]]
