@@ -279,3 +279,21 @@ async def test_pressing_order_again_adds_one_line_not_a_second_header(whieda_ten
     assert len(to_forum) == 1
     assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-5 · клиент снова нажал «Заказать»")
     assert to_forum[0].get("reply_markup") is None
+
+
+@pytest.mark.asyncio
+async def test_old_paid_button_on_a_site_ticket_explains_instead_of_offering_gemini(whieda_tenant, whieda_bot_binding, two_admins):
+    ticket = _site_ticket(ticket_no=6, forum_chat_id=SITE_FORUM, forum_thread_id=8)
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    callback = _callback(f"sale:paid:{ticket['ticket_id']}", user=OWNER, chat={"id": SITE_FORUM, "type": "supergroup"})
+    callback["callback_query"]["message"]["message_thread_id"] = 8
+    with patch("app.telegram.service_sales.send_telegram_text", send), patch("app.telegram.service_sales.answer_callback_query", AsyncMock()), patch(
+        "app.telegram.service_sales.get_ticket", AsyncMock(return_value=ticket)
+    ), patch("app.telegram.service_sales.get_sale_for_ticket", AsyncMock()) as sale:
+        result = await process_core_telegram_update(whieda_tenant, callback, "u10", binding=whieda_bot_binding)
+    assert result["status"] == "site_ticket"
+    sale.assert_not_called()
+    text = send.await_args.kwargs["text"]
+    assert "только для заказов Gemini" in text and "Заявки на сайты" in text
+    assert send.await_args.kwargs.get("reply_markup") is None
+
