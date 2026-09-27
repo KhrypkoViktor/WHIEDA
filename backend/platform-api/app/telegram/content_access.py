@@ -8,13 +8,19 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.content_access.service import CONTENT_START_PREFIX, confirm_content_from_telegram
+from app.cookie_domain import shared_cookie_domains
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import send_telegram_text
+from app.telegram.site_login import with_site_login
 from app.telegram.update_parser import parse_start_token, parse_telegram_message
 
 logger = logging.getLogger(__name__)
 
-_SUCCESS_MESSAGE = "✅ Вход подтверждён. Вернитесь на сайт — всё уже открыто."
+_SUCCESS_MESSAGE = (
+    "✅ Вход подтверждён. Вернитесь на сайт — всё уже открыто.\n\n"
+    "Если страница сайта закрылась, нажмите кнопку ниже: она откроет сайт уже с входом."
+)
+_RETURN_BUTTON = "Вернуться на сайт"
 
 _NEUTRAL_ERRORS: dict[str, str] = {
     "challenge_expired": "Ссылка истекла. Создайте новую на странице материала.",
@@ -40,14 +46,52 @@ def _neutral_message(exc: HTTPException) -> str:
     return _NEUTRAL_ERRORS.get(error, _DEFAULT_ERROR_MESSAGE)
 
 
-async def deliver_text(chat_id: int | str, text: str) -> None:
+async def deliver_text(chat_id: int | str, text: str, reply_markup: dict[str, Any] | None = None) -> None:
     if not text.strip():
         return
     await send_telegram_text(
         chat_id=str(chat_id),
         text=text.strip(),
         bot_token=current_bot_binding().bot_token,
+        reply_markup=reply_markup,
     )
+
+
+def _site_url(return_to: str | None) -> str | None:
+    """Абсолютный адрес страницы, где нажали «Войти». Старый клиент присылал
+    только путь — тогда главный домен семьи (первый в PLATFORM_COOKIE_SHARED_DOMAINS)."""
+    value = str(return_to or "").strip()
+    if value.startswith("https://"):
+        return value
+    if value.startswith("/") and not value.startswith("//"):
+        domains = shared_cookie_domains()
+        return f"https://{domains[0]}{value}" if domains else None
+    return None
+
+
+async def return_link(tenant_id: str, return_to: str | None, telegram_user_id: int) -> str | None:
+    """Кнопка «Вернуться на сайт» после подтверждения входа (27.09.2026).
+
+    Во встроенном браузере Telegram вкладка с сайтом закрывается, когда человек
+    уходит в бота; на iPhone страница перезагружается. Опрос заявки в браузере
+    гибнет, и подтверждённый вход пропадал (за неделю до правки — каждый пятый).
+    Ссылка несёт заранее одобренный вход (#wwc-login=…, как ссылки бота на
+    ежедневник), поэтому сайт открывается уже вошедшим, откуда бы её ни нажали.
+    """
+    url = _site_url(return_to)
+    if not url:
+        return None
+    try:
+        return await with_site_login(url, tenant_id=tenant_id, telegram_user_id=telegram_user_id)
+    except Exception:  # noqa: BLE001 — ссылка без входа лучше, чем без кнопки
+        logger.warning("content_access_return_link_failed", exc_info=True)
+        return url
+
+
+def _return_markup(link: str | None) -> dict[str, Any] | None:
+    if not link:
+        return None
+    return {"inline_keyboard": [[{"text": _RETURN_BUTTON, "url": link}]]}
 
 
 def _update_id(update: dict[str, Any]) -> int | None:
@@ -89,7 +133,8 @@ async def try_handle_content_access(
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
         )
-        await deliver_text(msg.chat_id, _SUCCESS_MESSAGE)
+        link = await return_link(binding.tenant.tenant_id, result.get("return_to"), msg.user_id)
+        await deliver_text(msg.chat_id, _SUCCESS_MESSAGE, _return_markup(link))
         return {
             **base,
             "ok": True,

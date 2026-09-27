@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
+from app.cookie_domain import shared_cookie_domains
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
 
@@ -42,11 +43,30 @@ def extract_challenge_token(start_param: str) -> str:
     return value
 
 
+def _family_host(hostname: str | None) -> bool:
+    host = str(hostname or "").strip().lower()
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in shared_cookie_domains())
+
+
 def sanitize_return_to(raw: str) -> str:
     value = str(raw or "").strip()
-    if not value.startswith("/") or value.startswith("//"):
+    if any(ch in value for ch in ("\\", "\x00")) or len(value) > 500:
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
-    if any(ch in value for ch in ("\\", "\x00")):
+    # Абсолютный адрес принимается только для своей семьи доменов (wwc.best и
+    # *.wwc.best): бот после подтверждения входа шлёт кнопку «Вернуться на сайт»
+    # на тот же хост, где человек нажал «Войти» (27.09.2026 — вкладка во
+    # встроенном браузере Telegram закрывается, и вход терялся). Схема только
+    # https, без логина в адресе; путь проверяется теми же правилами, что ниже.
+    origin = ""
+    if "://" in value:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc or "@" in parsed.netloc or not _family_host(parsed.hostname):
+            raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
+        origin = f"https://{parsed.netloc.lower()}"
+        value = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+    if not value.startswith("/") or value.startswith("//"):
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
     parsed = urlparse(value)
     if parsed.scheme or parsed.netloc:
@@ -60,9 +80,7 @@ def sanitize_return_to(raw: str) -> str:
     # header «Войти» fail with 400 on /otvety/, /price/, /about/, /de/… (owner:
     # «кнопка войти глючит», 23.09.2026). External, protocol-relative and
     # backslash tricks are rejected above; service areas below.
-    if len(value) > 500:
-        raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
-    return value
+    return origin + value
 
 
 def sanitize_content_key(raw: str) -> str:
@@ -245,7 +263,7 @@ async def confirm_content_from_telegram(
         row = await fetch_one(
             conn,
             """
-            select challenge_id, status, expires_at, used_at, visitor_session_id, requested_scope
+            select challenge_id, status, expires_at, used_at, visitor_session_id, requested_scope, return_to
             from content_access_challenges
             where challenge_hash = %s
             limit 1
@@ -304,7 +322,12 @@ async def confirm_content_from_telegram(
                 ),
             )
 
-    return {"ok": True, "challenge_id": str(row["challenge_id"]), "status": "approved"}
+    return {
+        "ok": True,
+        "challenge_id": str(row["challenge_id"]),
+        "status": "approved",
+        "return_to": str(row.get("return_to") or ""),
+    }
 
 
 async def poll_content_challenge(
