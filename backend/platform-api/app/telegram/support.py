@@ -51,6 +51,7 @@ from app.support.service import (
     find_ticket_by_forum_thread,
     forum_kind_for_channel,
     get_forum,
+    get_message_by_delivery,
     get_message_by_source,
     get_open_ticket_for_user,
     get_ticket,
@@ -96,6 +97,9 @@ _SERVICES_RE = re.compile(r"^(?:сервисы|/services|gemini|джемини)$
 _SUPPORT_RE = re.compile(r"^(?:поддержка|/support(?:@\w+)?)$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how|move):([A-Za-z0-9_-]+)$")
 _USERNAME_IN_DISPLAY = re.compile(r"@([A-Za-z0-9_]{4,32})")
+# Ответ (Reply) на сообщение клиента в теме Gemini этими словами переносит его
+# в поддержку WWC (владелец, 27.09.2026: кнопок под сообщениями не нужно).
+_MOVE_WORDS = {"в поддержку", "поддержка", "в поддержку wwc", "сайт"}
 # Owner (or the administrator) sends this inside the forum group once:
 # «/forum» — the Gemini («services») group, «/forum site» — the owner's «site» group.
 _FORUM_REGISTER_RE = re.compile(r"^/forum(?:@\w+)?(?:\s+(site|services))?$", re.IGNORECASE)
@@ -425,13 +429,7 @@ def _close_keyboard(ticket: dict[str, Any]) -> dict[str, Any]:
     return {"inline_keyboard": [[paid_button(ticket), close]]}
 
 
-def _services_user_keyboard(ticket: dict[str, Any], msg: TelegramMessage) -> dict[str, Any]:
-    """Сообщение человека в заявке Gemini: «Оплачено / Закрыть» и перенос в
-    поддержку WWC — пока заявка Gemini открыта, туда уходит всё, что человек
-    пишет боту, в том числе вопросы по сайту (27.09.2026, «чаты спутаны»)."""
-    rows = _close_keyboard(ticket)["inline_keyboard"]
-    move = {"text": "↪ В поддержку WWC", "callback_data": f"svc:move:{int(msg.chat_id)}_{int(msg.message_id)}"}
-    return {"inline_keyboard": [*rows, [move]]}
+
 
 
 # ----------------------------------------------------------------------------
@@ -518,7 +516,15 @@ async def _open_tunnel(
     else:
         hint = f"Ответьте на это сообщение (Reply) — ответ уйдёт {who if kind == FORUM_KIND_SITE else 'человеку'}."
         delivered_chat = admin
-    if kind == FORUM_KIND_SITE:
+    if kind != FORUM_KIND_SITE:
+        hint += "\nВопрос не про Gemini (сайт, платформа)? Ответьте на сообщение клиента словами «в поддержку» — оно уйдёт команде WWC."
+    if not ticket["created"]:
+        # Заявка уже открыта: вторую шапку с кнопками не шлём — одна строка.
+        again = "партнёр снова нажал «Поддержка»" if kind == FORUM_KIND_SITE else (
+            f"клиент снова нажал «Заказать»: {offer.title} — {offer.price_text}" if offer else "клиент снова открыл вопрос"
+        )
+        delivered = await _send_to_admin(ticket, f"{client} · {again}")
+    elif kind == FORUM_KIND_SITE:
         delivered = await _send_site_header(ticket, header + "\n\n" + hint)
     else:
         delivered = await _send_to_admin(ticket, header + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
@@ -619,26 +625,33 @@ async def _move_to_site_support(
     или уже открытое — и сообщает человеку номер. Обращение по сайту
     становится самым свежим, и следующие сообщения человека идут туда же.
     """
-    reply_thread = callback.thread_id
     try:
         chat_part, message_part = arg.split("_", 1)
         source_chat, source_message = int(chat_part), int(message_part)
     except ValueError:
         return {"ok": False, "route": "support_move", "status": "bad_argument", "trace_id": trace_id}
     row = await get_message_by_source(tenant.tenant_id, source_chat_id=source_chat, source_message_id=source_message)
+    return await _move_row_to_site_support(
+        tenant, row, chat_id=callback.chat_id, user_id=callback.user_id, reply_thread=callback.thread_id, trace_id=trace_id
+    )
+
+
+async def _move_row_to_site_support(
+    tenant: TenantContext, row: dict[str, Any] | None, *, chat_id: int, user_id: int, reply_thread: int | None, trace_id: str
+) -> dict[str, Any]:
     origin = await get_ticket(tenant.tenant_id, ticket_id=str(row["ticket_id"])) if row else None
-    if not row or not origin:
-        await _send(callback.chat_id, "Сообщение не найдено.", thread_id=reply_thread)
+    if not row or not origin or row.get("direction") not in (None, "user_to_admin"):
+        await _send(chat_id, "Не нашёл сообщение клиента. Ответьте (Reply) на строку «Клиент WWC · Заявка …» с его текстом.", thread_id=reply_thread)
         return {"ok": False, "route": "support_move", "status": "not_found", "trace_id": trace_id}
     if _is_site(origin):
-        await _send(callback.chat_id, f"Уже в поддержке WWC ({ticket_label(origin)}).", thread_id=reply_thread)
+        await _send(chat_id, f"Уже в поддержке WWC ({ticket_label(origin)}).", thread_id=reply_thread)
         return {"ok": True, "route": "support_move", "status": "already_site", "trace_id": trace_id}
-    in_topic = _in_forum(origin) and callback.chat_id == int(origin["forum_chat_id"])
-    if not in_topic and not _is_ticket_admin(origin, callback.user_id) and not _is_owner(callback.user_id):
+    in_topic = _in_forum(origin) and chat_id == int(origin["forum_chat_id"])
+    if not in_topic and not _is_ticket_admin(origin, user_id) and not _is_owner(user_id):
         return {"ok": False, "route": "support_move", "status": "forbidden", "trace_id": trace_id}
     owner = owner_id()
     if owner is None or not tenant.entitlements.get("site_support", False):
-        await _send(callback.chat_id, "Поддержка сайтов в этом боте не подключена.", thread_id=reply_thread)
+        await _send(chat_id, "Поддержка сайтов в этом боте не подключена.", thread_id=reply_thread)
         return {"ok": False, "route": "support_move", "status": "feature_disabled", "trace_id": trace_id}
     burst = await list_user_burst(tenant.tenant_id, ticket_id=str(origin["ticket_id"]), around=row["created_at"])
     site_ticket = await open_or_reuse_ticket(
@@ -681,7 +694,7 @@ async def _move_to_site_support(
         )
         moved += 1
     await _send(
-        callback.chat_id,
+        chat_id,
         f"↪ Перенесено в поддержку WWC ({label}): сообщений — {moved}. Дальше этот вопрос ведёт команда WWC.",
         thread_id=reply_thread,
     )
@@ -718,9 +731,9 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
     admin = int(ticket["forum_chat_id"]) if _in_forum(ticket) else int(ticket["admin_telegram_user_id"])
     label = ticket_label(ticket)
     header = _client_label(ticket)
-    # Поддержка сайтов: кнопки только в шапке темы, не под каждым сообщением
-    # (владелец, 27.09.2026). Gemini: «Оплачено / Закрыть» и «В поддержку WWC».
-    markup = None if _is_site(ticket) else _services_user_keyboard(ticket, msg)
+    # Кнопки — только в шапке темы, не под каждым сообщением клиента
+    # (владелец, 27.09.2026: «очень много лишнего»).
+    markup = None
     if msg.file_id:
         # A photo or document: copy it (no forward header, no contact leak), then
         # a text line the admin can Reply to.
@@ -906,6 +919,13 @@ async def try_handle_support_forum_message(
         return {"ok": False, "route": "support_relay", "status": "closed", "trace_id": trace_id}
     if msg.text.strip().lower() in {"закрыть", "/close"}:
         return await _close_ticket_everywhere(tenant, str(ticket["ticket_id"]), ticket, reply_chat=msg.chat_id, trace_id=trace_id)
+    reply_to = _reply_to_message_id(msg)
+    if not _is_site(ticket) and reply_to is not None and msg.text.strip().lower().rstrip(".!") in _MOVE_WORDS:
+        # Вопрос не про Gemini: ответом «в поддержку» — к команде WWC, клиенту не пересылаем.
+        row = await get_message_by_delivery(tenant.tenant_id, delivered_chat_id=msg.chat_id, delivered_message_id=reply_to)
+        return await _move_row_to_site_support(
+            tenant, row, chat_id=msg.chat_id, user_id=msg.user_id, reply_thread=msg.thread_id, trace_id=trace_id
+        )
     return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
 
 

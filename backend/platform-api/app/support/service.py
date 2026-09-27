@@ -413,6 +413,20 @@ async def get_message_by_source(tenant_id: str, *, source_chat_id: int, source_m
         )
 
 
+async def get_message_by_delivery(tenant_id: str, *, delivered_chat_id: int, delivered_message_id: int) -> dict[str, Any] | None:
+    """Сообщение, на которое ответили в теме (Reply) — по тому, куда бот его доставил."""
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            f"""
+            select {_MESSAGE_COLUMNS} from support_messages
+            where tenant_id = %s and delivered_chat_id = %s and delivered_message_id = %s
+            limit 1
+            """,
+            (tenant_id, int(delivered_chat_id), int(delivered_message_id)),
+        )
+
+
 async def list_user_burst(
     tenant_id: str, *, ticket_id: str, around: Any, window_sec: int = 180
 ) -> list[dict[str, Any]]:
