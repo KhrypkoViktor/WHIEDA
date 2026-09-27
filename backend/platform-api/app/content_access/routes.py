@@ -19,6 +19,7 @@ from app.content_access.service import (
     revoke_content_session,
     validate_content_session,
 )
+from app.content_access.webapp_login import webapp_login_url
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.content_access.account import load_site_account
 from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
@@ -189,6 +190,21 @@ async def logout_v1(request: Request, response: Response) -> dict:
 @router.post("/api/v1/content-access/logout")
 async def logout_site(request: Request, response: Response) -> dict:
     return await _logout(request, response)
+
+
+class WebAppLoginBody(BaseModel):
+    init_data: str
+    return_to: str
+
+
+@router.post("/api/v1/content-access/telegram-webapp-login")
+async def telegram_webapp_login(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    """Мини-приложение /tg-open/ → ссылка со входом для основного браузера (27.09.2026)."""
+    response.headers["Cache-Control"] = "private, no-store"
+    tenant = get_request_tenant(request)
+    require_entitlement(tenant, "structure_basic")
+    url = await webapp_login_url(tenant.tenant_id, init_data=body.init_data, return_to=body.return_to)
+    return {"ok": True, "url": url}
 
 
 async def _review_originals(request: Request, response: Response) -> dict:
