@@ -515,3 +515,13 @@ async def test_review_originals_returns_all_in_one_response(content_client):
     assert loader.await_args.kwargs["scope"] == "telegram_verified"
     assert "999001" not in response.text
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/v1/content-access/telegram-webapp-login", "/api/v1/content-access/telegram-webapp-login"])
+async def test_both_route_prefixes_answer(content_client, path):
+    # Бой ходит с /api, staging (nginx location /api/ → Core /) — без него.
+    with patch("app.content_access.routes.webapp_login_url", AsyncMock(return_value="https://wwc.best/#wwc-login=a.b")):
+        response = await content_client.post(path, json={"init_data": "x", "return_to": "https://wwc.best/"}, headers={"host": "wwc.best"})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "url": "https://wwc.best/#wwc-login=a.b"}
+    assert response.headers["cache-control"] == "private, no-store"

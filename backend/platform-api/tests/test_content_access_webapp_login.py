@@ -105,3 +105,4 @@ async def test_login_url_needs_an_absolute_family_address(return_to):
             await webapp_login_url("whieda", init_data=_signed(_fields()), return_to=return_to)
     assert info.value.status_code == 400
     bot_login.assert_not_called()
+
