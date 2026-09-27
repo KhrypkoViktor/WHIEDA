@@ -197,14 +197,25 @@ class WebAppLoginBody(BaseModel):
     return_to: str
 
 
-@router.post("/api/v1/content-access/telegram-webapp-login")
-async def telegram_webapp_login(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+async def _telegram_webapp_login(body: WebAppLoginBody, request: Request, response: Response) -> dict:
     """Мини-приложение /tg-open/ → ссылка со входом для основного браузера (27.09.2026)."""
     response.headers["Cache-Control"] = "private, no-store"
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     url = await webapp_login_url(tenant.tenant_id, init_data=body.init_data, return_to=body.return_to)
     return {"ok": True, "url": url}
+
+
+# Два адреса, как у всех маршрутов входа: бой проксирует /api/v1/…, staging
+# (nginx location /api/ → Core /) отрезает /api и приходит на /v1/….
+@router.post("/v1/content-access/telegram-webapp-login")
+async def telegram_webapp_login_v1(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    return await _telegram_webapp_login(body, request, response)
+
+
+@router.post("/api/v1/content-access/telegram-webapp-login")
+async def telegram_webapp_login_site(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    return await _telegram_webapp_login(body, request, response)
 
 
 async def _review_originals(request: Request, response: Response) -> dict:
