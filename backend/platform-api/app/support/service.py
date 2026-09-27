@@ -374,3 +374,87 @@ async def find_ticket_by_forum_thread(
             """,
             (tenant_id, int(forum_chat_id), int(forum_thread_id)),
         )
+
+
+async def set_site_orders_thread(tenant_id: str, *, binding_id: str, thread_id: int | None) -> None:
+    """Тема «Заявки на сайты» в форуме владельца (kind='site', 27.09.2026): шаги
+    анкеты и чеки с кнопками «Подтвердить / Отклонить». У site-форума колонка
+    reports_thread_id свободна («Отчёты» живут только в services-форуме Карины),
+    поэтому номер темы хранится в ней — без новой миграции."""
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            update support_forums
+               set reports_thread_id = %s, updated_at = now()
+             where tenant_id = %s and binding_id = %s and kind = %s
+            returning binding_id
+            """,
+            (thread_id, tenant_id, binding_id, FORUM_KIND_SITE),
+        )
+
+
+_MESSAGE_COLUMNS = """
+message_id, ticket_id, direction, text, telegram_file_id, source_chat_id, source_message_id,
+delivered_chat_id, delivered_message_id, created_at
+"""
+
+
+async def get_message_by_source(tenant_id: str, *, source_chat_id: int, source_message_id: int) -> dict[str, Any] | None:
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            f"""
+            select {_MESSAGE_COLUMNS} from support_messages
+            where tenant_id = %s and source_chat_id = %s and source_message_id = %s
+            limit 1
+            """,
+            (tenant_id, int(source_chat_id), int(source_message_id)),
+        )
+
+
+async def list_user_burst(
+    tenant_id: str, *, ticket_id: str, around: Any, window_sec: int = 180
+) -> list[dict[str, Any]]:
+    """Сообщения человека в заявке рядом по времени: текст и скриншоты одной
+    «пачки» переносятся вместе."""
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_all(
+            conn,
+            f"""
+            select {_MESSAGE_COLUMNS} from support_messages
+            where tenant_id = %s and ticket_id = %s::uuid and direction = 'user_to_admin'
+              and source_message_id is not null
+              and created_at between %s - make_interval(secs => %s) and %s + make_interval(secs => %s)
+            order by created_at, source_message_id
+            """,
+            (tenant_id, str(ticket_id), around, int(window_sec), around, int(window_sec)),
+        )
+
+
+async def move_message_to_ticket(
+    tenant_id: str,
+    *,
+    message_id: str,
+    ticket_id: str,
+    delivered_chat_id: int | None,
+    delivered_message_id: int | None,
+) -> None:
+    """Сообщение попало не в ту заявку (Gemini вместо поддержки сайта): запись
+    переезжает целиком — источник уникален, копию рядом положить нельзя."""
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            update support_messages
+               set ticket_id = %s::uuid, delivered_chat_id = %s, delivered_message_id = %s
+             where tenant_id = %s and message_id = %s::uuid
+            returning message_id
+            """,
+            (str(ticket_id), delivered_chat_id, delivered_message_id, tenant_id, str(message_id)),
+        )
+        await fetch_one(
+            conn,
+            "update support_tickets set last_message_at = now() where tenant_id = %s and ticket_id = %s::uuid returning ticket_id",
+            (tenant_id, str(ticket_id)),
+        )

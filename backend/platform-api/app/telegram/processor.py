@@ -458,12 +458,17 @@ async def _process_core_telegram_update_scoped(
     callback = parse_telegram_callback(update)
     if callback:
         if callback.chat_type != "private":
-            # The only group callback the bot serves: «Закрыть #S-N» inside a
-            # support forum topic.
-            if callback.data.startswith(("svc:close:", "sale:", "dep:")):
+            # Group callbacks the bot serves, all inside support forums:
+            # «Закрыть #S-N», продажи Gemini, «↪ В поддержку WWC» (27.09.2026) и
+            # «Подтвердить / Отклонить» заявку на сайт из темы «Заявки на сайты».
+            if callback.data.startswith(("svc:close:", "svc:move:", "sale:", "dep:")):
                 forum_close_result = await try_handle_support_callback(tenant, callback, trace_id=trace_id)
                 if forum_close_result is not None:
                     return forum_close_result
+            if callback.data.startswith(("site:confirm:", "site:reject:")):
+                orders_result = await try_handle_site_request_callback(tenant, callback, trace_id=trace_id)
+                if orders_result is not None:
+                    return orders_result
             return {"ok": True, "route": "ignored_group_callback"}
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)

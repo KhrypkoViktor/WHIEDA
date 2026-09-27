@@ -68,8 +68,12 @@ def test_owner_sees_raw_text_and_what_the_bot_understood(monkeypatch):
     async def deliver(chat_id, text, *, reply_markup=None):
         sent.append(text)
 
+    async def no_group(tenant_id):
+        return None
+
     monkeypatch.setattr(sr, "get_settings", lambda: S())
     monkeypatch.setattr(sr, "_deliver", deliver)
+    monkeypatch.setattr(sr, "_orders_topic", no_group)
     msg = TelegramMessage(
         chat_id=111, user_id=111, message_id=5, text="Телефон и WhatsApp: +7 900 123-45-67",
         chat_type="private", file_id=None, raw={}, username="partner",
@@ -80,7 +84,7 @@ def test_owner_sees_raw_text_and_what_the_bot_understood(monkeypatch):
         "contacts_text": msg.text,
         "contacts": parse_contacts(msg.text),
     }
-    asyncio.run(sr._notify_owner_step(msg, request, done="контакты"))
+    asyncio.run(sr._notify_owner_step("whieda", msg, request, done="контакты"))
     text = sent[0]
     assert "Телефон и WhatsApp: +7 900 123-45-67" in text
     assert "Бот разобрал:" in text

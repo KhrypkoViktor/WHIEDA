@@ -29,8 +29,13 @@ def test_owner_gets_step_alert_and_photo_copy(monkeypatch):
     monkeypatch.setattr(sr, "copy_telegram_message", copy)
     monkeypatch.setattr(sr, "current_bot_binding", lambda: type("B", (), {"bot_token": "t"})())
 
+    async def no_group(tenant_id):
+        return None
+
+    monkeypatch.setattr(sr, "_orders_topic", no_group)  # без группы WWC Support — личка, как раньше
+
     request = {"requested_subdomain": "olga", "status": "awaiting_text"}
-    asyncio.run(sr._notify_owner_step(_msg(file_id="F1"), request, done="фото"))
+    asyncio.run(sr._notify_owner_step("whieda", _msg(file_id="F1"), request, done="фото"))
 
     assert copied and copied[0]["chat_id"] == "999" and copied[0]["from_chat_id"] == "111"
     assert sent == [(999, "Заявка на сайт — @partner: фото получено.\nАдрес: olga.wwc.best\nДальше: текст о себе.")]
@@ -48,5 +53,5 @@ def test_owner_is_not_alerted_about_own_request(monkeypatch):
         sent.append(text)
 
     monkeypatch.setattr(sr, "_deliver", deliver)
-    asyncio.run(sr._notify_owner_step(_msg(text="olga"), {"status": "awaiting_photo"}, done="адрес сайта"))
+    asyncio.run(sr._notify_owner_step("whieda", _msg(text="olga"), {"status": "awaiting_photo"}, done="адрес сайта"))
     assert sent == []

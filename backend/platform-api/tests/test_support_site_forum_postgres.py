@@ -209,7 +209,9 @@ def test_support_button_opens_a_named_topic_and_relays_while_gemini_stays_anonym
                 assert relayed["route"] == "support_relay" and relayed["direction"] == "user_to_admin"
                 to_topic = send.await_args.kwargs
                 assert to_topic["chat_id"] == str(SITE_FORUM) and to_topic["message_thread_id"] == 77
-                assert to_topic["text"] == f"{label} · Ольга (@olga)\nПоменяйте WhatsApp"
+                # Имя — ссылка в чат с партнёром (27.09.2026); кнопок под сообщением нет.
+                assert to_topic["text"] == f'{label} · <a href="https://t.me/olga">Ольга (@olga)</a>\nПоменяйте WhatsApp'
+                assert to_topic["reply_markup"] is None
                 send.reset_mock()
                 answered = await process_core_telegram_update(tenant, _group("Готово", chat=SITE_FORUM, user=OWNER, thread_id=77, message_id=300), "p5", binding=binding)
                 assert answered["direction"] == "admin_to_user"
