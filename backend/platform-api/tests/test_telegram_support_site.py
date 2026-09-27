@@ -299,7 +299,9 @@ async def test_partner_text_lands_in_the_site_topic_with_their_name(whieda_tenan
     assert result["direction"] == "user_to_admin"
     kwargs = send.await_args.kwargs
     assert kwargs["chat_id"] == str(SITE_FORUM) and kwargs["message_thread_id"] == 77
-    assert kwargs["text"] == "#S-1042 · Ольга Самцова (@olga)\nПоменяйте WhatsApp на +7 900"
+    # Имя — ссылка в чат с партнёром; под сообщением партнёра кнопок нет (они в шапке темы).
+    assert kwargs["text"] == '#S-1042 · <a href="https://t.me/olga">Ольга Самцова (@olga)</a>\nПоменяйте WhatsApp на +7 900'
+    assert kwargs["reply_markup"] is None
 
 
 @pytest.mark.asyncio
@@ -335,7 +337,7 @@ async def test_owner_private_reply_reaches_the_partner_when_there_is_no_site_for
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert to_user[0]["text"] == "Ответ команды WWC по обращению #S-1042:\nСделаю сегодня"
     to_owner = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(OWNER)]
-    assert to_owner[0]["text"] == "→ отправлено: #S-1042 · Ольга Самцова (@olga)"
+    assert to_owner[0]["text"] == '→ отправлено: #S-1042 · <a href="https://t.me/olga">Ольга Самцова (@olga)</a>'
 
 
 @pytest.mark.asyncio

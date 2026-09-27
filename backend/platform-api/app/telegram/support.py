@@ -51,10 +51,13 @@ from app.support.service import (
     find_ticket_by_forum_thread,
     forum_kind_for_channel,
     get_forum,
+    get_message_by_source,
     get_open_ticket_for_user,
     get_ticket,
     list_open_tickets_for_admin,
     list_ticket_messages,
+    list_user_burst,
+    move_message_to_ticket,
     open_or_reuse_ticket,
     partner_site_for_telegram_user,
     record_relayed_message,
@@ -63,6 +66,7 @@ from app.support.service import (
 )
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import (
+    TelegramDeliveryError,
     answer_callback_query,
     close_forum_topic,
     copy_telegram_message,
@@ -90,7 +94,8 @@ CHANNEL_GEMINI = "gemini"
 _SERVICES_RE = re.compile(r"^(?:сервисы|/services|gemini|джемини)$", re.IGNORECASE)
 # The menu button / command «Поддержка» (app/telegram/navigation.py) and the bare word.
 _SUPPORT_RE = re.compile(r"^(?:поддержка|/support(?:@\w+)?)$", re.IGNORECASE)
-_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how):([A-Za-z0-9_-]+)$")
+_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how|move):([A-Za-z0-9_-]+)$")
+_USERNAME_IN_DISPLAY = re.compile(r"@([A-Za-z0-9_]{4,32})")
 # Owner (or the administrator) sends this inside the forum group once:
 # «/forum» — the Gemini («services») group, «/forum site» — the owner's «site» group.
 _FORUM_REGISTER_RE = re.compile(r"^/forum(?:@\w+)?(?:\s+(site|services))?$", re.IGNORECASE)
@@ -268,6 +273,35 @@ def _partner_line(ticket: dict[str, Any]) -> str:
     return f'Партнёр: <a href="tg://user?id={int(ticket["user_telegram_user_id"])}">{display}</a>'
 
 
+def _direct_url(ticket: dict[str, Any]) -> str:
+    """Прямой чат с партнёром (владелец, 27.09.2026: «хочу написать Ольге в
+    Telegram напрямую»): t.me/<username>, а без username — tg://user?id=…"""
+    match = _USERNAME_IN_DISPLAY.search(str(ticket.get("user_display") or ""))
+    if match:
+        return f"https://t.me/{match.group(1)}"
+    return f"tg://user?id={int(ticket['user_telegram_user_id'])}"
+
+
+def _site_keyboard(ticket: dict[str, Any], *, direct: bool = True) -> dict[str, Any]:
+    """Шапка обращения по сайту: написать партнёру напрямую и закрыть. Без
+    «Оплачено» — это кнопка продаж Gemini, в поддержке сайтов она путала."""
+    close = {"text": f"Закрыть {ticket_label(ticket)}", "callback_data": f"svc:close:{ticket['ticket_id']}"}
+    rows = [[{"text": "✉️ Написать в Telegram", "url": _direct_url(ticket)}]] if direct else []
+    return {"inline_keyboard": [*rows, [close]]}
+
+
+async def _send_site_header(ticket: dict[str, Any], text: str) -> dict[str, Any]:
+    try:
+        delivered = await _send_to_admin(ticket, text, reply_markup=_site_keyboard(ticket, direct=True))
+    except TelegramDeliveryError:
+        delivered = {"ok": False}
+    if not delivered.get("ok"):
+        # BUTTON_USER_PRIVACY_RESTRICTED: человек запретил ссылки на себя по id —
+        # шапка уходит без кнопки, имя-ссылка в тексте останется.
+        delivered = await _send_to_admin(ticket, text, reply_markup=_site_keyboard(ticket, direct=False))
+    return delivered
+
+
 def _site_header_lines(ticket: dict[str, Any], site: dict[str, Any] | None) -> list[str]:
     return [_client_label(ticket), _partner_line(ticket), f"Сайт: {site['url']}" if site else "Сайт: не найден"]
 
@@ -280,7 +314,9 @@ def is_support_forum_traffic(update: dict[str, Any]) -> bool:
     if callback:
         chat = (callback.get("message") or {}).get("chat") or {}
         data = str(callback.get("data") or "")
-        return chat.get("type") == "supergroup" and (data.startswith("svc:close:") or data.startswith("sale:") or data.startswith("dep:"))
+        return chat.get("type") == "supergroup" and data.startswith(
+            ("svc:close:", "svc:move:", "sale:", "dep:", "site:confirm:", "site:reject:")
+        )
     message = (update or {}).get("message") or {}
     chat = message.get("chat") or {}
     if chat.get("type") != "supergroup":
@@ -314,7 +350,8 @@ def _client_label(ticket: dict[str, Any]) -> str:
     «Site» tickets are the owner's own: the label carries the name (26.09.2026)."""
     if _is_site(ticket):
         display = str(ticket.get("user_display") or "").strip() or f"Telegram {ticket['user_telegram_user_id']}"
-        return f"{ticket_label(ticket)} · {display}"
+        # Имя — ссылка в чат с партнёром (27.09.2026); format_telegram_html её сохраняет.
+        return f'{ticket_label(ticket)} · <a href="{_direct_url(ticket)}">{display}</a>'
     return f"Клиент WWC · Заявка {ticket_label(ticket)}"
 
 
@@ -382,7 +419,19 @@ async def _open_forum_topic(tenant: TenantContext, ticket: dict[str, Any], *, si
 
 def _close_keyboard(ticket: dict[str, Any]) -> dict[str, Any]:
     # «Оплачено» starts the sale record (Gemini, v10); «Закрыть» ends the tunnel.
-    return {"inline_keyboard": [[paid_button(ticket), {"text": f"Закрыть {ticket_label(ticket)}", "callback_data": f"svc:close:{ticket['ticket_id']}"}]]}
+    close = {"text": f"Закрыть {ticket_label(ticket)}", "callback_data": f"svc:close:{ticket['ticket_id']}"}
+    if _is_site(ticket):
+        return {"inline_keyboard": [[close]]}
+    return {"inline_keyboard": [[paid_button(ticket), close]]}
+
+
+def _services_user_keyboard(ticket: dict[str, Any], msg: TelegramMessage) -> dict[str, Any]:
+    """Сообщение человека в заявке Gemini: «Оплачено / Закрыть» и перенос в
+    поддержку WWC — пока заявка Gemini открыта, туда уходит всё, что человек
+    пишет боту, в том числе вопросы по сайту (27.09.2026, «чаты спутаны»)."""
+    rows = _close_keyboard(ticket)["inline_keyboard"]
+    move = {"text": "↪ В поддержку WWC", "callback_data": f"svc:move:{int(msg.chat_id)}_{int(msg.message_id)}"}
+    return {"inline_keyboard": [*rows, [move]]}
 
 
 # ----------------------------------------------------------------------------
@@ -469,7 +518,10 @@ async def _open_tunnel(
     else:
         hint = f"Ответьте на это сообщение (Reply) — ответ уйдёт {who if kind == FORUM_KIND_SITE else 'человеку'}."
         delivered_chat = admin
-    delivered = await _send_to_admin(ticket, header + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
+    if kind == FORUM_KIND_SITE:
+        delivered = await _send_site_header(ticket, header + "\n\n" + hint)
+    else:
+        delivered = await _send_to_admin(ticket, header + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
     await record_relayed_message(
         tenant.tenant_id,
         ticket_id=str(ticket["ticket_id"]),
@@ -498,7 +550,7 @@ async def try_handle_support_callback(
     if not services_enabled() and action in {"order", "confirm", "support"}:
         return None
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=current_bot_binding().bot_token)
-    if callback.chat_type != "private" and action != "close":
+    if callback.chat_type != "private" and action not in {"close", "move"}:
         return {"ok": True, "route": "services", "status": "private_chat_required", "trace_id": trace_id}
 
     if action == "card":
@@ -541,6 +593,9 @@ async def try_handle_support_callback(
         channel = CHANNEL_SITE if arg == CHANNEL_SITE else CHANNEL_GEMINI
         return await _open_tunnel(tenant, callback, offer=None, trace_id=trace_id, channel=channel)
 
+    if action == "move":
+        return await _move_to_site_support(tenant, callback, arg, trace_id=trace_id)
+
     if action == "close":
         existing = await get_ticket(tenant.tenant_id, ticket_id=arg)
         # In the forum any human in the ticket's topic may close it; in private
@@ -550,6 +605,92 @@ async def try_handle_support_callback(
             return {"ok": False, "route": "services", "status": "forbidden", "trace_id": trace_id}
         return await _close_ticket_everywhere(tenant, arg, existing, reply_chat=callback.chat_id, trace_id=trace_id)
     return None
+
+
+async def _move_to_site_support(
+    tenant: TenantContext, callback: TelegramCallbackQuery, arg: str, *, trace_id: str
+) -> dict[str, Any]:
+    """«↪ В поддержку WWC» под сообщением в заявке Gemini (27.09.2026).
+
+    Пока у человека открыта заявка Gemini, всё, что он пишет боту, уходит
+    Карине — и вопрос про сайт («в Одноклассниках ссылка не кликабельна»)
+    оказался у неё. Кнопка переносит это сообщение и соседние (±3 минуты:
+    текст и скриншоты одной пачки) в обращение по сайту к владельцу — новое
+    или уже открытое — и сообщает человеку номер. Обращение по сайту
+    становится самым свежим, и следующие сообщения человека идут туда же.
+    """
+    reply_thread = callback.thread_id
+    try:
+        chat_part, message_part = arg.split("_", 1)
+        source_chat, source_message = int(chat_part), int(message_part)
+    except ValueError:
+        return {"ok": False, "route": "support_move", "status": "bad_argument", "trace_id": trace_id}
+    row = await get_message_by_source(tenant.tenant_id, source_chat_id=source_chat, source_message_id=source_message)
+    origin = await get_ticket(tenant.tenant_id, ticket_id=str(row["ticket_id"])) if row else None
+    if not row or not origin:
+        await _send(callback.chat_id, "Сообщение не найдено.", thread_id=reply_thread)
+        return {"ok": False, "route": "support_move", "status": "not_found", "trace_id": trace_id}
+    if _is_site(origin):
+        await _send(callback.chat_id, f"Уже в поддержке WWC ({ticket_label(origin)}).", thread_id=reply_thread)
+        return {"ok": True, "route": "support_move", "status": "already_site", "trace_id": trace_id}
+    in_topic = _in_forum(origin) and callback.chat_id == int(origin["forum_chat_id"])
+    if not in_topic and not _is_ticket_admin(origin, callback.user_id) and not _is_owner(callback.user_id):
+        return {"ok": False, "route": "support_move", "status": "forbidden", "trace_id": trace_id}
+    owner = owner_id()
+    if owner is None or not tenant.entitlements.get("site_support", False):
+        await _send(callback.chat_id, "Поддержка сайтов в этом боте не подключена.", thread_id=reply_thread)
+        return {"ok": False, "route": "support_move", "status": "feature_disabled", "trace_id": trace_id}
+    burst = await list_user_burst(tenant.tenant_id, ticket_id=str(origin["ticket_id"]), around=row["created_at"])
+    site_ticket = await open_or_reuse_ticket(
+        tenant.tenant_id,
+        channel_code=CHANNEL_SITE,
+        offer_code=None,
+        offer_title=None,
+        user_telegram_user_id=int(origin["user_telegram_user_id"]),
+        user_chat_id=int(origin["user_chat_id"]),
+        user_display=str(origin.get("user_display") or ""),
+        admin_telegram_user_id=owner,
+    )
+    site = await _site_card(tenant, site_ticket)
+    if site_ticket["created"]:
+        site_ticket = await _open_forum_topic(tenant, site_ticket, site=site)
+    label = ticket_label(site_ticket)
+    in_forum = _in_forum(site_ticket)
+    target_chat = int(site_ticket["forum_chat_id"]) if in_forum else int(site_ticket["admin_telegram_user_id"])
+    thread = int(site_ticket["forum_thread_id"]) if in_forum else None
+    hint = "Пишите в эту тему — ответ уйдёт партнёру." if in_forum else "Ответьте на это сообщение (Reply) — ответ уйдёт партнёру."
+    lines = [*_site_header_lines(site_ticket, site), f"↪ Перенесено из заявки Gemini {ticket_label(origin)}.", "", hint]
+    delivered = await _send_site_header(site_ticket, "\n".join(lines))
+    await record_relayed_message(
+        tenant.tenant_id, ticket_id=str(site_ticket["ticket_id"]), direction="system", text=lines[0],
+        delivered_chat_id=target_chat, delivered_message_id=delivered.get("message_id"),
+    )
+    token = current_bot_binding().bot_token
+    moved = 0
+    for item in burst:
+        copied = await copy_telegram_message(
+            chat_id=str(target_chat), from_chat_id=str(item["source_chat_id"]),
+            message_id=int(item["source_message_id"]), bot_token=token, message_thread_id=thread,
+        )
+        if not copied.get("ok"):
+            body = str(item.get("text") or "").strip() or "(вложение — открыть не удалось)"
+            copied = await _send(target_chat, f"{_client_label(site_ticket)}\n{body}", thread_id=thread)
+        await move_message_to_ticket(
+            tenant.tenant_id, message_id=str(item["message_id"]), ticket_id=str(site_ticket["ticket_id"]),
+            delivered_chat_id=target_chat, delivered_message_id=copied.get("message_id"),
+        )
+        moved += 1
+    await _send(
+        callback.chat_id,
+        f"↪ Перенесено в поддержку WWC ({label}): сообщений — {moved}. Дальше этот вопрос ведёт команда WWC.",
+        thread_id=reply_thread,
+    )
+    await _send(
+        int(origin["user_chat_id"]),
+        f"Ваш вопрос передан команде WWC — обращение {label}. Вопросы по сайту и платформе пишите сюда, ответ придёт в этот чат.",
+    )
+    logger.info("support_messages_moved", extra={"trace_id": trace_id, "from": ticket_label(origin), "to": label, "moved": moved})
+    return {"ok": True, "route": "support_move", "status": "moved", "from": ticket_label(origin), "to": label, "moved": moved, "trace_id": trace_id}
 
 
 async def _close_ticket_everywhere(
@@ -577,6 +718,9 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
     admin = int(ticket["forum_chat_id"]) if _in_forum(ticket) else int(ticket["admin_telegram_user_id"])
     label = ticket_label(ticket)
     header = _client_label(ticket)
+    # Поддержка сайтов: кнопки только в шапке темы, не под каждым сообщением
+    # (владелец, 27.09.2026). Gemini: «Оплачено / Закрыть» и «В поддержку WWC».
+    markup = None if _is_site(ticket) else _services_user_keyboard(ticket, msg)
     if msg.file_id:
         # A photo or document: copy it (no forward header, no contact leak), then
         # a text line the admin can Reply to.
@@ -585,9 +729,9 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
             bot_token=current_bot_binding().bot_token,
             message_thread_id=int(ticket["forum_thread_id"]) if _in_forum(ticket) else None,
         )
-        delivered = await _send_to_admin(ticket, f"{header}\n(вложение выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=_close_keyboard(ticket))
+        delivered = await _send_to_admin(ticket, f"{header}\n(вложение выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
     else:
-        delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=_close_keyboard(ticket))
+        delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=markup)
     result = await record_relayed_message(
         tenant.tenant_id,
         ticket_id=str(ticket["ticket_id"]),
@@ -694,7 +838,10 @@ async def _move_open_tickets_to_forum(tenant: TenantContext, *, kind: str = FORU
             if body:
                 lines.append(f"{author}: {body}")
         lines += ["", f"Пишите в эту тему — ответ уйдёт {who}."]
-        delivered = await _send_to_admin(bound, "\n".join(lines), reply_markup=_close_keyboard(bound))
+        if _is_site(bound):
+            delivered = await _send_site_header(bound, "\n".join(lines))
+        else:
+            delivered = await _send_to_admin(bound, "\n".join(lines), reply_markup=_close_keyboard(bound))
         await record_relayed_message(
             tenant.tenant_id, ticket_id=str(bound["ticket_id"]), direction="system", text=lines[0],
             delivered_chat_id=int(bound["forum_chat_id"]), delivered_message_id=delivered.get("message_id"),
