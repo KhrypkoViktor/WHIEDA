@@ -28,7 +28,7 @@ from app.service_sales.service import (
     suggest_partner_for_client,
 )
 from app.settings import get_settings
-from app.support.service import get_forum, get_ticket, set_forum_service_threads, ticket_label
+from app.support.service import FORUM_KIND_SITE, forum_kind_for_channel, get_forum, get_ticket, set_forum_service_threads, ticket_label
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, create_forum_topic, send_telegram_text
 from app.telegram.money import money, wwc
@@ -106,6 +106,12 @@ def _activate_keyboard(sale: dict[str, Any]) -> dict[str, Any]:
 # Callbacks
 # ----------------------------------------------------------------------------
 
+SITE_PAYMENT_HINT = (
+    "«Оплачено» — только для заказов Gemini. Оплату сайта подтверждают кнопкой «Подтвердить» "
+    "под чеком в теме «Заявки на сайты»; здесь просто отвечайте партнёру."
+)
+
+
 async def try_handle_service_sale_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -117,6 +123,15 @@ async def try_handle_service_sale_callback(
     if not is_service_operator(callback.user_id):
         return {"ok": False, "route": "service_sale", "status": "forbidden", "trace_id": trace_id}
     chat, thread = callback.chat_id, callback.thread_id
+
+    if family == "sale" and action in {"paid", "offer", "seller"}:
+        # «Оплачено» — продажа Gemini. На обращениях по сайту эта кнопка
+        # осталась со старых сообщений и открывала выбор Gemini (владелец,
+        # 27.09.2026: «кнопка оплачено — к сайту или к AI?»).
+        target = await get_ticket(tenant.tenant_id, ticket_id=arg)
+        if target and forum_kind_for_channel(target.get("channel_code")) == FORUM_KIND_SITE:
+            await _send(chat, SITE_PAYMENT_HINT, thread_id=thread)
+            return {"ok": True, "route": "service_sale", "status": "site_ticket", "trace_id": trace_id}
 
     if family == "dep" and action == "ok":
         if callback.user_id != _admin_id():
