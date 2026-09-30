@@ -17,6 +17,7 @@ from app.site_requests.service import (
     confirm_site_request,
     get_open_site_request,
     reject_site_request,
+    request_is_stale,
     set_site_request_contacts,
     set_site_request_country,
     set_site_request_intro,
@@ -41,6 +42,9 @@ from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
 
+
+# Шаги анкеты, которые ждут вложение: фото и чек.
+SITE_FILE_STEPS = frozenset({"awaiting_photo", "awaiting_payment"})
 
 _CALLBACK_RE = re.compile(
     r"^site:(create|country:(?:BY|RU)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
@@ -92,6 +96,12 @@ _STEP_LABELS = {
 }
 
 
+def partner_tag(msg: TelegramMessage) -> str:
+    """«@name · id 123»: владелец видит, кто это, а его ответ (Reply) в теме
+    «Заявки на сайты» бот по id доставляет партнёру."""
+    return f"@{msg.username} · id {msg.chat_id}" if msg.username else f"id {msg.chat_id}"
+
+
 async def _notify_owner_step(tenant_id: str, msg: TelegramMessage, request: dict[str, Any], *, done: str) -> None:
     """Владелец узнаёт о каждом шаге заявки, а не только о чеке: люди бросали
     анкету на адресе или фото, и об этом никто не знал (владелец, 22.09.2026:
@@ -100,7 +110,7 @@ async def _notify_owner_step(tenant_id: str, msg: TelegramMessage, request: dict
     owner_id = str(get_settings().platform_billing_owner_telegram_id or "").strip()
     if not owner_id.isdigit() or int(owner_id) == int(msg.chat_id):
         return
-    who = f"@{msg.username}" if msg.username else str(msg.chat_id)
+    who = partner_tag(msg)
     if done == "фото" and msg.file_id:
         await _copy_to_owner(tenant_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
     subdomain = request.get("requested_subdomain")
@@ -400,6 +410,10 @@ async def try_handle_site_request_message(
         raise
     if not request:
         return None
+    if request_is_stale(request) and not (str(request["status"]) in SITE_FILE_STEPS and msg.file_id):
+        # Брошенная анкета не отвечает на всё подряд: сообщение идёт дальше
+        # (советник, меню). Вернуться к ней — кнопкой «Заказать сайт».
+        return None
     try:
         status = str(request["status"])
         if status == "awaiting_subdomain" and msg.text:
@@ -431,7 +445,7 @@ async def try_handle_site_request_message(
                     tenant.tenant_id,
                     "\n".join(
                         [
-                            "Новая заявка на сайт.",
+                            f"Новая заявка на сайт — {partner_tag(msg)}.",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
                             f"Страна: {request['country_code']}",
                             f"Пакет: {'Платформа + Клуб' if str(request.get('plan_code') or 'site') == 'bundle' else 'сайт + настройка'}",

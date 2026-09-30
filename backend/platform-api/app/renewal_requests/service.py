@@ -43,7 +43,14 @@ async def get_open_renewal_request(tenant_id: str, actor_id: str) -> dict[str, A
 async def begin_renewal_request(tenant_id: str, actor_id: str) -> dict[str, Any]:
     existing = await get_open_renewal_request(tenant_id, actor_id)
     if existing:
-        return existing
+        # Вернулись к продлению кнопкой или словом — оно снова свежее.
+        async with tenant_connection(tenant_id) as conn:
+            touched = await fetch_one(
+                conn,
+                "update partner_renewal_requests set updated_at = now() where tenant_id = %s and request_id = %s returning *",
+                (tenant_id, existing["request_id"]),
+            )
+        return touched or existing
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,

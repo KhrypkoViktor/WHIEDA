@@ -40,7 +40,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.referral_bonus.service import ensure_telegram_actor
+from app.renewal_requests.service import get_open_renewal_request
 from app.settings import get_settings
+from app.site_requests.service import get_open_site_request
 from app.support.service import (
     CHANNEL_SITE,
     FORUM_KIND_SERVICES,
@@ -913,7 +916,7 @@ async def try_handle_support_forum_message(
         if is_reports_topic(forum, msg.chat_id, msg.thread_id):
             await _send(msg.chat_id, "Команды: «отчёт», «баланс», «перевёл 20000», «тариф».", thread_id=msg.thread_id)
             return {"ok": True, "route": "service_command", "status": "help", "trace_id": trace_id}
-        return None
+        return await _try_orders_topic_reply(tenant, msg, trace_id=trace_id)
     if ticket["status"] != "open":
         await _send(msg.chat_id, _closed_note(ticket), thread_id=msg.thread_id)
         return {"ok": False, "route": "support_relay", "status": "closed", "trace_id": trace_id}
@@ -927,6 +930,71 @@ async def try_handle_support_forum_message(
             tenant, row, chat_id=msg.chat_id, user_id=msg.user_id, reply_thread=msg.thread_id, trace_id=trace_id
         )
     return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
+
+
+_PARTNER_ID_RE = re.compile(r"\bid (\d{5,15})\b")
+_PARTNER_TAG_RE = re.compile(r"— (@[A-Za-z0-9_]{4,32}) · id \d+")
+
+
+async def _try_orders_topic_reply(tenant: TenantContext, msg: TelegramMessage, *, trace_id: str) -> dict[str, Any] | None:
+    """Reply владельца на сообщение бота о заявке в теме «Заявки на сайты» —
+    партнёру, через его обращение по сайту: там же вернётся ответ (30.09.2026:
+    «Ждём оплату. Вы хотите в клуб?» молча не ушёл Татьяне). Своя заметка в
+    теме без Reply партнёру не уходит."""
+    forum = await get_forum(tenant.tenant_id, binding_id=current_bot_binding().binding_id, kind=FORUM_KIND_SITE)
+    orders_thread = (forum or {}).get("reports_thread_id")
+    if not forum or int(forum["chat_id"]) != msg.chat_id or not orders_thread or int(orders_thread) != msg.thread_id:
+        return None
+    reply = ((msg.raw or {}).get("message") or {}).get("reply_to_message") or {}
+    # В темах каждое сообщение формально «отвечает» на создание темы — это не ответ.
+    if not reply or reply.get("message_id") == msg.thread_id or not (reply.get("from") or {}).get("is_bot"):
+        return None
+    admin = _admin_for_kind(FORUM_KIND_SITE)
+    if admin is None or msg.user_id != admin or not (msg.text.strip() or msg.file_id):
+        return None
+    source = str(reply.get("text") or reply.get("caption") or "")
+    found = _PARTNER_ID_RE.search(source)
+    if not found:
+        await _send(
+            msg.chat_id,
+            "Этот ответ никуда не ушёл: в сообщении нет id партнёра. Ответьте на сообщение бота "
+            "о шаге заявки (в нём есть id) или напишите в тему обращения партнёра.",
+            thread_id=msg.thread_id,
+        )
+        return {"ok": False, "route": "site_orders_reply", "status": "no_partner", "trace_id": trace_id}
+    partner = int(found.group(1))
+    tag = _PARTNER_TAG_RE.search(source)
+    ticket = await open_or_reuse_ticket(
+        tenant.tenant_id,
+        channel_code=CHANNEL_SITE,
+        offer_code=None,
+        offer_title=None,
+        user_telegram_user_id=partner,
+        user_chat_id=partner,
+        user_display=tag.group(1) if tag else f"id {partner}",
+        admin_telegram_user_id=admin,
+    )
+    if ticket["created"]:
+        site = await _site_card(tenant, ticket)
+        ticket = await _open_forum_topic(tenant, ticket, site=site)
+        header = "\n".join(_site_header_lines(ticket, site))
+        delivered = await _send_site_header(ticket, header + "\n\nОткрыто ответом из «Заявок на сайты». Пишите в эту тему — ответ уйдёт партнёру.")
+        await record_relayed_message(
+            tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), direction="system", text=header,
+            delivered_chat_id=int(ticket["forum_chat_id"]) if _in_forum(ticket) else admin,
+            delivered_message_id=delivered.get("message_id"),
+        )
+    result = await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
+    label = ticket_label(ticket)
+    if _in_forum(ticket):
+        # Разговор целиком — в теме обращения: туда же придёт ответ партнёра.
+        await _send(
+            int(ticket["forum_chat_id"]),
+            "Ответ из «Заявок на сайты»:\n" + (msg.text or "вложение"),
+            thread_id=int(ticket["forum_thread_id"]),
+        )
+    await _send(msg.chat_id, f"→ ушло партнёру, обращение {label}: ответ придёт в его тему.", thread_id=msg.thread_id)
+    return {**result, "route": "site_orders_reply"}
 
 
 async def try_handle_support_admin_message(
@@ -996,5 +1064,30 @@ async def try_handle_support_message(
     if admin_result is not None:
         return admin_result
     if msg.file_id and not is_support_admin(msg.user_id):
+        if await _request_waits_for_file(tenant, msg):
+            return None  # чек или фото анкеты — заявке (renewal / site_request в processor)
         return await try_relay_user_message(tenant, msg, trace_id=trace_id)
     return None
+
+
+# Шаги анкеты «Заказать сайт», которые ждут вложение (как SITE_FILE_STEPS).
+_SITE_FILE_STEPS = frozenset({"awaiting_photo", "awaiting_payment"})
+
+
+async def _request_waits_for_file(tenant: TenantContext, msg: TelegramMessage) -> bool:
+    """Анкета ждёт фото, заявка на сайт или продление — чек: вложение идёт
+    туда, даже если открыто обращение (30.09.2026: чек Татьяны ушёл в #S-11
+    без «Подтвердить», оплату никто не увидел)."""
+    try:
+        actor_id = await ensure_telegram_actor(
+            tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id, raw_update=msg.raw
+        )
+        renewal = await get_open_renewal_request(tenant.tenant_id, actor_id)
+        if renewal and renewal["status"] == "awaiting_payment":
+            return True
+        site = await get_open_site_request(tenant.tenant_id, actor_id)
+    except RuntimeError as exc:
+        if "database pool is not initialized" in str(exc):
+            return False
+        raise
+    return bool(site) and str(site["status"]) in _SITE_FILE_STEPS

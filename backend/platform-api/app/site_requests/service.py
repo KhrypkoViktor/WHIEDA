@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.site_requests.contacts import parse_contacts
@@ -92,10 +93,31 @@ async def get_open_site_request(tenant_id: str, actor_id: str) -> dict[str, Any]
         )
 
 
+# Заявка, которая не двигалась столько времени, брошена: она больше не
+# перехватывает обычные сообщения партнёра (30.09.2026: анкеты с 22.09 и
+# продления с 12.09 отвечали на всё «напишите адрес» / «оплатите» и глотали
+# фото). Ждущее вложение (фото анкеты, чек) она по-прежнему принимает.
+STALE_AFTER = timedelta(days=3)
+
+
+def request_is_stale(request: dict[str, Any], *, now: datetime | None = None) -> bool:
+    updated = request.get("updated_at") or request.get("created_at")
+    if not isinstance(updated, datetime):
+        return False
+    return (now or datetime.now(timezone.utc)) - updated > STALE_AFTER
+
+
 async def begin_site_request(tenant_id: str, actor_id: str) -> dict[str, Any]:
     existing = await get_open_site_request(tenant_id, actor_id)
     if existing:
-        return existing
+        # Вернулись к анкете кнопкой — она снова свежая.
+        async with tenant_connection(tenant_id) as conn:
+            touched = await fetch_one(
+                conn,
+                "update partner_site_requests set updated_at = now() where tenant_id = %s and request_id = %s returning *",
+                (tenant_id, existing["request_id"]),
+            )
+        return touched or existing
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,

@@ -22,6 +22,7 @@ from app.renewal_requests.service import (
     submit_renewal_payment_proof,
 )
 from app.settings import get_settings
+from app.site_requests.service import request_is_stale
 from app.telegram.academy import is_academy_payment, notify_academy_payment
 from app.telegram.club_group import invite_to_club
 from app.telegram.billing import notify_payment_participants
@@ -245,6 +246,9 @@ async def try_handle_renewal_message(
             return None
         raise
     if not request:
+        return None
+    if request_is_stale(request) and not (request["status"] == "awaiting_payment" and msg.file_id):
+        # Брошенное продление не отвечает «оплатите» на каждое сообщение.
         return None
     try:
         if request["status"] == "awaiting_payment" and msg.file_id:

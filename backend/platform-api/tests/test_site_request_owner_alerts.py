@@ -38,7 +38,7 @@ def test_owner_gets_step_alert_and_photo_copy(monkeypatch):
     asyncio.run(sr._notify_owner_step("whieda", _msg(file_id="F1"), request, done="фото"))
 
     assert copied and copied[0]["chat_id"] == "999" and copied[0]["from_chat_id"] == "111"
-    assert sent == [(999, "Заявка на сайт — @partner: фото получено.\nАдрес: olga.wwc.best\nДальше: текст о себе.")]
+    assert sent == [(999, "Заявка на сайт — @partner · id 111: фото получено.\nАдрес: olga.wwc.best\nДальше: текст о себе.")]
 
 
 def test_owner_is_not_alerted_about_own_request(monkeypatch):
