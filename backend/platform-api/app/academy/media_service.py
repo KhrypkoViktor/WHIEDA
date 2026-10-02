@@ -14,6 +14,7 @@ lesson the viewer could open.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from app.academy.media import MediaError, signed_url
@@ -29,11 +30,18 @@ _MEDIA_COLUMNS = """
 
 
 def _valid_ids(ids: list[Any]) -> list[str]:
+    """Ids from the outside → canonical UUID strings; anything else is dropped (no 500 on ::uuid)."""
     out: list[str] = []
     for value in ids:
         text = str(value or "").strip().lower()
-        if len(text) == 36 and text.count("-") == 4 and text not in out:
-            out.append(text)
+        if len(text) != 36:
+            continue
+        try:
+            canonical = str(uuid.UUID(text))
+        except ValueError:
+            continue
+        if canonical not in out:
+            out.append(canonical)
     return out
 
 
@@ -203,8 +211,6 @@ async def init_upload(
     allowed_kinds: tuple[str, ...],
     chunk_size: int | None = None,
 ) -> dict[str, Any]:
-    import uuid
-
     from app.academy.keys import actor_ids_for_telegram
     from app.academy.media import CHUNK_SIZE, MIME_TYPES, check_upload, media_key
 

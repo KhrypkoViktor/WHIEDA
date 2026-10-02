@@ -173,3 +173,10 @@ def test_assemble_refuses_a_short_file(tmp_path):
     with pytest.raises(MediaError) as short:
         store.assemble("whieda", media_id, media_key("whieda", media_id, "original.pdf"), 10)
     assert short.value.code == "upload_incomplete"
+
+
+def test_ids_from_the_outside_must_be_real_uuids():
+    from app.academy.media_service import _valid_ids
+
+    upper = "0F8FAD5B-D9CB-469F-A165-70867728950E"
+    assert _valid_ids(["zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz", upper, upper.lower(), None, "", "x"]) == [upper.lower()]
