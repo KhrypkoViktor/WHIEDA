@@ -17,6 +17,7 @@ import logging
 import uuid
 from typing import Any
 
+from app.academy.content import linked_media
 from app.academy.media import MediaError, signed_url
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
@@ -108,23 +109,34 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
     if row.get("owner_actor_id") and str(row["owner_actor_id"]) in actor_ids:
         return True
     media_id = row["media_id"]
+    # SQL отбирает кандидатов по упоминанию; настоящая ли это ссылка (src/href внутри тега),
+    # решает linked_media: id, написанный текстом, файл не открывает.
     courses = await fetch_all(
         conn,
         """
         select c.course_id::text as course_id, c.access_rule, c.author_actor_id,
-               (c.cover_media_id = %(m)s::uuid
-                or strpos(coalesce(c.description_html, ''), 'media:' || %(m)s::text) > 0) as showcase
+               (c.cover_media_id = %(m)s::uuid) as is_cover, c.description_html,
+               exists (
+                 select 1 from academy_lessons l
+                 where l.tenant_id = c.tenant_id and l.course_id = c.course_id and l.status = 'published'
+                   and (l.files @> jsonb_build_array(%(m)s::text) or l.video ->> 'media_id' = %(m)s::text)
+               ) as attached,
+               array(
+                 select l.body_html from academy_lessons l
+                 where l.tenant_id = c.tenant_id and l.course_id = c.course_id and l.status = 'published'
+                   and strpos(lower(l.body_html), 'media:' || %(m)s::text) > 0
+               ) as bodies
         from academy_courses c
         where c.tenant_id = %(t)s and c.status = 'published'
           and (
             c.cover_media_id = %(m)s::uuid
-            or strpos(coalesce(c.description_html, ''), 'media:' || %(m)s::text) > 0
+            or strpos(lower(coalesce(c.description_html, '')), 'media:' || %(m)s::text) > 0
             or exists (
               select 1 from academy_lessons l
               where l.tenant_id = c.tenant_id and l.course_id = c.course_id and l.status = 'published'
                 and (l.files @> jsonb_build_array(%(m)s::text)
                      or l.video ->> 'media_id' = %(m)s::text
-                     or strpos(l.body_html, 'media:' || %(m)s::text) > 0)
+                     or strpos(lower(l.body_html), 'media:' || %(m)s::text) > 0)
             )
           )
         """,
@@ -133,8 +145,12 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
     if courses:
         access = await _access_rows(conn, tenant_id, viewer.telegram_user_id)
         for course in courses:
-            if course["showcase"] and academy_visible(viewer):
+            showcase = course["is_cover"] or media_id in linked_media(course.get("description_html"))
+            in_lessons = course["attached"] or any(media_id in linked_media(body) for body in course["bodies"] or [])
+            if showcase and academy_visible(viewer):
                 return True
+            if not in_lessons:
+                continue
             if is_staff_for(course, viewer, actor_ids):
                 return True
             if course_lock_reason(course, viewer, has_access_row=course["course_id"] in access) is None:

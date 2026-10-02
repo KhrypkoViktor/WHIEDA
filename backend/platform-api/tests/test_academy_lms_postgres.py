@@ -284,7 +284,7 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
                 load_viewer,
                 set_lesson_done,
             )
-            from app.db import tenant_connection
+            from app.db import fetch_one, tenant_connection
 
             student = await load_viewer("whieda", STUDENT)
             stranger = await load_viewer("whieda", STRANGER)
@@ -368,6 +368,23 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
                 await media_url("whieda", FILE_ID, stranger)
             assert foreign.value.status == 403
             assert (await media_url("whieda", VIDEO_ID, author))["poster_url"].startswith("/academy-media/")
+            # Упоминание id текстом (не ссылкой из проверенного markdown) в чужом открытом курсе
+            # не открывает файл: доступ — только по настоящим ссылкам src/href="media:<id>".
+            async with tenant_connection("whieda") as conn:
+                leak = (await fetch_one(
+                    conn,
+                    "insert into academy_courses (tenant_id, slug, title, access_rule, status, description_html)"
+                    " values ('whieda', 'besplatno', 'Бесплатно', 'free', 'published', %s) returning course_id::text",
+                    (f"<p>media:{FILE_ID}</p>",),
+                ))["course_id"]
+                await conn.execute(
+                    "insert into academy_lessons (tenant_id, course_id, slug, position, title, body_html)"
+                    " values ('whieda', %s::uuid, 'x', 1, 'x', %s)",
+                    (leak, f'<p>смотрите media:{FILE_ID.upper()} и src="media:{FILE_ID}"</p>'),
+                )
+            with pytest.raises(MediaError) as still_foreign:
+                await media_url("whieda", FILE_ID, stranger)
+            assert still_foreign.value.status == 403
 
             # 7. Автор видит свой курс целиком: без замков доступа и расписания.
             authored = await course_outline("whieda", "akvarel", author, allow_locked=True)
@@ -380,7 +397,7 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
                     "update academy_access set expires_at = now() - interval '1 minute' where telegram_user_id = %s",
                     (STUDENT,),
                 )
-            [expired] = await list_courses("whieda", student)
+            expired = next(c for c in await list_courses("whieda", student) if c["slug"] == "akvarel")
             assert (expired["locked"], expired["lock_reason"]) == (True, "purchase_required")
 
         db.run_with_app(proof)
@@ -784,6 +801,8 @@ def test_author_builds_publishes_and_follows_a_course(monkeypatch, tmp_path):
                 ({"currency": "DOGE"}, "bad_currency"),
                 ({"price": -1}, "bad_price"),
                 ({"cover_media_id": foreign}, "bad_media"),
+                ({"description_md": f"смотрите media:{foreign}"}, "bad_media"),
+                ({"description_md": f"смотрите MEDIA:{foreign.upper()}"}, "bad_media"),
                 ({"access_rule": "pro"}, "bad_access_rule"),  # PRO-курс заводит только владелец
                 ({"status": "archived"}, "bad_status"),
                 ({"title": ""}, "bad_title"),

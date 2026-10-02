@@ -39,10 +39,11 @@ MARKDOWN_EXTENSIONS = ["tables", "sane_lists", "fenced_code"]
 MAX_MARKDOWN_CHARS = 200_000
 
 _MEDIA_ID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-_MEDIA_REF_RE = re.compile(rf'"media:({_MEDIA_ID})"')
-_IMG_RE = re.compile(rf'<img\b[^>]*\bsrc="media:({_MEDIA_ID})"[^>]*>')
-_HREF_RE = re.compile(rf'\shref="media:({_MEDIA_ID})"')
-_SRC_RE = re.compile(rf'\ssrc="media:({_MEDIA_ID})"')
+# Любое упоминание, и текстом тоже, в любом регистре: проверка владельца видит всё.
+_MEDIA_MENTION_RE = re.compile(rf"media:({_MEDIA_ID})", re.I)
+# Подставляются только настоящие ссылки внутри тегов (после nh3 значения атрибутов — в двойных кавычках).
+_TAG_RE = re.compile(r"<[^<>]+>")
+_ATTR_RE = re.compile(rf'\s(src|href)="media:({_MEDIA_ID})"', re.I)
 
 
 def sanitize_html(raw: str | None) -> str:
@@ -66,21 +67,41 @@ def render_markdown(source: str | None) -> str:
 
 
 def media_refs(html: str | None) -> list[str]:
-    """``media:<uuid>`` references in order, without repeats."""
+    """Every ``media:<uuid>`` mentioned (links and plain text), lower-case, in order, no repeats."""
     seen: list[str] = []
-    for match in _MEDIA_REF_RE.finditer(str(html or "")):
-        if match.group(1) not in seen:
-            seen.append(match.group(1))
+    for match in _MEDIA_MENTION_RE.finditer(str(html or "")):
+        media_id = match.group(1).lower()
+        if media_id not in seen:
+            seen.append(media_id)
     return seen
 
 
+def linked_media(html: str | None) -> set[str]:
+    """Ids used as real links: ``src``/``href="media:<id>"`` inside tags, not mentions in text.
+    Only these open a file to the readers of a course (``media_service.media_access``)."""
+    found: set[str] = set()
+    for tag in _TAG_RE.finditer(str(html or "")):
+        for match in _ATTR_RE.finditer(tag.group(0)):
+            found.add(match.group(2).lower())
+    return found
+
+
 def resolve_media(html: str | None, urls: dict[str, str]) -> str:
-    """References → links of this viewer; an image without a link is dropped, a
-    link without one keeps its text only."""
-    text = str(html or "")
-    text = _IMG_RE.sub(lambda m: m.group(0) if m.group(1) in urls else "", text)
-    text = _SRC_RE.sub(lambda m: f' src="{html_lib.escape(urls[m.group(1)], quote=True)}"', text)
-    return _HREF_RE.sub(
-        lambda m: f' href="{html_lib.escape(urls[m.group(1)], quote=True)}"' if m.group(1) in urls else "",
-        text,
-    )
+    """``src``/``href="media:<id>"`` inside tags → links of this viewer. An image without
+    a link is dropped, a link without one keeps its text only; text is never touched."""
+
+    def attribute(match: re.Match) -> str:
+        url = urls.get(match.group(2).lower())
+        return f' {match.group(1)}="{html_lib.escape(url, quote=True)}"' if url else ""
+
+    def tag(match: re.Match) -> str:
+        value = match.group(0)
+        if "media:" not in value.lower():
+            return value
+        if value[:4].lower() == "<img":
+            source = _ATTR_RE.search(value)
+            if source and source.group(1).lower() == "src" and source.group(2).lower() not in urls:
+                return ""
+        return _ATTR_RE.sub(attribute, value)
+
+    return _TAG_RE.sub(tag, str(html or ""))

@@ -85,3 +85,15 @@ def test_media_refs_and_resolution():
     assert "<img" not in resolve_media(html, {})
     assert "media:" not in resolve_media(html, {})
     assert "файл" in resolve_media(html, {})
+
+
+def test_media_mentions_in_text_are_refs_but_only_tags_are_rewritten():
+    other = "11111111-2222-3333-4444-555555555555"
+    html = f'<p>текст media:{MEDIA_ID.upper()} и src="media:{other}"</p><img src="media:{MEDIA_ID}" alt="a">'
+    # Проверка владельца видит и упоминания текстом (в любом регистре).
+    assert media_refs(html) == [MEDIA_ID, other]
+    # Текст не трогаем и не падаем, если ссылки на упомянутый файл нет.
+    resolved = resolve_media(html, {MEDIA_ID: "/academy-media/k?u=1&e=2&s=x"})
+    assert f'src="media:{other}"' in resolved and f"media:{MEDIA_ID.upper()}" in resolved
+    assert '<img src="/academy-media/k?u=1&amp;e=2&amp;s=x" alt="a">' in resolved
+    assert "<img" not in resolve_media(html, {})
