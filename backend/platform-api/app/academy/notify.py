@@ -33,6 +33,7 @@ OPEN_LESSON_BUTTON = "Открыть урок"
 # Премодерация курсов (решение лида 02.10): карточка владельцу и ответ автору.
 COURSE_REVIEW_EVENT = "academy_course_review"
 COURSE_REVIEWED_EVENT = "academy_course_reviewed"
+COURSE_UNPUBLISHED_EVENT = "academy_course_unpublished"
 VIEW_COURSE_BUTTON = "Посмотреть курс"
 OPEN_CABINET_BUTTON = "Открыть кабинет"
 REVIEW_CALLBACK_PREFIX = "acadrev"
@@ -93,6 +94,10 @@ def course_reviewed_text(status: str, title: str, note: str | None) -> str:
     if status == "published":
         return f"✅ Курс «{title}» опубликован."
     return f"↩️ Курс «{title}» вернули на доработку:\n{str(note or '').strip()}"
+
+
+def course_unpublished_text(title: str, note: str | None) -> str:
+    return f"↩️ Курс «{title}» снят с публикации:\n{str(note or '').strip()}"
 
 
 def owner_telegram_id() -> int | None:

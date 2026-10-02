@@ -1204,4 +1204,24 @@ def test_owner_moderates_an_authors_course(monkeypatch, tmp_path):
             assert rows[-1][0]["text"] == "Посмотреть курс"
             assert rows[-1][0]["url"].endswith(f"/academy/?course={slug}#wwc-login=t{ADMIN}")
 
+            # 7. Снять опубликованный курс той же командой: черновик, причина автору, ученики не видят.
+            pulled = await authoring.review_course("whieda", owner, slug=slug, decision="returned", note="Проверьте цену")
+            assert (pulled["status"], pulled["was"]) == ("draft", "published")
+            assert slug not in [c["slug"] for c in await list_courses("whieda", student)]
+            assert (await authoring.author_course("whieda", almira, slug))["course"]["review_note"] == "Проверьте цену"
+            [down] = await notes("academy_course_unpublished")
+            assert down["payload"]["chat_id"] == "7001"
+            assert down["payload"]["text"] == "↩️ Курс «Акварель» снят с публикации:\nПроверьте цену"
+            assert down["payload"]["site_button"] == {
+                "text": "Открыть кабинет", "url": down["payload"]["site_button"]["url"], "telegram_user_id": AUTHOR,
+            }
+            assert down["payload"]["site_button"]["url"].endswith(f"/academy/author/?course={slug}")
+            with pytest.raises(AcademyError) as already_draft:
+                await authoring.review_course("whieda", owner, slug=slug, decision="returned", note="ещё раз")
+            assert already_draft.value.code == "not_published"
+            # Свой курс владелец снимает без сообщения самому себе.
+            mine = await authoring.review_course("whieda", owner, slug=own["slug"], decision="returned", note="пауза")
+            assert mine["status"] == "draft"
+            assert len(await notes("academy_course_unpublished")) == 1
+
         db.run_with_app(proof)

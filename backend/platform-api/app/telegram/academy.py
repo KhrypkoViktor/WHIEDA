@@ -90,6 +90,7 @@ _REVIEW_CALLBACK_RE = re.compile(r"^acadrev:(ok|no):([0-9a-f-]{36})$")
 _RETURN_PROMPT_RE = re.compile(r"^↩️ Курс «.*» \(([a-z0-9]+(?:-[a-z0-9]+)*)\) — что поправить\?")
 _RETURN_COMMAND_RE = re.compile(r"^/?вернуть\s+([a-z0-9]+(?:-[a-z0-9]+)*)\s+(.+)$", re.I | re.S)
 NOT_IN_REVIEW_TEXT = "Курс «{title}» уже не на проверке."
+ALREADY_DRAFT_TEXT = "Курс «{title}» и так в черновике."
 KEYS_INLINE_LIMIT = 20  # больше — одним текстовым файлом (сообщение Telegram ≤ 4096 символов)
 
 LOCK_TEXT = {
@@ -350,9 +351,10 @@ async def _handle_review_callback(
         if not brief:
             await _send(callback.chat_id, "Курс не найден.")
             return {"ok": False, "route": route, "status": "course_not_found", "trace_id": trace_id}
-        if brief["status"] != "review":
-            await _send(callback.chat_id, NOT_IN_REVIEW_TEXT.format(title=brief["title"]))
-            return {"ok": False, "route": route, "status": "not_in_review", "trace_id": trace_id}
+        if brief["status"] not in ("review", "published"):
+            # Уже опубликованный курс «Вернуть» тоже снимает: тот же вопрос о причине.
+            await _send(callback.chat_id, ALREADY_DRAFT_TEXT.format(title=brief["title"]))
+            return {"ok": False, "route": route, "status": "not_published", "trace_id": trace_id}
         await _send(
             callback.chat_id,
             f"↩️ Курс «{brief['title']}» ({brief['slug']}) — что поправить? Ответьте на это сообщение одной строкой.",
@@ -396,12 +398,17 @@ async def _try_course_return(tenant: TenantContext, msg: TelegramMessage, text: 
         title = str(exc.extra.get("title") or slug)
         texts = {
             "not_in_review": NOT_IN_REVIEW_TEXT.format(title=title),
+            "not_published": ALREADY_DRAFT_TEXT.format(title=title),
             "comment_required": "Напишите, что поправить, — одной строкой.",
             "comment_too_long": "Слишком длинно — уложитесь в одну строку.",
         }
         await _send(msg.chat_id, texts.get(exc.code, "Курс не найден."))
         return {"ok": False, "route": route, "status": exc.code, "trace_id": trace_id}
-    await _send(msg.chat_id, f"↩️ Курс «{result['title']}» вернули автору: {' '.join(str(note).split())}")
+    reason = " ".join(str(note).split())
+    if result.get("was") == "published":
+        await _send(msg.chat_id, f"↩️ Курс «{result['title']}» снят с публикации: {reason}")
+        return {"ok": True, "route": route, "status": "unpublished", "trace_id": trace_id}
+    await _send(msg.chat_id, f"↩️ Курс «{result['title']}» вернули автору: {reason}")
     return {"ok": True, "route": route, "status": "returned", "trace_id": trace_id}
 
 

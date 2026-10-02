@@ -74,13 +74,36 @@ async def test_return_asks_for_a_reason_in_reply(whieda_tenant, bot):
 
 
 @pytest.mark.asyncio
-async def test_card_of_a_course_no_longer_in_review(whieda_tenant, bot):
-    brief = {"slug": "akvarel", "title": "Акварель", "status": "published"}
+async def test_card_of_a_course_already_in_draft(whieda_tenant, bot):
+    brief = {"slug": "akvarel", "title": "Акварель", "status": "draft"}
     with patch("app.telegram.academy.load_viewer", AsyncMock(return_value=OWNER)), patch(
         "app.telegram.academy.course_brief", AsyncMock(return_value=brief)
     ):
         await try_handle_academy_callback(whieda_tenant, callback(f"acadrev:no:{COURSE_ID}"), trace_id="t")
-    assert bot.await_args.kwargs["text"] == "Курс «Акварель» уже не на проверке."
+    assert bot.await_args.kwargs["text"] == "Курс «Акварель» и так в черновике."
+
+
+@pytest.mark.asyncio
+async def test_return_button_on_an_already_published_course_asks_for_a_reason(whieda_tenant, bot):
+    brief = {"slug": "akvarel", "title": "Акварель", "status": "published"}
+    with patch("app.telegram.academy.load_viewer", AsyncMock(return_value=OWNER)), patch(
+        "app.telegram.academy.course_brief", AsyncMock(return_value=brief)
+    ):
+        result = await try_handle_academy_callback(whieda_tenant, callback(f"acadrev:no:{COURSE_ID}"), trace_id="t")
+    assert result["status"] == "reason_asked"
+    assert bot.await_args.kwargs["reply_markup"]["force_reply"] is True
+
+
+@pytest.mark.asyncio
+async def test_return_command_unpublishes_a_published_course(whieda_tenant, bot):
+    done = {"ok": True, "slug": "akvarel", "title": "Акварель", "status": "draft", "was": "published"}
+    with patch("app.telegram.academy.load_viewer", AsyncMock(return_value=OWNER)), patch(
+        "app.telegram.academy.review_course", AsyncMock(return_value=done)
+    ) as review:
+        result = await try_handle_academy_text(whieda_tenant, message("вернуть akvarel Проверьте цену"), trace_id="t")
+    assert result["status"] == "unpublished"
+    assert review.await_args.kwargs == {"slug": "akvarel", "decision": "returned", "note": "Проверьте цену"}
+    assert bot.await_args.kwargs["text"] == "↩️ Курс «Акварель» снят с публикации: Проверьте цену"
 
 
 @pytest.mark.asyncio
@@ -115,10 +138,10 @@ async def test_return_by_command_and_strangers_are_ignored(whieda_tenant, bot):
 
 @pytest.mark.asyncio
 async def test_reason_for_a_course_already_decided(whieda_tenant, bot):
-    error = AcademyError(409, "not_in_review", {"status": "published", "title": "Акварель"})
+    error = AcademyError(409, "not_published", {"status": "draft", "title": "Акварель"})
     with patch("app.telegram.academy.load_viewer", AsyncMock(return_value=OWNER)), patch(
         "app.telegram.academy.review_course", AsyncMock(side_effect=error)
     ):
         result = await try_handle_academy_text(whieda_tenant, message("вернуть akvarel поздно"), trace_id="t")
-    assert result["status"] == "not_in_review"
-    assert bot.await_args.kwargs["text"] == "Курс «Акварель» уже не на проверке."
+    assert result["status"] == "not_published"
+    assert bot.await_args.kwargs["text"] == "Курс «Акварель» и так в черновике."

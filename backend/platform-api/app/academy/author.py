@@ -36,6 +36,7 @@ from app.academy.content import media_refs, render_markdown, sanitize_html
 from app.academy.notify import (
     COURSE_REVIEW_EVENT,
     COURSE_REVIEWED_EVENT,
+    COURSE_UNPUBLISHED_EVENT,
     OPEN_CABINET_BUTTON,
     VIEW_COURSE_BUTTON,
     author_course_url,
@@ -44,6 +45,7 @@ from app.academy.notify import (
     course_review_markup,
     course_review_text,
     course_reviewed_text,
+    course_unpublished_text,
     enqueue_notification,
     owner_telegram_id,
 )
@@ -461,7 +463,8 @@ async def review_course(
     decision: str,
     note: str | None,
 ) -> dict[str, Any]:
-    """Решение владельца по курсу на проверке: опубликовать или вернуть автору с причиной."""
+    """Решение владельца: курс на проверке — опубликовать или вернуть автору с причиной;
+    опубликованный курс — снять с публикации той же командой «вернуть» (в черновик, причина автору)."""
     if not viewer.is_preview_admin:
         raise AcademyError(403, "not_owner")
     if decision not in REVIEW_DECISIONS:
@@ -487,8 +490,11 @@ async def review_course(
             )
         if not course:
             raise AcademyError(404, "course_not_found")
-        if course["status"] != "review":
-            raise AcademyError(409, "not_in_review", {"status": course["status"], "title": course["title"]})
+        was = course["status"]
+        if decision == "published" and was != "review":
+            raise AcademyError(409, "not_in_review", {"status": was, "title": course["title"]})
+        if decision == "returned" and was not in ("review", "published"):
+            raise AcademyError(409, "not_published", {"status": was, "title": course["title"]})
         status = "published" if decision == "published" else "draft"
         async with conn.cursor() as cur:
             await cur.execute(
@@ -499,19 +505,26 @@ async def review_course(
                 (status, reason or None if decision == "returned" else None, tenant_id, course["course_id"]),
             )
         recipient = await author_telegram_id(conn, tenant_id, course.get("author_actor_id"))
-        if recipient is not None:
+        # Свой курс владелец снимает/решает без сообщения самому себе.
+        if recipient is not None and recipient != viewer.telegram_user_id:
             requested = course.get("review_requested_at")
+            if was == "published":
+                event, text = COURSE_UNPUBLISHED_EVENT, course_unpublished_text(course["title"], reason)
+                key = f"{event}:{course['course_id']}:{datetime.now(timezone.utc).isoformat()}"
+            else:
+                event, text = COURSE_REVIEWED_EVENT, course_reviewed_text(status, course["title"], reason)
+                key = f"{event}:{course['course_id']}:{requested.isoformat() if requested else 'n'}"
             await enqueue_notification(
                 conn,
                 tenant_id,
-                event_type=COURSE_REVIEWED_EVENT,
-                key=f"{COURSE_REVIEWED_EVENT}:{course['course_id']}:{requested.isoformat() if requested else 'n'}",
+                event_type=event,
+                key=key,
                 recipient=recipient,
-                text=course_reviewed_text(status, course["title"], reason),
+                text=text,
                 button_text=OPEN_CABINET_BUTTON,
                 url=author_course_url(course["slug"]),
             )
-    return {"ok": True, "slug": course["slug"], "title": course["title"], "status": status}
+    return {"ok": True, "slug": course["slug"], "title": course["title"], "status": status, "was": was}
 
 
 async def course_brief(tenant_id: str, course_id: str) -> dict[str, Any] | None:
