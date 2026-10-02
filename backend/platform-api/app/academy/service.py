@@ -821,7 +821,8 @@ async def grant_course_access(
             insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
             values (%s, %s::uuid, %s, 'purchase', %s)
             on conflict (tenant_id, course_id, telegram_user_id)
-            do update set revoked_at = null, source = 'purchase', payment_ref = excluded.payment_ref, granted_at = now()
+            do update set revoked_at = null, expires_at = null, source = 'purchase',
+                          payment_ref = excluded.payment_ref, granted_at = now()
             """,
             (tenant_id, course["course_id"], telegram_user_id, payment_ref),
         )

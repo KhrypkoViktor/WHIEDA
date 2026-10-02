@@ -16,7 +16,7 @@ Text commands «начать обучение», «мой план», «акад
 the coach's first week were two competing «first weeks» nobody finished
 (owner, 23.09.2026). The objection practice («коуч», «коуч ответ …») stays.
 
-Authors on the shelf (owner, 25.09.2026), private chat only:
+Authors of the Academy (owner, 25.09.2026), private chat only:
   «ключи <slug> <N>» — N access keys as ``t.me/<bot>?start=course_<код>`` links
                        (more than 20 — one text file);
   «мои курсы»        — per course: status, keys redeemed / issued, students.
@@ -120,7 +120,7 @@ def key_error_text(exc: AcademyKeyError) -> str:
 
 
 def purchase_lock_text(contact: dict[str, Any] | None) -> str:
-    """Замок purchase_required: доступ выдаёт автор курса («полка»), не поддержка."""
+    """Замок purchase_required: доступ выдаёт автор курса, не поддержка."""
     who = author_contact_label(contact)
     if not who:
         return LOCK_TEXT["purchase_required"]
@@ -380,7 +380,7 @@ async def _usage_text(tenant_id: str, telegram_user_id: int, is_admin: bool) -> 
 async def handle_keys_command(
     tenant: TenantContext, msg: TelegramMessage, slug: str | None, count: int | None, *, trace_id: str
 ) -> dict[str, Any]:
-    """«ключи <slug> <N>» от автора курса (полка оплачена) или владельца."""
+    """«ключи <slug> <N>» от Автора Академии (Академия оплачена) или владельца."""
     tenant_id = tenant.tenant_id
     is_admin = int(msg.user_id) in preview_admin_ids()
     if not slug:
@@ -433,9 +433,9 @@ async def handle_my_courses(tenant: TenantContext, msg: TelegramMessage, *, trac
     lines = ["🎓 Мои курсы"]
     paid_until = await shelf_paid_until(tenant_id, actor_ids)
     if paid_until and paid_until > datetime.now(timezone.utc):
-        lines.append(f"Полка Академии оплачена до {_date(paid_until)}.")
+        lines.append(f"Академия оплачена до {_date(paid_until)}.")
     elif not is_admin:
-        lines.append("Полка Академии не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться.")
+        lines.append("Академия не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться.")
     for row in courses:
         lines += [
             "",
@@ -499,14 +499,14 @@ def is_academy_payment(payment: dict[str, Any] | None) -> bool:
 
 
 async def notify_academy_payment(payment: dict[str, Any], *, chat_id: int, title: str) -> None:
-    """Оплата полки или курса подтверждена. Общее «Сайт: … Доступ до: …» здесь
-    врёт: у полки свой срок, курс — без срока."""
+    """Оплата Академии автора или курса подтверждена. Общее «Сайт: … Доступ до: …» здесь
+    врёт: у Академии автора свой срок, курс — без срока."""
     product = str(payment.get("product_code") or "")
     head = f"Оплата подтверждена: {title}." if title else "Оплата подтверждена."
     if product == SHELF_PRODUCT_CODE:
         lines = [
             head,
-            f"Полка Академии оплачена до {_date(payment.get('period_end'))}.",
+            f"Академия оплачена до {_date(payment.get('period_end'))}.",
             "Ключи ученикам: «ключи <адрес курса> <сколько>». Статистика: «мои курсы».",
         ]
     else:

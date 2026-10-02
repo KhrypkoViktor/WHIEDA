@@ -868,8 +868,13 @@ def test_author_builds_publishes_and_follows_a_course(monkeypatch, tmp_path):
                 await conn.execute("update academy_shelf set status = 'active'")
 
             # 6. Ключ автора → ученик видит модули с замком и проходит урок.
-            issued = await issue_keys("whieda", slug, "almira", 1)
+            issued = await issue_keys("whieda", slug, "almira", 2)
             assert (await redeem_key("whieda", issued.codes[0], STUDENT)).status == "opened"
+            # Истёкший доступ — не «уже открыт»: новый ключ открывает курс снова и снимает срок.
+            async with tenant_connection("whieda") as conn:
+                await conn.execute("update academy_access set expires_at = now() - interval '1 day'")
+            assert (await redeem_key("whieda", issued.codes[1], STUDENT)).status == "opened"
+            assert await rows("select expires_at from academy_access") == [{"expires_at": None}]
             outline = await course_outline("whieda", slug, student, allow_locked=True)
             assert outline["course"]["price"] == {"amount": 250, "currency": "BYN"}
             assert outline["course"]["description_html"] == "<p><strong>Курс</strong> для начинающих </p>"
