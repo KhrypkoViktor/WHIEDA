@@ -52,6 +52,7 @@ MIGRATIONS = (
     "platform_support_site_forum_v16.sql",
     "platform_marketing_consent_v17.sql",
     "platform_pricing_october_v18.sql",
+    "platform_academy_lms_v19.sql",
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 
