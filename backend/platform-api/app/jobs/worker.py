@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
 
-# Scheduled notifications (platform_outbox.due_at, V14): the CRM morning message
-# and, since CRM v2, «Через час встреча».
+# Scheduled notifications (platform_outbox.due_at, V14): the CRM morning message.
+# CRM v2 (V20) adds «Через час встреча» (app.crm.meetings).
 DUE_NOTIFY_INTERVAL_SEC = 30.0
 CRM_DIGEST_INTERVAL_SEC = 300.0
 DUE_BATCH_SIZE = 50
@@ -352,7 +352,8 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     if plan_crm:
         from app.crm.digest import enqueue_crm_digests
         from app.crm.meetings import enqueue_meeting_reminders
-        from app.crm.service import crm_feature_enabled, purge_deleted_everywhere
+        from app.crm.service import crm_feature_enabled
+        from app.crm.service import purge_deleted_everywhere
 
         if crm_feature_enabled():
             crm_tenants = {
