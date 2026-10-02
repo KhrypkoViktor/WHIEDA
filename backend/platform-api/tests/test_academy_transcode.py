@@ -56,14 +56,25 @@ async def test_worker_loop_steps_the_transcode_slot(monkeypatch):
     class FakeSlot:
         async def step(self):
             calls.append("step")
-            raise asyncio.CancelledError  # одного прохода цикла достаточно
 
+    monkeypatch.delenv("PLATFORM_SCHEDULED_NOTIFY_BINDINGS", raising=False)
+    monkeypatch.delenv("PLATFORM_ACADEMY_NOTIFY_BINDING", raising=False)
     monkeypatch.setattr(worker, "init_pool_for_worker", AsyncMock())
     monkeypatch.setattr(worker, "process_pending_outbox", AsyncMock(return_value=0))
     monkeypatch.setattr(worker, "TranscodeSlot", FakeSlot)
-    with pytest.raises(asyncio.CancelledError):
-        await worker.worker_loop(poll_interval_sec=0)
+    # Уборка брошенных загрузок — в первом же проходе (потом раз в час); ею цикл и остановим.
+    cleanup = AsyncMock(side_effect=asyncio.CancelledError)
+    monkeypatch.setattr(worker, "cleanup_abandoned_uploads", cleanup)
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await worker.worker_loop(poll_interval_sec=0)
+    finally:
+        get_settings.cache_clear()
     assert calls == ["step"]
+    cleanup.assert_awaited_once()
 
 
 @needs_ffmpeg

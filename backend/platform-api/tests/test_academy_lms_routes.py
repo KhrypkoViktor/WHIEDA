@@ -88,6 +88,7 @@ async def test_student_uploads_only_photos(content_app, signed_in):  # noqa: F81
                               json={"name": "фото.jpg", "size": 10, "mime": "image/jpeg", "kind": "image"})
     assert response.status_code == 200
     assert service.await_args.kwargs["allowed_kinds"] == ("image",)
+    assert service.await_args.kwargs["require_course_access"] is True
 
 
 @pytest.mark.asyncio

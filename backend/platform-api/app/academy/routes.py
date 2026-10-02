@@ -249,7 +249,9 @@ async def _init(body: UploadInitBody, request: Request, response: Response, kind
         "ok": True,
         **await _guard(
             init_upload(
-                tenant_id, viewer, kind=body.kind, name=body.name, mime=body.mime, size=body.size, allowed_kinds=kinds
+                tenant_id, viewer, kind=body.kind, name=body.name, mime=body.mime, size=body.size, allowed_kinds=kinds,
+                # Фото домашки — только у кого открыт хоть один курс (диск общий).
+                require_course_access=not author,
             )
         ),
     }

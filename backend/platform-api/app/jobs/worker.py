@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+from app.academy.media_service import cleanup_abandoned_uploads
 from app.academy.transcode import TranscodeSlot
 from app.db import fetch_all, get_pool, tenant_connection
 from app.jobs.n8n_integration import trigger_lead_delivery
@@ -34,6 +35,8 @@ DUE_MAX_ATTEMPTS = 3
 DUE_PASS_BUDGET_SEC = 20.0
 # A worker killed mid-send (SIGTERM) leaves rows «processing»; older than this — dead.
 DUE_STUCK_AFTER = "1 hour"
+# Академия v2: брошенные загрузки с диска — раз в час.
+ACADEMY_CLEANUP_INTERVAL_SEC = 3600.0
 
 
 async def process_pending_outbox(batch_size: int = 20) -> int:
@@ -373,6 +376,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     last_due = last_plan = float("-inf")
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
+    last_cleanup = float("-inf")
     while True:
         await process_pending_outbox()
         try:
@@ -393,6 +397,12 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await academy_notifications_step()
             except Exception:
                 logger.exception("academy_notifications_step_failed")
+        if now - last_cleanup >= ACADEMY_CLEANUP_INTERVAL_SEC:
+            last_cleanup = now
+            try:
+                await cleanup_abandoned_uploads()
+            except Exception:
+                logger.exception("academy_cleanup_failed")
         await asyncio.sleep(poll_interval_sec)
 
 

@@ -564,6 +564,62 @@ def test_media_upload_state_machine_and_transcode(monkeypatch, tmp_path):
         db.run_with_app(proof)
 
 
+@pytest.mark.integration
+def test_upload_limits_and_abandoned_uploads(monkeypatch, tmp_path):
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    with temporary_database("whieda_academy_limits") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            _seed_course(conn, datetime.now(timezone.utc))  # у ученика 9001 — доступ по ключу
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import media_service
+            from app.academy.media import MediaError, get_media_store
+            from app.academy.media_service import cleanup_abandoned_uploads, init_upload, put_chunk, upload_status
+            from app.academy.service import load_viewer
+            from app.db import tenant_connection
+
+            student = await load_viewer("whieda", STUDENT)
+            stranger = await load_viewer("whieda", STRANGER)
+            photo = {"kind": "image", "name": "фото.png", "mime": "image/png", "allowed_kinds": ("image",),
+                     "require_course_access": True}
+
+            # 1. Фото домашки — только у того, у кого есть доступ хоть к одному курсу.
+            with pytest.raises(MediaError) as nobody:
+                await init_upload("whieda", stranger, size=10, **photo)
+            assert (nobody.value.status, nobody.value.code) == (403, "upload_not_allowed")
+            first = await init_upload("whieda", student, size=10, **photo)
+
+            # 2. Дневной объём на человека (счёт и по брошенным, и по отклонённым загрузкам).
+            monkeypatch.setattr(media_service, "STUDENT_DAILY_BYTES", 25)
+            await init_upload("whieda", student, size=10, **photo)
+            with pytest.raises(MediaError) as daily:
+                await init_upload("whieda", student, size=10, **photo)
+            assert (daily.value.status, daily.value.code) == (429, "daily_limit")
+
+            # 3. Брошенная загрузка (дольше 3 дней) — с диска долой, статус «failed».
+            await put_chunk("whieda", student, first["media_id"], 0, b"\x89PNG\r\n\x1a\n12")
+            store = get_media_store()
+            assert store.received("whieda", first["media_id"]) == [0]
+            async with tenant_connection("whieda") as conn:
+                await conn.execute(
+                    "update academy_media set created_at = now() - interval '4 days' where media_id = %s::uuid",
+                    (first["media_id"],),
+                )
+            assert await cleanup_abandoned_uploads() == 1
+            gone = await upload_status("whieda", student, first["media_id"])
+            assert (gone["status"], gone["error"]) == ("failed", "upload_abandoned")
+            assert store.received("whieda", first["media_id"]) == []
+            assert not (media_dir / "whieda" / "academy" / first["media_id"] / "upload.part").exists()
+            assert await cleanup_abandoned_uploads() == 0
+
+        db.run_with_app(proof)
+
+
 def _notify_binding():
     from app.telegram.bindings import BotBindingContext
     from app.tenancy import TenantContext

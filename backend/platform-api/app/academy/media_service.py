@@ -198,6 +198,48 @@ async def media_url(tenant_id: str, media_id: str, viewer: Any) -> dict[str, Any
 MAX_OPEN_UPLOADS = 20  # одновременно незавершённых загрузок у одного человека
 STUDENT_KINDS = ("image",)
 AUTHOR_KINDS = ("image", "file", "video")
+# Объём за сутки на человека (считаются все начатые загрузки, и брошенные, и отклонённые):
+# диск общий у боя и staging.
+STUDENT_DAILY_BYTES = 200 * 1024**2
+AUTHOR_DAILY_BYTES = 20 * 1024**3
+ABANDONED_AFTER_HOURS = 72
+
+
+async def _may_upload_homework(conn: Any, tenant_id: str, viewer: Any) -> bool:
+    """Фото домашки — тому, у кого открыт хоть один курс: PRO, доступ по ключу/покупке или
+    бесплатный курс с домашкой."""
+    from app.academy.service import academy_visible
+
+    if viewer.is_preview_admin:
+        return True
+    if not academy_visible(viewer):
+        return False
+    if viewer.partner_paid:
+        return True
+    row = await fetch_one(
+        conn,
+        """
+        select 1 as ok from academy_access
+        where tenant_id = %s and telegram_user_id = %s and revoked_at is null
+          and (expires_at is null or expires_at > now())
+        limit 1
+        """,
+        (tenant_id, viewer.telegram_user_id),
+    )
+    if row:
+        return True
+    free = await fetch_one(
+        conn,
+        """
+        select 1 as ok from academy_courses c
+        join academy_lessons l on l.tenant_id = c.tenant_id and l.course_id = c.course_id and l.status = 'published'
+        join academy_assignments a on a.tenant_id = l.tenant_id and a.lesson_id = l.lesson_id
+        where c.tenant_id = %s and c.status = 'published' and c.access_rule = 'free'
+        limit 1
+        """,
+        (tenant_id,),
+    )
+    return bool(free)
 
 
 def _upload_out(row: dict[str, Any], telegram_user_id: int, received: list[int] | None = None) -> dict[str, Any]:
@@ -226,6 +268,7 @@ async def init_upload(
     size: int,
     allowed_kinds: tuple[str, ...],
     chunk_size: int | None = None,
+    require_course_access: bool = False,
 ) -> dict[str, Any]:
     from app.academy.keys import actor_ids_for_telegram
     from app.academy.media import CHUNK_SIZE, MIME_TYPES, check_upload, media_key
@@ -236,17 +279,23 @@ async def init_upload(
     media_id = str(uuid.uuid4())
     key = media_key(tenant_id, media_id, f"original.{ext}")
     async with tenant_connection(tenant_id) as conn:
+        if require_course_access and not await _may_upload_homework(conn, tenant_id, viewer):
+            raise MediaError(403, "upload_not_allowed")
         busy = await fetch_one(
             conn,
             """
-            select count(*) as n from academy_media
-            where tenant_id = %s and owner_telegram_user_id = %s and status = 'uploading'
-              and created_at > now() - interval '3 days'
+            select count(*) filter (where status = 'uploading' and created_at > now() - interval '3 days') as n,
+                   coalesce(sum(size_bytes) filter (where created_at > now() - interval '1 day'), 0) as day_bytes
+            from academy_media
+            where tenant_id = %s and owner_telegram_user_id = %s
             """,
             (tenant_id, viewer.telegram_user_id),
         )
         if busy and int(busy["n"]) >= MAX_OPEN_UPLOADS:
             raise MediaError(429, "too_many_uploads")
+        daily = AUTHOR_DAILY_BYTES if "video" in allowed_kinds else STUDENT_DAILY_BYTES
+        if busy and int(busy["day_bytes"]) + int(size) > daily:
+            raise MediaError(429, "daily_limit", {"limit_bytes": daily})
         actor_ids = await actor_ids_for_telegram(conn, tenant_id, viewer.telegram_user_id)
         row = await fetch_one(
             conn,
@@ -368,3 +417,48 @@ async def complete_upload(tenant_id: str, viewer: Any, media_id: str) -> dict[st
         # Вне транзакции: статус «failed» уже записан, ошибка — для ответа сайту.
         raise MediaError(422, "bad_image")
     return _upload_out(row, viewer.telegram_user_id)
+
+
+async def cleanup_abandoned_uploads(*, older_than_hours: int = ABANDONED_AFTER_HOURS, limit: int = 200) -> int:
+    """Worker, hourly: uploads left unfinished for days — parts off the disk, status «failed».
+    Only where the media directory is mounted (the production worker)."""
+    import asyncio
+    from pathlib import Path
+
+    from app.academy.media import get_media_store
+    from app.db import get_pool
+
+    if not Path(get_settings().platform_academy_media_dir).is_dir():
+        return 0
+    store = get_media_store()
+    async with get_pool().connection(timeout=get_settings().database_timeout_sec) as conn:
+        tenants = [row["tenant_id"] for row in await fetch_all(conn, "select tenant_id from tenants")]
+    cleaned = 0
+    for tenant_id in tenants:
+        async with tenant_connection(tenant_id) as conn:
+            rows = await fetch_all(
+                conn,
+                """
+                select media_id::text as media_id from academy_media
+                where tenant_id = %s and status = 'uploading'
+                  and created_at < now() - make_interval(hours => %s)
+                order by created_at
+                limit %s
+                for update skip locked
+                """,
+                (tenant_id, int(older_than_hours), int(limit)),
+            )
+            for row in rows:
+                await asyncio.to_thread(store.discard_upload, tenant_id, row["media_id"])
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        """
+                        update academy_media set status = 'failed', error = 'upload_abandoned', updated_at = now()
+                        where tenant_id = %s and media_id = %s::uuid
+                        """,
+                        (tenant_id, row["media_id"]),
+                    )
+            cleaned += len(rows)
+    if cleaned:
+        logger.info("academy_abandoned_uploads_cleaned", extra={"count": cleaned})
+    return cleaned
