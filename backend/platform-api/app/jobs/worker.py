@@ -18,6 +18,7 @@ from app.telegram.delivery import (
     send_telegram_text,
 )
 from app.telegram.inbox import safe_error_summary
+from app.telegram.site_login import with_site_login
 
 logger = logging.getLogger(__name__)
 
@@ -139,17 +140,21 @@ async def scheduled_notify_bindings() -> dict[str, BotBindingContext]:
     """
     bindings: dict[str, BotBindingContext] = {}
     for binding_id in get_settings().parsed_scheduled_notify_bindings():
-        try:
-            binding = await resolve_bot_binding_context(binding_id)
-        except Exception as exc:
-            logger.warning(
-                "scheduled_notify_binding_unavailable",
-                extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
-            )
-            continue
+        binding = await _resolve_binding(binding_id)
         if binding is not None:
             bindings.setdefault(binding.tenant.tenant_id, binding)
     return bindings
+
+
+async def _resolve_binding(binding_id: str) -> BotBindingContext | None:
+    try:
+        return await resolve_bot_binding_context(binding_id)
+    except Exception as exc:
+        logger.warning(
+            "scheduled_notify_binding_unavailable",
+            extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+        )
+        return None
 
 
 def _final_delivery_error(exc: Exception) -> bool:
@@ -165,6 +170,13 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
     if not chat_id or not text.strip():
         raise TelegramDeliveryUnknown("due_notification_empty")
     markup = payload.get("reply_markup")
+    button = payload.get("site_button")
+    if isinstance(button, dict) and button.get("url"):
+        # Академия: кнопка входит на сайт сразу; ссылку со входом делаем в момент отправки.
+        url = await with_site_login(
+            str(button["url"]), tenant_id=binding.tenant.tenant_id, telegram_user_id=button.get("telegram_user_id")
+        )
+        markup = {"inline_keyboard": [[{"text": str(button.get("text") or "Открыть")[:64], "url": url}]]}
     with outbound_binding_guard(binding.bot_token):
         result = await send_telegram_text(
             chat_id=chat_id,
@@ -320,11 +332,13 @@ async def process_due_notifications(
 async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     """Plan the CRM mornings (every 5 minutes) and send what is due (every 30 s).
     Nothing happens in a process without PLATFORM_SCHEDULED_NOTIFY_BINDINGS."""
-    if not get_settings().parsed_scheduled_notify_bindings():
+    settings = get_settings()
+    academy_binding = settings.platform_academy_notify_binding.strip()
+    if not settings.parsed_scheduled_notify_bindings() and not academy_binding:
         return {}
-    bindings = await scheduled_notify_bindings()
+    bindings = await scheduled_notify_bindings() if settings.parsed_scheduled_notify_bindings() else {}
     result: dict[str, int] = {}
-    if plan_crm:
+    if plan_crm and bindings:
         from app.crm.digest import enqueue_crm_digests
         from app.crm.service import crm_feature_enabled
 
@@ -335,7 +349,13 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
                 if binding.tenant.entitlements.get("crm")
             }
             result["crm_digests"] = await enqueue_crm_digests(crm_tenants)
-    result["due_sent"] = await process_due_notifications(bindings)
+    # Уведомления Академии могут идти своим ботом (staging): он только отправляет, утро CRM им не планируется.
+    senders = {binding.binding_id: binding for binding in bindings.values()}
+    if academy_binding and academy_binding not in senders:
+        extra = await _resolve_binding(academy_binding)
+        if extra is not None:
+            senders[extra.binding_id] = extra
+    result["due_sent"] = await process_due_notifications(senders)
     return result
 
 

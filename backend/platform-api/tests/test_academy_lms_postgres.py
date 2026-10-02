@@ -545,3 +545,174 @@ def test_media_upload_state_machine_and_transcode(monkeypatch, tmp_path):
                 assert await claim_job() is None
 
         db.run_with_app(proof)
+
+
+def _notify_binding():
+    from app.telegram.bindings import BotBindingContext
+    from app.tenancy import TenantContext
+
+    return BotBindingContext(
+        binding_id="whieda-advisor-bot",
+        tenant=TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={}),
+        bot_token_ref="env:TEST_TOKEN",
+        webhook_secret_ref="env:TEST_SECRET",
+        bot_username="test_bot",
+        status="active",
+        processing_mode="core",
+        bot_token="test-token",
+        webhook_secret="test-secret",
+    )
+
+
+@pytest.mark.integration
+def test_homework_submit_return_resubmit_accept_and_notify(monkeypatch, tmp_path):
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    monkeypatch.setenv("PLATFORM_ACADEMY_NOTIFY_BINDING", "whieda-advisor-bot")
+    now = datetime.now(timezone.utc)
+    with temporary_database("whieda_academy_homework") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            ids = _seed_course(conn, now)
+            # Неделя 3 — после недели 2: проверяем, что домашка держит следующий модуль.
+            conn.execute("update academy_modules set unlock = '{\"type\": \"after_prev\"}' where title = 'Неделя 3'")
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from unittest.mock import AsyncMock, patch
+
+            from app.academy.homework import list_submissions, review_submission, submit_homework
+            from app.academy.media import MediaError
+            from app.academy.media_service import complete_upload, init_upload, put_chunk
+            from app.academy.service import AcademyError, course_outline, load_viewer, set_lesson_done
+            from app.db import fetch_all, tenant_connection
+            from app.jobs.worker import process_due_notifications
+
+            async def rows(sql: str, params: tuple = ()) -> list[dict]:
+                async with tenant_connection("whieda") as conn:
+                    return [dict(r) for r in await fetch_all(conn, sql, params)]
+
+            async def notes() -> list[dict]:
+                return await rows(
+                    "select event_type, status, payload from platform_outbox"
+                    " where event_type like 'academy_hw_%%' order by outbox_id"
+                )
+
+            def locks(outline) -> dict:
+                return {row["slug"]: (row["locked"], row["lock_reason"], row["assignment_status"]) for row in outline["lessons"]}
+
+            student = await load_viewer("whieda", STUDENT)
+            author = await load_viewer("whieda", AUTHOR)
+            stranger = await load_viewer("whieda", STRANGER)
+
+            async def photo(viewer) -> str:
+                png = b"\x89PNG\r\n\x1a\n" + b"photo"
+                media = await init_upload("whieda", viewer, kind="image", name="работа.png", mime="image/png",
+                                          size=len(png), allowed_kinds=("image",))
+                await put_chunk("whieda", viewer, media["media_id"], 0, png)
+                await complete_upload("whieda", viewer, media["media_id"])
+                return media["media_id"]
+
+            await set_lesson_done("whieda", "akvarel", "a", student, done=True, source="site")
+            await set_lesson_done("whieda", "akvarel", "b", student, done=True, source="site")
+            work = await photo(student)
+
+            # 1. Пустую сдачу, чужие и неготовые файлы — не принимаем.
+            for text, media_ids, code in (
+                ("", [], "empty_submission"),
+                ("готово", [await photo(stranger)], "bad_media"),
+                ("готово", [VIDEO_ID], "bad_media"),
+            ):
+                with pytest.raises(AcademyError) as refused:
+                    await submit_homework("whieda", "akvarel", "c", student, text=text, media_ids=media_ids)
+                assert refused.value.code == code
+            with pytest.raises(AcademyError) as no_homework:
+                await submit_homework("whieda", "akvarel", "a", student, text="x", media_ids=[])
+            assert no_homework.value.code == "assignment_not_found"
+            with pytest.raises(AcademyError) as locked:
+                await submit_homework("whieda", "akvarel", "d", student, text="x", media_ids=[])
+            assert locked.value.code == "lesson_locked"
+
+            # 2. Сдача: урок отмечен, домашка на проверке, автору — уведомление.
+            sent = await submit_homework("whieda", "akvarel", "c", student, text="Моя заливка", media_ids=[work])
+            first_id = sent["submission"]["submission_id"]
+            assert sent["submission"]["status"] == "submitted"
+            assert sent["submission"]["media"][0]["url"].startswith(f"/academy-media/whieda/academy/{work}/")
+            outline = await course_outline("whieda", "akvarel", student, allow_locked=True)
+            assert locks(outline)["c"] == (False, None, "submitted")
+            assert locks(outline)["d"] == (True, "after_prev", None)
+            assert outline["course"]["next_lesson"] is None  # ждём проверки, дальше — замки
+            [note] = await notes()
+            assert (note["event_type"], note["status"]) == ("academy_hw_submitted", "scheduled")
+            payload = note["payload"]
+            assert payload["chat_id"] == "7001" and payload["binding_id"] == "whieda-advisor-bot"
+            assert payload["text"].startswith("📝 Домашка от Мария — урок «Заливка»")
+            assert payload["site_button"]["url"].endswith(f"/academy/author/?view=inbox&submission={first_id}")
+            assert payload["site_button"]["telegram_user_id"] == AUTHOR
+            # Правка до проверки — та же сдача, второго уведомления нет.
+            edited = await submit_homework("whieda", "akvarel", "c", student, text="Моя заливка, v2", media_ids=[work])
+            assert edited["submission"]["submission_id"] == first_id
+            assert len(await notes()) == 1
+
+            # 3. Входящие автора: имя ученика, урок, текст, фото по ссылке автора.
+            [inbox] = await list_submissions("whieda", author, status="submitted")
+            assert (inbox["student_name"], inbox["lesson_title"], inbox["course_slug"]) == ("Мария", "Заливка", "akvarel")
+            assert inbox["text"] == "Моя заливка, v2"
+            assert inbox["media"][0]["url"].startswith(f"/academy-media/whieda/academy/{work}/original.png?u={AUTHOR}")
+            assert await list_submissions("whieda", author, status="submitted", course_slug="drugoy") == []
+            with pytest.raises(AcademyError) as not_author:
+                await list_submissions("whieda", stranger, status="submitted")
+            assert not_author.value.code == "not_author"
+            with pytest.raises(AcademyError) as foreign_review:
+                await review_submission("whieda", first_id, stranger, status="accepted", comment="")
+            assert foreign_review.value.code == "not_author"
+            with pytest.raises(AcademyError) as no_comment:
+                await review_submission("whieda", first_id, author, status="returned", comment=" ")
+            assert no_comment.value.code == "comment_required"
+
+            # 4. Вернули с комментарием → ученику уведомление; повторная проверка — нельзя.
+            returned = await review_submission("whieda", first_id, author, status="returned", comment="Добавьте тени")
+            assert returned["status"] == "returned"
+            with pytest.raises(AcademyError) as twice:
+                await review_submission("whieda", first_id, author, status="accepted", comment="")
+            assert twice.value.code == "already_reviewed"
+            back = (await notes())[-1]
+            assert back["event_type"] == "academy_hw_reviewed" and back["payload"]["chat_id"] == "9001"
+            assert back["payload"]["text"] == "↩️ Домашку вернули — урок «Заливка»:\nДобавьте тени"
+            assert back["payload"]["site_button"]["url"].endswith("/academy/?course=akvarel&lesson=c")
+            outline = await course_outline("whieda", "akvarel", student, allow_locked=True)
+            assert locks(outline)["c"] == (False, None, "returned")
+            assert outline["course"]["next_lesson"] == "c"
+
+            # 5. Пересдача — новая строка; приняли → урок завершён, неделя 3 открылась.
+            again = await submit_homework("whieda", "akvarel", "c", student, text="С тенями", media_ids=[work])
+            second_id = again["submission"]["submission_id"]
+            assert second_id != first_id
+            assert len([n for n in await notes() if n["event_type"] == "academy_hw_submitted"]) == 2
+            await review_submission("whieda", second_id, author, status="accepted", comment="Отлично")
+            assert (await notes())[-1]["payload"]["text"].startswith("✅ Домашка принята — урок «Заливка»")
+            with pytest.raises(AcademyError) as accepted_already:
+                await submit_homework("whieda", "akvarel", "c", student, text="ещё", media_ids=[])
+            assert accepted_already.value.code == "already_accepted"
+            outline = await course_outline("whieda", "akvarel", student, allow_locked=True)
+            assert locks(outline)["c"] == (False, None, "accepted")
+            assert locks(outline)["d"] == (False, None, None)
+            assert outline["course"]["lessons_done"] == 3
+            assert await list_submissions("whieda", author, status="submitted") == []
+            history = await list_submissions("whieda", author, status="all")
+            assert [item["status"] for item in history] == ["accepted", "returned"]
+
+            # 6. Воркер шлёт уведомления ботом из настройки, кнопка входит на сайт сразу.
+            send = AsyncMock(return_value={"ok": True, "message_id": 1})
+            login = AsyncMock(side_effect=lambda url, **kw: f"{url}#wwc-login=t{kw['telegram_user_id']}")
+            with patch("app.jobs.worker.send_telegram_text", send), patch("app.jobs.worker.with_site_login", login):
+                assert await process_due_notifications({"whieda-advisor-bot": _notify_binding()}) == 4
+            first_call = send.await_args_list[0].kwargs
+            assert first_call["chat_id"] == "7001"
+            button = first_call["reply_markup"]["inline_keyboard"][0][0]
+            assert button["text"] == "Открыть" and button["url"].endswith(f"submission={first_id}#wwc-login=t{AUTHOR}")
+            assert {n["status"] for n in await notes()} == {"done"}
+
+        db.run_with_app(proof)
