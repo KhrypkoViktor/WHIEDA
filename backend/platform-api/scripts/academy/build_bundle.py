@@ -12,13 +12,17 @@ slugs). Per lesson:
   lines never reach the site;
 - «урок N» references become «урок «Короткое название»» — lesson numbers change
   with the course order, names do not;
-- `from_heading` in the manifest keeps only the part from that H2 onwards.
+- `from_heading` in the manifest keeps only the part from that H2 onwards;
+- pictures (`![…](img/…)`) travel inside the bundle (`media`: path → mime + base64);
+  `load_bundle.py` puts them into `academy_media` (Academy v2, 02.10.2026) — the site
+  repository no longer keeps lesson screenshots. A missing picture stops the build.
 
 Needs `pip install markdown` on the machine that builds; Core only loads JSON.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import sys
@@ -33,6 +37,21 @@ TIME_RE = re.compile(r"^\*\*Время:\*\*\s*(.+)$", re.M)
 PREAMBLE_RE = re.compile(r"^(Версия|Формат|Основа|Статус)\b.*$", re.M)
 LESSON_REF_RE = re.compile(r"\b([Уу]рок(?:а|е|у|ом|и)?)\s+(\d{1,2})\b")
 WIKILINK_RE = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+IMG_SRC_RE = re.compile(r'<img\b[^>]*\bsrc="(img/[^"]+)"')
+IMAGE_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def _embed_pictures(folder: Path, source_file: str, body_html: str, media: dict) -> None:
+    for path in IMG_SRC_RE.findall(body_html):
+        if path in media:
+            continue
+        file = folder / path
+        mime = IMAGE_MIME.get(file.suffix.lower())
+        if not file.is_file():
+            raise SystemExit(f"{source_file}: нет картинки {path}")
+        if not mime:
+            raise SystemExit(f"{source_file}: картинка {path} — не png/jpg/webp/gif")
+        media[path] = {"mime": mime, "data_b64": base64.b64encode(file.read_bytes()).decode("ascii")}
 
 
 def _strip_owner_callouts(text: str) -> str:
@@ -91,6 +110,7 @@ def build(folder: Path) -> dict:
         short_by_file[Path(item["file"]).stem] = short
 
     lessons = []
+    media: dict[str, dict] = {}
     for position, (module_title, item, source) in enumerate(entries, start=1):
         text = source
         if item.get("from_heading"):
@@ -118,9 +138,9 @@ def build(folder: Path) -> dict:
         # Разделители «---» в начале/конце урока на сайте лишние.
         text = re.sub(r"^(?:---\s*\n)+|(?:\n---\s*)+$", "", text).strip()
         body_html = markdown.markdown(text, extensions=["tables", "sane_lists"], output_format="html")
-        # Скриншоты урока лежат в Obsidian рядом (img/…) и на сайте в /academy/img/
-        # (site: scripts/academy-shots.mjs); внешние ссылки — в новой вкладке.
-        body_html = re.sub(r'<img alt="([^"]*)" src="img/', r'<img loading="lazy" alt="\1" src="/academy/img/', body_html)
+        # Скриншоты урока лежат в Obsidian рядом (img/…) и едут в бандле → academy_media;
+        # внешние ссылки — в новой вкладке.
+        _embed_pictures(folder, item["file"], body_html, media)
         body_html = re.sub(r'<a href="(https?://[^"]+)">', r'<a href="\1" target="_blank" rel="noopener">', body_html)
         lessons.append(
             {
@@ -144,6 +164,7 @@ def build(folder: Path) -> dict:
             "access_rule": manifest.get("access", "pro"),
         },
         "lessons": lessons,
+        "media": media,
     }
 
 

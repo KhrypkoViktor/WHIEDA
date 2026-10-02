@@ -917,3 +917,96 @@ def test_author_builds_publishes_and_follows_a_course(monkeypatch, tmp_path):
             ]
 
         db.run_with_app(proof)
+
+
+def _bundle_loader():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "academy" / "load_bundle.py"
+    spec = importlib.util.spec_from_file_location("academy_load_bundle_v2", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.integration
+def test_bundle_loader_builds_modules_and_stores_pictures(monkeypatch, tmp_path):
+    import base64
+
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    loader = _bundle_loader()
+    png = b"\x89PNG\r\n\x1a\n" + b"scheme"
+
+    def bundle(*lessons):
+        return {
+            "course": {"slug": "zapusk", "title": "Запуск WWC", "access_rule": "pro"},
+            "lessons": [
+                {"slug": slug, "position": position, "module_title": module, "title": title, "body_html": body}
+                for position, (slug, module, title, body) in enumerate(lessons, start=1)
+            ],
+            "media": {"img/shema.png": {"mime": "image/png", "data_b64": base64.b64encode(png).decode("ascii")}},
+        }
+
+    first = bundle(
+        ("vhod", "Старт", "Вход", '<p>Схема:</p><img alt="Схема" src="img/shema.png">'),
+        ("plan", "Старт", "План", "<p>План</p>"),
+        ("dengi", "Деньги", "Деньги", '<img loading="lazy" alt="" src="/academy/img/shema.png">'),
+    )
+    with temporary_database("whieda_academy_bundle") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            db.grant_api_role(conn)
+
+        def query(sql: str):
+            with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+                return conn.execute(sql).fetchall()
+
+        loaded = loader.load("whieda", first, status="published", dsn=db.admin_dsn)
+        assert (loaded["modules"], loaded["media"]) == (2, 1)
+        modules = query("select title, position, module_id from academy_modules order by position")
+        assert [(row[0], row[1]) for row in modules] == [("Старт", 1), ("Деньги", 2)]
+        [(media_id, status, key, kind)] = query("select media_id::text, status, storage_key, kind from academy_media")
+        assert (status, kind) == ("ready", "image")
+        assert key == f"whieda/academy/{media_id}/original.png"
+        assert (media_dir / key).read_bytes() == png
+        bodies = dict(query("select slug, body_html from academy_lessons"))
+        assert f'src="media:{media_id}"' in bodies["vhod"] and f'src="media:{media_id}"' in bodies["dengi"]
+        links = dict(query("select l.slug, m.title from academy_lessons l join academy_modules m on m.module_id = l.module_id"))
+        assert links == {"vhod": "Старт", "plan": "Старт", "dengi": "Деньги"}
+
+        # Повторная загрузка: те же модули и та же картинка, без дублей.
+        loader.load("whieda", first, dsn=db.admin_dsn)
+        assert query("select title, position, module_id from academy_modules order by position") == modules
+        assert query("select count(*) from academy_media") == [(1,)]
+
+        # Модули поменялись местами, урок «План» убран → архив; модуль остался.
+        loader.load(
+            "whieda",
+            bundle(("dengi", "Деньги", "Деньги", "<p>д</p>"), ("vhod", "Старт", "Вход", "<p>в</p>")),
+            dsn=db.admin_dsn,
+        )
+        assert [(row[0], row[1]) for row in query("select title, position from academy_modules order by position")] == [
+            ("Деньги", 1), ("Старт", 2),
+        ]
+        assert query("select status from academy_lessons where slug = 'plan'") == [("archived",)]
+
+        # Модуля «Деньги» больше нет в бандле — он удаляется, урок переехал в «Старт».
+        loader.load(
+            "whieda",
+            bundle(("vhod", "Старт", "Вход", "<p>в</p>"), ("dengi", "Старт", "Деньги", "<p>д</p>")),
+            dsn=db.admin_dsn,
+        )
+        assert [row[0] for row in query("select title from academy_modules")] == ["Старт"]
+
+        async def proof() -> None:
+            from app.academy.service import course_outline, load_viewer
+
+            owner = await load_viewer("whieda", ADMIN)
+            outline = await course_outline("whieda", "zapusk", owner, allow_locked=True)
+            assert [m["title"] for m in outline["modules"]] == ["Старт"]
+            assert [l["slug"] for l in outline["lessons"]] == ["vhod", "dengi"]
+
+        db.run_with_app(proof)
