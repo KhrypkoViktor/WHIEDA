@@ -97,3 +97,21 @@ def test_media_mentions_in_text_are_refs_but_only_tags_are_rewritten():
     assert f'src="media:{other}"' in resolved and f"media:{MEDIA_ID.upper()}" in resolved
     assert '<img src="/academy-media/k?u=1&amp;e=2&amp;s=x" alt="a">' in resolved
     assert "<img" not in resolve_media(html, {})
+
+
+def test_author_views_clean_stored_html_too():
+    from app.academy.author import _course_out, _lesson_out
+
+    course = {
+        "slug": "k", "title": "K", "subtitle": None, "kind": "course", "status": "draft", "access_rule": "purchase",
+        "description_md": "", "description_html": "<p>x</p><script>alert(1)</script>", "cover_media_id": None,
+        "price_wusd_minor": None, "price_currency": "WUSD", "created_at": None, "updated_at": None,
+    }
+    assert _course_out(course, {}, 1)["description_html"] == "<p>x</p>"
+    lesson = {
+        "lesson_id": MEDIA_ID, "slug": "a", "module_id": None, "position": 1, "title": "A", "short_title": None,
+        "kind": "lesson", "status": "published", "body_md": "", "body_html": "<p>b</p>", "video": None, "files": [],
+        "live_at": None, "live_url": None, "unlock": None,
+        "prompt_md": "", "prompt_html": '<p onclick="x()">Фото</p><iframe src="https://x"></iframe>', "required": True,
+    }
+    assert _lesson_out(lesson, {}, 1)["assignment"]["prompt_html"] == "<p>Фото</p>"

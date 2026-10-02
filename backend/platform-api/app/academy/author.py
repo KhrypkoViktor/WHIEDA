@@ -149,7 +149,7 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "status": course["status"],
         "access_rule": course["access_rule"],
         "description_md": course.get("description_md") or "",
-        "description_html": course.get("description_html") or "",
+        "description_html": sanitize_html(course.get("description_html")),
         "cover_media_id": course.get("cover_media_id"),
         "cover_url": media_summary(cover, telegram_user_id)["url"] if cover else None,
         "price": price_out(course.get("price_wusd_minor"), course.get("price_currency")),
@@ -272,6 +272,10 @@ async def create_course(
     clean_subtitle = _text(subtitle, code="bad_subtitle", max_len=300, required=False)
     async with tenant_connection(tenant_id) as conn:
         author = await _author(conn, tenant_id, viewer)
+        # Два одновременных «создать» с одним адресом: второй ждёт и получает 409/«-2», а не 500.
+        await fetch_one(
+            conn, "select pg_advisory_xact_lock(hashtext(%s)) as locked", (f"academy_course_slug:{tenant_id}",)
+        )
         if slug:
             wanted = str(slug).strip().lower()
             if not _SLUG_RE.match(wanted) or len(wanted) > 60:
@@ -455,7 +459,7 @@ def _lesson_out(row: dict[str, Any], media: dict[str, dict[str, Any]], telegram_
         "live_url": row.get("live_url"),
         "unlock": row.get("unlock"),
         "assignment": (
-            {"prompt_md": row.get("prompt_md") or "", "prompt_html": row.get("prompt_html") or "",
+            {"prompt_md": row.get("prompt_md") or "", "prompt_html": sanitize_html(row.get("prompt_html")),
              "required": bool(row.get("required"))}
             if row.get("required") is not None
             else None
