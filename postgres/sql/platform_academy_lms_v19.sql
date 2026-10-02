@@ -14,7 +14,10 @@
 --   academy_submissions — сдачи: одна активная на (урок, ученик), после «вернули» — новая строка;
 --   academy_access      + started_at (старт для days_after_start; старым строкам — granted_at),
 --                          expires_at (срок доступа, пока никто не ставит);
---   academy_media       — загрузки: uploading → processing (видео) → ready | failed.
+--   academy_media       — загрузки: uploading → processing (видео) → ready | failed;
+--   academy_courses.status + 'review' — курс стороннего автора на проверке у владельца
+--                          (премодерация, решение лида 02.10): review_note — причина возврата,
+--                          review_requested_at — когда автор отправил на проверку.
 --
 -- Только create/add if not exists и пересоздание своих проверок: повторный прогон
 -- безопасен. Знака доллара в файле нет: боевые правки идут через n8n.
@@ -66,6 +69,13 @@ alter table academy_courses add constraint academy_courses_kind_check
 alter table academy_courses drop constraint if exists academy_courses_cover_media_fk;
 alter table academy_courses add constraint academy_courses_cover_media_fk
   foreign key (tenant_id, cover_media_id) references academy_media (tenant_id, media_id);
+
+-- 2a. Премодерация: черновик → на проверке → опубликован (или обратно в черновик с причиной).
+alter table academy_courses add column if not exists review_note text;
+alter table academy_courses add column if not exists review_requested_at timestamptz;
+alter table academy_courses drop constraint if exists academy_courses_status_check;
+alter table academy_courses add constraint academy_courses_status_check
+  check (status in ('draft', 'review', 'published', 'archived'));
 
 -- 3. Модули.
 create table if not exists academy_modules (

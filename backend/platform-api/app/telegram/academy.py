@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.academy.author import course_brief, review_course
 from app.academy.keys import (
     KEY_ERROR_TEXT,
     MAX_KEYS_PER_BATCH,
@@ -84,6 +85,11 @@ _TEXT_RE = re.compile(
 )
 _KEYS_RE = re.compile(r"^/?ключи(?:\s+([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\s+(\d{1,4}))?\s*$", re.I)
 _MY_COURSES_RE = re.compile(r"^/?мои\s+курсы\s*$", re.I)
+# Премодерация курсов (лид, 02.10.2026): карточка владельцу с кнопками решения.
+_REVIEW_CALLBACK_RE = re.compile(r"^acadrev:(ok|no):([0-9a-f-]{36})$")
+_RETURN_PROMPT_RE = re.compile(r"^↩️ Курс «.*» \(([a-z0-9]+(?:-[a-z0-9]+)*)\) — что поправить\?")
+_RETURN_COMMAND_RE = re.compile(r"^/?вернуть\s+([a-z0-9]+(?:-[a-z0-9]+)*)\s+(.+)$", re.I | re.S)
+NOT_IN_REVIEW_TEXT = "Курс «{title}» уже не на проверке."
 KEYS_INLINE_LIMIT = 20  # больше — одним текстовым файлом (сообщение Telegram ≤ 4096 символов)
 
 LOCK_TEXT = {
@@ -328,9 +334,85 @@ async def show_academy_home(tenant_id: str, chat_id: int, telegram_user_id: int)
     return {"status": "courses"}
 
 
+async def _handle_review_callback(
+    tenant: TenantContext, callback: TelegramCallbackQuery, decision: str, course_id: str, *, trace_id: str
+) -> dict[str, Any]:
+    """«Опубликовать» / «Вернуть» на карточке курса — только владелец (preview-админ)."""
+    route = "academy_course_review"
+    if callback.chat_type != "private":
+        return {"ok": True, "route": route, "status": "private_chat_required", "trace_id": trace_id}
+    viewer = await load_viewer(tenant.tenant_id, callback.user_id)
+    if not viewer.is_preview_admin:
+        await _send(callback.chat_id, "Решение по курсу принимает владелец.")
+        return {"ok": False, "route": route, "status": "not_owner", "trace_id": trace_id}
+    if decision == "no":
+        brief = await course_brief(tenant.tenant_id, course_id)
+        if not brief:
+            await _send(callback.chat_id, "Курс не найден.")
+            return {"ok": False, "route": route, "status": "course_not_found", "trace_id": trace_id}
+        if brief["status"] != "review":
+            await _send(callback.chat_id, NOT_IN_REVIEW_TEXT.format(title=brief["title"]))
+            return {"ok": False, "route": route, "status": "not_in_review", "trace_id": trace_id}
+        await _send(
+            callback.chat_id,
+            f"↩️ Курс «{brief['title']}» ({brief['slug']}) — что поправить? Ответьте на это сообщение одной строкой.",
+            {"force_reply": True, "input_field_placeholder": "Что поправить"},
+        )
+        return {"ok": True, "route": route, "status": "reason_asked", "trace_id": trace_id}
+    try:
+        result = await review_course(tenant.tenant_id, viewer, course_id=course_id, decision="published", note="")
+    except AcademyError as exc:
+        title = str(exc.extra.get("title") or "")
+        await _send(
+            callback.chat_id,
+            NOT_IN_REVIEW_TEXT.format(title=title) if exc.code == "not_in_review" and title else "Курс не найден.",
+        )
+        return {"ok": False, "route": route, "status": exc.code, "trace_id": trace_id}
+    await _send(callback.chat_id, f"✅ Курс «{result['title']}» опубликован. Автору отправлен ответ.")
+    return {"ok": True, "route": route, "status": "published", "trace_id": trace_id}
+
+
+async def _try_course_return(tenant: TenantContext, msg: TelegramMessage, text: str, *, trace_id: str) -> dict | None:
+    """Причина возврата курса: ответ владельца на вопрос бота или «вернуть <адрес> <причина>»."""
+    if int(msg.user_id) not in preview_admin_ids():
+        return None
+    slug = note = None
+    reply = ((msg.raw or {}).get("message") or {}).get("reply_to_message") or {}
+    if (reply.get("from") or {}).get("is_bot"):
+        prompt = _RETURN_PROMPT_RE.match(str(reply.get("text") or ""))
+        if prompt:
+            slug, note = prompt.group(1), text
+    if slug is None:
+        command = _RETURN_COMMAND_RE.match(text)
+        if command:
+            slug, note = command.group(1).lower(), command.group(2)
+    if slug is None:
+        return None
+    route = "academy_course_review"
+    viewer = await load_viewer(tenant.tenant_id, msg.user_id)
+    try:
+        result = await review_course(tenant.tenant_id, viewer, slug=slug, decision="returned", note=note)
+    except AcademyError as exc:
+        title = str(exc.extra.get("title") or slug)
+        texts = {
+            "not_in_review": NOT_IN_REVIEW_TEXT.format(title=title),
+            "comment_required": "Напишите, что поправить, — одной строкой.",
+            "comment_too_long": "Слишком длинно — уложитесь в одну строку.",
+        }
+        await _send(msg.chat_id, texts.get(exc.code, "Курс не найден."))
+        return {"ok": False, "route": route, "status": exc.code, "trace_id": trace_id}
+    await _send(msg.chat_id, f"↩️ Курс «{result['title']}» вернули автору: {' '.join(str(note).split())}")
+    return {"ok": True, "route": route, "status": "returned", "trace_id": trace_id}
+
+
 async def try_handle_academy_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
+    review = _REVIEW_CALLBACK_RE.fullmatch(callback.data or "")
+    if review:
+        binding = current_bot_binding()
+        await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=binding.bot_token)
+        return await _handle_review_callback(tenant, callback, review.group(1), review.group(2), trace_id=trace_id)
     match = _CALLBACK_RE.fullmatch(callback.data)
     if not match:
         return None
@@ -379,6 +461,9 @@ async def try_handle_academy_text(tenant: TenantContext, msg: TelegramMessage, *
     """Old «обучение» commands → the Academy, but only where it is open.
     «ключи …» and «мои курсы» — the author's tools (the shelf)."""
     text = str(msg.text or "").strip()
+    returned = await _try_course_return(tenant, msg, text, trace_id=trace_id)
+    if returned is not None:
+        return returned
     if not is_academy_text(text):
         return None
     keys = _KEYS_RE.match(text)
@@ -482,7 +567,7 @@ async def handle_keys_command(
     return {"ok": True, "route": "academy_keys", "status": "issued_file", "count": len(links), "trace_id": trace_id}
 
 
-_STATUS_LABEL = {"draft": "черновик — на проверке у владельца", "published": "опубликован"}
+_STATUS_LABEL = {"draft": "черновик", "review": "на проверке у владельца", "published": "опубликован"}
 
 
 async def handle_my_courses(tenant: TenantContext, msg: TelegramMessage, *, trace_id: str) -> dict[str, Any] | None:

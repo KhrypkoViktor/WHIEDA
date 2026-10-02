@@ -36,6 +36,7 @@ from app.academy.author import (
     reorder_lessons,
     reorder_modules,
     require_author,
+    review_course,
     update_course,
     update_lesson,
     update_module,
@@ -327,6 +328,13 @@ async def author_update_course(slug: str, body: CoursePatchBody, request: Reques
 async def author_students(slug: str, request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
     return {"ok": True, "students": await _guard(course_students(tenant_id, viewer, slug))}
+
+
+@router.post(f"{A}/courses/{{slug}}/review")
+async def owner_review_course(slug: str, body: ReviewBody, request: Request, response: Response) -> dict[str, Any]:
+    """Премодерация на сайте (то же, что кнопки в боте): published | returned + причина."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(review_course(tenant_id, viewer, slug=slug, decision=body.status, note=body.comment))
 
 
 @router.post(f"{A}/courses/{{slug}}/modules")

@@ -99,8 +99,12 @@ website_lead_owner_routing (окружение/живые снимки). Спи�
   position,unlock,lessons[]{lesson_id,slug,position,title,kind,status,live_at,unlock,has_assignment,
   submissions_pending,video}}`, `unassigned_lessons[]`, `can_publish`.
 - `PATCH /author/courses/{slug}` — любые из `title, subtitle, description_md, cover_media_id, access_rule
-  (free|purchase; pro — владелец), price (число|null), currency (WUSD|BYN|RUB|USD|EUR|KZT), status (draft|published)`.
-  Публикация без оплаченной Академии автора → 403 `shelf_inactive`. Лишнее поле → 422.
+  (free|purchase; pro — владелец), price (число|null), currency (WUSD|BYN|RUB|USD|EUR|KZT), status (draft|review|published)`.
+  Автор: `published`/`review` → курс `review` (премодерация), без оплаченной Академии автора → 403 `shelf_inactive`;
+  любая правка курса в `review` возвращает его в `draft`. Владелец/админ: `published` сразу. В `course` —
+  `review_note` (причина возврата) и `review_requested_at`. Решение владельца на сайте:
+  `POST /author/courses/{slug}/review {status: published|returned, comment}` (вернуть — с причиной;
+  не на проверке → 409 `not_in_review`, не владелец → 403 `not_owner`). Лишнее поле → 422.
 - Модули: `POST …/modules {title, unlock?}`, `PATCH …/modules/reorder {order:[module_id…]}` (весь список),
   `PATCH …/modules/{id} {title?, unlock?}`, `DELETE …/modules/{id}` (409 `module_not_empty`).
   `unlock`: `{"type":"open"}` | `{"type":"after_prev"}` | `{"type":"date","at":"2026-10-10T10:00"}` (без пояса —
@@ -145,7 +149,8 @@ website_lead_owner_routing (окружение/живые снимки). Спи�
 
 1. ТЗ п.7: ссылка автору `/academy/author/#inbox` — `with_site_login` заменяет фрагмент на `#wwc-login=…`, сделал `?view=inbox&submission=<id>`; Site-сессии читать query.
 2. ТЗ п.5 «HMAC», п.6 «nginx secure_link» — модуль secure_link умеет только md5(строка+секрет); сделал формат secure_link (один и для nginx, и для fallback в API). Нужен строго HMAC — тогда nginx через auth_request в Core, скажите.
-3. Решение 25.09 «курс автора проверяет владелец до публикации» vs ТЗ v2 «автор публикует при активной полке» — сделал по ТЗ v2; нужна премодерация — добавлю статус «на проверке».
+3. Ответ лида 02.10: нужна премодерация — сделана (строка в «Сделано»). Вопросы 1 и 2 лид принял как есть.
+4. Опубликованный курс автор правит без новой проверки (лид описал возврат в черновик только для `review`) — если нужна проверка и правок опубликованного, скажите.
 
 ## Действия лида перед staging (инфраструктура, сам не делал)
 
@@ -170,15 +175,20 @@ website_lead_owner_routing (окружение/живые снимки). Спи�
 
 ## Сделано / проверено
 
+- 02.10, по ответу лида: премодерация курсов сторонних авторов — автор «Опубликовать» → `review` (статус в V19),
+  владельцу в бот карточка «Курс на проверку: «…», автор …, N уроков» с «Опубликовать» / «Вернуть» (причина —
+  ответом на вопрос бота или «вернуть <адрес> <причина>») и «Посмотреть курс», автору — ответ с кнопкой в кабинет
+  (outbox); правка на проверке → `draft`; владелец публикует сразу; то же решение — `POST /author/courses/{slug}/review`.
+
 Коммиты ветки `core/academy-v2-lms` (от `34d2c85`): миграция V19; правила открытия; markdown + nh3;
 ученик (модули, замки, медиа урока); загрузка кусками + перекодирование; домашки + уведомления;
 кабинет автора; HTTP-ручки; «полка» → «Академия»; бот и замки; load_bundle/build_bundle; nginx/compose/Dockerfile.
 
 Проверено локально (Windows, Python 3.14, PostgreSQL из scoop, ffmpeg 9.0.1):
-- `python -m pytest -q -p no:cacheprovider tests` → 22 failed, 4 errors, 1905 passed, 28 skipped.
-  Список падений совпадает с origin/master один в один (26 старых, новых нет); +96 новых тестов.
-- `pwsh backend/platform-api/scripts/run_postgres_integration_tests.ps1` → 27 passed, 0 failed
-  (7 новых: лимиты загрузок и уборка брошенных; V19 двойной прогон + RLS; ученик; загрузка + перекодирование настоящим ffmpeg 1080p→720p
+- `python -m pytest -q -p no:cacheprovider tests` → 22 failed, 4 errors, 1913 passed, 29 skipped.
+  Список падений совпадает с origin/master один в один (26 старых, новых нет); +104 новых теста.
+- `pwsh backend/platform-api/scripts/run_postgres_integration_tests.ps1` → 28 passed, 0 failed
+  (8 новых: премодерация курса; лимиты загрузок и уборка брошенных; V19 двойной прогон + RLS; ученик; загрузка + перекодирование настоящим ffmpeg 1080p→720p
   с постером; домашки + уведомления; кабинет автора; load_bundle).
 - Фокус-тесты гейта `release_core.ps1` (тот же список) → 182 passed.
 - `python .github/scripts/check_zone.py --base origin/master` → ZONE CHECK OK (zone: core).

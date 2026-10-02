@@ -61,6 +61,8 @@ def test_v19_migration_twice_backfills_start_and_isolates_tenants():
                 ("academy_courses", "cover_media_id"),
                 ("academy_courses", "price_currency"),
                 ("academy_courses", "kind"),
+                ("academy_courses", "review_note"),
+                ("academy_courses", "review_requested_at"),
                 ("academy_modules", "unlock"),
                 ("academy_lessons", "module_id"),
                 ("academy_lessons", "kind"),
@@ -119,6 +121,9 @@ def test_v19_migration_twice_backfills_start_and_isolates_tenants():
             )
             with pytest.raises(psycopg.errors.CheckViolation):
                 conn.execute("update academy_lessons set kind = 'webinar' where lesson_id = %s", (lesson_id,))
+            # Курс автора — на проверке у владельца (премодерация, 02.10).
+            conn.execute("update academy_courses set status = 'review', review_note = 'x' where slug = 'kurs'")
+            conn.execute("update academy_courses set status = 'published', review_note = null where slug = 'kurs'")
 
             # Одна активная домашка на (урок, ученик); после «вернули» — новая строка.
             conn.execute(
@@ -930,7 +935,9 @@ def test_author_builds_publishes_and_follows_a_course(monkeypatch, tmp_path):
             # 5. Черновик ученику не виден; публикация — при оплаченном размещении.
             assert [c["slug"] for c in await list_courses("whieda", student)] == []
             published = (await authoring.update_course("whieda", almira, slug, {"status": "published"}))["course"]
-            assert published["status"] == "published"
+            assert published["status"] == "review"  # премодерация: курс автора — на проверку владельцу
+            approved = await authoring.review_course("whieda", owner, slug=slug, decision="published", note="")
+            assert approved["status"] == "published"
             async with tenant_connection("whieda") as conn:
                 await conn.execute("update academy_shelf set status = 'suspended'")
             with pytest.raises(AcademyError) as lapsed:
@@ -1083,5 +1090,118 @@ def test_bundle_loader_builds_modules_and_stores_pictures(monkeypatch, tmp_path)
             outline = await course_outline("whieda", "zapusk", owner, allow_locked=True)
             assert [m["title"] for m in outline["modules"]] == ["Старт"]
             assert [l["slug"] for l in outline["lessons"]] == ["vhod", "dengi"]
+
+        db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_owner_moderates_an_authors_course(monkeypatch, tmp_path):
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    monkeypatch.setenv("PLATFORM_ACADEMY_NOTIFY_BINDING", "whieda-advisor-bot")
+    with temporary_database("whieda_academy_review") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from unittest.mock import AsyncMock, patch
+
+            from app.academy import author as authoring
+            from app.academy.service import AcademyError, list_courses, load_viewer
+            from app.db import fetch_all, tenant_connection
+            from app.jobs.worker import process_due_notifications
+
+            async def notes(prefix: str) -> list[dict]:
+                async with tenant_connection("whieda") as conn:
+                    return [
+                        dict(r) for r in await fetch_all(
+                            conn,
+                            "select event_type, payload from platform_outbox where event_type like %s order by outbox_id",
+                            (prefix + "%",),
+                        )
+                    ]
+
+            almira = await load_viewer("whieda", AUTHOR)
+            owner = await load_viewer("whieda", ADMIN)
+            student = await load_viewer("whieda", STUDENT)
+
+            course = (await authoring.create_course("whieda", almira, title="Акварель"))["course"]
+            slug = course["slug"]
+            module = (await authoring.create_module("whieda", almira, slug, {"title": "Неделя 1"}))["module"]
+            for title in ("Кисти", "Бумага"):
+                await authoring.create_lesson("whieda", almira, slug, module["module_id"], {"title": title})
+
+            # 1. Автор жмёт «Опубликовать» → на проверке; владельцу — карточка с кнопками.
+            sent = (await authoring.update_course("whieda", almira, slug, {"status": "published"}))["course"]
+            assert sent["status"] == "review"
+            assert await list_courses("whieda", student) == []
+            [card] = await notes("academy_course_review")
+            payload = card["payload"]
+            assert payload["chat_id"] == str(ADMIN) and payload["binding_id"] == "whieda-advisor-bot"
+            assert payload["text"] == "📝 Курс на проверку: «Акварель», автор Альмира, 2 урока"
+            buttons = [b for row in payload["reply_markup"]["inline_keyboard"] for b in row]
+            course_id = buttons[0]["callback_data"].split(":")[-1]
+            assert [(b["text"], b["callback_data"]) for b in buttons] == [
+                ("Опубликовать", f"acadrev:ok:{course_id}"), ("Вернуть", f"acadrev:no:{course_id}"),
+            ]
+            assert payload["site_button"]["url"].endswith(f"/academy/?course={slug}")
+            assert payload["site_button"]["text"] == "Посмотреть курс"
+            # Повторное «Опубликовать» на проверке — без второй карточки.
+            assert (await authoring.update_course("whieda", almira, slug, {"status": "published"}))["course"]["status"] == "review"
+            assert len(await notes("academy_course_review")) == 1
+
+            # 2. Правка курса на проверке возвращает его в черновик.
+            await authoring.update_lesson("whieda", almira, slug, (await authoring.author_course("whieda", almira, slug))
+                                          ["modules"][0]["lessons"][0]["lesson_id"], {"title": "Кисти и краски"})
+            assert (await authoring.author_course("whieda", almira, slug))["course"]["status"] == "draft"
+            with pytest.raises(AcademyError) as not_waiting:
+                await authoring.review_course("whieda", owner, slug=slug, decision="published", note="")
+            assert (not_waiting.value.status, not_waiting.value.code) == (409, "not_in_review")
+            await authoring.update_course("whieda", almira, slug, {"status": "review"})
+            assert len(await notes("academy_course_review")) == 2  # новая отправка — новая карточка
+
+            # 3. Решает только владелец; вернуть — с причиной.
+            with pytest.raises(AcademyError) as not_owner:
+                await authoring.review_course("whieda", almira, slug=slug, decision="published", note="")
+            assert not_owner.value.code == "not_owner"
+            with pytest.raises(AcademyError) as no_reason:
+                await authoring.review_course("whieda", owner, slug=slug, decision="returned", note="  ")
+            assert no_reason.value.code == "comment_required"
+            returned = await authoring.review_course(
+                "whieda", owner, course_id=course_id, decision="returned", note="Уберите обещание вылечить спину"
+            )
+            assert (returned["status"], returned["slug"], returned["title"]) == ("draft", slug, "Акварель")
+            back = await authoring.author_course("whieda", almira, slug)
+            assert back["course"]["review_note"] == "Уберите обещание вылечить спину"
+            [answer] = await notes("academy_course_reviewed")
+            assert answer["payload"]["chat_id"] == "7001"
+            assert answer["payload"]["text"] == "↩️ Курс «Акварель» вернули на доработку:\nУберите обещание вылечить спину"
+            assert answer["payload"]["site_button"]["url"].endswith(f"/academy/author/?course={slug}")
+
+            # 4. Снова на проверку → владелец публикует; ученики видят курс, автору — ответ.
+            await authoring.update_course("whieda", almira, slug, {"status": "published"})
+            published = await authoring.review_course("whieda", owner, slug=slug, decision="published", note="")
+            assert published["status"] == "published"
+            assert (await authoring.author_course("whieda", almira, slug))["course"]["review_note"] is None
+            assert (await notes("academy_course_reviewed"))[-1]["payload"]["text"] == "✅ Курс «Акварель» опубликован."
+            assert [c["slug"] for c in await list_courses("whieda", student)] == [slug]
+
+            # 5. Курс владельца публикуется сразу, без проверки.
+            own = (await authoring.create_course("whieda", owner, title="Запуск"))["course"]
+            assert (await authoring.update_course("whieda", owner, own["slug"], {"status": "published"}))["course"]["status"] == "published"
+
+            # 6. Воркер: карточка владельцу — кнопки решения и кнопка «Посмотреть курс» со входом.
+            send = AsyncMock(return_value={"ok": True, "message_id": 1})
+            login = AsyncMock(side_effect=lambda url, **kw: f"{url}#wwc-login=t{kw['telegram_user_id']}")
+            with patch("app.jobs.worker.send_telegram_text", send), patch("app.jobs.worker.with_site_login", login):
+                assert await process_due_notifications({"whieda-advisor-bot": _notify_binding()}) == 5
+            owner_card = send.await_args_list[0].kwargs
+            rows = owner_card["reply_markup"]["inline_keyboard"]
+            assert [b["text"] for b in rows[0]] == ["Опубликовать", "Вернуть"]
+            assert rows[-1][0]["text"] == "Посмотреть курс"
+            assert rows[-1][0]["url"].endswith(f"/academy/?course={slug}#wwc-login=t{ADMIN}")
 
         db.run_with_app(proof)

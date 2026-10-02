@@ -228,3 +228,12 @@ async def test_signed_file_refuses_tampering(content_app, media_files):  # noqa:
         assert response.status_code in (403, 404), bad
     expired = signed_url(media_files, 9001, now=1_000_000_000)
     assert (await call(content_app, "GET", expired)).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_owner_reviews_a_course_on_the_site_too(content_app, signed_in):  # noqa: F811
+    with patch("app.academy.routes.review_course", AsyncMock(return_value={"ok": True, "status": "draft"})) as review:
+        response = await call(content_app, "POST", f"{P}/author/courses/akvarel/review",
+                              json={"status": "returned", "comment": "Уберите обещания"})
+    assert response.status_code == 200 and response.json()["status"] == "draft"
+    assert review.await_args.kwargs == {"slug": "akvarel", "decision": "returned", "note": "Уберите обещания"}

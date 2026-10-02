@@ -175,7 +175,10 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
         url = await with_site_login(
             str(button["url"]), tenant_id=binding.tenant.tenant_id, telegram_user_id=button.get("telegram_user_id")
         )
-        markup = {"inline_keyboard": [[{"text": str(button.get("text") or "Открыть")[:64], "url": url}]]}
+        row = [{"text": str(button.get("text") or "Открыть")[:64], "url": url}]
+        # Кнопки решения (премодерация курса) остаются, кнопка сайта — последней строкой.
+        rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+        markup = {"inline_keyboard": [*(rows if isinstance(rows, list) else []), row]}
     with outbound_binding_guard(binding.bot_token):
         result = await send_telegram_text(
             chat_id=chat_id,

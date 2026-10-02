@@ -30,6 +30,12 @@ SUBMITTED_EVENT = "academy_hw_submitted"
 REVIEWED_EVENT = "academy_hw_reviewed"
 OPEN_BUTTON = "Открыть"
 OPEN_LESSON_BUTTON = "Открыть урок"
+# Премодерация курсов (решение лида 02.10): карточка владельцу и ответ автору.
+COURSE_REVIEW_EVENT = "academy_course_review"
+COURSE_REVIEWED_EVENT = "academy_course_reviewed"
+VIEW_COURSE_BUTTON = "Посмотреть курс"
+OPEN_CABINET_BUTTON = "Открыть кабинет"
+REVIEW_CALLBACK_PREFIX = "acadrev"
 
 
 def notify_binding_id() -> str | None:
@@ -51,6 +57,51 @@ def author_inbox_url(submission_id: str) -> str:
 
 def lesson_page_url(course_slug: str, lesson_slug: str) -> str:
     return f"{_site_base()}/academy/?{urlencode({'course': course_slug, 'lesson': lesson_slug})}"
+
+
+def course_page_url(course_slug: str) -> str:
+    return f"{_site_base()}/academy/?{urlencode({'course': course_slug})}"
+
+
+def author_course_url(course_slug: str) -> str:
+    return f"{_site_base()}/academy/author/?{urlencode({'course': course_slug})}"
+
+
+def lessons_word(count: int) -> str:
+    n = abs(int(count))
+    if n % 10 == 1 and n % 100 != 11:
+        return "урок"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return "урока"
+    return "уроков"
+
+
+def course_review_text(title: str, author_name: str | None, lessons: int) -> str:
+    return f"📝 Курс на проверку: «{title}», автор {author_name or 'без имени'}, {lessons} {lessons_word(lessons)}"
+
+
+def course_review_markup(course_id: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [[
+            {"text": "Опубликовать", "callback_data": f"{REVIEW_CALLBACK_PREFIX}:ok:{course_id}"},
+            {"text": "Вернуть", "callback_data": f"{REVIEW_CALLBACK_PREFIX}:no:{course_id}"},
+        ]]
+    }
+
+
+def course_reviewed_text(status: str, title: str, note: str | None) -> str:
+    if status == "published":
+        return f"✅ Курс «{title}» опубликован."
+    return f"↩️ Курс «{title}» вернули на доработку:\n{str(note or '').strip()}"
+
+
+def owner_telegram_id() -> int | None:
+    """Кто проверяет курсы: владелец (billing owner), иначе первый супер-админ."""
+    settings = get_settings()
+    if settings.platform_billing_owner_telegram_id:
+        return int(settings.platform_billing_owner_telegram_id)
+    admins = sorted(settings.parsed_super_admin_telegram_ids())
+    return admins[0] if admins else None
 
 
 def submitted_text(student_name: str | None, lesson_title: str, course_title: str) -> str:
@@ -109,6 +160,7 @@ async def enqueue_notification(
     text: str,
     button_text: str,
     url: str,
+    reply_markup: dict[str, Any] | None = None,
 ) -> bool:
     binding_id = notify_binding_id()
     if not binding_id:
@@ -125,6 +177,7 @@ async def enqueue_notification(
             "text": text,
             "binding_id": binding_id,
             "site_button": {"text": button_text, "url": url, "telegram_user_id": int(recipient)},
+            **({"reply_markup": reply_markup} if reply_markup else {}),
         },
         due_at=datetime.now(timezone.utc),
     )

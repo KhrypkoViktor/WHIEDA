@@ -10,6 +10,13 @@ access by key (``purchase``); publishing needs the author's place in the Academy
 paid and active (owner / preview admins publish anything); a ``pro`` course is the
 owner's only. The student pays the author directly — the price is for display.
 
+Pre-moderation (lead, 02.10.2026: third-party courses go out under the wwc.best brand,
+the owner answers for their texts): an author's «Опубликовать» puts the course into
+``review`` and the owner gets a card in the bot («Опубликовать» / «Вернуть» with a
+one-line reason, ``review_course``); the author gets the answer with a button to the
+cabinet. The owner and preview admins publish at once. Any edit by the author while
+the course waits for review takes it back to ``draft`` — the owner checks what will go out.
+
 Text is Markdown, rendered and cleaned on the server (``app.academy.content``).
 Media the author attaches must be their own uploads (or already in this lesson /
 course). Lesson ``position`` is the course order (modules, then lessons) and is
@@ -22,10 +29,24 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from app.academy.content import media_refs, render_markdown, sanitize_html
+from app.academy.notify import (
+    COURSE_REVIEW_EVENT,
+    COURSE_REVIEWED_EVENT,
+    OPEN_CABINET_BUTTON,
+    VIEW_COURSE_BUTTON,
+    author_course_url,
+    author_telegram_id,
+    course_page_url,
+    course_review_markup,
+    course_review_text,
+    course_reviewed_text,
+    enqueue_notification,
+    owner_telegram_id,
+)
 from app.academy.keys import shelf_active
 from app.academy.media_service import _valid_ids, load_media, media_summary
 from app.academy.rules import _parse_at, parse_unlock
@@ -36,7 +57,9 @@ AUTHOR_ACCESS_RULES = ("free", "purchase")
 ADMIN_ACCESS_RULES = ("free", "purchase", "pro")
 CURRENCIES = ("WUSD", "BYN", "RUB", "USD", "EUR", "KZT")
 VIDEO_PROVIDERS = ("kinescope", "youtube", "rutube", "vk")
-COURSE_STATUSES = ("draft", "published")
+COURSE_STATUSES = ("draft", "review", "published")
+REVIEW_DECISIONS = ("published", "returned")
+MAX_REVIEW_NOTE_CHARS = 1000
 LESSON_STATUSES = ("draft", "published")
 LESSON_KINDS = ("lesson", "live")
 MAX_PRICE = 10_000_000
@@ -118,7 +141,7 @@ async def _author(conn: Any, tenant_id: str, viewer: AcademyViewer) -> Author:
 _COURSE_COLUMNS = """
     course_id::text as course_id, slug, title, subtitle, kind, status, access_rule, author_actor_id,
     description_md, description_html, cover_media_id::text as cover_media_id, price_wusd_minor, price_currency,
-    created_at, updated_at
+    review_note, review_requested_at, created_at, updated_at
 """
 
 
@@ -153,6 +176,9 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "cover_media_id": course.get("cover_media_id"),
         "cover_url": media_summary(cover, telegram_user_id)["url"] if cover else None,
         "price": price_out(course.get("price_wusd_minor"), course.get("price_currency")),
+        # Премодерация: причина последнего возврата владельцем и когда отправлено на проверку.
+        "review_note": course.get("review_note"),
+        "review_requested_at": _iso(course.get("review_requested_at")),
         "created_at": _iso(course.get("created_at")),
         "updated_at": _iso(course.get("updated_at")),
     }
@@ -349,12 +375,24 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
             if patch["access_rule"] not in allowed:
                 raise AcademyError(400, "bad_access_rule", {"allowed": list(allowed)})
             changes["access_rule"] = patch["access_rule"]
+        submitted = False
         if "status" in patch:
-            if patch["status"] == "published" and course["status"] != "published" and not author.is_admin:
+            wanted, current = patch["status"], course["status"]
+            if wanted == "draft":
+                changes["status"] = "draft"
+            elif author.is_admin:
+                # Владелец и preview-админы публикуют сразу, без проверки.
+                changes.update({"status": "published", "review_note": None})
+            elif current in ("published", "review"):
+                pass  # уже опубликован или уже ждёт проверки: второй карточки нет
+            else:
                 owner_actor = str(course.get("author_actor_id") or "")
                 if not owner_actor or not await shelf_active(conn, tenant_id, owner_actor):
                     raise AcademyError(403, "shelf_inactive")
-            changes["status"] = patch["status"]
+                changes.update({"status": "review", "review_requested_at": datetime.now(timezone.utc)})
+                submitted = True
+        elif changes and not author.is_admin and course["status"] == "review":
+            changes["status"] = "draft"  # правка на проверке — снова черновик
         if changes:
             columns = ", ".join(
                 f"{name} = %s::uuid" if name == "cover_media_id" else f"{name} = %s" for name in changes
@@ -368,8 +406,125 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
                 """,
                 (*changes.values(), tenant_id, course["course_id"]),
             )
+        if submitted:
+            await _send_for_review(conn, tenant_id, course)
         media = await load_media(conn, tenant_id, [course.get("cover_media_id")])
     return {"ok": True, "course": _course_out(course, media, viewer.telegram_user_id)}
+
+
+async def _back_to_draft(conn: Any, tenant_id: str, course: dict[str, Any], author: Author) -> None:
+    """Правка автором курса, который ждёт проверки, возвращает его в черновик."""
+    if author.is_admin or course.get("status") != "review":
+        return
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update academy_courses set status = 'draft', updated_at = now() where tenant_id = %s and course_id = %s::uuid",
+            (tenant_id, course["course_id"]),
+        )
+    course["status"] = "draft"
+
+
+async def _send_for_review(conn: Any, tenant_id: str, course: dict[str, Any]) -> None:
+    """Карточка владельцу в бот: курс, автор, сколько уроков; кнопки решения и «Посмотреть курс»."""
+    recipient = owner_telegram_id()
+    if recipient is None:
+        return
+    name_row = await fetch_one(
+        conn,
+        "select display_name from lead_actors where tenant_id = %s and actor_id = %s",
+        (tenant_id, str(course.get("author_actor_id") or "")),
+    )
+    lessons = await fetch_one(
+        conn,
+        "select count(*) as n from academy_lessons where tenant_id = %s and course_id = %s::uuid and status = 'published'",
+        (tenant_id, course["course_id"]),
+    )
+    await enqueue_notification(
+        conn,
+        tenant_id,
+        event_type=COURSE_REVIEW_EVENT,
+        key=f"{COURSE_REVIEW_EVENT}:{course['course_id']}:{course['review_requested_at'].isoformat()}",
+        recipient=recipient,
+        text=course_review_text(course["title"], (name_row or {}).get("display_name"), int(lessons["n"])),
+        button_text=VIEW_COURSE_BUTTON,
+        url=course_page_url(course["slug"]),
+        reply_markup=course_review_markup(course["course_id"]),
+    )
+
+
+async def review_course(
+    tenant_id: str,
+    viewer: AcademyViewer,
+    *,
+    slug: str | None = None,
+    course_id: str | None = None,
+    decision: str,
+    note: str | None,
+) -> dict[str, Any]:
+    """Решение владельца по курсу на проверке: опубликовать или вернуть автору с причиной."""
+    if not viewer.is_preview_admin:
+        raise AcademyError(403, "not_owner")
+    if decision not in REVIEW_DECISIONS:
+        raise AcademyError(400, "bad_status")
+    reason = " ".join(str(note or "").split())
+    if decision == "returned" and not reason:
+        raise AcademyError(400, "comment_required")
+    if len(reason) > MAX_REVIEW_NOTE_CHARS:
+        raise AcademyError(400, "comment_too_long", {"limit": MAX_REVIEW_NOTE_CHARS})
+    ids = _valid_ids([course_id]) if course_id else []
+    async with tenant_connection(tenant_id) as conn:
+        course = None
+        if ids or slug:
+            course = await fetch_one(
+                conn,
+                f"""
+                select {_COURSE_COLUMNS} from academy_courses
+                where tenant_id = %s and status <> 'archived'
+                  and (course_id = %s::uuid or slug = %s)
+                for update
+                """,
+                (tenant_id, ids[0] if ids else None, str(slug or "").strip().lower() or None),
+            )
+        if not course:
+            raise AcademyError(404, "course_not_found")
+        if course["status"] != "review":
+            raise AcademyError(409, "not_in_review", {"status": course["status"], "title": course["title"]})
+        status = "published" if decision == "published" else "draft"
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                update academy_courses set status = %s, review_note = %s, updated_at = now()
+                where tenant_id = %s and course_id = %s::uuid
+                """,
+                (status, reason or None if decision == "returned" else None, tenant_id, course["course_id"]),
+            )
+        recipient = await author_telegram_id(conn, tenant_id, course.get("author_actor_id"))
+        if recipient is not None:
+            requested = course.get("review_requested_at")
+            await enqueue_notification(
+                conn,
+                tenant_id,
+                event_type=COURSE_REVIEWED_EVENT,
+                key=f"{COURSE_REVIEWED_EVENT}:{course['course_id']}:{requested.isoformat() if requested else 'n'}",
+                recipient=recipient,
+                text=course_reviewed_text(status, course["title"], reason),
+                button_text=OPEN_CABINET_BUTTON,
+                url=author_course_url(course["slug"]),
+            )
+    return {"ok": True, "slug": course["slug"], "title": course["title"], "status": status}
+
+
+async def course_brief(tenant_id: str, course_id: str) -> dict[str, Any] | None:
+    """Название, адрес и статус курса по id — для подписи в боте владельца."""
+    ids = _valid_ids([course_id])
+    if not ids:
+        return None
+    async with tenant_connection(tenant_id) as conn:
+        return await fetch_one(
+            conn,
+            "select slug, title, status from academy_courses where tenant_id = %s and course_id = %s::uuid",
+            (tenant_id, ids[0]),
+        )
 
 
 # ---- structure -----------------------------------------------------------------------------------
@@ -582,6 +737,7 @@ async def create_module(tenant_id: str, viewer: AcademyViewer, slug: str, data: 
     async with tenant_connection(tenant_id) as conn:
         author = await _author(conn, tenant_id, viewer)
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
+        await _back_to_draft(conn, tenant_id, course, author)
         row = await fetch_one(
             conn,
             """
@@ -609,6 +765,7 @@ async def update_module(
         course = await _course_for(conn, tenant_id, author, slug)
         row = await _module_row(conn, tenant_id, course["course_id"], module_id)
         if changes:
+            await _back_to_draft(conn, tenant_id, course, author)
             columns = ", ".join(f"{name} = %s::jsonb" if name == "unlock" else f"{name} = %s" for name in changes)
             row = await fetch_one(
                 conn,
@@ -627,6 +784,7 @@ async def delete_module(tenant_id: str, viewer: AcademyViewer, slug: str, module
         author = await _author(conn, tenant_id, viewer)
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
         row = await _module_row(conn, tenant_id, course["course_id"], module_id)
+        await _back_to_draft(conn, tenant_id, course, author)
         busy = await fetch_one(
             conn,
             """
@@ -674,6 +832,7 @@ async def reorder_modules(tenant_id: str, viewer: AcademyViewer, slug: str, orde
         ]
         if len(wanted) != len(list(order or [])) or sorted(wanted) != sorted(current):
             raise AcademyError(400, "bad_order")
+        await _back_to_draft(conn, tenant_id, course, author)
         async with conn.cursor() as cur:
             for position, module in enumerate(wanted, start=1):
                 await cur.execute(
@@ -705,6 +864,7 @@ async def reorder_lessons(
         ]
         if len(wanted) != len(list(order or [])) or sorted(wanted) != sorted(current):
             raise AcademyError(400, "bad_order")
+        await _back_to_draft(conn, tenant_id, course, author)
         async with conn.cursor() as cur:
             for position, lesson in enumerate(wanted, start=1):
                 await cur.execute(
@@ -836,6 +996,7 @@ async def create_lesson(
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
         module = await _module_row(conn, tenant_id, course["course_id"], module_id)
         changes, assignment = await _lesson_changes(conn, tenant_id, author, data, current=None)
+        await _back_to_draft(conn, tenant_id, course, author)
         lesson_slug = await _free_slug(
             conn, tenant_id, slugify(changes["title"], fallback="urok"), course_id=course["course_id"]
         )
@@ -885,6 +1046,8 @@ async def update_lesson(
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
         current = await _lesson_row(conn, tenant_id, course["course_id"], lesson_id)
         changes, assignment = await _lesson_changes(conn, tenant_id, author, data, current=current)
+        if changes or assignment is not ...:
+            await _back_to_draft(conn, tenant_id, course, author)
         moved = False
         if data.get("module_id") and data["module_id"] != current.get("module_id"):
             target = await _module_row(conn, tenant_id, course["course_id"], str(data["module_id"]))
@@ -915,6 +1078,7 @@ async def delete_lesson(tenant_id: str, viewer: AcademyViewer, slug: str, lesson
         author = await _author(conn, tenant_id, viewer)
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
         row = await _lesson_row(conn, tenant_id, course["course_id"], lesson_id)
+        await _back_to_draft(conn, tenant_id, course, author)
         async with conn.cursor() as cur:
             await cur.execute(
                 "update academy_lessons set status = 'archived', updated_at = now() where tenant_id = %s and lesson_id = %s::uuid",
