@@ -63,6 +63,13 @@ def test_lock_texts():
 
 
 @pytest.mark.asyncio
+async def test_card_asks_for_homework_not_handed_in(whieda_tenant, bot):
+    plan = outline([lesson("a", 1, done=True, homework="none")], "a")
+    await press(whieda_tenant, "acad:c:akvarel", plan)
+    assert "Домашка: сдайте её на странице урока." in bot.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
 async def test_waiting_for_homework_review_instead_of_a_locked_lesson(whieda_tenant, bot):
     plan = outline([
         lesson("a", 1, done=True, homework="submitted"),

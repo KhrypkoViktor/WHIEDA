@@ -155,13 +155,11 @@ def lesson_lock_text(reason: str | None, opens_at: Any = None, contact: dict[str
             return f"🔒 Урок откроется через {days} дн. после старта курса."
     if code == "purchase":
         return purchase_lock_text(contact)
-    if code == "pro":
-        return LOCK_TEXT["pro_required"]
     return "🔒 Урок пока закрыт."
 
 
 HOMEWORK_LINE = {
-    "not_submitted": "Домашка: сдайте её на странице урока.",
+    "none": "Домашка: сдайте её на странице урока.",
     "submitted": "Домашка на проверке у автора.",
     "returned": "Домашку вернули — посмотрите комментарий на странице урока.",
     "accepted": "Домашка принята ✓",

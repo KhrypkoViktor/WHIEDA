@@ -325,7 +325,7 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             e_row = next(row for row in outline["lessons"] if row["slug"] == "e")
             assert e_row["opens_at"] is not None
             c_row = next(row for row in outline["lessons"] if row["slug"] == "c")
-            assert c_row["assignment_status"] == "not_submitted"
+            assert c_row["assignment_status"] == "none"
             assert next(row for row in outline["lessons"] if row["slug"] == "a")["assignment_status"] is None
             assert outline["course"]["next_lesson"] == "a"
             assert [row["number"] for row in outline["lessons"]] == [1, 2, 3, 4, 5]

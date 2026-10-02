@@ -141,6 +141,13 @@ def test_days_after_start_without_a_start_stays_locked_and_zero_days_is_open():
 # ---- course access and staff --------------------------------------------------------
 
 
+def test_lock_reasons_are_only_the_ones_the_site_knows():
+    """ТЗ §5: after_prev | date:<iso> | days:<n> | purchase (PRO-курс без доступа — тоже purchase)."""
+    from app.academy.service import COURSE_LOCK_LESSON_REASON
+
+    assert set(COURSE_LOCK_LESSON_REASON.values()) == {"purchase"}
+
+
 def test_course_without_access_locks_every_lesson_with_its_reason():
     rows = [lesson("a"), lesson("b")]
     assert locks([ModuleIn("m1", OPEN)], rows, course_lock="purchase") == {

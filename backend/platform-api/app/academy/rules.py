@@ -10,11 +10,11 @@ Rules (``academy_modules.unlock``, a lesson's own ``unlock`` overrides its modul
 
 A lesson is complete when it is done («Сделал») and, if it has a required homework,
 the latest submission is accepted. Course access comes first: without it every
-lesson is locked with the course reason (``purchase`` / ``pro``). Staff (the course
+lesson is locked with the course reason (``purchase``). Staff (the course
 author, the owner and preview admins) see everything open.
 
-Lock reasons for the site: ``after_prev`` | ``date:<iso>`` | ``days:<n>`` | ``purchase``
-| ``pro``; ``opens_at`` is known for a date and for days with a start.
+Lock reasons for the site (ТЗ §5): ``after_prev`` | ``date:<iso>`` | ``days:<n>`` | ``purchase``;
+``opens_at`` is known for a date and for days with a start.
 """
 
 from __future__ import annotations

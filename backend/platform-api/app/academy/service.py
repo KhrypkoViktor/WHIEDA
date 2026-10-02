@@ -57,8 +57,9 @@ from app.subscriptions.service import (
 logger = logging.getLogger(__name__)
 
 SHELF_PRODUCT_CODE = "academy_shelf"
-# Замок курса → причина на каждом уроке (сайт: «доступ по ключу» / «входит в PRO»).
-COURSE_LOCK_LESSON_REASON = {"purchase_required": "purchase", "pro_required": "pro"}
+# Замок курса → причина на каждом уроке. Коды уроков — ровно ТЗ §5 (after_prev | date:<iso> |
+# days:<n> | purchase): PRO-курс без доступа на уроке тоже «purchase», различает course.lock_reason.
+COURSE_LOCK_LESSON_REASON = {"purchase_required": "purchase", "pro_required": "purchase"}
 LEGACY_MODULE_PREFIX = "legacy:"
 
 
@@ -464,10 +465,10 @@ def _evaluate(view: CourseView, modules: list[dict[str, Any]], lessons: list[dic
 
 
 def assignment_status(row: dict[str, Any]) -> str | None:
-    """None — no homework; ``not_submitted`` | ``submitted`` | ``accepted`` | ``returned``."""
+    """None — no homework; ``none`` (not handed in) | ``submitted`` | ``accepted`` | ``returned`` (ТЗ §5)."""
     if row.get("assignment_required") is None:
         return None
-    return str(row.get("submission_status") or "not_submitted")
+    return str(row.get("submission_status") or "none")
 
 
 def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock) -> dict[str, Any]:
