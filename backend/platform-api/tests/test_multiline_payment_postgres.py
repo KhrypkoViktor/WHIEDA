@@ -41,23 +41,23 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
             # Prices: list, and a personal one.
             async with tenant_connection("whieda") as conn:
                 assert await effective_price_minor(conn, tenant_id="whieda", ref_code="zina", product_code="club_subscription", access_months=3, currency="WUSD") == (12000, None)
-                assert await effective_price_minor(conn, tenant_id="whieda", ref_code="zina", product_code="site_setup", access_months=0, currency="RUB") == (200000, None)
+                assert await effective_price_minor(conn, tenant_id="whieda", ref_code="zina", product_code="site_setup", access_months=0, currency="RUB") == (300000, None)
                 await fetch_one(conn, """
                     insert into partner_price_overrides (tenant_id, ref_code, product_code, price_wusd_minor, reason, approved_by_telegram_user_id)
                     values ('whieda', 'olesya', 'platform_subscription', 1500, 'скидка 50%%', 1) returning override_id""")
                 assert await effective_price_minor(conn, tenant_id="whieda", ref_code="olesya", product_code="platform_subscription", access_months=3, currency="RUB") == (150000, "скидка 50%")
 
-            # Zina: bundle 105 WWC$ in one transfer.
-            parsed = parse_payment_command("оплата ref:zina\nпакет 105 WWC$\nполучено 105 WWC$")
+            # Zina: bundle 150 WWC$ in one transfer (V18: renewal split PRO 30 + club 120).
+            parsed = parse_payment_command("оплата ref:zina\nпакет 150 WWC$\nполучено 150 WWC$")
             result = await record_payment_lines(
-                "whieda", ref_code="zina", lines=parsed.lines, received_minor=10500, currency="WUSD",
+                "whieda", ref_code="zina", lines=parsed.lines, received_minor=15000, currency="WUSD",
                 telegram_chat_id=1, telegram_message_id=101, telegram_user_id=1,
             )
             assert result["idempotent"] is False
             assert [l["product_code"] for l in result["lines"]] == ["platform_subscription", "club_subscription"]
             assert result["pro_paid_until"] is not None and result["club_paid_until"] is not None
             ledger = await rows("select product_code, amount_minor, access_months, promo_note, received_payment_id from partner_payment_ledger where ref_code = 'zina' order by product_code")
-            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [("club_subscription", 7500, 3), ("platform_subscription", 3000, 3)]
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [("club_subscription", 12000, 3), ("platform_subscription", 3000, 3)]
             assert len({r["received_payment_id"] for r in ledger}) == 1 and ledger[0]["promo_note"]
             access = await rows("select product_code, paid_until from partner_product_access where ref_code = 'zina'")
             assert access[0]["product_code"] == "club_subscription" and access[0]["paid_until"] == result["club_paid_until"]
@@ -66,7 +66,7 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
 
             # Same message again: nothing doubles.
             again = await record_payment_lines(
-                "whieda", ref_code="zina", lines=parsed.lines, received_minor=10500, currency="WUSD",
+                "whieda", ref_code="zina", lines=parsed.lines, received_minor=15000, currency="WUSD",
                 telegram_chat_id=1, telegram_message_id=101, telegram_user_id=1,
             )
             assert again["idempotent"] is True
@@ -80,9 +80,9 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
                 )
 
             # Kira: PRO + site setup in roubles; setup is one-off (no term, no bonus).
-            kira = parse_payment_command("оплата ref:kira\nPRO 3000 RUB 3\nнастройка 2000 RUB\nполучено 5000 RUB")
+            kira = parse_payment_command("оплата ref:kira\nPRO 3000 RUB 3\nнастройка 3000 RUB\nполучено 6000 RUB")
             k = await record_payment_lines(
-                "whieda", ref_code="kira", lines=kira.lines, received_minor=500000, currency="RUB",
+                "whieda", ref_code="kira", lines=kira.lines, received_minor=600000, currency="RUB",
                 telegram_chat_id=1, telegram_message_id=102, telegram_user_id=1,
             )
             assert k["club_paid_until"] is None and k["pro_paid_until"] is not None
@@ -122,5 +122,20 @@ def test_bundle_payment_records_lines_extends_club_and_pays_bonus_from_pro_only(
             )
             assert again_o["idempotent"] is True
             assert len(await rows("select 1 as x from partner_bonus_ledger where actor_id = 'proof-olesya' and entry_type = 'debit'")) == 1
+
+            # V18 (02.10.2026): club trial month — 40 WWC$, a 1-month term, no bonus to the inviter.
+            async with tenant_connection("whieda") as conn:
+                assert await effective_price_minor(conn, tenant_id="whieda", ref_code="kira", product_code="club_subscription", access_months=1, currency="WUSD") == (4000, None)
+            trial = parse_payment_command("оплата ref:kira\nклуб 40 WWC$ 1\nполучено 40 WWC$")
+            assert trial.lines[0].product_code == "club_subscription" and trial.lines[0].access_months == 1
+            bonus_rows = len(await rows("select 1 as x from partner_bonus_ledger where actor_id = 'proof-olesya'"))
+            t = await record_payment_lines(
+                "whieda", ref_code="kira", lines=trial.lines, received_minor=4000, currency="WUSD",
+                telegram_chat_id=1, telegram_message_id=104, telegram_user_id=1,
+            )
+            assert t["club_paid_until"] is not None
+            club = await rows("select access_months, period_end < period_start + interval '32 days' as one_month from partner_payment_ledger where ref_code = 'kira' and product_code = 'club_subscription'")
+            assert club == [{"access_months": 1, "one_month": True}]
+            assert len(await rows("select 1 as x from partner_bonus_ledger where actor_id = 'proof-olesya'")) == bonus_rows
 
         db.run_with_app(proof)

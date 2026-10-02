@@ -8,10 +8,11 @@
 -- 1 WWC$ = 100 ₽. Бонус рефереру только со строки PRO (правило reward_rules).
 begin;
 
--- 1. Планы: разовая услуга = access_months 0.
+-- 1. Планы: разовая услуга = access_months 0; 1 — пробный месяц клуба (V18, 02.10.2026),
+--    здесь тоже, чтобы повторный прогон V7 после V18 не падал.
 alter table partner_subscription_plans drop constraint if exists partner_subscription_plans_access_months_check;
 alter table partner_subscription_plans add constraint partner_subscription_plans_access_months_check
-  check (access_months in (0, 3, 6, 12));
+  check (access_months in (0, 1, 3, 6, 12));
 insert into partner_subscription_plans (tenant_id, plan_code, product_code, access_months, price_wusd_minor, price_rub_minor)
 values
   ('whieda', 'club_3m', 'club_subscription', 3, 12000, 1200000),
@@ -89,7 +90,7 @@ alter table partner_payment_ledger add constraint partner_payment_ledger_one_lin
 alter table partner_payment_ledger drop constraint if exists partner_payment_ledger_amount_minor_check;
 alter table partner_payment_ledger add constraint partner_payment_ledger_amount_minor_check check (amount_minor >= 0);
 alter table partner_payment_ledger drop constraint if exists partner_payment_ledger_access_months_check;
-alter table partner_payment_ledger add constraint partner_payment_ledger_access_months_check check (access_months in (0, 3, 6, 12));
+alter table partner_payment_ledger add constraint partner_payment_ledger_access_months_check check (access_months in (0, 1, 3, 6, 12));
 alter table partner_payment_ledger drop constraint if exists partner_payment_ledger_check;
 alter table partner_payment_ledger drop constraint if exists partner_payment_ledger_period_check;
 alter table partner_payment_ledger add constraint partner_payment_ledger_period_check check (period_end >= period_start);
@@ -97,7 +98,7 @@ alter table partner_payment_ledger add constraint partner_payment_ledger_period_
 -- 6. Разобранные строки многострочной команды хранятся в intent до подтверждения.
 alter table partner_payment_intents add column if not exists lines jsonb;
 alter table partner_payment_intents drop constraint if exists partner_payment_intents_access_months_check;
-alter table partner_payment_intents add constraint partner_payment_intents_access_months_check check (access_months in (0, 3, 6, 12));
+alter table partner_payment_intents add constraint partner_payment_intents_access_months_check check (access_months in (0, 1, 3, 6, 12));
 
 -- 7. Напоминания клуба используют тот же журнал.
 alter table partner_subscription_reminder_log drop constraint if exists partner_subscription_reminder_log_event_type_check;

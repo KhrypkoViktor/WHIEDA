@@ -62,7 +62,7 @@ def test_bundle_and_course_renewals_record_every_line():
             assert offers[:4] == ["platform_3m", "platform_6m", "platform_12m", "bundle_pro_club_3m"]
             assert "course_neuro" in offers
             # Клуба отдельно и подключения сайта в продлении нет.
-            assert "club_3m" not in offers and "site_setup" not in offers
+            assert "club_3m" not in offers and "club_1m" not in offers and "site_setup" not in offers
 
             # Пакет «сайт + клуб» за рубли.
             req = await begin_renewal_request("whieda", "proof-partner")
@@ -71,7 +71,7 @@ def test_bundle_and_course_renewals_record_every_line():
             req = await set_renewal_plan("whieda", "proof-partner", "bundle_pro_club_3m")
             assert req["status"] == "awaiting_country" and req["access_months"] == 3
             req = await set_renewal_country("whieda", "proof-partner", "RU")
-            assert req["currency"] == "RUB" and req["amount_minor"] == 1_050_000
+            assert req["currency"] == "RUB" and req["amount_minor"] == 1_500_000
             req = await submit_renewal_payment_proof("whieda", "proof-partner", chat_id=6001, message_id=1, file_id="r1")
             done = await confirm_renewal_request("whieda", request_id=str(req["request_id"]), admin_telegram_user_id=1)
             assert done["status"] == "confirmed"
@@ -81,11 +81,11 @@ def test_bundle_and_course_renewals_record_every_line():
                 " where ref_code = 'petrovna' order by product_code"
             )
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [
-                ("club_subscription", 750_000, 3),
+                ("club_subscription", 1_200_000, 3),
                 ("platform_subscription", 300_000, 3),
             ]
             received = await rows("select received_amount_minor, currency from partner_payments where ref_code = 'petrovna'")
-            assert received == [{"received_amount_minor": 1_050_000, "currency": "RUB"}]
+            assert received == [{"received_amount_minor": 1_500_000, "currency": "RUB"}]
             club = await rows(
                 "select paid_until > now() + interval '80 days' as ok from partner_product_access"
                 " where ref_code = 'petrovna' and product_code = 'club_subscription'"

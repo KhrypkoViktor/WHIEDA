@@ -66,7 +66,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 await set_site_request_plan("whieda", "proof-new", "gold")
             req = await set_site_request_plan("whieda", "proof-new", "bundle")
             assert req["status"] == "awaiting_payment" and req["plan_code"] == "bundle"
-            assert req["currency"] == "RUB" and req["total_amount_minor"] == 1_050_000 and req["subscription_amount_minor"] == 300_000
+            assert req["currency"] == "RUB" and req["total_amount_minor"] == 1_500_000 and req["subscription_amount_minor"] == 300_000
             req = await submit_site_payment_proof("whieda", "proof-new", chat_id=5002, message_id=77, file_id="receipt")
             assert req["status"] == "pending_confirmation"
 
@@ -74,10 +74,12 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             assert done["status"] == "pending_provisioning" and done["idempotent"] is False
             assert done["payment"]["club_paid_until"] is not None
             ledger = await rows("select product_code, amount_minor, access_months, promo_note from partner_payment_ledger where ref_code = 'anastasy' order by product_code")
-            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [("club_subscription", 750_000, 3), ("platform_subscription", 300_000, 3)]
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [
+                ("club_subscription", 1_000_000, 3), ("platform_subscription", 300_000, 3), ("site_setup", 200_000, 0),
+            ]
             assert ledger[0]["promo_note"]
             header = await rows("select received_amount_minor, currency from partner_payments where ref_code = 'anastasy'")
-            assert header == [{"received_amount_minor": 1_050_000, "currency": "RUB"}]
+            assert header == [{"received_amount_minor": 1_500_000, "currency": "RUB"}]
             access = await rows("select paid_until from partner_product_access where ref_code = 'anastasy' and product_code = 'club_subscription'")
             assert access and access[0]["paid_until"] is not None
             sub = await rows("select paid_until from partner_subscriptions where ref_code = 'anastasy'")
@@ -102,10 +104,10 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             req2 = await set_site_request_contacts("whieda", "proof-two", "нет")
             assert req2["status"] == "awaiting_plan" and req2["contacts"] == {}
             req2 = await set_site_request_plan("whieda", "proof-two", "site")
-            assert req2["currency"] == "WUSD" and req2["total_amount_minor"] == 5_000
+            assert req2["currency"] == "WUSD" and req2["total_amount_minor"] == 6_000
             req2 = await submit_site_payment_proof("whieda", "proof-two", chat_id=5003, message_id=78, file_id="receipt-2")
             await confirm_site_request("whieda", request_id=str(req2["request_id"]), admin_telegram_user_id=1)
             ledger2 = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'kira2' order by product_code")
-            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger2] == [("platform_subscription", 3_000, 3), ("site_setup", 2_000, 0)]
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger2] == [("platform_subscription", 3_000, 3), ("site_setup", 3_000, 0)]
 
         db.run_with_app(proof)
