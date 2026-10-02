@@ -183,6 +183,48 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ACADEMY_SITE_BASE",
         description="Site host the bot links lessons to. Academy opened to every PRO partner 23.09.2026.",
     )
+    # Академия v2 (02.10.2026): медиа курсов на диске Core, подписанные ссылки, уведомления.
+    platform_academy_media_dir: str = Field(
+        default="/opt/whieda-platform-core/media/academy",
+        validation_alias="PLATFORM_ACADEMY_MEDIA_DIR",
+        description=(
+            "Academy uploads (images, files, video) on the Core disk. One directory for "
+            "staging and production: the database is shared, so are the files. The API "
+            "writes uploads, the worker transcodes video; nginx serves it read-only."
+        ),
+    )
+    platform_media_signing_secret: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_MEDIA_SIGNING_SECRET",
+        description=(
+            "Signs Academy media links (nginx secure_link format, bound to the viewer's "
+            "Telegram id). At least 32 characters; the same value goes into the nginx "
+            "config. No default: without it media links are not issued."
+        ),
+    )
+    platform_academy_media_via_api: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_ACADEMY_MEDIA_VIA_API",
+        description=(
+            "True until nginx serves /academy-media/: links point to the Core API, which "
+            "streams the file with Range support."
+        ),
+    )
+    platform_academy_media_url_ttl_seconds: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        validation_alias="PLATFORM_ACADEMY_MEDIA_URL_TTL_SECONDS",
+    )
+    platform_academy_notify_binding: str = Field(
+        default="",
+        validation_alias="PLATFORM_ACADEMY_NOTIFY_BINDING",
+        description=(
+            "Bot binding that sends Academy homework notifications from this deployment "
+            "(production: whieda-advisor-bot, staging: its own bot). Empty: the first of "
+            "PLATFORM_SCHEDULED_NOTIFY_BINDINGS; both empty: no notification."
+        ),
+    )
     # Ежедневник партнёра (CRM v1, 25.09.2026).
     platform_crm_pilot_telegram_ids: str = Field(
         default="",
