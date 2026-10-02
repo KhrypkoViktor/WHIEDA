@@ -140,21 +140,17 @@ async def scheduled_notify_bindings() -> dict[str, BotBindingContext]:
     """
     bindings: dict[str, BotBindingContext] = {}
     for binding_id in get_settings().parsed_scheduled_notify_bindings():
-        binding = await _resolve_binding(binding_id)
+        try:
+            binding = await resolve_bot_binding_context(binding_id)
+        except Exception as exc:
+            logger.warning(
+                "scheduled_notify_binding_unavailable",
+                extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+            )
+            continue
         if binding is not None:
             bindings.setdefault(binding.tenant.tenant_id, binding)
     return bindings
-
-
-async def _resolve_binding(binding_id: str) -> BotBindingContext | None:
-    try:
-        return await resolve_bot_binding_context(binding_id)
-    except Exception as exc:
-        logger.warning(
-            "scheduled_notify_binding_unavailable",
-            extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
-        )
-        return None
 
 
 def _final_delivery_error(exc: Exception) -> bool:
@@ -332,13 +328,11 @@ async def process_due_notifications(
 async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     """Plan the CRM mornings (every 5 minutes) and send what is due (every 30 s).
     Nothing happens in a process without PLATFORM_SCHEDULED_NOTIFY_BINDINGS."""
-    settings = get_settings()
-    academy_binding = settings.platform_academy_notify_binding.strip()
-    if not settings.parsed_scheduled_notify_bindings() and not academy_binding:
+    if not get_settings().parsed_scheduled_notify_bindings():
         return {}
-    bindings = await scheduled_notify_bindings() if settings.parsed_scheduled_notify_bindings() else {}
+    bindings = await scheduled_notify_bindings()
     result: dict[str, int] = {}
-    if plan_crm and bindings:
+    if plan_crm:
         from app.crm.digest import enqueue_crm_digests
         from app.crm.service import crm_feature_enabled
 
@@ -349,14 +343,29 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
                 if binding.tenant.entitlements.get("crm")
             }
             result["crm_digests"] = await enqueue_crm_digests(crm_tenants)
-    # Уведомления Академии могут идти своим ботом (staging): он только отправляет, утро CRM им не планируется.
-    senders = {binding.binding_id: binding for binding in bindings.values()}
-    if academy_binding and academy_binding not in senders:
-        extra = await _resolve_binding(academy_binding)
-        if extra is not None:
-            senders[extra.binding_id] = extra
-    result["due_sent"] = await process_due_notifications(senders)
+    result["due_sent"] = await process_due_notifications(bindings)
     return result
+
+
+async def academy_notifications_step() -> int:
+    """Академия v2: уведомления о домашках своим ботом (PLATFORM_ACADEMY_NOTIFY_BINDING), когда он
+    не среди PLATFORM_SCHEDULED_NOTIFY_BINDINGS (staging). Этот бот только отправляет свои строки,
+    утро CRM им не планируется. Бот из общего списка обходит scheduled_notifications_step."""
+    settings = get_settings()
+    binding_id = settings.platform_academy_notify_binding.strip()
+    if not binding_id or binding_id in settings.parsed_scheduled_notify_bindings():
+        return 0
+    try:
+        binding = await resolve_bot_binding_context(binding_id)
+    except Exception as exc:
+        logger.warning(
+            "academy_notify_binding_unavailable",
+            extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+        )
+        return 0
+    if binding is None:
+        return 0
+    return await process_due_notifications({binding.binding_id: binding})
 
 
 async def worker_loop(poll_interval_sec: float = 2.0) -> None:
@@ -380,6 +389,10 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await scheduled_notifications_step(plan_crm=plan_crm)
             except Exception:
                 logger.exception("scheduled_notifications_step_failed")
+            try:
+                await academy_notifications_step()
+            except Exception:
+                logger.exception("academy_notifications_step_failed")
         await asyncio.sleep(poll_interval_sec)
 
 

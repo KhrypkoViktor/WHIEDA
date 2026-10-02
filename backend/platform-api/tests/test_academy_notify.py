@@ -62,7 +62,21 @@ async def test_staging_worker_sends_academy_notes_without_planning_crm(clean_env
     with patch.object(worker, "resolve_bot_binding_context", AsyncMock(return_value=staging)) as resolve, patch.object(
         worker, "process_due_notifications", AsyncMock(return_value=2)
     ) as send, patch("app.crm.digest.enqueue_crm_digests", AsyncMock()) as plan:
-        assert await worker.scheduled_notifications_step(plan_crm=True) == {"due_sent": 2}
+        # Утро CRM на staging не планируется: обычный шаг без PLATFORM_SCHEDULED_NOTIFY_BINDINGS молчит.
+        assert await worker.scheduled_notifications_step(plan_crm=True) == {}
+        assert await worker.academy_notifications_step() == 2
     resolve.assert_awaited_once_with("wwc-cabinet-staging-bot")
     plan.assert_not_awaited()
     assert send.await_args.args[0] == {"wwc-cabinet-staging-bot": staging}
+
+
+@pytest.mark.asyncio
+async def test_academy_bot_among_scheduled_ones_is_sent_by_the_usual_step(clean_env):
+    from app.jobs import worker
+
+    clean_env.setenv("PLATFORM_SCHEDULED_NOTIFY_BINDINGS", "whieda-advisor-bot")
+    clean_env.setenv("PLATFORM_ACADEMY_NOTIFY_BINDING", "whieda-advisor-bot")
+    get_settings.cache_clear()
+    with patch.object(worker, "resolve_bot_binding_context", AsyncMock()) as resolve:
+        assert await worker.academy_notifications_step() == 0  # второй раз тот же бот не обходим
+    resolve.assert_not_awaited()
