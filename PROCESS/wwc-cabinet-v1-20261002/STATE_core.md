@@ -47,11 +47,17 @@
 - Публичный `/api/v1/public/ref/<code>`: `consultant.bio` (null — нет в Core) и в `consultant.socials` ключи `phone, whatsapp, viber, maxUrl, email, address` (рядом с прежними 7).
 - Бот: `t.me/<бот>?start=renew` — продление (на профиле minimal — ответ «оформляется вручную», как кнопка), `?start=support` — то же обращение, что `/support`.
 
-## Открытые вопросы (одной строкой)
-- nginx сайта: `location ^~ /api/v1/content-access { client_max_body_size 16k; }`, у Core-nginx дефолт 1m → загрузка фото (до 20 МБ) получит 413; нужен отдельный location для `/api/v1/content-access/me/profile/photo` с 20m (не моя зона, решение лида). Сайт может ужимать фото в браузере — всё равно больше 16 КБ.
-- Legacy-синк `n8n/current/run_partners_ref_runtime_sync_2026-08-01.py` пишет `public_profile = excluded.public_profile` целиком: если его запустить, пропадут правки кабинета (и уже сейчас subdomain/тема); не трогал.
-- @sunraysword — это аккаунт владельца 688931415 (тесты support_site, владелец nnm/dev), отдельного тестового id в коде нет; второй аккаунт @khrypko_pro добавить в `PLATFORM_LEADER_PILOT_TELEGRAM_IDS` вручную, id не выдумываю.
-- Фото и «о себе» многих партнёров лежат только в реестре сайта (`src/data/referrals.js`), не в Core: для них шаг «Заполнить профиль» не отмечен, пока они не отправят профиль через кабинет (или лид не перенесёт данные в public_profile).
-- AGENTS.md (профиль minimal) перечисляет кнопки кабинета без «Открыть кабинет» — дописать строку решает лид.
-- Фото, загруженное через staging и применённое, откроется на бою только после выкладки этого Core на бой (раздаёт боевой Core).
-- Миграцию V21 применить к общей БД до выкладки кода (schema gate требует 3 новые таблицы) и записать в APPLIED.log — делает лид.
+## Открытые вопросы — ответы лида 02.10 (через Site-сессию)
+- nginx сайта: `sites-enabled/wwc.best` строки 155 и 349 — `location ^~ /api/v1/content-access { client_max_body_size 16k; }` (проверено на сервере 02.10, только чтение) → загрузка фото на бою получит 413. → Лид: отдельный location для `/me/profile/photo` (21m) при интеграции; в коде ничего не нужно.
+- Legacy-синк `n8n/current/run_partners_ref_runtime_sync_2026-08-01.py` перезаписывает `public_profile` целиком. → Лид: больше не запускать, поставит предохранитель сам; я не трогаю.
+- @sunraysword = владелец 688931415 → по умолчанию в коде достаточно; @khrypko_pro лид добавит в `PLATFORM_LEADER_PILOT_TELEGRAM_IDS` на сервере.
+- Фото и «о себе» из `src/data/referrals.js` → лид перенесёт в public_profile скриптом. Переиспользовать: `app.cabinet.profile.apply_profile_changes(public_profile, changes)` — новый public_profile (чистая функция, photo_url не проверяет); `normalize_profile_input` / `current_profile_fields` / `diff_profile` — проверка и «что меняется»; запись — как в `app.cabinet.service.apply_profile_request` (`profile_version + 1`).
+- Строку «Открыть кабинет» в AGENTS.md (профиль minimal) допишет лид.
+- V21 на общую базу до кода, APPLIED.log, права роли — чек-лист лида. Фото со staging видно на бою после выкладки этого Core на бой.
+- Решения по partner_media, прямой модерации ботом, статусам replaced/cancelled и лимитам лид принял.
+
+## Ревью кода 02.10 (независимый ревьюер) — что сделано и что осталось
+- Сделано: в имени и адресе запрещены `" < > `` ` (stored XSS через alt/innerHTML на сайте, код `invalid_characters`); «что не удалять» при чистке фото узнаёт своё фото с любым origin.
+- Осталось (до боя): (1) фото до модерации доступно по адресу — отдавать публично только фото из живого public_profile, превью — через сессию; чистить незаявленные загрузки периодически; (2) память: проверять лимит загрузок до декодирования, семафор ~2 на обработку, `Image.open(formats=…)`, `thumbnail` до `exif_transpose`, ниже лимит пикселей для PNG/WebP.
+- Мелкое: карточка владельцу длиннее 4096 знаков обрезается; GET overview создаёт аккаунт CRM (таймзона не бывает null); `contacts: null` целиком не убирает группу; при отказе у карточки остаются кнопки; `intro_text` из анкеты бота не учтён как «о себе»; дубль SQL Академии (лучше звать функцию Академии); в durable-inbox `/profiles` пишет NULL в owner_message_id; общая БД: `/profiles` показывает заявки обоих ботов; ошибки Pillow вне списка → 500; бот тянет Pillow при старте.
+- Site: сайт читает `shortBio`, не `bio`, и фото/соцсети берёт локально — до выкладки site/cabinet-v1 после «Применить» меняется только имя; `esc()` для имени и «о себе» в ReferralBootstrap.

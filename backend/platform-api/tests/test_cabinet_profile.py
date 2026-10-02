@@ -15,6 +15,7 @@ from app.cabinet.profile import (
     current_profile_fields,
     diff_profile,
     media_id_from_url,
+    media_id_in_url,
     media_public_url,
     normalize_profile_input,
     overlay_changes,
@@ -85,6 +86,8 @@ def test_normalize_input_checks_every_field_and_keeps_only_sent_ones():
         ({"display_name": " "}, "required", "display_name"),
         ({"display_name": "Я"}, "too_short", "display_name"),
         ({"display_name": "<i>Ольга</i>"}, "html_not_allowed", "display_name"),
+        ({"display_name": 'Ольга" onload="x'}, "invalid_characters", "display_name"),
+        ({"contacts": {"address": "Москва `x`"}}, "invalid_characters", "address"),
         ({"contacts": {"telegram": "@x"}}, "unknown_field", "telegram"),
         ({"contacts": "+7 928"}, "invalid_value", "contacts"),
         ({"contacts": {"email": "not-an-email"}}, "invalid_email", "email"),
@@ -176,5 +179,8 @@ def test_only_our_cabinet_photo_urls_are_recognised():
     url = media_public_url(BASE, MEDIA)
     assert media_id_from_url(url, BASE) == MEDIA
     assert media_id_from_url(url, "https://staging.wwc.best") is None
+    # «Что не удалять» узнаёт своё фото с любым origin.
+    assert media_id_in_url(f"https://staging.wwc.best/api/v1/content-access/partner-media/{MEDIA}.jpg") == MEDIA
+    assert media_id_in_url("/media/partners/x.jpg") is None
     assert media_id_from_url("https://media.sysarch.pro/media/partners/x.jpg", BASE) is None
     assert media_id_from_url(f"{BASE}/api/v1/content-access/partner-media/../etc.jpg", BASE) is None

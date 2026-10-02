@@ -33,6 +33,7 @@ from app.cabinet.profile import (
     current_profile_fields,
     diff_profile,
     media_id_from_url,
+    media_id_in_url,
     media_public_url,
     normalize_profile_input,
     overlay_changes,
@@ -569,7 +570,8 @@ async def _prune_media(conn: Any, tenant_id: str, ref_code: str, keep: set[str])
 
 
 def _referenced_media(base: str, *photo_urls: Any) -> set[str]:
-    return {media for media in (media_id_from_url(url, base) for url in photo_urls) if media}
+    # Любой origin: удалить фото, которое показывает сайт, хуже, чем оставить лишнее.
+    return {media for media in (media_id_in_url(url) for url in photo_urls) if media}
 
 
 async def submit_profile_request(tenant_id: str, person: CabinetPerson, body: dict[str, Any]) -> dict[str, Any]:

@@ -86,6 +86,9 @@ _HTML_RE = re.compile(r"<\s*/?\s*[A-Za-z!?]|&(?:[A-Za-z]{2,10}|#[0-9]{1,7}|#x[0-
 _PHONE_INPUT_RE = re.compile(r"\+?[0-9\s().\-]{7,30}")
 _EMAIL_RE = re.compile(r"[\w.+%-]+@[\w-]+(?:\.[\w-]+)*\.[^\W\d_]{2,}")
 _URL_FORBIDDEN = set("<>\"'`\\{}|^")
+# Имя и адрес сайт вставляет в разметку (alt, innerHTML): кавычки и угловые
+# скобки там — готовая XSS (ревью 02.10.2026). В имени человека они не нужны.
+_LINE_FORBIDDEN = set("<>\"`")
 
 
 class ProfileValidationError(ValueError):
@@ -121,6 +124,8 @@ def _clean_line(value: Any, field: str, *, max_len: int, min_len: int = 0) -> st
         return None
     if _HTML_RE.search(text):
         raise ProfileValidationError("html_not_allowed", field)
+    if any(ch in _LINE_FORBIDDEN for ch in text):
+        raise ProfileValidationError("invalid_characters", field)
     if len(text) > max_len:
         raise ProfileValidationError("too_long", field)
     if len(text) < min_len:
@@ -366,6 +371,20 @@ MEDIA_PATH = "/api/v1/content-access/partner-media/"
 
 def media_public_url(base: str, media_id: str) -> str:
     return f"{str(base).rstrip('/')}{MEDIA_PATH}{media_id}.jpg"
+
+
+def media_id_in_url(url: Any) -> str | None:
+    """id фото из кабинета в адресе с любым origin — для «что не удалять»:
+    фото на сайте не должно пропасть, если base когда-то был другим."""
+    text = str(url or "").strip().split("?", 1)[0]
+    marker = text.rfind(MEDIA_PATH)
+    if marker < 0 or not text.endswith(".jpg"):
+        return None
+    candidate = text[marker + len(MEDIA_PATH):-len(".jpg")]
+    try:
+        return str(uuid.UUID(candidate)) if len(candidate) == 36 else None
+    except ValueError:
+        return None
 
 
 def media_id_from_url(url: Any, base: str) -> str | None:
