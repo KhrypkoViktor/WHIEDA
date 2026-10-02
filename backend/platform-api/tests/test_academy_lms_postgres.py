@@ -384,3 +384,164 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             assert (expired["locked"], expired["lock_reason"]) == (True, "purchase_required")
 
         db.run_with_app(proof)
+
+
+def _make_clip(path, *, seconds: int = 4, size: str = "1920x1080") -> bool:
+    """A short test clip with sound (ffmpeg's own generators); False without ffmpeg."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        return False
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size={size}:rate=25",
+            "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+            "-f", "mov", str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return True
+
+
+def _probe(path) -> dict:
+    import subprocess
+
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,codec_name",
+         "-of", "json", str(path)],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    return json.loads(out)["streams"][0]
+
+
+@pytest.mark.integration
+def test_media_upload_state_machine_and_transcode(monkeypatch, tmp_path):
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    clip = tmp_path / "clip.mov"
+    have_ffmpeg = _make_clip(clip)
+    with temporary_database("whieda_academy_media") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy.media import MediaError, get_media_store
+            from app.academy.media_service import complete_upload, init_upload, put_chunk, upload_status
+            from app.academy.service import load_viewer
+            from app.academy.transcode import EVENT_TYPE, claim_job, process_job
+            from app.db import fetch_all, tenant_connection
+            from app.jobs.worker import process_pending_outbox
+
+            async def rows(sql: str, params: tuple = ()) -> list[dict]:
+                async with tenant_connection("whieda") as conn:
+                    return [dict(r) for r in await fetch_all(conn, sql, params)]
+
+            student = await load_viewer("whieda", STUDENT)
+            author = await load_viewer("whieda", AUTHOR)
+            stranger = await load_viewer("whieda", STRANGER)
+            store = get_media_store()
+
+            # 1. Фото домашки тремя кусками, в любом порядке, с докачкой.
+            png = b"\x89PNG\r\n\x1a\n" + bytes(range(12))
+            init = await init_upload(
+                "whieda", student, kind="image", name="фото.png", mime="image/png", size=len(png),
+                allowed_kinds=("image",), chunk_size=8,
+            )
+            media_id = init["media_id"]
+            assert (init["status"], init["chunk_size"], init["chunks_total"]) == ("uploading", 8, 3)
+            with pytest.raises(MediaError) as no_video:
+                await init_upload("whieda", student, kind="video", name="v.mp4", mime="video/mp4", size=10,
+                                  allowed_kinds=("image",))
+            assert (no_video.value.status, no_video.value.code) == (403, "kind_not_allowed")
+            await put_chunk("whieda", student, media_id, 2, png[16:])
+            await put_chunk("whieda", student, media_id, 0, png[:8])
+            status = await upload_status("whieda", student, media_id)
+            assert (status["status"], status["chunks_received"]) == ("uploading", [0, 2])
+            with pytest.raises(MediaError) as wrong_size:
+                await put_chunk("whieda", student, media_id, 1, png[8:15])
+            assert wrong_size.value.code == "bad_chunk_size"
+            with pytest.raises(MediaError) as foreign:
+                await put_chunk("whieda", stranger, media_id, 1, png[8:16])
+            assert foreign.value.status == 404
+            with pytest.raises(MediaError) as gap:
+                await complete_upload("whieda", student, media_id)
+            assert (gap.value.code, gap.value.extra["missing"]) == ("upload_incomplete", [1])
+            await put_chunk("whieda", student, media_id, 1, png[8:16])
+            ready = await complete_upload("whieda", student, media_id)
+            assert ready["status"] == "ready" and ready["url"].startswith(f"/academy-media/whieda/academy/{media_id}/")
+            assert (await complete_upload("whieda", student, media_id))["status"] == "ready"  # повтор безопасен
+            assert store.path(f"whieda/academy/{media_id}/original.png").read_bytes() == png
+            with pytest.raises(MediaError) as closed:
+                await put_chunk("whieda", student, media_id, 0, png[:8])
+            assert closed.value.code == "not_uploading"
+
+            # 2. «Картинка», которая на деле HTML, — не принимается.
+            fake = b"<html><script>alert(1)</script>"
+            bad = await init_upload("whieda", student, kind="image", name="x.png", mime="image/png", size=len(fake),
+                                    allowed_kinds=("image",))
+            await put_chunk("whieda", student, bad["media_id"], 0, fake)
+            with pytest.raises(MediaError) as not_image:
+                await complete_upload("whieda", student, bad["media_id"])
+            assert not_image.value.code == "bad_image"
+            assert (await upload_status("whieda", student, bad["media_id"]))["status"] == "failed"
+
+            # 3. Видео автора: после «complete» — в очереди перекодирования, а не готово.
+            data = clip.read_bytes() if have_ffmpeg else b"\x00" * 300_000
+            video = await init_upload(
+                "whieda", author, kind="video", name="Урок 1.MOV", mime="video/quicktime", size=len(data),
+                allowed_kinds=("image", "file", "video"), chunk_size=64 * 1024,
+            )
+            for n in range(video["chunks_total"]):
+                await put_chunk("whieda", author, video["media_id"], n, data[n * 64 * 1024:(n + 1) * 64 * 1024])
+            queued = await complete_upload("whieda", author, video["media_id"])
+            assert queued["status"] == "processing" and queued["url"] is None
+            assert (await complete_upload("whieda", author, video["media_id"]))["status"] == "processing"
+            jobs = await rows(
+                "select status, payload, due_at is not null as due from platform_outbox where event_type = %s",
+                (EVENT_TYPE,),
+            )
+            assert jobs == [{"status": "scheduled", "payload": {"media_id": video["media_id"]}, "due": True}]
+            # Обычная очередь (и старые сборки на общей базе) задачу не трогает.
+            await process_pending_outbox()
+            assert [row["status"] for row in await rows("select status from platform_outbox")] == ["scheduled"]
+
+            if have_ffmpeg:
+                job = await claim_job()
+                assert job is not None and job["payload"]["media_id"] == video["media_id"]
+                assert await claim_job() is None  # одна задача за раз
+                await process_job(job)
+                [media] = await rows(
+                    "select status, variants, error from academy_media where media_id = %s::uuid", (video["media_id"],)
+                )
+                assert media["status"] == "ready", media
+                variants = media["variants"]
+                mp4 = store.path(variants["mp4_720"])
+                assert _probe(mp4) == {"width": 1280, "height": 720, "codec_name": "h264"}
+                assert mp4.read_bytes()[4:8] == b"ftyp"
+                assert store.path(variants["poster"]).read_bytes()[:3] == b"\xff\xd8\xff"
+                assert 3 <= variants["duration_sec"] <= 5
+                assert not store.exists(f"whieda/academy/{video['media_id']}/original.mov")  # исходник удалён
+                assert [row["status"] for row in await rows("select status from platform_outbox")] == ["done"]
+                done_video = await upload_status("whieda", author, video["media_id"])
+                assert done_video["url"].startswith(f"/academy-media/{variants['mp4_720']}?u={AUTHOR}")
+                assert done_video["poster_url"].startswith(f"/academy-media/{variants['poster']}?u={AUTHOR}")
+
+                # 4. Битое видео — «не получилось», без повторов по кругу.
+                junk = b"not a video at all" * 100
+                broken = await init_upload("whieda", author, kind="video", name="broken.mp4", mime="video/mp4",
+                                           size=len(junk), allowed_kinds=("video",))
+                await put_chunk("whieda", author, broken["media_id"], 0, junk)
+                await complete_upload("whieda", author, broken["media_id"])
+                await process_job(await claim_job())
+                failed = await upload_status("whieda", author, broken["media_id"])
+                assert failed["status"] == "failed" and failed["error"]
+                assert await claim_job() is None
+
+        db.run_with_app(proof)

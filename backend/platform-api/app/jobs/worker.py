@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+from app.academy.transcode import TranscodeSlot
 from app.db import fetch_all, get_pool, tenant_connection
 from app.jobs.n8n_integration import trigger_lead_delivery
 from app.jobs.outbox import ensure_outbox_table
@@ -341,8 +342,14 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
 async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     await init_pool_for_worker()
     last_due = last_plan = float("-inf")
+    # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
+    transcode = TranscodeSlot()
     while True:
         await process_pending_outbox()
+        try:
+            await transcode.step()
+        except Exception:
+            logger.exception("academy_transcode_step_failed")
         now = time.monotonic()
         if now - last_due >= DUE_NOTIFY_INTERVAL_SEC:
             plan_crm = now - last_plan >= CRM_DIGEST_INTERVAL_SEC

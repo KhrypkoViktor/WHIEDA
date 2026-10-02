@@ -167,3 +167,182 @@ async def media_url(tenant_id: str, media_id: str, viewer: Any) -> dict[str, Any
     if row["status"] == "ready" and not summary.get("url"):
         raise MediaError(503, "media_unavailable")
     return {**summary, "expires_in": int(get_settings().platform_academy_media_url_ttl_seconds)}
+
+
+# ---- uploads ---------------------------------------------------------------------------------
+
+MAX_OPEN_UPLOADS = 20  # одновременно незавершённых загрузок у одного человека
+STUDENT_KINDS = ("image",)
+AUTHOR_KINDS = ("image", "file", "video")
+
+
+def _upload_out(row: dict[str, Any], telegram_user_id: int, received: list[int] | None = None) -> dict[str, Any]:
+    from app.academy.media import chunks_total
+
+    out = media_summary(row, telegram_user_id)
+    out.update(
+        {
+            "chunk_size": int(row["chunk_size"]),
+            "chunks_total": chunks_total(int(row["size_bytes"]), int(row["chunk_size"])),
+            "error": row.get("error"),
+        }
+    )
+    if row["status"] == "uploading":
+        out["chunks_received"] = list(received or [])
+    return out
+
+
+async def init_upload(
+    tenant_id: str,
+    viewer: Any,
+    *,
+    kind: str,
+    name: str,
+    mime: str,
+    size: int,
+    allowed_kinds: tuple[str, ...],
+    chunk_size: int | None = None,
+) -> dict[str, Any]:
+    import uuid
+
+    from app.academy.keys import actor_ids_for_telegram
+    from app.academy.media import CHUNK_SIZE, MIME_TYPES, check_upload, media_key
+
+    if kind not in allowed_kinds:
+        raise MediaError(403 if kind in MIME_TYPES else 400, "kind_not_allowed" if kind in MIME_TYPES else "bad_kind")
+    ext = check_upload(kind, mime, size, name)
+    media_id = str(uuid.uuid4())
+    key = media_key(tenant_id, media_id, f"original.{ext}")
+    async with tenant_connection(tenant_id) as conn:
+        busy = await fetch_one(
+            conn,
+            """
+            select count(*) as n from academy_media
+            where tenant_id = %s and owner_telegram_user_id = %s and status = 'uploading'
+              and created_at > now() - interval '3 days'
+            """,
+            (tenant_id, viewer.telegram_user_id),
+        )
+        if busy and int(busy["n"]) >= MAX_OPEN_UPLOADS:
+            raise MediaError(429, "too_many_uploads")
+        actor_ids = await actor_ids_for_telegram(conn, tenant_id, viewer.telegram_user_id)
+        row = await fetch_one(
+            conn,
+            f"""
+            insert into academy_media (
+              tenant_id, media_id, owner_actor_id, owner_telegram_user_id, kind, original_name, mime,
+              size_bytes, chunk_size, storage_key, status
+            ) values (%s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, 'uploading')
+            returning {_MEDIA_COLUMNS}
+            """,
+            (
+                tenant_id, media_id, actor_ids[0] if actor_ids else None, viewer.telegram_user_id, kind,
+                str(name).strip(), str(mime).strip().lower(), int(size), int(chunk_size or CHUNK_SIZE), key,
+            ),
+        )
+    return _upload_out(row, viewer.telegram_user_id, [])
+
+
+async def _own_media(conn: Any, tenant_id: str, viewer: Any, media_id: str, *, lock: str = "") -> dict[str, Any]:
+    wanted = _valid_ids([media_id])
+    row = None
+    if wanted:
+        row = await fetch_one(
+            conn,
+            f"""
+            select {_MEDIA_COLUMNS} from academy_media
+            where tenant_id = %s and media_id = %s::uuid and owner_telegram_user_id = %s
+            {lock}
+            """,
+            (tenant_id, wanted[0], viewer.telegram_user_id),
+        )
+    if not row:
+        raise MediaError(404, "media_not_found")
+    return row
+
+
+async def put_chunk(tenant_id: str, viewer: Any, media_id: str, n: int, data: bytes) -> dict[str, Any]:
+    import asyncio
+
+    from app.academy.media import chunk_length, chunks_total, get_media_store
+
+    store = get_media_store()
+    async with tenant_connection(tenant_id) as conn:
+        row = await _own_media(conn, tenant_id, viewer, media_id, lock="for share")
+        if row["status"] != "uploading":
+            raise MediaError(409, "not_uploading", {"status": row["status"]})
+        expected = chunk_length(int(row["size_bytes"]), int(n), int(row["chunk_size"]))
+        if len(data) != expected:
+            raise MediaError(400, "bad_chunk_size", {"expected": expected})
+        await asyncio.to_thread(
+            store.write_chunk, tenant_id, row["media_id"], int(n), int(n) * int(row["chunk_size"]), data
+        )
+    received = store.received(tenant_id, row["media_id"])
+    return {
+        "media_id": row["media_id"],
+        "chunk": int(n),
+        "chunks_received": len(received),
+        "chunks_total": chunks_total(int(row["size_bytes"]), int(row["chunk_size"])),
+    }
+
+
+async def upload_status(tenant_id: str, viewer: Any, media_id: str) -> dict[str, Any]:
+    """The site resumes an interrupted upload from ``chunks_received``."""
+    from app.academy.media import get_media_store
+
+    async with tenant_connection(tenant_id) as conn:
+        row = await _own_media(conn, tenant_id, viewer, media_id)
+    received = get_media_store().received(tenant_id, row["media_id"]) if row["status"] == "uploading" else []
+    return _upload_out(row, viewer.telegram_user_id, received)
+
+
+async def complete_upload(tenant_id: str, viewer: Any, media_id: str) -> dict[str, Any]:
+    """Every chunk in place → the original. An image is checked by its signature; a
+    video goes to the transcoding queue. Repeating ``complete`` is harmless."""
+    import asyncio
+
+    from app.academy.media import chunks_total, get_media_store, image_signature_ok
+    from app.academy.transcode import enqueue_transcode
+
+    store = get_media_store()
+    async with tenant_connection(tenant_id) as conn:
+        row = await _own_media(conn, tenant_id, viewer, media_id, lock="for update")
+        if row["status"] in ("processing", "ready"):
+            return _upload_out(row, viewer.telegram_user_id)
+        if row["status"] == "failed":
+            raise MediaError(409, "upload_failed", {"error": row.get("error")})
+        total = chunks_total(int(row["size_bytes"]), int(row["chunk_size"]))
+        received = set(store.received(tenant_id, row["media_id"]))
+        missing = [n for n in range(total) if n not in received]
+        if missing:
+            raise MediaError(409, "upload_incomplete", {"missing": missing[:50]})
+        if row["kind"] == "image" and not image_signature_ok(row["mime"], store.part_head(tenant_id, row["media_id"])):
+            await asyncio.to_thread(store.discard_upload, tenant_id, row["media_id"])
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update academy_media set status = 'failed', error = 'bad_image', updated_at = now()
+                    where tenant_id = %s and media_id = %s::uuid
+                    """,
+                    (tenant_id, row["media_id"]),
+                )
+            failed = True
+        else:
+            failed = False
+            await asyncio.to_thread(store.assemble, tenant_id, row["media_id"], row["storage_key"], int(row["size_bytes"]))
+            status = "processing" if row["kind"] == "video" else "ready"
+            row = await fetch_one(
+                conn,
+                f"""
+                update academy_media set status = %s, updated_at = now()
+                where tenant_id = %s and media_id = %s::uuid
+                returning {_MEDIA_COLUMNS}
+                """,
+                (status, tenant_id, row["media_id"]),
+            )
+            if status == "processing":
+                await enqueue_transcode(conn, tenant_id, row["media_id"])
+    if failed:
+        # Вне транзакции: статус «failed» уже записан, ошибка — для ответа сайту.
+        raise MediaError(422, "bad_image")
+    return _upload_out(row, viewer.telegram_user_id)
