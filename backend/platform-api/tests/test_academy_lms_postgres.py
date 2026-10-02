@@ -716,3 +716,199 @@ def test_homework_submit_return_resubmit_accept_and_notify(monkeypatch, tmp_path
             assert {n["status"] for n in await notes()} == {"done"}
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_author_builds_publishes_and_follows_a_course(monkeypatch, tmp_path):
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    _env(monkeypatch, media_dir)
+    with temporary_database("whieda_academy_author") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import author as authoring
+            from app.academy.keys import issue_keys, redeem_key
+            from app.academy.media_service import complete_upload, init_upload, put_chunk
+            from app.academy.service import AcademyError, course_outline, list_courses, load_viewer, set_lesson_done
+            from app.db import fetch_all, tenant_connection
+
+            async def rows(sql: str, params: tuple = ()) -> list[dict]:
+                async with tenant_connection("whieda") as conn:
+                    return [dict(r) for r in await fetch_all(conn, sql, params)]
+
+            async def upload(viewer, kind, name, mime, data) -> str:
+                media = await init_upload("whieda", viewer, kind=kind, name=name, mime=mime, size=len(data),
+                                          allowed_kinds=("image", "file", "video"))
+                await put_chunk("whieda", viewer, media["media_id"], 0, data)
+                await complete_upload("whieda", viewer, media["media_id"])
+                return media["media_id"]
+
+            almira = await load_viewer("whieda", AUTHOR)
+            student = await load_viewer("whieda", STUDENT)
+            stranger = await load_viewer("whieda", STRANGER)
+            owner = await load_viewer("whieda", ADMIN)
+
+            # 1. Роль автора: размещение в Академии (или владелец). Чужой — 403.
+            with pytest.raises(AcademyError) as nobody:
+                await authoring.author_courses("whieda", stranger)
+            assert nobody.value.code == "not_author"
+            mine = await authoring.author_courses("whieda", almira)
+            assert mine["courses"] == [] and mine["shelf"]["active"] is True
+
+            # 2. Курс: адрес из названия, черновик, доступ по ключу.
+            course = (await authoring.create_course("whieda", almira, title="Акварель с нуля"))["course"]
+            assert (course["slug"], course["status"], course["access_rule"]) == ("akvarel-s-nulya", "draft", "purchase")
+            twin = (await authoring.create_course("whieda", almira, title="Акварель с нуля"))["course"]
+            assert twin["slug"] == "akvarel-s-nulya-2"
+            with pytest.raises(AcademyError) as taken:
+                await authoring.create_course("whieda", almira, title="Ещё", slug="akvarel-s-nulya")
+            assert taken.value.code == "slug_taken"
+            slug = course["slug"]
+
+            # 3. Описание в markdown (очищается), цена в BYN, обложка — только своя картинка.
+            cover = await upload(almira, "image", "обложка.png", "image/png", b"\x89PNG\r\n\x1a\ncover")
+            foreign = await upload(student, "image", "чужая.png", "image/png", b"\x89PNG\r\n\x1a\nmine")
+            updated = (await authoring.update_course("whieda", almira, slug, {
+                "subtitle": "6 недель",
+                "description_md": "**Курс** для начинающих <script>alert(1)</script>",
+                "price": 250, "currency": "BYN", "cover_media_id": cover,
+            }))["course"]
+            assert updated["description_html"] == "<p><strong>Курс</strong> для начинающих </p>"
+            assert updated["price"] == {"amount": 250, "currency": "BYN"}
+            assert updated["cover_url"].startswith(f"/academy-media/whieda/academy/{cover}/original.png?u={AUTHOR}")
+            for patch_body, code in (
+                ({"currency": "DOGE"}, "bad_currency"),
+                ({"price": -1}, "bad_price"),
+                ({"cover_media_id": foreign}, "bad_media"),
+                ({"access_rule": "pro"}, "bad_access_rule"),  # PRO-курс заводит только владелец
+                ({"status": "archived"}, "bad_status"),
+                ({"title": ""}, "bad_title"),
+            ):
+                with pytest.raises(AcademyError) as refused:
+                    await authoring.update_course("whieda", almira, slug, patch_body)
+                assert refused.value.code == code, patch_body
+
+            # 4. Модули с правилами открытия; уроки: видео (ещё перекодируется), файл, домашка.
+            week1 = (await authoring.create_module("whieda", almira, slug, {"title": "Неделя 1"}))["module"]
+            week2 = (await authoring.create_module("whieda", almira, slug, {
+                "title": "Неделя 2", "unlock": {"type": "after_prev"},
+            }))["module"]
+            with pytest.raises(AcademyError) as bad_rule:
+                await authoring.create_module("whieda", almira, slug, {"title": "X", "unlock": {"type": "someday"}})
+            assert bad_rule.value.code == "bad_unlock"
+            video = await upload(almira, "video", "урок.mp4", "video/mp4", b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64)
+            workbook = await upload(almira, "file", "Тетрадь.pdf", "application/pdf", b"%PDF-1.4 workbook")
+            intro = (await authoring.create_lesson("whieda", almira, slug, week1["module_id"], {
+                "title": "Знакомство с красками",
+                "body_md": f"Смотрите схему:\n\n![Схема](media:{cover})\n\n<img src=x onerror=alert(1)>",
+                "video": {"media_id": video},
+                "files": [workbook],
+            }))["lesson"]
+            assert intro["slug"] == "znakomstvo-s-kraskami" and intro["status"] == "published"
+            assert "onerror" not in intro["body_html"] and f'src="media:{cover}"' in intro["body_html"]
+            assert intro["video"] == {"media_id": video, "status": "processing"}
+            practice = (await authoring.create_lesson("whieda", almira, slug, week2["module_id"], {
+                "title": "Практика",
+                "assignment": {"prompt_md": "Пришлите **фото**", "required": True},
+            }))["lesson"]
+            assert practice["assignment"] == {
+                "prompt_md": "Пришлите **фото**", "prompt_html": "<p>Пришлите <strong>фото</strong></p>", "required": True,
+            }
+            for lesson_body, code in (
+                ({"title": "Эфир", "kind": "live", "live_url": "http://zoom.example/x"}, "bad_live_url"),
+                ({"title": "Чужое", "files": [foreign]}, "bad_media"),
+                ({"title": "Чужое видео", "video": {"media_id": foreign}}, "bad_media"),
+                ({"title": "Видео", "video": {"provider": "dailymotion", "id": "x"}}, "bad_video"),
+            ):
+                with pytest.raises(AcademyError) as refused:
+                    await authoring.create_lesson("whieda", almira, slug, week1["module_id"], lesson_body)
+                assert refused.value.code == code, lesson_body
+            live = (await authoring.create_lesson("whieda", almira, slug, week1["module_id"], {
+                "title": "Эфир недели", "kind": "live", "live_at": "2026-10-09T19:00", "live_url": "https://zoom.us/j/1",
+                "video": {"provider": "youtube", "id": "dQw4w9WgXcQ"},
+            }))["lesson"]
+            assert (live["kind"], live["live_at"]) == ("live", "2026-10-09T16:00:00+00:00")
+
+            structure = await authoring.author_course("whieda", almira, slug)
+            assert [m["title"] for m in structure["modules"]] == ["Неделя 1", "Неделя 2"]
+            assert [(l["title"], l["position"]) for m in structure["modules"] for l in m["lessons"]] == [
+                ("Знакомство с красками", 1), ("Эфир недели", 2), ("Практика", 3),
+            ]
+            # Порядок: модули и уроки кнопками вверх/вниз (весь список целиком).
+            await authoring.reorder_modules("whieda", almira, slug, [week2["module_id"], week1["module_id"]])
+            moved = await authoring.author_course("whieda", almira, slug)
+            assert [l["title"] for m in moved["modules"] for l in m["lessons"]][0] == "Практика"
+            await authoring.reorder_modules("whieda", almira, slug, [week1["module_id"], week2["module_id"]])
+            await authoring.reorder_lessons("whieda", almira, slug, week1["module_id"], [live["lesson_id"], intro["lesson_id"]])
+            ordered = await authoring.author_course("whieda", almira, slug)
+            assert [(l["title"], l["position"]) for m in ordered["modules"] for l in m["lessons"]] == [
+                ("Эфир недели", 1), ("Знакомство с красками", 2), ("Практика", 3),
+            ]
+            with pytest.raises(AcademyError) as wrong_order:
+                await authoring.reorder_lessons("whieda", almira, slug, week1["module_id"], [live["lesson_id"]])
+            assert wrong_order.value.code == "bad_order"
+
+            # 5. Черновик ученику не виден; публикация — при оплаченном размещении.
+            assert [c["slug"] for c in await list_courses("whieda", student)] == []
+            published = (await authoring.update_course("whieda", almira, slug, {"status": "published"}))["course"]
+            assert published["status"] == "published"
+            async with tenant_connection("whieda") as conn:
+                await conn.execute("update academy_shelf set status = 'suspended'")
+            with pytest.raises(AcademyError) as lapsed:
+                await authoring.update_course("whieda", almira, twin["slug"], {"status": "published"})
+            assert lapsed.value.code == "shelf_inactive"
+            # Черновик править можно и без размещения; владелец публикует сам.
+            await authoring.update_course("whieda", almira, twin["slug"], {"subtitle": "черновик"})
+            assert (await authoring.update_course("whieda", owner, twin["slug"], {"status": "published"}))["course"]["status"] == "published"
+            async with tenant_connection("whieda") as conn:
+                await conn.execute("update academy_shelf set status = 'active'")
+
+            # 6. Ключ автора → ученик видит модули с замком и проходит урок.
+            issued = await issue_keys("whieda", slug, "almira", 1)
+            assert (await redeem_key("whieda", issued.codes[0], STUDENT)).status == "opened"
+            outline = await course_outline("whieda", slug, student, allow_locked=True)
+            assert outline["course"]["price"] == {"amount": 250, "currency": "BYN"}
+            assert outline["course"]["description_html"] == "<p><strong>Курс</strong> для начинающих </p>"
+            locks = {row["title"]: (row["locked"], row["lock_reason"]) for row in outline["lessons"]}
+            assert locks == {
+                "Эфир недели": (False, None), "Знакомство с красками": (False, None), "Практика": (True, "after_prev"),
+            }
+
+            # 7. Правило урока поверх модуля, удаление: модуль с уроками — нет, урок — в архив.
+            await authoring.update_lesson("whieda", almira, slug, practice["lesson_id"], {"unlock": {"type": "open"}})
+            outline = await course_outline("whieda", slug, student, allow_locked=True)
+            assert next(r for r in outline["lessons"] if r["title"] == "Практика")["locked"] is False
+            with pytest.raises(AcademyError) as not_empty:
+                await authoring.delete_module("whieda", almira, slug, week2["module_id"])
+            assert not_empty.value.code == "module_not_empty"
+            await authoring.delete_lesson("whieda", almira, slug, live["lesson_id"])
+            empty = (await authoring.create_module("whieda", almira, slug, {"title": "Пустой"}))["module"]
+            await authoring.delete_module("whieda", almira, slug, empty["module_id"])
+            outline = await course_outline("whieda", slug, student, allow_locked=True)
+            assert [(r["title"], r["position"]) for r in outline["lessons"]] == [
+                ("Знакомство с красками", 1), ("Практика", 2),
+            ]
+            assert await rows("select status from academy_lessons where title = 'Эфир недели'") == [{"status": "archived"}]
+
+            # 8. Ученики: прогресс, последняя активность, домашки на проверке.
+            await set_lesson_done("whieda", slug, "znakomstvo-s-kraskami", student, done=True, source="site")
+            [learner] = await authoring.course_students("whieda", almira, slug)
+            assert (learner["name"], learner["username"], learner["progress_pct"]) == ("Мария", "masha_s", 50)
+            assert (learner["lessons_complete"], learner["lessons_total"], learner["submissions_pending"]) == (1, 2, 0)
+            assert learner["access"] == "key" and learner["last_activity_at"] is not None
+
+            # 9. Чужой курс не правится; предпросмотр markdown — тем же очистителем.
+            with pytest.raises(AcademyError) as foreign_course:
+                await authoring.update_course("whieda", stranger, slug, {"title": "Моё"})
+            assert foreign_course.value.code == "not_author"
+            assert await authoring.preview_markdown("whieda", almira, "# Заголовок\n<script>x</script>") == "<h1>Заголовок</h1>\n"
+            listing = await authoring.author_courses("whieda", almira)
+            assert [(c["slug"], c["students"], c["lessons_total"]) for c in listing["courses"]] == [
+                ("akvarel-s-nulya", 1, 2), ("akvarel-s-nulya-2", 0, 0),
+            ]
+
+        db.run_with_app(proof)
