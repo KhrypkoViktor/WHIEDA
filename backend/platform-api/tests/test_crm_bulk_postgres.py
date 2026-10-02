@@ -117,6 +117,17 @@ def test_bulk_import_skips_duplicates_and_is_one_transaction(monkeypatch):
 
             # Another tenant sees nothing (RLS), Пётр's diary is untouched.
             assert await rows("select contact_id from crm_contacts", tenant="other") == []
-            assert [c["name"] for c in await crm.list_contacts("whieda", petr)] == ["Анна у Петра"]
+            from app.crm.queries import list_contacts
+
+            assert [c["name"] for c in (await list_contacts("whieda", petr))["items"]] == ["Анна у Петра"]
+            # CRM v2: every imported card starts its history with «created» {source: import}.
+            sources = await rows(
+                "select a.payload ->> 'source' as source, count(*)::int as n from crm_activities a "
+                "join crm_contacts c on c.contact_id = a.contact_id "
+                "join platform_accounts p on p.account_id = c.account_id "
+                "where a.kind = 'created' and p.telegram_user_id = 7001 group by 1 order by 1"
+            )
+            assert {row["source"]: row["n"] for row in sources}["manual"] == 1  # Анна, created by hand
+            assert {row["source"]: row["n"] for row in sources}["import"] >= 500
 
         db.run_with_app(proof)

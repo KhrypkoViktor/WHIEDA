@@ -1,6 +1,9 @@
-"""The diary in the bot: the words «ежедневник», «crm», «мои контакты» and the
-cabinet button. The diary itself lives on the site (/crm/); the bot only opens
-it with a link that signs the person in on arrival (#wwc-login).
+"""WWC CRM in the bot: the words «ежедневник», «crm», «wwc crm», «мои контакты»
+and the cabinet button. The app itself lives on the site (/crm/); the bot only
+opens it with a link that signs the person in on arrival (#wwc-login).
+
+The product is named «WWC CRM» since 02.10.2026 (owner); the old word
+«ежедневник» still opens it.
 
 Nothing here breaks the bot: a lookup failure means «no button» / «not mine»,
 and the text falls through to the usual handlers.
@@ -21,23 +24,24 @@ from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
 
-CRM_BUTTON_LABEL = "📒 Ежедневник"
-OPEN_BUTTON_LABEL = "📒 Открыть ежедневник"
+CRM_BUTTON_LABEL = "📒 WWC CRM"
+OPEN_BUTTON_LABEL = "📒 Открыть WWC CRM"
 
 _TEXT_RE = re.compile(
-    r"^/?(?:crm|срм|ежедневник|мой\s+ежедневник|открыть\s+ежедневник|мои\s+контакты)\s*[.!]?\s*$",
+    r"^/?(?:(?:wwc\s+)?(?:crm|срм)|ежедневник|мой\s+ежедневник|открыть\s+ежедневник"
+    r"|открыть\s+(?:wwc\s+)?(?:crm|срм)|мои\s+контакты)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
 OPEN_TEXT = (
-    "📒 Ежедневник партнёра: кому позвонить сегодня, статусы и заметки по каждому человеку.\n\n"
-    "Утром в 09:00 бот напомнит, с кем связаться, если на сегодня есть дела."
+    "📒 WWC CRM — ваши контакты, встречи и следующие шаги в одном приложении.\n\n"
+    "Утром в 09:00 бот пришлёт, с кем связаться сегодня, а за час до встречи напомнит о ней."
 )
 LOCK_TEXT = {
-    "pro_required": "Ежедневник входит в PRO — платформу вашего сайта. Продлите PRO, и он откроется сразу.",
+    "pro_required": "WWC CRM входит в PRO — платформу вашего сайта. Продлите PRO, и CRM откроется сразу.",
     "crm_pilot_only": (
-        "Ежедневник сейчас проверяют несколько партнёров. "
-        "После проверки откроем его всем с PRO."
+        "WWC CRM сейчас проверяют несколько партнёров. "
+        "После проверки откроем её всем с PRO."
     ),
 }
 
@@ -51,7 +55,7 @@ def _available(tenant: TenantContext) -> bool:
 
 
 async def crm_button_rows(tenant: TenantContext, telegram_user_id: int | None) -> list[list[dict[str, Any]]]:
-    """The cabinet row «📒 Ежедневник» — only for those who can open it."""
+    """The cabinet row «📒 WWC CRM» — only for those who can open it."""
     if telegram_user_id is None or not _available(tenant):
         return []
     try:
