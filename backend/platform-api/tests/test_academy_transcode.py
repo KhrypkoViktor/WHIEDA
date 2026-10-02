@@ -109,3 +109,34 @@ def test_small_video_is_not_upscaled_and_garbage_fails(tmp_path):
         run_ffmpeg(garbage, tmp_path / "g.mp4", tmp_path / "g.jpg")
     assert str(failed.value).startswith("ffmpeg:")
     assert not (tmp_path / "g.mp4").exists() and not list(tmp_path.glob("g.*.tmp"))
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_failure_does_not_abandon_a_running_encode():
+    import time
+
+    from app.academy.transcode import run_with_heartbeat
+
+    beats = []
+
+    async def broken_heartbeat():
+        beats.append(1)
+        raise RuntimeError("database blip")
+
+    def encode(value):
+        time.sleep(0.3)
+        return {"done": value}
+
+    assert await run_with_heartbeat(encode, 7, heartbeat=broken_heartbeat, interval=0.05) == {"done": 7}
+    assert len(beats) >= 2
+
+
+@needs_ffmpeg
+def test_only_video_containers_reach_ffmpeg(tmp_path):
+    playlist = tmp_path / "trick.mp4"
+    playlist.write_text("#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://169.254.169.254/x.ts\n#EXT-X-ENDLIST\n")
+    with pytest.raises(TranscodeFailed) as refused:
+        run_ffmpeg(playlist, tmp_path / "720.mp4", tmp_path / "poster.jpg")
+    # Отказ до кодирования: плейлист HLS не открывается, ссылки из него не запрашиваются.
+    assert str(refused.value).startswith("ffmpeg: unsupported container")
+    assert not (tmp_path / "720.mp4").exists()

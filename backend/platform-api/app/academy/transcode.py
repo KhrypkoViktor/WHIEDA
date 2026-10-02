@@ -20,6 +20,10 @@ failure (for a look by hand).
 
 A worker transcodes only where it can: ffmpeg and ffprobe on PATH and the media
 directory mounted (``PLATFORM_ACADEMY_MEDIA_DIR``).
+
+An upload is untrusted: ffprobe and ffmpeg read it with the ``file`` protocol only and
+with video container demuxers only (mov/mp4, matroska/webm, avi, mpeg) — a playlist
+(HLS, concat) disguised as a video is refused before it can fetch anything.
 """
 
 from __future__ import annotations
@@ -45,6 +49,9 @@ HEARTBEAT_SEC = 60.0
 STALE_AFTER = "10 minutes"
 FFMPEG_TIMEOUT_SEC = 6 * 3600
 POSTER_AT_SEC = 3.0
+# Контейнер загрузки → демультиплексор ffmpeg; всё прочее (HLS, concat, картинки) — отказ.
+CONTAINERS = {"mov,mp4,m4a,3gp,3g2,mj2": "mov", "matroska,webm": "matroska", "avi": "avi", "mpeg": "mpeg"}
+SAFE_INPUT = ["-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,avi,mpeg"]
 SCALE_720 = (
     "scale=w='if(gt(iw,ih),-2,trunc(min(720,iw)/2)*2)':h='if(gt(iw,ih),trunc(min(720,ih)/2)*2,-2)',setsar=1"
 )
@@ -195,14 +202,34 @@ def probe_duration(path: Path) -> float:
         return 0.0
 
 
+def probe_container(source: Path) -> str:
+    """The demuxer for an upload, or TranscodeFailed («unsupported container»)."""
+    try:
+        name = subprocess.run(
+            ["ffprobe", "-v", "error", *SAFE_INPUT, "-show_entries", "format=format_name",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(source)],
+            check=True, capture_output=True, timeout=120,
+        ).stdout.decode("utf-8", "replace").strip()
+    except subprocess.CalledProcessError as exc:
+        raise TranscodeFailed(("ffmpeg: unsupported container: " + _ffmpeg_error(exc)[len("ffmpeg: "):])[:300]) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise TranscodeFailed("ffmpeg: unsupported container: probe timeout") from exc
+    demuxer = CONTAINERS.get(name)
+    if demuxer is None:
+        raise TranscodeFailed(f"ffmpeg: unsupported container {name or '?'}"[:300])
+    return demuxer
+
+
 def run_ffmpeg(source: Path, mp4: Path, poster: Path) -> dict[str, Any]:
     """Blocking (runs in a thread). Writes ``mp4`` and ``poster`` atomically."""
     mp4_tmp = mp4.with_name(mp4.name + ".tmp")
     poster_tmp = poster.with_name(poster.name + ".tmp")
+    demuxer = probe_container(source)
     try:
         subprocess.run(
             [
-                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
+                "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                *SAFE_INPUT, "-f", demuxer, "-i", str(source),
                 "-map", "0:v:0", "-map", "0:a:0?", "-vf", SCALE_720,
                 "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-f", "mp4", str(mp4_tmp),
@@ -229,6 +256,20 @@ def run_ffmpeg(source: Path, mp4: Path, poster: Path) -> dict[str, Any]:
     mp4_tmp.replace(mp4)
     poster_tmp.replace(poster)
     return {"duration_sec": int(round(duration))}
+
+
+async def run_with_heartbeat(fn: Any, *args: Any, heartbeat: Any, interval: float) -> Any:
+    """Run a blocking ``fn`` in a thread to its end, touching the job every ``interval``.
+    A failed heartbeat (database blip) is logged and waited out — never a second ffmpeg."""
+    task = asyncio.create_task(asyncio.to_thread(fn, *args))
+    while True:
+        finished, _ = await asyncio.wait({task}, timeout=interval)
+        if finished:
+            return task.result()
+        try:
+            await heartbeat()
+        except Exception:
+            logger.warning("academy_transcode_heartbeat_failed", exc_info=True)
 
 
 async def process_job(job: dict[str, Any] | None) -> str:
@@ -260,14 +301,11 @@ async def process_job(job: dict[str, Any] | None) -> str:
         await _set_media(tenant_id, media_id, status="failed", error="source_missing")
         await _set_outbox(outbox_id, "dead", "source_missing")
         return "failed"
-    task = asyncio.create_task(asyncio.to_thread(run_ffmpeg, source, store.path(mp4_key), store.path(poster_key)))
     try:
-        while True:
-            finished, _ = await asyncio.wait({task}, timeout=HEARTBEAT_SEC)
-            if finished:
-                break
-            await _heartbeat(outbox_id)
-        result = task.result()
+        result = await run_with_heartbeat(
+            run_ffmpeg, source, store.path(mp4_key), store.path(poster_key),
+            heartbeat=lambda: _heartbeat(outbox_id), interval=HEARTBEAT_SEC,
+        )
     except TranscodeFailed as exc:
         logger.warning("academy_transcode_failed", extra={"media_id": media_id, "error": str(exc)})
         await _set_media(tenant_id, media_id, status="failed", error=str(exc))
