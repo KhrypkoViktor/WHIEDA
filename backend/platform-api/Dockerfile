@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+# Академия v2: ffmpeg/ffprobe — перекодирование видео в воркере (у api и worker один образ).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY pyproject.toml /app/
 RUN pip install --no-cache-dir -e ".[dev]"

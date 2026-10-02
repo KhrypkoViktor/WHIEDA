@@ -7,6 +7,8 @@ services:
       - .env
     volumes:
       - ${PLATFORM_PARTNER_LIBRARY_HOST_ROOT:-/var/lib/wwc-partner-library}:/var/lib/wwc-partner-library:ro
+      # Академия v2: загрузки курсов (api пишет куски, worker перекодирует видео). Каталог общий с staging.
+      - ${PLATFORM_ACADEMY_MEDIA_HOST_DIR:-/opt/whieda-platform-core/media/academy}:/opt/whieda-platform-core/media/academy
     ports:
       - "8080:8080"
     depends_on:
@@ -25,14 +27,18 @@ services:
     command: ["python", "-m", "app.jobs.worker"]
     env_file:
       - .env
+    volumes:
+      # Академия v2: воркер перекодирует видео (ffmpeg 720p) — только здесь, не на staging.
+      - ${PLATFORM_ACADEMY_MEDIA_HOST_DIR:-/opt/whieda-platform-core/media/academy}:/opt/whieda-platform-core/media/academy
     depends_on:
       - redis
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 384M
+          # Запас под ffmpeg (libx264 720p, preset medium); было 0.5 CPU / 384M.
+          cpus: "1.5"
+          memory: 1536M
 
   redis:
     image: redis:7-alpine
