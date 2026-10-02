@@ -15,6 +15,8 @@ dependencies = [
   # Академия v2: markdown автора → HTML и его очистка (санитайзер).
   "markdown>=3.5",
   "nh3>=0.3.0",
+  # Range в FileResponse (видео Академии через API до nginx) — с Starlette 0.39.
+  "starlette>=0.39.0",
 ]
 
 [project.optional-dependencies]
