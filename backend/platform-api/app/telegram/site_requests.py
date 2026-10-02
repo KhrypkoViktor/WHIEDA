@@ -140,15 +140,15 @@ def _payment_text(request: dict[str, Any]) -> str:
     rub = request["currency"] == "RUB"
     if str(request.get("plan_code") or "site") == "bundle":
         what = (
-            "Платформа + Клуб на 3 месяца (сайт 3 000 ₽ + клуб 7 500 ₽ по акции, настройка в подарок)"
+            "Платформа + Клуб на 3 месяца по акции октября (сайт 3 000 ₽ + клуб 10 000 ₽ вместо 12 000 + подключение 2 000 ₽ вместо 3 000)"
             if rub else
-            "Платформа + Клуб на 3 месяца (сайт 30 WWC$ + клуб 75 WWC$ по акции, настройка в подарок)"
+            "Платформа + Клуб на 3 месяца по акции октября (сайт 30 WWC$ + клуб 100 WWC$ вместо 120 + подключение 20 WWC$ вместо 30)"
         )
     else:
         what = (
-            "Сайт на 3 месяца (PRO 3 000 ₽) и его настройка (2 000 ₽)"
+            "Сайт на 3 месяца (PRO 3 000 ₽) и его подключение (3 000 ₽)"
             if rub else
-            "Сайт на 3 месяца (PRO 30 WWC$) и его настройка (20 WWC$)"
+            "Сайт на 3 месяца (PRO 30 WWC$) и его подключение (30 WWC$)"
         )
     return f"{what}: {total}.\n{PAYMENT_RU if rub else PAYMENT_BY}\nПосле перевода пришлите сюда скриншот чека."
 
@@ -304,8 +304,8 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             chat_id,
             "Что оформляем?",
             reply_markup={"inline_keyboard": [
-                [{"text": "Сайт + настройка — 5 000 ₽" if rub else "Сайт + настройка — 50 WWC$", "callback_data": "site:plan:site"}],
-                [{"text": "Платформа + Клуб — 10 500 ₽" if rub else "Платформа + Клуб — 105 WWC$", "callback_data": "site:plan:bundle"}],
+                [{"text": "Сайт + подключение — 6 000 ₽" if rub else "Сайт + подключение — 60 WWC$", "callback_data": "site:plan:site"}],
+                [{"text": "Платформа + Клуб — 15 000 ₽" if rub else "Платформа + Клуб — 150 WWC$", "callback_data": "site:plan:bundle"}],
             ]},
         )
     elif status == "awaiting_payment":

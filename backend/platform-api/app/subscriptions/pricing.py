@@ -1,21 +1,23 @@
 """Partner products, personal prices and the owner's multi-line payment command.
 
-Products (owner, 14–15.09.2026):
+Products (owner, 14–15.09.2026; prices from 02.10.2026, V18):
   PRO (сайт)            platform_subscription   3/6/12 мес   30/54/96 WWC$
-  CLUB                  club_subscription       3 мес        120 WWC$ (40/мес)
-  настройка сайта       site_setup              разово       20 WWC$
-  пакет PRO + клуб      bundle_pro_club         3 мес        105 WWC$ = PRO 30 + клуб 75 (акция)
+  CLUB                  club_subscription       1 / 3 мес    40 / 120 WWC$ (1 мес — пробный)
+  настройка сайта       site_setup              разово       30 WWC$
+  пакет PRO + клуб      bundle_pro_club         3 мес        150 WWC$: новому партнёру PRO 30 + клуб 100
+                                                             + настройка 20 (акция октября), продление — PRO 30 + клуб 120
 
 One received transfer may pay several lines. The owner writes:
 
     оплата ref:olga-samtsova
-    PRO 15 WWC$ 3
-    клуб 75 WWC$ 3 акция
-    настройка 0 WWC$ акция
-    получено 90 WWC$
+    PRO 30 WWC$ 3
+    клуб 100 WWC$ 3 акция
+    настройка 20 WWC$ акция
+    получено 150 WWC$
 
 or the old one-liner ``оплата ref:code 30 WWC$ 3`` (= one PRO line), or a
-bundle line ``пакет 105 WWC$`` which expands into PRO 30 + клуб 75 (promo).
+bundle line ``пакет 150 WWC$`` which expands into PRO 30 + клуб 120 (the bundle
+renewal; a new partner's October offer is written as the three lines above).
 A line whose amount differs from the price (personal price included) must
 say «акция», and «получено» must equal the sum of lines — otherwise nothing
 is recorded and the bot explains what does not add up.
@@ -47,7 +49,7 @@ _PRODUCT_WORDS = {
     "пакет": "bundle_pro_club", "bundle": "bundle_pro_club",
     "курс": "course_academy", "академия": "course_academy", "course": "course_academy",
 }
-BUNDLE_LINES = (("platform_subscription", 3000), ("club_subscription", 7500))
+BUNDLE_LINES = (("platform_subscription", 3000), ("club_subscription", 12000))
 RUB_PER_WWC = 100
 
 _IDENTIFIER = r"(ref:[A-Za-z0-9][A-Za-z0-9_-]{0,62}|@[A-Za-z0-9_]{3,64})"
@@ -56,7 +58,7 @@ _CURRENCY = r"(RUB|₽|WUSD|WWC\$|W\$)"
 _HEAD_RE = re.compile(rf"^(?:оплата|/pay)\s+{_IDENTIFIER}(?:\s+{_AMOUNT}\s+{_CURRENCY}(?:\s+(3|6|12))?)?\s*$", re.IGNORECASE)
 _LINE_RE = re.compile(
     rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle|курс|академия|course)\s+"
-    rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>3|6|12))?(?:\s+(?P<note>.+))?$",
+    rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>12|1|3|6))?(?:\s+(?P<note>.+))?$",
     re.IGNORECASE,
 )
 _RECEIVED_RE = re.compile(rf"^получено\s+{_AMOUNT}\s+{_CURRENCY}\s*$", re.IGNORECASE)
@@ -72,9 +74,11 @@ USAGE = (
     "оплата ref:code\n"
     "PRO 30 WWC$ 3\n"
     "клуб 120 WWC$ 3\n"
-    "настройка 20 WWC$\n"
-    "получено 170 WWC$\n"
-    "Пакет PRO+клуб: строка «пакет 105 WWC$». Цена не по тарифу — добавьте слово «акция».\n"
+    "настройка 30 WWC$\n"
+    "получено 180 WWC$\n"
+    "Новый партнёр по акции октября: PRO 30 WWC$ 3 / клуб 100 WWC$ 3 акция / настройка 20 WWC$ акция.\n"
+    "Продление пакета PRO+клуб: строка «пакет 150 WWC$». Пробный месяц клуба: «клуб 40 WWC$ 1».\n"
+    "Цена не по тарифу — добавьте слово «акция».\n"
     "Часть суммы бонусами партнёра: строка «бонусами 5 WWC$» — тогда «получено» меньше строк ровно на неё."
 )
 
@@ -163,7 +167,7 @@ def parse_payment_command(text: str) -> ParsedPayment:
         promo = "акци" in note.lower()
         if product == "bundle_pro_club":
             # The bundle is priced as a whole; its lines are PRO at list price and
-            # CLUB at the promotional remainder, so the club line carries the promo.
+            # CLUB as the remainder (150 − 30 = 120 on a renewal), marked as promo.
             scale = RUB_PER_WWC if cur == "RUB" else 1
             pro_minor, club_minor = BUNDLE_LINES[0][1] * scale, amount - BUNDLE_LINES[0][1] * scale
             if club_minor <= 0:

@@ -16,17 +16,22 @@ from app.subscriptions.service import (
 )
 from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF
 
-# Что оформляют (владелец, 14–19.09.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
-#   site   — PRO 3 мес + настройка сайта: 30 + 20 WWC$ = 3 000 + 2 000 ₽
-#   bundle — PRO 3 мес + клуб 3 мес по акции: 105 WWC$ = 10 500 ₽, настройка в подарок
+# Что оформляют (владелец; цены с 02.10.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
+#   site   — PRO 3 мес + подключение сайта: 30 + 30 WWC$ = 3 000 + 3 000 ₽
+#   bundle — акция октября: PRO 30 + клуб 100 вместо 120 + подключение 20 вместо 30
+#            = 150 WWC$ = 15 000 ₽
 PLANS: dict[str, dict[str, Any]] = {
     "site": {
         "label": "Сайт на 3 месяца + настройка",
-        "lines": (("platform_subscription", 3_000, 3, False, ""), ("site_setup", 2_000, 0, False, "")),
+        "lines": (("platform_subscription", 3_000, 3, False, ""), ("site_setup", 3_000, 0, False, "")),
     },
     "bundle": {
         "label": "Платформа + Клуб на 3 месяца",
-        "lines": (("platform_subscription", 3_000, 3, False, ""), ("club_subscription", 7_500, 3, True, "пакет PRO + клуб (первый поток)")),
+        "lines": (
+            ("platform_subscription", 3_000, 3, False, ""),
+            ("club_subscription", 10_000, 3, True, "пакет PRO + клуб (акция октября)"),
+            ("site_setup", 2_000, 0, True, "пакет PRO + клуб (акция октября)"),
+        ),
     },
 }
 RUB_PER_WWC = 100
@@ -388,7 +393,7 @@ async def confirm_site_request(
                 """,
                 (tenant_id, request["requested_subdomain"]),
             )
-        # Одна оплата — несколько строк (сайт + настройка или сайт + клуб): так же, как
+        # Одна оплата — несколько строк (сайт + настройка или сайт + клуб + настройка): так же, как
         # владелец записывает вручную через «оплата ref:… / пакет …». Настройка сайта
         # раньше в ledger не попадала, и 2 000 ₽ терялись в отчётах.
         plan = str(request.get("plan_code") or "site")

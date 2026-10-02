@@ -1123,8 +1123,10 @@ async def record_payment_lines_in_connection(
     for line in lines:
         if line.currency != normalized_currency:
             raise SubscriptionError("Все строки одной оплаты должны быть в одной валюте.")
-        if line.product_code in TERM_PRODUCTS and line.access_months not in {3, 6, 12}:
-            raise SubscriptionError("access_months must be 3, 6 or 12")
+        # Клуб берут и на пробный месяц (V18, 02.10.2026), сайт — от 3 месяцев.
+        terms = {1, 3, 6, 12} if line.product_code == "club_subscription" else {3, 6, 12}
+        if line.product_code in TERM_PRODUCTS and line.access_months not in terms:
+            raise SubscriptionError("access_months must be 3, 6 or 12 (club: also 1)")
         if line.product_code == "academy_shelf" and line.access_months not in {3, 6, 12}:
             raise SubscriptionError("access_months must be 3, 6 or 12")
     bonus_minor = int(bonus_minor or 0)

@@ -162,7 +162,7 @@ def build_due_reminder_text(reminder: dict[str, Any]) -> str:
         return "\n".join(
             [
                 f"{name}, CLUB заканчивается через {days} (до {until_text}).",
-                "Продление — 120 WWC$ (12 000 ₽) за 3 месяца. Напишите Виктору, чтобы продлить.",
+                "Продление — 120 WWC$ (12 000 ₽) за 3 месяца или 40 WWC$ (4 000 ₽) за месяц. Напишите Виктору, чтобы продлить.",
             ]
         )
     if event_type == "due_7d":

@@ -14,8 +14,8 @@ def test_site_offer_text_is_the_owner_wording():
     text = site_offer_text("Игорь Ефименко")
     assert text == (
         "Вас пригласил партнёр WWC: Игорь Ефименко. Такой же сайт — за 1 день, 10 WWC$ в месяц (1 000 ₽ / 35 BYN). "
-        "20 WWC$ (2 000 ₽) — разовая настройка сайта.\n"
-        "Пакет «Платформа + Клуб» на 3 месяца — 105 WWC$ (10 500 ₽), настройка в подарок: wwc.best/start"
+        "30 WWC$ (3 000 ₽) — разовое подключение сайта.\n"
+        "Акция октября: «Платформа + Клуб» на 3 месяца — 150 WWC$ (15 000 ₽), подключение 20 вместо 30: wwc.best/start"
     )
     assert "Баланс" not in text and "реферальн" not in text
     assert site_offer_text("").startswith("Такой же сайт")
