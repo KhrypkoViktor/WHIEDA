@@ -31,6 +31,32 @@ def test_money_formatter_speaks_wwc():
     assert money(3000, "WUSD") == "30 WWC$"
 
 
+# Кабинет партнёра /me/ (02.10.2026): тексты бота (карточка владельцу, ответы
+# партнёру, кабинет) и подписи сайта — те же слова про деньги и без обещаний.
+_CABINET_COPY = (APP / "cabinet", APP / "telegram" / "cabinet_profile.py")
+_PROMISE = re.compile(r"гарант|заработ|доход|разбогате|пассивн|вылеч|излеч|исцел|здоровь", re.I)
+
+
+def _cabinet_literals():
+    for root in _CABINET_COPY:
+        for path in ([root] if root.is_file() else sorted(root.rglob("*.py"))):
+            for match in _RU_LITERAL.finditer(path.read_text(encoding="utf-8")):
+                yield path.name, match.group(1)
+
+
+def test_cabinet_copy_speaks_wwc_and_promises_nothing():
+    from app.telegram.referral_bonus import cabinet_text
+
+    literals = list(_cabinet_literals())
+    assert literals, "cabinet copy not found"
+    texts = literals + [("referral_bonus.py", cabinet_text(None, balance_minor=0, link="https://t.me/x"))]
+    offenders = [
+        (f, s) for f, s in texts
+        if re.search(r"\bбалл", s, re.I) or re.search(r"(?<![A-Z])W\$", s) or _PROMISE.search(s)
+    ]
+    assert not offenders, offenders
+
+
 def test_no_points_wording_anywhere_a_person_reads():
     offenders = [(f, s) for f, s in _literals() if re.search(r"\bбалл", s, re.I)]
     assert not offenders, offenders

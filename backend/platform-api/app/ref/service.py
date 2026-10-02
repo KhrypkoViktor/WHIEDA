@@ -19,6 +19,17 @@ _SOCIAL_SOURCES: tuple[tuple[str, str], ...] = (
     ("tiktokUrl", "tiktok_url"),
     ("telegramChannelUrl", "telegram_channel_url"),
 )
+# Контакты партнёра (кабинет /me/, 02.10.2026) — в том же объекте socials, ключи
+# как в реестре сайта (src/data/referrals.js): whatsapp / viber / maxUrl / phone /
+# email / address. Источник — public_profile.contacts.<ключ>, затем верхний уровень.
+_CONTACT_SOURCES: tuple[tuple[str, str], ...] = (
+    ("phone", "phone"),
+    ("whatsapp", "whatsapp"),
+    ("viber", "viber"),
+    ("maxUrl", "max_url"),
+    ("email", "email"),
+    ("address", "address"),
+)
 
 
 async def load_public_ref(tenant_id: str, ref_code: str) -> dict[str, Any] | None:
@@ -151,6 +162,10 @@ def _socials(profile: dict[str, Any]) -> dict[str, str | None] | None:
     socials: dict[str, str | None] = {}
     for contract_key, source_key in _SOCIAL_SOURCES:
         socials[contract_key] = _clean(nested.get(source_key) or profile.get(source_key))
+    contacts = profile.get("contacts")
+    contacts = contacts if isinstance(contacts, dict) else {}
+    for contract_key, source_key in _CONTACT_SOURCES:
+        socials[contract_key] = _clean(contacts.get(source_key) or profile.get(source_key))
     if not any(socials.values()):
         return None
     return socials
@@ -179,5 +194,7 @@ def format_public_ref(row: dict[str, Any]) -> dict[str, Any]:
             ),
             "subdomain": subdomain,
             "socials": _socials(profile),
+            # «О себе» из кабинета /me/ (после «Применить» владельца); null — из реестра сайта.
+            "bio": _clean(profile.get("bio")),
         },
     }

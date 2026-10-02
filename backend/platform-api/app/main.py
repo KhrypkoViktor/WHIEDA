@@ -11,6 +11,8 @@ from fastapi.exceptions import HTTPException
 
 from app.admin.routes import router as admin_router
 from app.advisor.routes import router as advisor_router
+from app.cabinet.routes import media_router as cabinet_media_router
+from app.cabinet.routes import router as cabinet_router
 from app.cart.routes import router as cart_router
 from app.content_access.routes import router as content_access_router
 from app.crm.routes import router as crm_router
@@ -122,6 +124,9 @@ def create_app() -> FastAPI:
     app.include_router(cart_router)
     app.include_router(markets_router)
     app.include_router(content_access_router)
+    # Личный кабинет партнёра /me/ (02.10.2026): /api/v1/content-access/me/… и фото профиля.
+    app.include_router(cabinet_router)
+    app.include_router(cabinet_media_router)
     app.include_router(subscription_edge_router)
     app.include_router(theme_access_router)
     app.include_router(admin_router)
