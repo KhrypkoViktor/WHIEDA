@@ -131,6 +131,44 @@ def purchase_lock_text(contact: dict[str, Any] | None) -> str:
     )
 
 
+def _when(opens_at: Any) -> str:
+    if not opens_at:
+        return ""
+    try:
+        moment = opens_at if isinstance(opens_at, datetime) else datetime.fromisoformat(str(opens_at))
+    except ValueError:
+        return ""
+    return _date(moment)
+
+
+def lesson_lock_text(reason: str | None, opens_at: Any = None, contact: dict[str, Any] | None = None) -> str:
+    """Замок урока (Академия v2): после предыдущего, по дате, через N дней, по ключу."""
+    code = str(reason or "")
+    if code == "after_prev":
+        return "🔒 Урок откроется, когда пройдёте предыдущий."
+    if code.startswith(("date:", "days:")):
+        when = _when(opens_at)
+        if when:
+            return f"🔒 Урок откроется {when}."
+        days = code[len("days:"):]
+        if code.startswith("days:") and days.isdigit():
+            return f"🔒 Урок откроется через {days} дн. после старта курса."
+    if code == "purchase":
+        return purchase_lock_text(contact)
+    if code == "pro":
+        return LOCK_TEXT["pro_required"]
+    return "🔒 Урок пока закрыт."
+
+
+HOMEWORK_LINE = {
+    "not_submitted": "Домашка: сдайте её на странице урока.",
+    "submitted": "Домашка на проверке у автора.",
+    "returned": "Домашку вернули — посмотрите комментарий на странице урока.",
+    "accepted": "Домашка принята ✓",
+}
+WAITING_REVIEW_TEXT = "Домашка на проверке у автора. Следующий урок откроется после проверки."
+
+
 async def academy_button_rows(tenant_id: str, telegram_user_id: int | None) -> list[list[dict[str, Any]]]:
     """The cabinet row, or nothing while the Academy is closed for this person."""
     if telegram_user_id is None:
@@ -160,7 +198,7 @@ def _lesson_card(
     course: dict[str, Any], lesson: dict[str, Any], lessons_total: int, lessons_done: int, *, open_url: str | None = None
 ) -> tuple[str, dict]:
     lines = [
-        f"🎓 {course['title']} · урок {lesson['position']} из {lessons_total}",
+        f"🎓 {course['title']} · урок {lesson.get('number') or lesson['position']} из {lessons_total}",
         "",
         lesson["title"],
     ]
@@ -173,6 +211,8 @@ def _lesson_card(
     lines += ["", f"Пройдено {lessons_done} из {lessons_total} {_progress_bar(lessons_done, lessons_total)}"]
     if lesson.get("done"):
         lines.append("✓ Этот урок уже отмечен.")
+    if HOMEWORK_LINE.get(str(lesson.get("assignment_status") or "")):
+        lines.append(HOMEWORK_LINE[str(lesson["assignment_status"])])
     slug = course["slug"]
     keyboard = {
         "inline_keyboard": [
@@ -184,6 +224,12 @@ def _lesson_card(
     return "\n".join(lines), keyboard
 
 
+def _mark(lesson: dict[str, Any]) -> str:
+    if lesson.get("locked"):
+        return "🔒"
+    return "✓" if lesson.get("complete", lesson.get("done")) else "○"
+
+
 def _all_lessons(course: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple[str, dict]:
     lines = [f"🎓 {course['title']}", f"Пройдено {course['lessons_done']} из {course['lessons_total']}", ""]
     module = None
@@ -191,10 +237,9 @@ def _all_lessons(course: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple
         if lesson.get("module_title") and lesson["module_title"] != module:
             module = lesson["module_title"]
             lines += ["", module]
-        mark = "✓" if lesson.get("done") else "○"
-        lines.append(f"{mark} {lesson['position']}. {lesson['short_title']}")
+        lines.append(f"{_mark(lesson)} {lesson.get('number') or lesson['position']}. {lesson['short_title']}")
     rows = [
-        [{"text": f"{'✓' if lesson.get('done') else '○'} {lesson['position']}. {lesson['short_title']}"[:60],
+        [{"text": f"{_mark(lesson)} {lesson.get('number') or lesson['position']}. {lesson['short_title']}"[:60],
           "callback_data": f"acad:l:{course['slug']}:{lesson['position']}"}]
         for lesson in lessons
     ]
@@ -217,14 +262,30 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
     if not lessons:
         await _send(chat_id, "В курсе пока нет уроков.")
         return {"status": "empty"}
+    all_lessons_button = {"inline_keyboard": [[{"text": "📋 Все уроки", "callback_data": f"acad:all:{slug}"}]]}
     if position is None:
-        lesson = next((row for row in lessons if not row["done"]), None)
+        if "next_lesson" in course:
+            lesson = next((row for row in lessons if row["slug"] == course["next_lesson"]), None)
+        else:  # старый формат плана: первый неотмеченный
+            lesson = next((row for row in lessons if not row["done"]), None)
         if lesson is None:
+            unfinished = [row for row in lessons if not row.get("complete", row.get("done"))]
+            if unfinished:
+                waiting = any(row.get("assignment_status") == "submitted" for row in lessons)
+                locked = next((row for row in unfinished if row.get("locked")), None)
+                if waiting and (locked is None or locked.get("lock_reason") == "after_prev"):
+                    await _send(chat_id, WAITING_REVIEW_TEXT, all_lessons_button)
+                    return {"status": "waiting_review"}
+                if locked is not None:
+                    await _send(
+                        chat_id, lesson_lock_text(locked.get("lock_reason"), locked.get("opens_at")), all_lessons_button
+                    )
+                    return {"status": "locked"}
             await _send(
                 chat_id,
                 f"🎉 Курс «{course['title']}» пройден: {course['lessons_total']} из {course['lessons_total']}.\n\n"
                 "Уроки остаются открыты — можно вернуться к любому.",
-                {"inline_keyboard": [[{"text": "📋 Все уроки", "callback_data": f"acad:all:{slug}"}]]},
+                all_lessons_button,
             )
             return {"status": "completed"}
     else:
@@ -232,6 +293,9 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
         if lesson is None:
             await _send(chat_id, "Такого урока нет.")
             return {"status": "lesson_not_found"}
+    if lesson.get("locked"):
+        await _send(chat_id, lesson_lock_text(lesson.get("lock_reason"), lesson.get("opens_at")), all_lessons_button)
+        return {"status": "locked"}
     # Ссылка сразу входит на сайт (#wwc-login): человек уже в боте, второй вход не нужен.
     open_url = await with_site_login(
         lesson_url(course["slug"], lesson["slug"]), tenant_id=tenant_id, telegram_user_id=viewer.telegram_user_id
@@ -301,6 +365,9 @@ async def try_handle_academy_callback(
             await _send(callback.chat_id, text, keyboard)
             result = {"status": "all_lessons"}
     except AcademyError as exc:
+        if exc.code == "lesson_locked":
+            await _send(callback.chat_id, lesson_lock_text(exc.extra.get("lock_reason"), exc.extra.get("opens_at")))
+            return {"ok": False, "route": "academy", "status": exc.code, "trace_id": trace_id}
         await _show_lock(
             callback.chat_id,
             exc.code if exc.code in LOCK_TEXT else "academy_not_open",
@@ -474,7 +541,10 @@ async def handle_course_start_token(
         viewer = await load_viewer(tenant_id, msg.user_id)
         outline = await course_outline(tenant_id, result.course_slug, viewer)
         lessons = outline["lessons"]
-        lesson = next((row for row in lessons if not row["done"]), lessons[0] if lessons else None)
+        upcoming = outline["course"].get("next_lesson")
+        lesson = next((row for row in lessons if row["slug"] == upcoming), None) or next(
+            (row for row in lessons if not row["done"]), lessons[0] if lessons else None
+        )
         if lesson:
             url = await with_site_login(
                 lesson_url(result.course_slug, lesson["slug"]), tenant_id=tenant_id, telegram_user_id=msg.user_id
