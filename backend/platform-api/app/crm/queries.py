@@ -179,9 +179,15 @@ def _pipeline_key(row: dict[str, Any]) -> tuple[Any, ...]:
     return (int(row["priority"] or 0), row["updated_at"], row["contact_id"])
 
 
-async def pipeline(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
+def _tag_filter(tag: str | None) -> str | None:
+    """``?tag=`` of the pipeline: the same exact match as /contacts; empty — no filter."""
+    return clean_tag(tag) or None
+
+
+async def pipeline(tenant_id: str, account: dict[str, Any], *, tag: str | None = None) -> dict[str, Any]:
     """Every status column: its count and the first PIPELINE_FIRST_PAGE cards
-    (starred first, then recently changed) — one query."""
+    (starred first, then recently changed) — one query. ``tag`` narrows every
+    column and its count to the cards with that tag."""
     async with tenant_connection(tenant_id) as conn:
         rows = await fetch_all(
             conn,
@@ -193,11 +199,17 @@ async def pipeline(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
               from crm_contacts c
               where c.tenant_id = %(tenant_id)s and c.account_id = %(account_id)s::uuid
                 and c.deleted_at is null
+                and (%(tag)s::text is null or %(tag)s::text = any(c.tags))
             ) ranked
             where rn <= %(first)s
             order by status, rn
             """,
-            {"tenant_id": tenant_id, "account_id": account["account_id"], "first": PIPELINE_FIRST_PAGE + 1},
+            {
+                "tenant_id": tenant_id,
+                "account_id": account["account_id"],
+                "tag": _tag_filter(tag),
+                "first": PIPELINE_FIRST_PAGE + 1,
+            },
         )
     by_status: dict[str, list[dict[str, Any]]] = {status: [] for status in STATUSES}
     counts: dict[str, int] = {status: 0 for status in STATUSES}
@@ -219,9 +231,15 @@ async def pipeline(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
 
 
 async def pipeline_column(
-    tenant_id: str, account: dict[str, Any], status: str, *, cursor: str | None = None, limit: Any = None
+    tenant_id: str,
+    account: dict[str, Any],
+    status: str,
+    *,
+    cursor: str | None = None,
+    limit: Any = None,
+    tag: str | None = None,
 ) -> dict[str, Any]:
-    """The rest of one column, in the order of ``pipeline``."""
+    """The rest of one column, in the order of ``pipeline`` (and with its ``tag``)."""
     if status not in STATUSES:
         raise CrmError("invalid_status", 400)
     try:
@@ -236,6 +254,10 @@ async def pipeline_column(
         "c.deleted_at is null",
         "c.status = %(status)s",
     ]
+    tag_filter = _tag_filter(tag)
+    if tag_filter:
+        where.append("%(tag)s = any(c.tags)")
+        params["tag"] = tag_filter
     page_where = list(where)
     if key is not None:
         params["k0"], params["k1"], params["k2"] = key

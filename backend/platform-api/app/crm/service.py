@@ -393,7 +393,8 @@ async def _duplicate_of(
 async def today_view(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
     """«Сегодня»: ``groups`` by step (v1 site) and ``sections`` by meaning —
     meetings today, call, remind, overdue (v2 app, the same split as the bot's
-    morning message). Starred cards first."""
+    morning message), plus the counters ``done_today`` and ``planned_tomorrow``.
+    Starred cards first."""
     today = account["today"]
     async with tenant_connection(tenant_id) as conn:
         rows = await fetch_all(
@@ -422,6 +423,25 @@ async def today_view(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
                 "limit": TODAY_LIMIT,
             },
         )
+        counters = await fetch_one(
+            conn,
+            """
+            select
+              (select count(*)::int
+                 from crm_activities a
+                 join crm_contacts c on c.tenant_id = a.tenant_id and c.contact_id = a.contact_id
+                where a.tenant_id = %(tenant_id)s and a.account_id = %(account_id)s::uuid
+                  and a.kind = 'step' and a.payload ->> 'action' = 'done'
+                  and a.created_at >= (%(today)s::date)::timestamp at time zone %(tz)s
+                  and a.created_at < (%(today)s::date + 1)::timestamp at time zone %(tz)s
+                  and c.deleted_at is null) as done_today,
+              (select count(*)::int
+                 from crm_contacts c
+                where c.tenant_id = %(tenant_id)s and c.account_id = %(account_id)s::uuid
+                  and c.deleted_at is null and c.next_at = %(today)s::date + 1) as planned_tomorrow
+            """,
+            {"tenant_id": tenant_id, "account_id": account["account_id"], "today": today, "tz": account["timezone"]},
+        )
     view = group_today(rows, today)
     for group in view["groups"]:
         group["contacts"] = [contact_out(row) for row in group["contacts"]]
@@ -429,6 +449,10 @@ async def today_view(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
         {**section, "contacts": [contact_out(row) for row in section["contacts"]]}
         for section in today_sections(rows, today)
     ]
+    # «Сделано сегодня» (steps marked done since the account's local midnight, live
+    # cards) and «На завтра» (live cards whose next step is tomorrow).
+    view["done_today"] = int((counters or {}).get("done_today") or 0)
+    view["planned_tomorrow"] = int((counters or {}).get("planned_tomorrow") or 0)
     return view
 
 

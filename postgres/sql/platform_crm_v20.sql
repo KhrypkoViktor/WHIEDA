@@ -67,6 +67,10 @@ create table if not exists crm_activities (
 
 create index if not exists crm_activities_contact_created
   on crm_activities (tenant_id, contact_id, created_at desc, activity_id desc);
+-- «Сделано сегодня» на экране «Сегодня»: шаги аккаунта за локальные сутки (03.10.2026).
+create index if not exists crm_activities_account_steps
+  on crm_activities (tenant_id, account_id, created_at desc)
+  where kind = 'step';
 create unique index if not exists crm_activities_created_once
   on crm_activities (tenant_id, contact_id)
   where kind = 'created';

@@ -117,13 +117,18 @@ async def test_bad_cursor_or_sort_is_400(crm_app):
 async def test_pipeline_and_column(crm_app):
     board = {"columns": [{"status": "new", "title": "Новый контакт", "count": 1, "items": [CONTACT], "next_cursor": None}],
              "total": 1}
-    response = await _call(crm_app, "GET", "/pipeline", extra=[patch("app.crm.routes.pipeline", AsyncMock(return_value=board))])
+    board_call = AsyncMock(return_value=board)
+    response = await _call(crm_app, "GET", "/pipeline", extra=[patch("app.crm.routes.pipeline", board_call)])
     assert response.status_code == 200 and response.json()["columns"][0]["count"] == 1
+    assert board_call.await_args.kwargs == {"tag": None}
+    await _call(crm_app, "GET", "/pipeline?tag=vip", extra=[patch("app.crm.routes.pipeline", board_call)])
+    assert board_call.await_args.kwargs == {"tag": "vip"}
     column = AsyncMock(return_value={"status": "new", "title": "Новый контакт", **PAGE})
-    response = await _call(crm_app, "GET", "/pipeline/new?cursor=abc&limit=20",
+    response = await _call(crm_app, "GET", "/pipeline/new?cursor=abc&limit=20&tag=vip",
                            extra=[patch("app.crm.routes.pipeline_column", column)])
     assert response.status_code == 200
-    assert column.await_args.args[2] == "new" and column.await_args.kwargs == {"cursor": "abc", "limit": 20}
+    assert column.await_args.args[2] == "new"
+    assert column.await_args.kwargs == {"cursor": "abc", "limit": 20, "tag": "vip"}
     bad = AsyncMock(side_effect=CrmError("invalid_status", 400))
     response = await _call(crm_app, "GET", "/pipeline/lost", extra=[patch("app.crm.routes.pipeline_column", bad)])
     assert response.status_code == 400 and response.json()["error"] == "invalid_status"

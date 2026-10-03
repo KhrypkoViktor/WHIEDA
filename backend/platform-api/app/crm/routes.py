@@ -382,19 +382,19 @@ async def crm_export(request: Request) -> Response:
 
 
 @router.get(f"{PREFIX}/pipeline")
-async def crm_pipeline(request: Request) -> dict[str, Any]:
-    """Columns by status: count + the first 20 cards each."""
+async def crm_pipeline(request: Request, tag: str | None = None) -> dict[str, Any]:
+    """Columns by status: count + the first 20 cards each; ``tag`` — only cards with it."""
     ctx = await _context(request)
-    return {"ok": True, **await pipeline(ctx.tenant_id, ctx.account)}
+    return {"ok": True, **await pipeline(ctx.tenant_id, ctx.account, tag=tag)}
 
 
 @router.get(f"{PREFIX}/pipeline/{{status}}")
 async def crm_pipeline_column(
-    status: str, request: Request, cursor: str | None = None, limit: int | None = None
+    status: str, request: Request, cursor: str | None = None, limit: int | None = None, tag: str | None = None
 ) -> dict[str, Any]:
     ctx = await _context(request)
     try:
-        result = await pipeline_column(ctx.tenant_id, ctx.account, status, cursor=cursor, limit=limit)
+        result = await pipeline_column(ctx.tenant_id, ctx.account, status, cursor=cursor, limit=limit, tag=tag)
     except CrmError as exc:
         _raise(exc)
     return {"ok": True, **result}
