@@ -60,6 +60,7 @@ from app.academy.service import (
     list_courses,
     load_viewer,
     set_lesson_done,
+    viewer_profile,
 )
 from app.content_access.routes import _current_session
 from app.tenancy import get_request_tenant
@@ -182,13 +183,19 @@ async def _chunk_body(request: Request) -> bytes:
 @router.get(f"{P}/courses")
 async def courses_site(request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
-    return {"ok": True, "open": academy_visible(viewer), "courses": await list_courses(tenant_id, viewer)}
+    return {
+        "ok": True,
+        "open": academy_visible(viewer),
+        "courses": await list_courses(tenant_id, viewer),
+        "viewer": await viewer_profile(tenant_id, viewer.telegram_user_id),
+    }
 
 
 @router.get(f"{P}/courses/{{slug}}")
 async def course_site(slug: str, request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
-    return {"ok": True, **await _guard(course_outline(tenant_id, slug, viewer, allow_locked=True))}
+    outline = await _guard(course_outline(tenant_id, slug, viewer, allow_locked=True))
+    return {"ok": True, **outline, "viewer": await viewer_profile(tenant_id, viewer.telegram_user_id)}
 
 
 @router.get(f"{P}/courses/{{slug}}/lessons/{{lesson_slug}}")

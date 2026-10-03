@@ -471,7 +471,7 @@ def assignment_status(row: dict[str, Any]) -> str | None:
     return str(row.get("submission_status") or "none")
 
 
-def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock) -> dict[str, Any]:
+def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock, slugs: dict[str, str] | None = None) -> dict[str, Any]:
     return {
         "slug": row["slug"],
         "position": int(row["position"]),
@@ -489,12 +489,43 @@ def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock) -> dict[
         "locked": lock.locked,
         "lock_reason": lock.reason,
         "opens_at": _iso(lock.opens_at),
+        # after_prev: урок, после которого откроется (сайт пишет «откроется после урока N»).
+        "lock_after": (slugs or {}).get(lock.after or ""),
         "assignment_status": assignment_status(row),
     }
 
 
 def _summaries(lessons: list[dict[str, Any]], locks: dict[str, LessonLock]) -> list[dict[str, Any]]:
-    return [_lesson_summary(row, index + 1, locks[row["lesson_id"]]) for index, row in enumerate(lessons)]
+    slugs = {row["lesson_id"]: row["slug"] for row in lessons}
+    return [_lesson_summary(row, index + 1, locks[row["lesson_id"]], slugs) for index, row in enumerate(lessons)]
+
+
+def _locked_extra(lessons: list[dict[str, Any]], lock: LessonLock) -> dict[str, Any]:
+    after = next((row["slug"] for row in lessons if row["lesson_id"] == lock.after), None) if lock.after else None
+    return {"lock_reason": lock.reason, "opens_at": _iso(lock.opens_at), "lock_after": after}
+
+
+async def viewer_profile(tenant_id: str, telegram_user_id: int) -> dict[str, str | None]:
+    """Имя вошедшего для шапки кабинета (инициалы): из lead_actors, иначе пусто.
+    Украшение, не доступ: сбой поиска пишется в лог и не роняет страницу курса."""
+    try:
+        async with tenant_connection(tenant_id) as conn:
+            row = await fetch_one(
+                conn,
+                """
+                select display_name, telegram_username from lead_actors
+                where tenant_id = %s and telegram_user_id = %s
+                order by active desc
+                limit 1
+                """,
+                (tenant_id, int(telegram_user_id)),
+            )
+    except Exception:
+        logger.warning("academy_viewer_profile_failed", exc_info=True)
+        row = None
+    name = str((row or {}).get("display_name") or "").strip()
+    username = str((row or {}).get("telegram_username") or "").strip().lstrip("@")
+    return {"name": name or None, "username": username or None}
 
 
 def _next_slug(view: CourseView, lessons: list[dict[str, Any]], locks: dict[str, LessonLock]) -> str | None:
@@ -653,7 +684,7 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
             raise AcademyError(404, "lesson_not_found")
         lock = locks[lessons[index]["lesson_id"]]
         if lock.locked:
-            raise AcademyError(403, "lesson_locked", {"lock_reason": lock.reason, "opens_at": _iso(lock.opens_at)})
+            raise AcademyError(403, "lesson_locked", _locked_extra(lessons, lock))
         lesson_id = lessons[index]["lesson_id"]
         row = await fetch_one(
             conn,
@@ -721,7 +752,7 @@ async def open_lesson(conn: Any, tenant_id: str, slug: str, lesson_slug: str, vi
         raise AcademyError(404, "lesson_not_found")
     lock = _evaluate(view, modules, lessons)[lesson["lesson_id"]]
     if lock.locked:
-        raise AcademyError(403, "lesson_locked", {"lock_reason": lock.reason, "opens_at": _iso(lock.opens_at)})
+        raise AcademyError(403, "lesson_locked", _locked_extra(lessons, lock))
     return view, lesson
 
 

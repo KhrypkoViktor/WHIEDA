@@ -210,3 +210,16 @@ def test_parse_unlock_normalizes_and_rejects():
     ):
         with pytest.raises(ValueError):
             parse_unlock(bad)
+
+
+def test_after_prev_lock_names_the_lesson_to_finish():
+    modules = [ModuleIn("m1", OPEN), ModuleIn("m2", AFTER_PREV), ModuleIn("m3", {"type": "date", "at": "2030-01-01T00:00:00+00:00"})]
+    rows = [
+        lesson("a", done=True), lesson("b"),
+        lesson("c", "m2"), lesson("d", "m2", unlock=AFTER_PREV),
+        lesson("e", "m3"),
+    ]
+    result = evaluate_locks(modules, rows, now=NOW, started_at=NOW)
+    assert result["c"].after == "b"  # модуль «после предыдущего» — последний урок прошлого модуля
+    assert result["d"].after == "c"  # урок «после предыдущего» — предыдущий урок
+    assert result["a"].after is None and result["e"].after is None  # открыт / по дате

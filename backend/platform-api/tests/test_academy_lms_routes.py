@@ -237,3 +237,17 @@ async def test_owner_reviews_a_course_on_the_site_too(content_app, signed_in):  
                               json={"status": "returned", "comment": "Уберите обещания"})
     assert response.status_code == 200 and response.json()["status"] == "draft"
     assert review.await_args.kwargs == {"slug": "akvarel", "decision": "returned", "note": "Уберите обещания"}
+
+
+
+@pytest.mark.asyncio
+async def test_course_list_and_page_name_the_viewer(content_app, signed_in):  # noqa: F811
+    profile = {"name": "Мария", "username": "masha_s"}
+    outline = {"course": {"slug": "akvarel"}, "modules": [], "lessons": []}
+    with patch("app.academy.routes.viewer_profile", AsyncMock(return_value=profile)), patch(
+        "app.academy.routes.list_courses", AsyncMock(return_value=[])
+    ), patch("app.academy.routes.course_outline", AsyncMock(return_value=outline)):
+        listing = await call(content_app, "GET", f"{P}/courses")
+        page = await call(content_app, "GET", f"{P}/courses/akvarel")
+    assert listing.json()["viewer"] == profile
+    assert page.json()["viewer"] == profile
