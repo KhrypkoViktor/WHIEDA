@@ -21,7 +21,8 @@ when the homework is accepted — ``app.academy.rules``. Lessons loaded before
 modules existed (``module_id`` null) are grouped by ``module_title`` and open.
 
 Writers of academy_access: ``grant_course_access`` (the payment path, line
-``course_<код>`` → ``partner_subscription_plans.course_slug``) and
+``course_<код>`` → ``partner_subscription_plans.course_slug``),
+``grant_course_to_telegram_user`` (a course bought in «Мастерская», app/shop) and
 ``app.academy.keys.redeem_key`` (an author's key). The author's term in the
 Academy is extended from the payment path too (``extend_shelf_in_connection``).
 """
@@ -859,6 +860,33 @@ async def grant_course_access(
             (tenant_id, course["course_id"], telegram_user_id, payment_ref),
         )
     return telegram_user_id
+
+
+async def grant_course_to_telegram_user(
+    conn: Any, tenant_id: str, *, course_slug: str, telegram_user_id: int, payment_ref: str
+) -> bool:
+    """Мастерская WWC (03.10.2026): курс куплен через бота — доступ по Telegram id
+    покупателя, а не владельца профиля: купить может любой. Курса нет — False."""
+    course = await fetch_one(
+        conn,
+        "select course_id::text as course_id from academy_courses where tenant_id = %s and slug = %s",
+        (tenant_id, course_slug),
+    )
+    if not course:
+        logger.warning("academy_grant_course_missing", extra={"tenant_id": tenant_id, "course_slug": course_slug})
+        return False
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
+            values (%s, %s::uuid, %s, 'purchase', %s)
+            on conflict (tenant_id, course_id, telegram_user_id)
+            do update set revoked_at = null, expires_at = null, source = 'purchase',
+                          payment_ref = excluded.payment_ref, granted_at = now()
+            """,
+            (tenant_id, course["course_id"], int(telegram_user_id), payment_ref),
+        )
+    return True
 
 
 async def grant_course_access_for_product(

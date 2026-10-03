@@ -45,6 +45,7 @@ from app.renewal_requests.service import get_open_renewal_request
 from app.settings import get_settings
 from app.site_requests.service import get_open_site_request
 from app.support.service import (
+    CHANNEL_SHOP,
     CHANNEL_SITE,
     FORUM_KIND_SERVICES,
     FORUM_KIND_SITE,
@@ -256,6 +257,11 @@ def _is_site(ticket: dict[str, Any]) -> bool:
     return _ticket_kind(ticket) == FORUM_KIND_SITE
 
 
+def _is_shop(ticket: dict[str, Any]) -> bool:
+    """Заказ «Мастерской» (03.10.2026): живёт в форуме «site», но пишет покупатель, не партнёр."""
+    return str(ticket.get("channel_code") or "").strip().lower() == CHANNEL_SHOP
+
+
 def _is_ticket_admin(ticket: dict[str, Any] | None, user_id: int) -> bool:
     """The person a ticket is addressed to (owner for «site», administrator for
     Gemini); the configured administrator keeps the right on every ticket."""
@@ -275,9 +281,10 @@ def _partner_line(ticket: dict[str, Any]) -> str:
     """Who writes, for the owner: «Имя (@username)», or the name as a tg://user
     link when the person has no username (delivery keeps such links)."""
     display = str(ticket.get("user_display") or "").strip() or f"Telegram {ticket['user_telegram_user_id']}"
+    who = "Покупатель" if _is_shop(ticket) else "Партнёр"
     if "(@" in display or display.startswith("@"):
-        return f"Партнёр: {display}"
-    return f'Партнёр: <a href="tg://user?id={int(ticket["user_telegram_user_id"])}">{display}</a>'
+        return f"{who}: {display}"
+    return f'{who}: <a href="tg://user?id={int(ticket["user_telegram_user_id"])}">{display}</a>'
 
 
 def _direct_url(ticket: dict[str, Any]) -> str:
@@ -310,6 +317,9 @@ async def _send_site_header(ticket: dict[str, Any], text: str) -> dict[str, Any]
 
 
 def _site_header_lines(ticket: dict[str, Any], site: dict[str, Any] | None) -> list[str]:
+    if _is_shop(ticket):
+        # Покупатель Мастерской — не обязательно партнёр: строки «Сайт» нет.
+        return [_client_label(ticket), _partner_line(ticket), f"Мастерская: {ticket.get('offer_title') or 'заказ'}"]
     return [_client_label(ticket), _partner_line(ticket), f"Сайт: {site['url']}" if site else "Сайт: не найден"]
 
 
@@ -322,7 +332,7 @@ def is_support_forum_traffic(update: dict[str, Any]) -> bool:
         chat = (callback.get("message") or {}).get("chat") or {}
         data = str(callback.get("data") or "")
         return chat.get("type") == "supergroup" and data.startswith(
-            ("svc:close:", "svc:move:", "sale:", "dep:", "site:confirm:", "site:reject:")
+            ("svc:close:", "svc:move:", "sale:", "dep:", "site:confirm:", "site:reject:", "shop:paid:", "shop:reject:")
         )
     message = (update or {}).get("message") or {}
     chat = message.get("chat") or {}
@@ -386,6 +396,11 @@ def _in_forum(ticket: dict[str, Any]) -> bool:
 
 
 def _topic_name(ticket: dict[str, Any], *, closed: bool = False, site: dict[str, Any] | None = None) -> str:
+    if _is_shop(ticket):
+        # «Мастерская · <товар> · <имя>» (лид, 03.10.2026); тема Telegram — до 128 символов.
+        display = str(ticket.get("user_display") or "").strip() or f"Telegram {ticket['user_telegram_user_id']}"
+        what = str(ticket.get("offer_title") or "заказ")
+        return (("✅ " if closed else "") + f"Мастерская · {what} · {display}")[:128]
     if _is_site(ticket):
         # «#S-12 · Имя Фамилия (@username) · ref» — the owner sees who it is at a glance.
         display = str(ticket.get("user_display") or "").strip() or f"Telegram {ticket['user_telegram_user_id']}"
@@ -843,7 +858,7 @@ async def _move_open_tickets_to_forum(tenant: TenantContext, *, kind: str = FORU
             continue
         if _is_site(bound):
             lines = [*_site_header_lines(bound, site), ""]
-            client_word, who = "Партнёр", "партнёру"
+            client_word, who = ("Покупатель", "покупателю") if _is_shop(bound) else ("Партнёр", "партнёру")
         else:
             what = f"Заказ: {bound['offer_title']}" if bound.get("offer_title") else "Вопрос по Gemini"
             lines = [f"{_client_label(bound)} · {what}", ""]

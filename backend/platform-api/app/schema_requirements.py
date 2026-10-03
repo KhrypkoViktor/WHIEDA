@@ -118,6 +118,10 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "service_sales",
             "service_admin_deposit",
             "service_notice_log",
+            # Мастерская WWC (platform_shop_v22.sql, 03.10.2026): каталог, заказы, доступы.
+            "shop_items",
+            "shop_orders",
+            "shop_access",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

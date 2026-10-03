@@ -33,6 +33,7 @@ from app.retention.routes import router as retention_router
 from app.reports.routes import router as reports_router
 from app.observability import TraceMiddleware, configure_logging
 from app.ref.routes import router as ref_router
+from app.shop.routes import router as shop_router
 from app.schema_requirements import find_missing_tables, parse_disabled_features
 from app.settings import get_settings
 from app.max.routes import router as max_router
@@ -127,6 +128,8 @@ def create_app() -> FastAPI:
     # Личный кабинет партнёра /me/ (02.10.2026): /api/v1/content-access/me/… и фото профиля.
     app.include_router(cabinet_router)
     app.include_router(cabinet_media_router)
+    # Мастерская WWC (03.10.2026): /api/v1/public/shop, покупки /me/purchases, админка каталога.
+    app.include_router(shop_router)
     app.include_router(subscription_edge_router)
     app.include_router(theme_access_router)
     app.include_router(admin_router)

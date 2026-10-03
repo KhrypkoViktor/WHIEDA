@@ -38,10 +38,14 @@ def ticket_label(ticket: dict[str, Any]) -> str:
 FORUM_KIND_SERVICES = "services"
 FORUM_KIND_SITE = "site"
 CHANNEL_SITE = "site"
+# Мастерская WWC (03.10.2026): заказы — к владельцу, в его форум «site», тема на заявку;
+# администратор Gemini их не видит.
+CHANNEL_SHOP = "shop"
+SITE_FORUM_CHANNELS = (CHANNEL_SITE, CHANNEL_SHOP)
 
 
 def forum_kind_for_channel(channel_code: str | None) -> str:
-    return FORUM_KIND_SITE if str(channel_code or "").strip().lower() == CHANNEL_SITE else FORUM_KIND_SERVICES
+    return FORUM_KIND_SITE if str(channel_code or "").strip().lower() in SITE_FORUM_CHANNELS else FORUM_KIND_SERVICES
 
 
 async def open_or_reuse_ticket(
@@ -146,13 +150,13 @@ async def list_open_tickets_for_admin(
             select {_TICKET_COLUMNS} from support_tickets
             where tenant_id = %s and admin_telegram_user_id = %s and status = 'open'
               and forum_thread_id is null
-              and (%s::text is null or (case when channel_code = %s then %s else %s end) = %s)
+              and (%s::text is null or (case when channel_code = any(%s::text[]) then %s else %s end) = %s)
             order by last_message_at desc
             limit %s
             """,
             (
                 tenant_id, int(admin_telegram_user_id),
-                forum_kind, CHANNEL_SITE, FORUM_KIND_SITE, FORUM_KIND_SERVICES, forum_kind,
+                forum_kind, list(SITE_FORUM_CHANNELS), FORUM_KIND_SITE, FORUM_KIND_SERVICES, forum_kind,
                 max(1, min(limit, 50)),
             ),
         )

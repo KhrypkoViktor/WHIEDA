@@ -109,3 +109,39 @@ def _academy_literals():
 def test_no_shelf_wording_anywhere_a_person_reads():
     offenders = [(f, s) for f, s in _academy_literals() if re.search(r"\bполк[аиуеоы]", s, re.I)]
     assert not offenders, offenders
+
+
+# Мастерская WWC (03.10.2026): тексты бота, витрины и каталога (seed V22) — те же слова
+# про деньги, без обещаний результата и без слова «терапия» (владелец: «Снять блок»).
+_SHOP_COPY = (APP / "shop", APP / "telegram" / "shop.py")
+_SHOP_SEED = APP.parents[2] / "postgres" / "sql" / "platform_shop_v22.sql"
+_SQL_RU_LITERAL = re.compile(r"'((?:[^'\n]|'')*?[А-Яа-яЁё](?:[^'\n]|'')*?)'")
+
+
+def _shop_literals():
+    for root in _SHOP_COPY:
+        for path in ([root] if root.is_file() else sorted(root.rglob("*.py"))):
+            for match in _RU_LITERAL.finditer(path.read_text(encoding="utf-8")):
+                yield path.name, match.group(1)
+    seed = "\n".join(
+        line for line in _SHOP_SEED.read_text(encoding="utf-8").splitlines() if not line.lstrip().startswith("--")
+    )
+    for match in _SQL_RU_LITERAL.finditer(seed):
+        yield _SHOP_SEED.name, match.group(1)
+
+
+def test_shop_copy_speaks_wwc_promises_nothing_and_never_says_therapy():
+    from app.telegram.shop import card_text
+
+    literals = list(_shop_literals())
+    assert {f for f, _ in literals} >= {"service.py", "shop.py", "platform_shop_v22.sql"}, "shop copy not found"
+    assert any("Снять блок" in s for _, s in literals)
+    card = card_text({
+        "code": "snyat-blok", "kind": "service", "title": "Сессия «Снять блок»", "subtitle": None,
+        "description_md": "", "description_html": "", "price_wusd_minor": 10000, "price_rub_minor": 1000000,
+    })
+    offenders = [
+        (f, s) for f, s in literals + [("shop.py", card)]
+        if re.search(r"\bбалл", s, re.I) or re.search(r"(?<![A-Z])W\$", s) or _PROMISE.search(s) or re.search(r"терапи", s, re.I)
+    ]
+    assert not offenders, offenders

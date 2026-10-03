@@ -56,6 +56,12 @@ from app.telegram.cabinet_profile import (
     try_handle_profile_requests_command,
 )
 from app.telegram.renewal_requests import is_renewal_start_token, start_renewal_from_link
+from app.telegram.shop import (
+    handle_shop_start,
+    parse_shop_start_token,
+    try_handle_shop_callback,
+    try_handle_shop_message,
+)
 from app.telegram.support import is_support_start_token, open_site_support
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
@@ -477,6 +483,11 @@ async def _process_core_telegram_update_scoped(
                 orders_result = await try_handle_site_request_callback(tenant, callback, trace_id=trace_id)
                 if orders_result is not None:
                     return orders_result
+            # «Оплачено / Отклонить» заказа Мастерской в теме заявки (форум владельца).
+            if callback.data.startswith(("shop:paid:", "shop:reject:")):
+                shop_decision_result = await try_handle_shop_callback(tenant, callback, trace_id=trace_id)
+                if shop_decision_result is not None:
+                    return shop_decision_result
             return {"ok": True, "route": "ignored_group_callback"}
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
@@ -491,6 +502,10 @@ async def _process_core_telegram_update_scoped(
         profile_callback_result = await try_handle_profile_callback(tenant, callback, trace_id=trace_id)
         if profile_callback_result is not None:
             return profile_callback_result
+        # Мастерская WWC (03.10.2026): «Купить» на карточке, «Оплачено / Отклонить» в личке владельца.
+        shop_callback_result = await try_handle_shop_callback(tenant, callback, trace_id=trace_id)
+        if shop_callback_result is not None:
+            return shop_callback_result
         support_callback_result = await try_handle_support_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -572,6 +587,12 @@ async def _process_core_telegram_update_scoped(
     if profile_reason_result is not None:
         return profile_reason_result
 
+    # Мастерская: чек к заказу, который ждёт оплату, и «витрина» владельца —
+    # раньше туннеля, иначе чек ушёл бы в заявку вложением без «Оплачено».
+    shop_result = await try_handle_shop_message(tenant, msg, trace_id=trace_id)
+    if shop_result is not None:
+        return shop_result
+
     support_result = await try_handle_support_message(tenant, msg, trace_id=trace_id)
     if support_result is not None:
         return support_result
@@ -627,6 +648,9 @@ async def _process_core_telegram_update_scoped(
         if parse_course_start_token(start_token) is not None:
             # Ключ автора курса (полка Академии): /start course_<код>.
             return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
+        if parse_shop_start_token(start_token) is not None:
+            # Мастерская WWC с сайта: /start shop_<code>[_<ref>] — карточка товара.
+            return await handle_shop_start(tenant, msg, start_token, trace_id=trace_id)
         if is_services_start_token(start_token):
             return await show_services(msg.chat_id, trace_id=trace_id)
         if is_renewal_start_token(start_token):
