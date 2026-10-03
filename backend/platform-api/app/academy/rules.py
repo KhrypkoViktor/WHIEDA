@@ -14,7 +14,9 @@ lesson is locked with the course reason (``purchase``). Staff (the course
 author, the owner and preview admins) see everything open.
 
 Lock reasons for the site (ТЗ §5): ``after_prev`` | ``date:<iso>`` | ``days:<n>`` | ``purchase``;
-``opens_at`` is known for a date and for days with a start.
+``opens_at`` is known for a date and for days with a start; ``after`` (``after_prev`` only) — the
+lesson to finish: the previous lesson for a lesson rule, the last lesson of the previous module
+for a module rule.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ class LessonLock:
     locked: bool
     reason: str | None = None
     opens_at: datetime | None = None
+    after: str | None = None  # after_prev: key of the lesson to finish first
 
 
 OPEN_LOCK = LessonLock(False)
@@ -111,10 +114,17 @@ def parse_unlock(raw: Any, *, allow_none: bool = False) -> dict[str, Any] | None
     return {"type": "days_after_start", "days": days}
 
 
-def _rule_lock(rule: dict[str, Any] | None, *, prev_complete: bool, started_at: datetime | None, now: datetime) -> LessonLock:
+def _rule_lock(
+    rule: dict[str, Any] | None,
+    *,
+    prev_complete: bool,
+    started_at: datetime | None,
+    now: datetime,
+    prev_key: str | None = None,
+) -> LessonLock:
     kind = (rule or OPEN_RULE).get("type", "open")
     if kind == "after_prev":
-        return OPEN_LOCK if prev_complete else LessonLock(True, "after_prev")
+        return OPEN_LOCK if prev_complete else LessonLock(True, "after_prev", after=prev_key)
     if kind == "date":
         try:
             at = _parse_at(rule["at"])
@@ -156,14 +166,22 @@ def evaluate_locks(
         by_module.setdefault(lesson.module_key, []).append(lesson)
     module_locks: dict[str, LessonLock] = {}
     previous_complete = True
+    previous_last: str | None = None
     for module in modules:
-        module_locks[module.key] = _rule_lock(module.unlock, prev_complete=previous_complete, started_at=started_at, now=now)
-        previous_complete = all(complete[item.key] for item in by_module.get(module.key, []))
+        module_locks[module.key] = _rule_lock(
+            module.unlock, prev_complete=previous_complete, started_at=started_at, now=now, prev_key=previous_last
+        )
+        items = by_module.get(module.key, [])
+        previous_complete = all(complete[item.key] for item in items)
+        previous_last = items[-1].key if items else None
     result: dict[str, LessonLock] = {}
     for index, lesson in enumerate(lessons):
         if lesson.unlock:
             prev_done = complete[lessons[index - 1].key] if index > 0 else True
-            result[lesson.key] = _rule_lock(lesson.unlock, prev_complete=prev_done, started_at=started_at, now=now)
+            result[lesson.key] = _rule_lock(
+                lesson.unlock, prev_complete=prev_done, started_at=started_at, now=now,
+                prev_key=lessons[index - 1].key if index > 0 else None,
+            )
         else:
             result[lesson.key] = module_locks.get(lesson.module_key, OPEN_LOCK)
     return result

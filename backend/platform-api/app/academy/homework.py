@@ -17,6 +17,7 @@ import json
 from datetime import timezone
 from typing import Any
 
+from app.academy.content import sanitize_html
 from app.academy.media_service import _valid_ids, load_media, media_summary
 from app.academy.notify import (
     OPEN_BUTTON,
@@ -167,10 +168,12 @@ async def list_submissions(
             select s.submission_id::text as submission_id, s.telegram_user_id, s.text, s.media, s.status,
                    s.author_comment, s.created_at, s.updated_at, s.reviewed_at,
                    l.slug as lesson_slug, l.title as lesson_title, c.slug as course_slug, c.title as course_title,
-                   coalesce(la.display_name, '') as student_display_name, la.telegram_username as student_username
+                   coalesce(la.display_name, '') as student_display_name, la.telegram_username as student_username,
+                   a.prompt_html
             from academy_submissions s
             join academy_lessons l on l.tenant_id = s.tenant_id and l.lesson_id = s.lesson_id
             join academy_courses c on c.tenant_id = l.tenant_id and c.course_id = l.course_id
+            left join academy_assignments a on a.tenant_id = l.tenant_id and a.lesson_id = l.lesson_id
             left join lateral (
               select display_name, telegram_username from lead_actors
               where tenant_id = s.tenant_id and telegram_user_id = s.telegram_user_id
@@ -209,6 +212,8 @@ async def list_submissions(
                 "course_title": row["course_title"],
                 "lesson_slug": row["lesson_slug"],
                 "lesson_title": row["lesson_title"],
+                # Задание урока — в той же карточке проверки (как в GET урока).
+                "prompt_html": sanitize_html(row["prompt_html"]) if row.get("prompt_html") is not None else None,
             }
         )
     return out

@@ -331,6 +331,10 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             assert e_row["opens_at"] is not None
             c_row = next(row for row in outline["lessons"] if row["slug"] == "c")
             assert c_row["assignment_status"] == "none"
+            # Сайт пишет «откроется после урока N»: у замка after_prev — какой урок пройти.
+            assert c_row["lock_after"] == "b"
+            assert next(row for row in outline["lessons"] if row["slug"] == "d")["lock_after"] is None
+            assert next(row for row in outline["lessons"] if row["slug"] == "a")["lock_after"] is None
             assert next(row for row in outline["lessons"] if row["slug"] == "a")["assignment_status"] is None
             assert outline["course"]["next_lesson"] == "a"
             assert [row["number"] for row in outline["lessons"]] == [1, 2, 3, 4, 5]
@@ -340,6 +344,12 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             assert (closed.value.status, closed.value.code, closed.value.extra["lock_reason"]) == (
                 403, "lesson_locked", "after_prev",
             )
+            assert closed.value.extra["lock_after"] == "b"
+            # Шапка кабинета: имя вошедшего для инициалов.
+            from app.academy.service import viewer_profile
+
+            assert await viewer_profile("whieda", STUDENT) == {"name": "Мария", "username": "masha_s"}
+            assert await viewer_profile("whieda", STRANGER) == {"name": None, "username": None}
             with pytest.raises(AcademyError) as closed_done:
                 await set_lesson_done("whieda", "akvarel", "d", student, done=True, source="site")
             assert closed_done.value.code == "lesson_locked"
@@ -738,6 +748,7 @@ def test_homework_submit_return_resubmit_accept_and_notify(monkeypatch, tmp_path
             [inbox] = await list_submissions("whieda", author, status="submitted")
             assert (inbox["student_name"], inbox["lesson_title"], inbox["course_slug"]) == ("Мария", "Заливка", "akvarel")
             assert inbox["text"] == "Моя заливка, v2"
+            assert inbox["prompt_html"] == "<p>Пришлите фото заливки</p>"  # задание — в той же карточке
             assert inbox["media"][0]["url"].startswith(f"/academy-media/whieda/academy/{work}/original.png?u={AUTHOR}")
             assert await list_submissions("whieda", author, status="submitted", course_slug="drugoy") == []
             with pytest.raises(AcademyError) as not_author:
