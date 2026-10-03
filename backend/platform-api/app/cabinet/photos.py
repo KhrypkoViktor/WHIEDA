@@ -25,9 +25,17 @@ except ImportError:  # pragma: no cover - depends on the environment
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_SIDE = 1200
 MIN_SIDE = 160
-MAX_PIXELS = 60_000_000  # 60 Мп: больше любой камеры телефона, меньше «бомбы»
+# JPEG декодируется сразу уменьшенным (draft): 60 Мп — больше любой камеры телефона.
+MAX_PIXELS = 60_000_000
+# PNG / WebP / HEIC декодируются целиком (RGBA — 4 байта на точку): не больше ~100 МБ
+# на картинку. PNG в 1 МБ может разжиматься в гигабайт (ревью 02.10.2026).
+MAX_PIXELS_FULL_DECODE = 25_000_000
 JPEG_QUALITY = 85
 ALLOWED_FORMATS = frozenset({"JPEG", "MPO", "PNG", "WEBP", "HEIF", "HEIC"})
+# Какие декодеры Pillow вообще пробует: остальные форматы до разбора не доходят.
+# MPO (снимок iPhone «две картинки») открывает декодер JPEG — отдельного у Pillow нет.
+DECODERS = ("JPEG", "PNG", "WEBP") + (("HEIF",) if HEIF_SUPPORTED else ())
+_DRAFT_FORMATS = frozenset({"JPEG", "MPO"})
 
 
 class PhotoError(ValueError):
@@ -61,16 +69,19 @@ def process_profile_photo(data: bytes) -> ProcessedPhoto:
     if len(data) > MAX_UPLOAD_BYTES:
         raise PhotoError("photo_too_large", 413)
     try:
-        with Image.open(BytesIO(data)) as source:
+        with Image.open(BytesIO(data), formats=DECODERS) as source:
             fmt = str(source.format or "").upper()
             if fmt not in ALLOWED_FORMATS:
                 raise PhotoError("photo_type_unsupported", 415)
             width, height = source.size
-            if width * height > MAX_PIXELS:
+            if width * height > (MAX_PIXELS if fmt in _DRAFT_FORMATS else MAX_PIXELS_FULL_DECODE):
                 raise PhotoError("photo_too_large", 413)
+            if fmt in _DRAFT_FORMATS:
+                source.draft("RGB", (MAX_SIDE, MAX_SIDE))  # уменьшение уже при декодировании
+            # Сначала уменьшаем (в памяти одна маленькая копия), потом поворот и фон.
+            source.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
             image = ImageOps.exif_transpose(source)
             image = _flatten(image)
-            image.thumbnail((MAX_SIDE, MAX_SIDE), Image.Resampling.LANCZOS)
             if min(image.size) < MIN_SIDE:
                 raise PhotoError("photo_too_small", 400)
             # Новая картинка без info: в файл не попадут EXIF, XMP, GPS, ICC.
@@ -80,7 +91,9 @@ def process_profile_photo(data: bytes) -> ProcessedPhoto:
             clean.save(out, format="JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
     except PhotoError:
         raise
-    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError, SyntaxError) as exc:
+    except UnidentifiedImageError as exc:
+        raise PhotoError("photo_type_unsupported", 415) from exc
+    except Exception as exc:  # битый файл от телефона — 422, а не 500 с трейсом
         raise PhotoError("photo_unreadable", 422) from exc
     body = out.getvalue()
     return ProcessedPhoto(

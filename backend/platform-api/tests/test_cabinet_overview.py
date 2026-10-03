@@ -148,7 +148,8 @@ async def test_crm_counters_follow_the_crm_lock(monkeypatch):
         assert await service._crm_facts("whieda", person, crm_entitled=True) == ("crm_pilot_only", None, None)
         monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "*")
         get_settings.cache_clear()
-        monkeypatch.setattr("app.crm.service.get_or_create_account", AsyncMock(return_value={"account_id": "a"}))
+        account = AsyncMock(return_value={"account_id": "a", "timezone": "Europe/Moscow", "today": NOW.date()})
+        monkeypatch.setattr("app.cabinet_crm.crm_account", account)
         monkeypatch.setattr(
             "app.crm.service.today_view",
             AsyncMock(return_value={"groups": [{"contacts": [1, 2]}, {"contacts": [3]}]}),
@@ -157,6 +158,9 @@ async def test_crm_counters_follow_the_crm_lock(monkeypatch):
         assert await service._crm_facts("whieda", person, crm_entitled=True) == (None, 7, 3)
         monkeypatch.setattr("app.crm.service.today_view", AsyncMock(side_effect=RuntimeError("boom")))
         assert await service._crm_facts("whieda", person, crm_entitled=True) == (None, 0, None)
+        # CRM ещё не открывали: аккаунт для счётчика не заводится, ноль дел.
+        account.return_value = None
+        assert await service._crm_facts("whieda", person, crm_entitled=True) == (None, 0, 0)
         free = _person(site=False)
         assert await service._crm_facts("whieda", free, crm_entitled=True) == ("pro_required", None, None)
     finally:

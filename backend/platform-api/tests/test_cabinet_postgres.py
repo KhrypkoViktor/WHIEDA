@@ -159,8 +159,14 @@ def test_cabinet_profile_request_apply_photo_pages_and_overview(monkeypatch):
             stored = await cabinet.store_profile_photo("whieda", olga, photo)
             assert stored["photo_url"] == f"https://wwc.best/api/v1/content-access/partner-media/{stored['media_id']}.jpg"
             assert (stored["width"], stored["height"]) == (1200, 900)
-            assert await cabinet.load_public_media("whieda", stored["media_id"]) == photo.body
-            assert await cabinet.load_public_media("other", stored["media_id"]) is None  # RLS
+            assert await cabinet.check_upload_allowed("whieda", olga) == "olga-samtsova"
+            assert stored["preview_url"] == f"/api/v1/content-access/me/profile/photo/{stored['media_id']}.jpg"
+            # До «Применить» фото видит только сам партнёр: публичный адрес молчит.
+            assert await cabinet.load_public_media("whieda", stored["media_id"]) is None
+            assert await cabinet.load_own_media("whieda", olga, stored["media_id"]) == photo.body
+            free_person = await cabinet.load_person("whieda", FREE)
+            assert await cabinet.load_own_media("whieda", free_person, stored["media_id"]) is None
+            assert await cabinet.load_own_media("other", olga, stored["media_id"]) is None  # RLS
             assert await cabinet.load_public_media("whieda", "not-a-uuid") is None
 
             # ---- 3. заявка, замена, «Применить» ------------------------------------------------
@@ -187,6 +193,7 @@ def test_cabinet_profile_request_apply_photo_pages_and_overview(monkeypatch):
                 "socials": {"vk_url": None, "telegram_channel_url": "https://t.me/olga"},
             }
             assert second["pending"]["previous"]["socials"]["vk_url"] == "https://vk.com/old"
+            assert cabinet.request_out(second["pending"])["photo_preview_url"] == stored["preview_url"]
             assert admin("select status from partner_profile_requests order by created_at") == [("replaced",), ("pending",)]
 
             foreign = f"https://wwc.best/api/v1/content-access/partner-media/{uuid.uuid4()}.jpg"
@@ -226,6 +233,8 @@ def test_cabinet_profile_request_apply_photo_pages_and_overview(monkeypatch):
             assert "vk_url" not in public_profile
             assert public_profile["subdomain"] == "samtsova" and public_profile["selected_theme_id"] == "sankofa"
 
+            assert await cabinet.load_public_media("whieda", stored["media_id"]) == photo.body  # теперь на сайте
+            assert await cabinet.load_public_media("other", stored["media_id"]) is None  # RLS
             public = format_public_ref(await load_public_ref("whieda", "olga-samtsova"))
             consultant = public["consultant"]
             assert public["profile_version"] == 5
@@ -253,7 +262,7 @@ def test_cabinet_profile_request_apply_photo_pages_and_overview(monkeypatch):
                 "select status, reject_reason, reviewed_by, reason_prompt_message_id from partner_profile_requests where request_id = %s",
                 (third_id,),
             ) == [("rejected", "Есть опечатка", OWNER, 901)]
-            assert any(item[0] == OLGA and item[1].startswith("Изменения на сайте отклонены: Есть опечатка.") for item in sent)
+            assert any(item[0] == OLGA and item[1].startswith("Отклонено: Есть опечатка.") for item in sent)
             pending = await cabinet.get_pending_request("whieda", olga)
             assert pending["pending"] is None and pending["last_review"]["reject_reason"] == "Есть опечатка"
 

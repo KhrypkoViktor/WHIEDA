@@ -21,7 +21,7 @@ _SOCIAL_SOURCES: tuple[tuple[str, str], ...] = (
 )
 # Контакты партнёра (кабинет /me/, 02.10.2026) — в том же объекте socials, ключи
 # как в реестре сайта (src/data/referrals.js): whatsapp / viber / maxUrl / phone /
-# email / address. Источник — public_profile.contacts.<ключ>, затем верхний уровень.
+# email / address. Источник — только public_profile.contacts.<ключ> (кабинет /me/).
 _CONTACT_SOURCES: tuple[tuple[str, str], ...] = (
     ("phone", "phone"),
     ("whatsapp", "whatsapp"),
@@ -165,7 +165,7 @@ def _socials(profile: dict[str, Any]) -> dict[str, str | None] | None:
     contacts = profile.get("contacts")
     contacts = contacts if isinstance(contacts, dict) else {}
     for contract_key, source_key in _CONTACT_SOURCES:
-        socials[contract_key] = _clean(contacts.get(source_key) or profile.get(source_key))
+        socials[contract_key] = _clean(contacts.get(source_key))
     if not any(socials.values()):
         return None
     return socials

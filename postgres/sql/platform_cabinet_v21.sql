@@ -37,11 +37,15 @@ create table if not exists partner_profile_requests (
   owner_chat_id bigint,
   owner_message_id bigint,
   reason_prompt_message_id bigint,
+  -- бот, который прислал карточку (staging и бой делят базу): «/profiles» показывает свои
+  binding_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   reviewed_at timestamptz,
   reviewed_by bigint
 );
+
+alter table partner_profile_requests add column if not exists binding_id text;
 
 create unique index if not exists partner_profile_requests_one_pending
   on partner_profile_requests (tenant_id, ref_code)

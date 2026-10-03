@@ -338,6 +338,6 @@ async def test_public_ref_carries_cabinet_bio_and_contacts(client, monkeypatch):
     assert set(socials) == SOCIALS_CONTRACT_KEYS
     assert socials["phone"] == socials["whatsapp"] == "+79680605888"
     assert socials["maxUrl"] == "https://max.ru/u/abc"
-    assert socials["email"] == "legacy@mail.ru"  # старый ключ верхнего уровня тоже читается
+    assert socials["email"] is None  # ключ верхнего уровня не публикуется — только contacts
     assert socials["viber"] is None and socials["address"] is None
     assert socials["telegramChannelUrl"] == "https://t.me/dohod_dla_vsex"

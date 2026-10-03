@@ -161,9 +161,14 @@ def test_moderation_card_shows_was_and_becomes_per_field():
 
 def test_partner_texts_are_short_and_promise_nothing():
     applied = moderation.applied_text(CARD["changes"])
-    assert applied.splitlines()[0] == "Изменения на сайте применены: имя, «о себе», телефон, ВКонтакте."
-    assert moderation.rejected_text("Фото размытое").splitlines()[0] == "Изменения на сайте отклонены: Фото размытое."
-    assert moderation.rejected_text(None).splitlines()[0] == "Изменения на сайте отклонены."
+    assert applied == "Изменения на сайте применены: имя, «о себе», телефон, ВКонтакте."
+    assert "минут" not in applied  # без обещаний, когда именно обновится сайт
+    rejected = moderation.rejected_text("Фото размытое")
+    assert rejected.splitlines() == [
+        "Отклонено: Фото размытое.",
+        "Изменения на сайте не применены — поправьте в кабинете и отправьте ещё раз.",
+    ]
+    assert moderation.rejected_text(None).splitlines()[0] == "Отклонено."
 
 
 # ---- кнопки и причина -------------------------------------------------------------------------
@@ -203,7 +208,7 @@ async def test_apply_updates_site_notifies_partner_and_drops_buttons(whieda_tena
     assert partner_call.kwargs["reply_markup"] == {
         "inline_keyboard": [[{"text": "Открыть кабинет", "url": "https://samtsova.wwc.best/me/#wwc-login=t"}]]
     }
-    assert owner_call.args == (OWNER, "Применено: olga-samtsova. Сайт обновится в течение минуты.")
+    assert owner_call.args == (OWNER, "Применено: olga-samtsova.")
     assert edit.await_args.args[0] == "editMessageReplyMarkup"
     assert edit.await_args.args[1]["message_id"] == 77
 
@@ -245,7 +250,9 @@ async def test_owner_reply_is_the_reason_and_reaches_the_partner(whieda_tenant, 
         moderation, "reject_profile_request", AsyncMock(return_value={"rejected": True, "status": "rejected"})
     ) as reject, patch.object(moderation, "load_request_card", AsyncMock(return_value=CARD)), patch.object(
         moderation, "with_site_login", AsyncMock(side_effect=lambda url, **_: url)
-    ), patch.object(moderation, "_deliver", AsyncMock(return_value={"ok": True})) as deliver:
+    ), patch.object(moderation, "_retire_card", AsyncMock()) as retire, patch.object(
+        moderation, "_deliver", AsyncMock(return_value={"ok": True})
+    ) as deliver:
         with binding_context_scope(whieda_bot_binding):
             msg = parse_telegram_message(_message("  Фото   размытое ", reply_to=prompt))
             result = await moderation.try_handle_profile_reject_reason(whieda_tenant, msg, trace_id="t")
@@ -256,8 +263,9 @@ async def test_owner_reply_is_the_reason_and_reaches_the_partner(whieda_tenant, 
     assert reject.await_args_list[0].kwargs == {"reviewer_id": OWNER, "reason": "Фото размытое"}
     assert reject.await_args_list[1].kwargs["reason"] is None
     texts = [call.args[1] for call in deliver.await_args_list]
-    assert texts[0].startswith("Изменения на сайте отклонены: Фото размытое.")
+    assert texts[0].startswith("Отклонено: Фото размытое.")
     assert texts[1] == "Отклонено: olga-samtsova. Партнёр получил ответ."
+    assert retire.await_args_list[0].args == ("whieda", REQUEST_ID)  # кнопки под карточкой сняты
 
 
 @pytest.mark.asyncio
@@ -278,9 +286,9 @@ async def test_other_replies_are_not_taken_for_a_reason(whieda_tenant, owner_env
 
 @pytest.mark.asyncio
 async def test_profiles_command_resends_pending_cards(whieda_tenant, whieda_bot_binding, owner_env):
-    with patch.object(moderation, "list_pending_requests", AsyncMock(return_value=[{"request_id": REQUEST_ID}])), patch.object(
-        moderation, "send_moderation_card", AsyncMock(return_value=True)
-    ) as card:
+    with patch.object(
+        moderation, "list_pending_requests", AsyncMock(return_value=[{"request_id": REQUEST_ID}])
+    ) as pending, patch.object(moderation, "send_moderation_card", AsyncMock(return_value=True)) as card:
         with binding_context_scope(whieda_bot_binding):
             result = await moderation.try_handle_profile_requests_command(
                 whieda_tenant, parse_telegram_message(_message("/profiles")), trace_id="t"
@@ -290,6 +298,8 @@ async def test_profiles_command_resends_pending_cards(whieda_tenant, whieda_bot_
             ) is None
     assert result["count"] == 1
     card.assert_awaited_once_with("whieda", REQUEST_ID, chat_id=OWNER)
+    # Только заявки этого бота (staging и бой делят базу) и ещё не разосланные.
+    assert pending.await_args.kwargs == {"binding_id": whieda_bot_binding.binding_id}
     assert moderation.COMMAND_RE.fullmatch("правки сайтов")
 
 
@@ -307,7 +317,9 @@ async def test_site_request_reaches_the_owner_through_this_process_bot(whieda_bo
     assert send.await_args.kwargs["chat_id"] == str(OWNER)
     assert send.await_args.kwargs["bot_token"] == whieda_bot_binding.bot_token
     assert send.await_args.kwargs["reply_markup"] == moderation.moderation_keyboard(REQUEST_ID)
-    record.assert_awaited_once_with("whieda", REQUEST_ID, chat_id=OWNER, message_id=42)
+    record.assert_awaited_once_with(
+        "whieda", REQUEST_ID, chat_id=OWNER, message_id=42, binding_id=whieda_bot_binding.binding_id
+    )
 
 
 @pytest.mark.asyncio
@@ -434,3 +446,42 @@ async def test_replaced_and_withdrawn_requests_lose_their_buttons(whieda_bot_bin
         {"chat_id": OWNER, "message_id": 55, "reply_markup": {"inline_keyboard": []}},
     )
     assert edit.await_args_list[0].kwargs == {"bot_token": whieda_bot_binding.bot_token}
+
+
+@pytest.mark.asyncio
+async def test_long_request_goes_in_parts_and_the_card_keeps_the_buttons(whieda_bot_binding, owner_env):
+    url = "https://t.me/" + "c" * 280
+    card = {
+        **CARD,
+        "changes": {
+            "bio": "б" * 600,
+            "contacts": {"max_url": "https://max.ru/" + "m" * 280, "email": "e" * 240 + "@mail.ru",
+                         "address": "а" * 200},
+            "socials": {key: url for key in ("telegram_channel_url", "vk_url", "instagram_url", "youtube_url", "tiktok_url")},
+        },
+        "previous": {
+            "bio": "п" * 600,
+            "contacts": {"max_url": "https://max.ru/" + "o" * 280, "email": "o" * 240 + "@mail.ru", "address": "о" * 200},
+            "socials": {key: "https://t.me/" + "o" * 280 for key in ("telegram_channel_url", "vk_url", "instagram_url",
+                                                                     "youtube_url", "tiktok_url")},
+        },
+    }
+    sent = []
+
+    async def send(**kwargs):
+        sent.append(kwargs)
+        return {"ok": True, "message_id": len(sent)}
+
+    with patch.object(moderation, "load_request_card", AsyncMock(return_value=card)), patch.object(
+        moderation, "send_telegram_text", send
+    ), patch.object(moderation, "record_owner_card", AsyncMock()) as record:
+        with binding_context_scope(whieda_bot_binding):
+            assert await moderation.send_moderation_card("whieda", REQUEST_ID, chat_id=OWNER) is True
+    *parts, final = sent
+    assert len(parts) >= 2
+    assert all(len(moderation.format_telegram_html(item["text"])) <= 4096 for item in sent)
+    joined = "\n".join(item["text"] for item in parts)
+    assert "б" * 600 in joined and "п" * 600 in joined and url in joined  # ничего не обрезано
+    assert final["reply_markup"] == moderation.moderation_keyboard(REQUEST_ID)
+    assert final["text"].endswith("Изменения — в сообщениях выше.")
+    assert record.await_args.kwargs["message_id"] == len(sent)

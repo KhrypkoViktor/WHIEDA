@@ -11,6 +11,7 @@ no-store``; исключение — публичное фото ``/partner-medi
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable
 
@@ -29,9 +30,11 @@ from app.cabinet.service import (
     CabinetError,
     CabinetPerson,
     cancel_pending_request,
+    check_upload_allowed,
     get_pending_request,
     load_journey,
     load_overview,
+    load_own_media,
     load_person,
     load_public_media,
     mark_journey_step,
@@ -63,6 +66,9 @@ NO_STORE = "private, no-store"
 MEDIA_CACHE = "public, max-age=31536000, immutable"
 # multipart поверх 20 МБ файла: заголовки частей и граница
 UPLOAD_OVERHEAD = 64 * 1024
+# Разбор фото — до ~100 МБ памяти на файл: одновременно не больше двух на процесс
+# (тот же контейнер обслуживает бота).
+_PHOTO_SLOTS = asyncio.Semaphore(2)
 
 
 class _PrivateRoute(APIRoute):
@@ -324,14 +330,26 @@ async def cabinet_profile_photo(request: Request) -> dict[str, Any]:
     """Фото для заявки: уменьшенный JPEG без EXIF; адрес идёт в POST /me/profile."""
     tenant, person = await _context(request)
     try:
-        if not person.ref_code or not person.partner_paid:
-            raise CabinetError("pro_required", 402)
+        await check_upload_allowed(tenant.tenant_id, person)  # до чтения и разбора файла
         data = await _read_upload(request)
-        photo = await run_in_threadpool(process_profile_photo, data)
+        async with _PHOTO_SLOTS:
+            photo = await run_in_threadpool(process_profile_photo, data)
         stored = await store_profile_photo(tenant.tenant_id, person, photo)
     except (CabinetError, PhotoError) as exc:
         _raise(exc)
     return {"ok": True, **stored}
+
+
+@router.get(f"{API}/profile/photo/{{name}}")
+@router.get(f"{V1}/profile/photo/{{name}}")
+async def cabinet_profile_photo_preview(name: str, request: Request) -> Response:
+    """Своё фото до «Применить» — только самому партнёру (сессия), без кэша."""
+    tenant, person = await _context(request)
+    media_id = name[:-4] if name.endswith(".jpg") else ""
+    body = await load_own_media(tenant.tenant_id, person, media_id) if media_id else None
+    if body is None:
+        raise HTTPException(status_code=404, detail={"error": "media_not_found"})
+    return Response(content=body, media_type="image/jpeg", headers={"X-Content-Type-Options": "nosniff"})
 
 
 # ---- настройки ---------------------------------------------------------------------------
@@ -363,7 +381,8 @@ async def cabinet_settings(body: SettingsBody, request: Request) -> dict[str, An
 @media_router.get("/api/v1/content-access/partner-media/{name}")
 @media_router.get("/v1/content-access/partner-media/{name}")
 async def partner_media(name: str, request: Request) -> Response:
-    """Фото профиля из кабинета. Адрес неугадываемый (uuid) и неизменный — кэш на год."""
+    """Фото профиля, которое стоит на сайте (после «Применить»). Адрес
+    неугадываемый (uuid) и неизменный — кэш на год."""
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     media_id = name[:-4] if name.endswith(".jpg") else ""

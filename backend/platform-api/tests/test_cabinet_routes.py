@@ -200,6 +200,8 @@ async def test_photo_upload_needs_paid_site_before_reading_the_file(client, sign
 @pytest.mark.asyncio
 async def test_photo_upload_multipart_and_raw_body(client, signed_in, monkeypatch):
     signed_in()
+    allowed = AsyncMock(return_value="olga-samtsova")
+    monkeypatch.setattr("app.cabinet.routes.check_upload_allowed", allowed)
     seen = []
 
     async def store(tenant_id, person, photo):
@@ -231,7 +233,13 @@ async def test_photo_upload_multipart_and_raw_body(client, signed_in, monkeypatc
     broken = await client.post(
         "/api/v1/content-access/me/profile/photo", headers={**HOST, "content-type": "image/png"}, content=b"not a png"
     )
-    assert broken.status_code == 422 and broken.json()["error"] == "photo_unreadable"
+    assert broken.status_code == 415 and broken.json()["error"] == "photo_type_unsupported"
+    cut = await client.post(
+        "/api/v1/content-access/me/profile/photo",
+        headers={**HOST, "content-type": "image/jpeg"},
+        content=_jpeg_bytes()[:2000],
+    )
+    assert cut.status_code == 422 and cut.json()["error"] == "photo_unreadable"
     huge = await client.post(
         "/api/v1/content-access/me/profile/photo",
         headers={**HOST, "content-type": "image/jpeg", "content-length": str(30 * 1024 * 1024)},
@@ -239,6 +247,13 @@ async def test_photo_upload_multipart_and_raw_body(client, signed_in, monkeypatc
     )
     assert huge.status_code == 413 and huge.json()["error"] == "photo_too_large"
     assert len(seen) == 2
+    assert allowed.await_count == 7  # лимит проверяется до чтения каждого файла
+
+    monkeypatch.setattr("app.cabinet.routes.check_upload_allowed", AsyncMock(side_effect=CabinetError("too_many_uploads", 429)))
+    limited = await client.post(
+        "/api/v1/content-access/me/profile/photo", headers=HOST, files={"photo": ("p.jpg", _jpeg_bytes(), "image/jpeg")}
+    )
+    assert limited.status_code == 429 and len(seen) == 2  # файл даже не разбирали
 
 
 @pytest.mark.asyncio
@@ -310,3 +325,17 @@ async def test_pending_get_and_cancel(client, signed_in, monkeypatch):
 def test_cursor_helper_used_by_the_site_is_opaque():
     cursor = encode_page_cursor(NOW, "x")
     assert "2026" not in cursor and "/" not in cursor and "+" not in cursor
+
+
+@pytest.mark.asyncio
+async def test_own_photo_preview_is_private_and_only_for_the_owner(client, signed_in, monkeypatch):
+    signed_in()
+    media = "3f1c2a9e-0b7d-4c55-9a1e-2d3f4b5c6d7e"
+    own = AsyncMock(return_value=_jpeg_bytes((300, 300)))
+    monkeypatch.setattr("app.cabinet.routes.load_own_media", own)
+    response = await client.get(f"/api/v1/content-access/me/profile/photo/{media}.jpg", headers=HOST)
+    assert response.status_code == 200 and response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "private, no-store"
+    assert own.await_args.args[0] == "whieda" and own.await_args.args[2] == media
+    own.return_value = None  # чужое или удалённое
+    assert (await client.get(f"/v1/content-access/me/profile/photo/{media}.jpg", headers=HOST)).status_code == 404

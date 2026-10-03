@@ -12,6 +12,23 @@ from __future__ import annotations
 from app.db import fetch_one, tenant_connection
 
 
+async def crm_account(tenant_id: str, telegram_user_id: int) -> dict | None:
+    """Аккаунт WWC CRM в форме app.crm.service (account_id, timezone, today) — без
+    создания: кабинет не заводит CRM тому, кто её не открывал."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select account_id::text as account_id, telegram_user_id, timezone,
+                   (now() at time zone timezone)::date as today
+            from platform_accounts
+            where tenant_id = %s and telegram_user_id = %s
+            """,
+            (tenant_id, int(telegram_user_id)),
+        )
+    return dict(row) if row else None
+
+
 async def crm_contacts_count(tenant_id: str, telegram_user_id: int) -> int:
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(

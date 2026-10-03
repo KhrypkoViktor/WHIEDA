@@ -19,11 +19,10 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from app.academy.service import AcademyViewer, academy_open, course_lock_reason, preview_admin_ids
+from app.academy.service import AcademyViewer, academy_visible, course_lock_reason, preview_admin_ids
 from app.cabinet.journey import JourneyFacts, cabinet_locks, cabinet_tier, journey_steps
-from app.cabinet.photos import ProcessedPhoto
 from app.cabinet.profile import (
     ADDRESS_MAX,
     BIO_MAX,
@@ -51,9 +50,14 @@ from app.referral_bonus.service import (
 from app.settings import get_settings
 from app.subscriptions.service import resolve_partner_hostname, resolve_partner_subscription_by_telegram_user_id
 
+if TYPE_CHECKING:  # Pillow нужен загрузке фото, а не боту при старте
+    from app.cabinet.photos import ProcessedPhoto
+
 logger = logging.getLogger(__name__)
 
 LAUNCH_COURSE_SLUG = "zapusk-wwc"
+# Превью своего фото до «Применить»: публичный адрес отвечает только опубликованным.
+PREVIEW_PATH = "/api/v1/content-access/me/profile/photo/"
 UPLOADS_PER_DAY = 30
 REQUESTS_PER_HOUR = 10  # каждая заявка — сообщение владельцу
 REQUESTS_SHOWN = 5
@@ -239,8 +243,8 @@ class CabinetFacts:
 
 async def _crm_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: bool) -> tuple[str | None, int | None, int | None]:
     """(замок, людей в CRM, дел на сегодня). Закрыта — (причина, None, None)."""
-    from app.cabinet_crm import crm_contacts_count
-    from app.crm.service import crm_feature_enabled, get_or_create_account, lock_reason, today_view, viewer_from_row
+    from app.cabinet_crm import crm_account, crm_contacts_count
+    from app.crm.service import crm_feature_enabled, lock_reason, today_view, viewer_from_row
 
     if not crm_entitled or not crm_feature_enabled():
         return "feature_disabled", None, None
@@ -251,7 +255,9 @@ async def _crm_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: boo
     if reason is not None:
         return reason, None, None
     try:
-        account = await get_or_create_account(tenant_id, person.telegram_user_id)
+        account = await crm_account(tenant_id, person.telegram_user_id)
+        if account is None:  # CRM ещё не открывали: ни людей, ни дел, аккаунт не заводим
+            return None, 0, 0
         view = await today_view(tenant_id, account)
         today = sum(len(group.get("contacts") or []) for group in view.get("groups") or [])
         contacts = await crm_contacts_count(tenant_id, person.telegram_user_id)
@@ -355,7 +361,7 @@ def academy_block(person: CabinetPerson, facts: CabinetFacts) -> dict[str, Any] 
 
 def journey_facts(person: CabinetPerson, facts: CabinetFacts, tier: str) -> JourneyFacts:
     viewer = _academy_viewer(person)
-    visible = viewer.is_preview_admin or academy_open()
+    visible = academy_visible(viewer)
     launch = next((row for row in facts.courses if row["slug"] == LAUNCH_COURSE_SLUG), None)
     free = [row for row in facts.courses if row["access_rule"] == "free" and int(row["lessons_total"] or 0) > 0]
     current = current_profile_fields(person.public_profile)
@@ -375,13 +381,20 @@ def journey_facts(person: CabinetPerson, facts: CabinetFacts, tier: str) -> Jour
     )
 
 
+def preview_url(photo_url: Any) -> str | None:
+    media_id = media_id_in_url(photo_url)
+    return f"{PREVIEW_PATH}{media_id}.jpg" if media_id else None
+
+
 def request_out(row: dict[str, Any] | None) -> dict[str, Any] | None:
     if not row:
         return None
+    changes = row.get("changes") or {}
     return {
         "request_id": str(row["request_id"]),
         "status": row["status"],
-        "changes": row.get("changes") or {},
+        "changes": changes,
+        "photo_preview_url": preview_url(changes.get("photo_url")),
         "previous": row.get("previous") or {},
         "reject_reason": row.get("reject_reason"),
         "created_at": _iso(row.get("created_at")),
@@ -466,7 +479,7 @@ async def load_overview(
         has_site=bool(person.ref_code),
         club_active=is_club,
         crm_lock=facts.crm_lock,
-        academy_lock=None if (viewer.is_preview_admin or academy_open()) else "academy_not_open",
+        academy_lock=None if academy_visible(viewer) else "academy_not_open",
     )
     return {
         "ok": True,
@@ -761,7 +774,10 @@ async def load_media_body(tenant_id: str, media_id: str) -> bytes | None:
     return bytes(row["body"]) if row else None
 
 
-async def list_pending_requests(tenant_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
+async def list_pending_requests(
+    tenant_id: str, *, binding_id: str | None = None, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Ожидающие заявки; с binding_id — те, что прислал этот бот (или ещё никто)."""
     async with tenant_connection(tenant_id) as conn:
         rows = await fetch_all(
             conn,
@@ -769,25 +785,32 @@ async def list_pending_requests(tenant_id: str, *, limit: int = 10) -> list[dict
             select request_id::text as request_id
             from partner_profile_requests
             where tenant_id = %s and status = 'pending'
+              and (%s::text is null or binding_id is null or binding_id = %s::text)
             order by created_at
             limit %s
             """,
-            (tenant_id, max(1, min(int(limit), 30))),
+            (tenant_id, binding_id, binding_id, max(1, min(int(limit), 30))),
         )
     return [dict(row) for row in rows]
 
 
-async def record_owner_card(tenant_id: str, request_id: str, *, chat_id: int, message_id: int | None) -> None:
+async def record_owner_card(
+    tenant_id: str, request_id: str, *, chat_id: int, message_id: int | None, binding_id: str | None = None
+) -> None:
+    """Где карточка у владельца. Без message_id (очередь durable-inbox) прежний не затирается."""
     async with tenant_connection(tenant_id) as conn:
         await fetch_one(
             conn,
             """
             update partner_profile_requests
-            set owner_chat_id = %s, owner_message_id = %s, updated_at = now()
+            set owner_chat_id = %s,
+                owner_message_id = coalesce(%s, owner_message_id),
+                binding_id = coalesce(%s, binding_id),
+                updated_at = now()
             where tenant_id = %s and request_id = %s::uuid
             returning request_id
             """,
-            (int(chat_id), message_id, tenant_id, _request_uuid(request_id)),
+            (int(chat_id), message_id, binding_id, tenant_id, _request_uuid(request_id)),
         )
 
 
@@ -964,19 +987,51 @@ async def reject_profile_request(
 # ---- фото -----------------------------------------------------------------------------
 
 
-async def store_profile_photo(tenant_id: str, person: CabinetPerson, photo: ProcessedPhoto) -> dict[str, Any]:
+async def _uploads_today(conn: Any, tenant_id: str, telegram_user_id: int) -> int:
+    row = await fetch_one(
+        conn,
+        """
+        select count(*)::int as uploads from partner_media
+        where tenant_id = %s and telegram_user_id = %s and created_at > now() - interval '1 day'
+        """,
+        (tenant_id, telegram_user_id),
+    )
+    return int((row or {}).get("uploads") or 0)
+
+
+async def check_upload_allowed(tenant_id: str, person: CabinetPerson) -> str:
+    """До разбора файла: есть оплаченный сайт и не исчерпан дневной лимит загрузок."""
     ref_code = _require_site(person)
     async with tenant_connection(tenant_id) as conn:
-        recent = await fetch_one(
-            conn,
-            """
-            select count(*)::int as uploads from partner_media
-            where tenant_id = %s and telegram_user_id = %s and created_at > now() - interval '1 day'
-            """,
-            (tenant_id, person.telegram_user_id),
-        )
-        if int((recent or {}).get("uploads") or 0) >= UPLOADS_PER_DAY:
+        if await _uploads_today(conn, tenant_id, person.telegram_user_id) >= UPLOADS_PER_DAY:
             raise CabinetError("too_many_uploads", 429)
+    return ref_code
+
+
+async def store_profile_photo(tenant_id: str, person: CabinetPerson, photo: "ProcessedPhoto") -> dict[str, Any]:
+    ref_code = _require_site(person)
+    base = get_settings().platform_partner_media_public_base
+    async with tenant_connection(tenant_id) as conn:
+        if await _uploads_today(conn, tenant_id, person.telegram_user_id) >= UPLOADS_PER_DAY:
+            raise CabinetError("too_many_uploads", 429)
+        # Загрузки, которые так и не ушли в заявку, живут сутки: чистим при следующей.
+        site = await fetch_one(
+            conn,
+            "select public_profile from referral_profiles where tenant_id = %s and ref_code = %s",
+            (tenant_id, ref_code),
+        )
+        pending = await fetch_one(
+            conn,
+            "select changes from partner_profile_requests where tenant_id = %s and ref_code = %s and status = 'pending'",
+            (tenant_id, ref_code),
+        )
+        current = current_profile_fields((site or {}).get("public_profile"))
+        await _prune_media(
+            conn,
+            tenant_id,
+            ref_code,
+            _referenced_media(base, current.get("photo_url"), ((pending or {}).get("changes") or {}).get("photo_url")),
+        )
         row = await fetch_one(
             conn,
             """
@@ -990,19 +1045,55 @@ async def store_profile_photo(tenant_id: str, person: CabinetPerson, photo: Proc
     media_id = str(row["media_id"])
     return {
         "media_id": media_id,
-        "photo_url": media_public_url(get_settings().platform_partner_media_public_base, media_id),
+        "photo_url": media_public_url(base, media_id),
+        "preview_url": f"{PREVIEW_PATH}{media_id}.jpg",
         "width": photo.width,
         "height": photo.height,
         "size_bytes": len(photo.body),
     }
 
 
-async def load_public_media(tenant_id: str, media_id: str) -> bytes | None:
+def _media_uuid(media_id: Any) -> str | None:
     try:
-        media_uuid = str(uuid.UUID(str(media_id)))
+        return str(uuid.UUID(str(media_id)))
     except (TypeError, ValueError):
         return None
-    return await load_media_body(tenant_id, media_uuid)
+
+
+async def load_public_media(tenant_id: str, media_id: str) -> bytes | None:
+    """Публично — только фото, которое стоит на включённом сайте: до «Применить»
+    и после отказа по адресу ничего не открывается."""
+    media_uuid = _media_uuid(media_id)
+    if media_uuid is None:
+        return None
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select m.body
+            from partner_media m
+            join referral_profiles rp
+              on rp.tenant_id = m.tenant_id and rp.ref_code = m.ref_code and rp.enabled = true
+            where m.tenant_id = %s and m.media_id = %s::uuid
+              and position(m.media_id::text in coalesce(rp.public_profile->>'photo_url', '')) > 0
+            """,
+            (tenant_id, media_uuid),
+        )
+    return bytes(row["body"]) if row else None
+
+
+async def load_own_media(tenant_id: str, person: CabinetPerson, media_id: str) -> bytes | None:
+    """Превью для самого партнёра: фото своего сайта, в том числе ещё на проверке."""
+    media_uuid = _media_uuid(media_id)
+    if media_uuid is None or not person.ref_code:
+        return None
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            "select body from partner_media where tenant_id = %s and media_id = %s::uuid and ref_code = %s",
+            (tenant_id, media_uuid, person.ref_code),
+        )
+    return bytes(row["body"]) if row else None
 
 
 # ---- настройки ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ from app.telegram.bindings import (
     current_bot_binding,
     resolve_bot_binding_context,
 )
-from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
+from app.telegram.delivery import _call_telegram, answer_callback_query, format_telegram_html, send_telegram_text
 from app.telegram.referral_bonus import CABINET_BUTTON_LABEL, cabinet_page_url
 from app.telegram.site_login import with_site_login
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -60,6 +60,10 @@ _SHORT_ID_RE = re.compile(r"№([0-9a-f]{8})")
 REASON_MAX = 300
 NO_REASON = {"-", "—", "–", "без причины"}
 VALUE_MAX = 300  # длинное «о себе» целиком, остальное — до этой длины
+# Telegram режет сообщение на 4096 знаках (после HTML-экранирования): длинные
+# изменения уходят отдельными сообщениями перед карточкой, ничего не теряется.
+CARD_LIMIT = 3900
+CHUNK_LIMIT = 3500
 
 
 def owner_id() -> int | None:
@@ -106,16 +110,19 @@ def _shown(key: str, value: Any) -> str:
     return text
 
 
-def moderation_text(card: dict[str, Any], *, photo_sent: bool) -> str:
-    """Карточка владельцу: что было и что станет по каждому изменённому полю."""
-    changes = card.get("changes") or {}
-    previous = card.get("previous") or {}
+def _card_head(card: dict[str, Any]) -> list[str]:
     host = _site_host(card)
-    head = [
+    return [
         f"Заявка на изменение сайта — {_partner_name(card)} ({card.get('ref_code')})",
         " · ".join(part for part in (host, f"заявка №{short_id(card['request_id'])}") if part),
         "",
     ]
+
+
+def moderation_lines(card: dict[str, Any], *, photo_sent: bool) -> list[str]:
+    """«Было → стало» по каждому изменённому полю."""
+    changes = card.get("changes") or {}
+    previous = card.get("previous") or {}
     lines: list[str] = []
     for key in changed_fields(changes):
         title = FIELD_TITLES[key]
@@ -126,7 +133,27 @@ def moderation_text(card: dict[str, Any], *, photo_sent: bool) -> str:
             lines.extend([f"{title}:", f"было: {_shown(key, before)}", f"стало: {_shown(key, after)}"])
         else:
             lines.append(f"{title}: {_shown(key, before)} → {_shown(key, after)}")
-    return "\n".join(head + lines)
+    return lines
+
+
+def moderation_text(card: dict[str, Any], *, photo_sent: bool) -> str:
+    """Карточка владельцу: что было и что станет по каждому изменённому полю."""
+    return "\n".join(_card_head(card) + moderation_lines(card, photo_sent=photo_sent))
+
+
+def _chunks(lines: list[str], limit: int = CHUNK_LIMIT) -> list[str]:
+    out: list[str] = []
+    current = ""
+    for line in lines:
+        piece = line if len(format_telegram_html(line)) <= limit else line[: limit // 2] + "…"
+        candidate = f"{current}\n{piece}" if current else piece
+        if current and len(format_telegram_html(candidate)) > limit:
+            out.append(current)
+            candidate = piece
+        current = candidate
+    if current:
+        out.append(current)
+    return out
 
 
 def moderation_keyboard(request_id: str) -> dict[str, Any]:
@@ -156,19 +183,14 @@ def changed_titles_text(changes: dict[str, Any]) -> str:
 
 def applied_text(changes: dict[str, Any]) -> str:
     fields = changed_titles_text(changes)
-    return "\n".join(
-        [
-            "Изменения на сайте применены" + (f": {fields}." if fields else "."),
-            "Сайт обновится в течение минуты.",
-        ]
-    )
+    return "Изменения на сайте применены" + (f": {fields}." if fields else ".")
 
 
 def rejected_text(reason: str | None) -> str:
-    head = f"Изменения на сайте отклонены: {reason}" if reason else "Изменения на сайте отклонены."
+    head = f"Отклонено: {reason}" if reason else "Отклонено."
     if reason and not reason.endswith((".", "!", "?")):
         head += "."
-    return "\n".join([head, "Поправьте в кабинете и отправьте ещё раз."])
+    return "\n".join([head, "Изменения на сайте не применены — поправьте в кабинете и отправьте ещё раз."])
 
 
 async def _send_photo_upload(*, chat_id: str, body: bytes, caption: str, bot_token: str) -> dict[str, Any]:
@@ -211,16 +233,28 @@ async def send_moderation_card(tenant_id: str, request_id: str, *, chat_id: int)
                 bot_token=token,
             )
             photo_sent = bool(sent.get("ok"))
+    text = moderation_text(card, photo_sent=photo_sent)
+    if len(format_telegram_html(text)) > CARD_LIMIT:
+        # Длинная заявка: изменения — сообщениями выше, на карточке — заголовок и кнопки.
+        for part in _chunks(moderation_lines(card, photo_sent=photo_sent)):
+            await send_telegram_text(chat_id=str(chat_id), text=part, bot_token=token)
+        text = "\n".join(_card_head(card) + ["Изменения — в сообщениях выше."])
     result = await send_telegram_text(
         chat_id=str(chat_id),
-        text=moderation_text(card, photo_sent=photo_sent),
+        text=text,
         bot_token=token,
         reply_markup=moderation_keyboard(card["request_id"]),
     )
     if not result.get("ok"):
         logger.warning("cabinet_profile_card_send_failed", extra={"request_id": card["request_id"]})
         return False
-    await record_owner_card(tenant_id, card["request_id"], chat_id=chat_id, message_id=result.get("message_id"))
+    await record_owner_card(
+        tenant_id,
+        card["request_id"],
+        chat_id=chat_id,
+        message_id=result.get("message_id"),
+        binding_id=current_bot_binding().binding_id,
+    )
     return True
 
 
@@ -368,7 +402,7 @@ async def try_handle_profile_callback(
             request = result["request"]
             await _drop_card_buttons(callback)
             await _notify_partner(tenant.tenant_id, request_id, applied_text(request.get("changes") or {}))
-            await _deliver(callback.chat_id, f"Применено: {request['ref_code']}. Сайт обновится в течение минуты.")
+            await _deliver(callback.chat_id, f"Применено: {request['ref_code']}.")
             return {**base, "ok": True, "status": "applied"}
         current = await request_status(tenant.tenant_id, request_id)
         if current is None:
@@ -421,6 +455,10 @@ async def try_handle_profile_reject_reason(
         await _deliver(msg.chat_id, _status_note(result["status"]))
         return {**base, "ok": True, "status": result["status"]}
     await _notify_partner(tenant.tenant_id, request["request_id"], rejected_text(reason))
+    try:
+        await _retire_card(tenant.tenant_id, request["request_id"])  # кнопки под карточкой больше не нужны
+    except Exception:
+        logger.warning("cabinet_profile_card_retire_failed", extra={"request_id": request["request_id"]})
     await _deliver(msg.chat_id, f"Отклонено: {request['ref_code']}. Партнёр получил ответ.")
     return {**base, "ok": True, "status": "rejected"}
 
@@ -433,7 +471,7 @@ async def try_handle_profile_requests_command(
         return None
     if not _owner_allowed(msg.user_id):
         return None
-    rows = await list_pending_requests(tenant.tenant_id)
+    rows = await list_pending_requests(tenant.tenant_id, binding_id=current_bot_binding().binding_id)
     if not rows:
         await _deliver(msg.chat_id, "Заявок на изменение сайтов нет.")
         return {"ok": True, "route": "cabinet_profile_list", "count": 0, "trace_id": trace_id}

@@ -269,14 +269,16 @@ def _text(value: Any) -> str | None:
 def current_profile_fields(public_profile: Any) -> dict[str, Any]:
     """Что сейчас на сайте по данным Core, в форме полей кабинета.
 
-    Соцсети и контакты читаются как в публичном контракте: вложенный объект
-    важнее старого ключа верхнего уровня.
+    Как в публичном контракте: соцсети — вложенный объект, затем старый ключ
+    верхнего уровня; контакты — только вложенный ``contacts`` (ключи вроде
+    ``phone`` наверху могли значить другое — не публикуем их).
     """
     profile = public_profile if isinstance(public_profile, dict) else {}
     out: dict[str, Any] = {key: _text(profile.get(key)) for key in SCALAR_FIELDS}
     for group, keys in GROUPS.items():
         nested = profile.get(group) if isinstance(profile.get(group), dict) else {}
-        out[group] = {key: _text(nested.get(key) or profile.get(key)) for key in keys}
+        legacy = profile if group == "socials" else {}
+        out[group] = {key: _text(nested.get(key) or legacy.get(key)) for key in keys}
     return out
 
 
@@ -314,8 +316,9 @@ def diff_profile(current: dict[str, Any], desired: dict[str, Any]) -> tuple[dict
 def apply_profile_changes(public_profile: Any, changes: dict[str, Any]) -> dict[str, Any]:
     """Новый public_profile после «Применить». Остальные ключи не трогаются.
 
-    Контакт или соцсеть пишутся во вложенный объект; старый ключ верхнего
-    уровня с тем же именем убирается, иначе убранная соцсеть вернулась бы из него.
+    Контакт или соцсеть пишутся во вложенный объект. Для соцсети старый ключ
+    верхнего уровня с тем же именем убирается, иначе убранная соцсеть вернулась
+    бы из него; ключи верхнего уровня у контактов не трогаются.
     """
     profile = dict(public_profile) if isinstance(public_profile, dict) else {}
     for key in SCALAR_FIELDS:
@@ -329,7 +332,8 @@ def apply_profile_changes(public_profile: Any, changes: dict[str, Any]) -> dict[
             continue
         nested = dict(profile.get(group)) if isinstance(profile.get(group), dict) else {}
         for key, value in (changes.get(group) or {}).items():
-            profile.pop(key, None)
+            if group == "socials":
+                profile.pop(key, None)
             if value:
                 nested[key] = value
             else:

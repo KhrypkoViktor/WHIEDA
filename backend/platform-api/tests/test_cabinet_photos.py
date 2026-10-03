@@ -82,14 +82,31 @@ def test_heic_from_iphone_becomes_jpeg():
     ("data", "code", "status"),
     [
         (b"", "photo_empty", 400),
-        (b"this is not an image at all", "photo_unreadable", 422),
-        (b"\xff\xd8\xff\xe0" + b"\x00" * 64, "photo_unreadable", 422),
+        (b"this is not an image at all", "photo_type_unsupported", 415),
+        (b"\xff\xd8\xff\xe0" + b"\x00" * 64, "photo_type_unsupported", 415),
+        (_jpeg((1600, 1200))[:2000], "photo_unreadable", 422),  # JPEG оборвался на середине
     ],
 )
 def test_broken_uploads_are_refused(data, code, status):
     with pytest.raises(PhotoError) as caught:
         process_profile_photo(data)
     assert (caught.value.code, caught.value.status) == (code, status)
+
+
+def test_png_that_inflates_to_hundreds_of_megabytes_is_refused_before_decoding():
+    out = BytesIO()
+    Image.new("RGBA", (6000, 5000)).save(out, format="PNG")  # 30 Мп, а файл — около 100 КБ
+    assert len(out.getvalue()) < 1024 * 1024
+    with pytest.raises(PhotoError) as caught:
+        process_profile_photo(out.getvalue())
+    assert (caught.value.code, caught.value.status) == ("photo_too_large", 413)
+
+
+def test_huge_jpeg_is_decoded_already_reduced():
+    out = BytesIO()
+    Image.new("RGB", (8000, 6000), (10, 10, 10)).save(out, format="JPEG")
+    photo = process_profile_photo(out.getvalue())
+    assert (photo.width, photo.height) == (1200, 900)
 
 
 def test_gif_is_not_a_profile_photo_and_20mb_is_the_limit():

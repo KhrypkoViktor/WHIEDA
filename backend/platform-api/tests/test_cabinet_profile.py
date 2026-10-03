@@ -113,6 +113,8 @@ def test_current_fields_read_nested_first_then_legacy_top_level():
     assert current["socials"]["telegram_channel_url"] == "https://t.me/new"
     assert current["socials"]["youtube_url"] == "https://www.youtube.com/@olga"
     assert current["contacts"]["phone"] == "+79991112233" and current["contacts"]["viber"] is None
+    # Контакты — только из вложенного contacts: «phone» наверху мог значить другое.
+    assert current_profile_fields({"phone": "+70000000000"})["contacts"]["phone"] is None
 
 
 def test_diff_keeps_only_real_changes_with_what_was_before():
@@ -161,7 +163,8 @@ def test_apply_writes_nested_objects_and_drops_legacy_keys():
     assert result["photo_url"] == f"https://wwc.best/api/v1/content-access/partner-media/{MEDIA}.jpg"
     assert result["contacts"] == {"phone": "+79991112233"}
     assert result["socials"] == {"youtube_url": "https://www.youtube.com/@olga", "telegram_channel_url": "https://t.me/olga"}
-    assert "vk_url" not in result and "phone" not in result  # старый ключ не вернёт убранное
+    assert "vk_url" not in result  # старый ключ соцсети не вернёт убранное
+    assert result["phone"] == "+70000000000"  # ключи верхнего уровня у контактов не трогаем
     assert result["subdomain"] == "samtsova" and result["selected_theme_id"] == "sankofa"
     assert profile["vk_url"] == "https://vk.com/old"  # исходный словарь не тронут
     cleared = apply_profile_changes(result, {"bio": None, "contacts": {"phone": None}})
