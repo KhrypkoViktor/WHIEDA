@@ -63,7 +63,7 @@
 |---|---|---|
 | GET /me | — | + `install_hint_dismissed`, `my_name` (для `{мое_имя}`, из public_profile.display_name, может быть '') |
 | PATCH /me | `{timezone?, install_hint_dismissed?}` | как GET /me |
-| GET /today | — | v1 `groups` + новый `sections` [{key: meetings / call / remind / overdue, title, contacts}] |
+| GET /today | — | v1 `groups` + новый `sections` [{key: meetings / call / remind / overdue, title, contacts}] + `done_today`, `planned_tomorrow` (числа) |
 | GET /contacts | `q, status, tag, cursor, limit (1–100, по умолчанию 50), sort=updated / name / next` | `{items, next_cursor, total}` |
 | POST /contacts/search | те же поля в теле JSON | как GET; **для поиска по строке сайту лучше этот** (имя / телефон не попадут в URL и в access-лог nginx) |
 | POST /contacts | + `tags[]`, `priority` | 201 `{contact}` |
@@ -74,8 +74,8 @@
 | POST /contacts/{id}/log | `{kind: call / message, channel: phone / whatsapp / telegram / viber / max / sms, template_id?}` | 201 `{contact, activity}` |
 | POST /contacts/{id}/snooze | `{days}` или `{date}` | `{contact}` |
 | POST /contacts/{id}/done | `{meeting_at?, next_at?}` | `{contact}`; next_at = null → дату выбирает партнёр |
-| GET /pipeline | — | `{columns: [{status, title, count, items (20), next_cursor}], total}` |
-| GET /pipeline/{status} | `cursor, limit` | `{status, title, items, next_cursor, total}` |
+| GET /pipeline | `tag?` | `{columns: [{status, title, count, items (20), next_cursor}], total}` |
+| GET /pipeline/{status} | `cursor, limit, tag?` | `{status, title, items, next_cursor, total}` |
 | GET /tags | — | `{items: [{tag, count}]}` |
 | GET / POST /templates, PATCH / DELETE /templates/{id} | `{title ≤ 60, body ≤ 1000, position?}` | `{items}` / 201 `{template}` / `{template}` / 204 |
 
@@ -211,6 +211,18 @@ invalid_priority, duplicate (+contact_id), contact_not_found.
 - Общие файлы с соседними ветками (`core/academy-v2-lms` V19, `core/cabinet-v1` V21): у меня только
   добавленные строки — `schema_requirements.py` +2 / −0, `postgres_testkit.py` +1 / −0 (строка V20 после V18),
   `jobs/worker.py` +31 / −0; `telegram/processor.py` не трогал. При слиянии в testkit оставить V19, V20, V21 по порядку.
+
+## Доработки по просьбе лида (03.10.2026, коммит поверх a8bfd7d)
+
+- `deciding` → «Думает» (как в утверждённом макете). До этого «Решает» было и в Core, и на сайте v1
+  (`model.js`), и в ТЗ v1; меняется status_title в API, заголовок колонки воронки и столбец «Статус» в CSV.
+  Бот и утреннее сообщение названий этапов не используют. Тест закрепляет все семь названий.
+- `GET /pipeline?tag=` и `GET /pipeline/{status}?tag=`: точное совпадение, как в /contacts; сужает колонки и счётчики.
+- `GET /today` + `done_today` (шаги «Сделано» с локальной полуночи аккаунта, только живые карточки) и
+  `planned_tomorrow` (живые карточки с next_at = завтра). Старые поля не тронуты.
+- V20 + индекс `crm_activities_account_steps` для счётчика. Если V20 уже применена на общей базе —
+  прогнать файл ещё раз (идемпотентно), иначе счётчик работает и без индекса, просто медленнее.
+- Проверки: pytest tests — 26 старых падений, новых нет (1876 passed); postgres — 23 passed; check_zone — OK.
 
 ## Ревью (независимый агент, 02.10)
 

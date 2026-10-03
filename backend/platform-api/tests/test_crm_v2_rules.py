@@ -143,6 +143,14 @@ def test_today_sections_split_by_meaning():
     assert today_sections([], TODAY) == []
 
 
+def test_stage_titles_follow_the_approved_v2_mockup():
+    from app.crm.rules import STATUS_TITLES, STATUSES
+
+    assert list(STATUS_TITLES) == list(STATUSES)  # codes are the contract with the site, unchanged
+    assert [STATUS_TITLES[s] for s in STATUSES] == [
+        "Новый контакт", "Приглашён", "Презентация проведена", "Думает", "Клиент", "Партнёр", "Пауза"]
+
+
 FORBIDDEN_PROMISES = ("доход", "заработ", "деньг", "прибыл", "богат", "миллион", "вылеч", "лечит", "исцел",
                       "здоров", "болезн", "гарант", "похуде")
 

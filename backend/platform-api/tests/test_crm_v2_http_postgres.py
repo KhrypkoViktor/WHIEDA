@@ -129,6 +129,14 @@ def test_v2_api_over_http(monkeypatch):
                     rest = await call("GET", "/pipeline/new", params={"limit": 3, "cursor": first["next_cursor"]})
                     assert len(first["items"]) == 3 and len(rest["items"]) == 1 and rest["next_cursor"] is None
                     assert (await call("GET", "/pipeline/lost", 400))["error"] == "invalid_status"
+                    vip = await call("GET", "/pipeline", params={"tag": "vip"})
+                    assert vip["total"] == 2 and vip["columns"][0]["count"] == 2
+                    assert (await call("GET", "/pipeline/new", params={"tag": "минск"}))["total"] == 2
+
+                    # «Сегодня»: the counters next to the old fields.
+                    today_view = await call("GET", "/today")
+                    assert (today_view["done_today"], today_view["planned_tomorrow"]) == (1, 1)
+                    assert {"date", "groups", "overdue", "sections"} <= set(today_view)
 
                     # Delete → gone everywhere → «Вернуть».
                     await call("DELETE", f"/contacts/{ids['Вера']}", 204)

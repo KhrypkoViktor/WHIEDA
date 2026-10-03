@@ -276,6 +276,14 @@ def test_crm_v2_cards_lists_templates_and_meeting_reminders(monkeypatch):
             rest = await pipeline_column("whieda", igor, "new", cursor=new_column["next_cursor"])
             assert len(rest["items"]) == 4 and rest["next_cursor"] is None and rest["total"] == 24
             assert not {c["id"] for c in rest["items"]} & {c["id"] for c in new_column["items"]}
+            # ?tag= narrows every column and its count (exact match, as in /contacts).
+            tagged = await pipeline("whieda", igor, tag="#клиент")
+            assert {column["status"]: column["count"] for column in tagged["columns"]} == {
+                "new": 0, "invited": 0, "presented": 0, "deciding": 0, "client": 1, "partner": 0, "paused": 0}
+            assert tagged["total"] == 1 and tagged["columns"][4]["items"][0]["name"] == "Анна"
+            assert tagged["columns"][3]["title"] == "Думает"
+            assert (await pipeline_column("whieda", igor, "client", tag="клиент"))["total"] == 1
+            assert (await pipeline_column("whieda", igor, "client", tag="Клиент"))["items"] == []
 
             # ---- soft delete, «Вернуть», purge -----------------------------------------------
             boris = (await list_contacts("whieda", igor, q="Борис"))["items"][0]
@@ -336,6 +344,17 @@ def test_crm_v2_cards_lists_templates_and_meeting_reminders(monkeypatch):
             assert sections["meetings"] == ["Глеб"]
             assert "Глеб" not in sum((names for key, names in sections.items() if key != "meetings"), [])
             assert {group["step"] for group in view["groups"]} >= {"invite"}  # v1 groups are still there
+            # Counters: three «Сделано» on Анна today; nobody planned for tomorrow yet.
+            assert (view["done_today"], view["planned_tomorrow"]) == (3, 0)
+            vera = (await list_contacts("whieda", igor, q="Вера 100"))["items"][0]
+            await crm.snooze_contact("whieda", igor, vera["id"], days=1)
+            temp = await crm.create_contact("whieda", igor, name="Временный")
+            await crm.done_contact("whieda", igor, temp["id"], meeting_at=meeting)
+            counted = await crm.today_view("whieda", igor)
+            assert (counted["done_today"], counted["planned_tomorrow"]) == (4, 1)
+            await crm.delete_contact("whieda", igor, temp["id"])  # a deleted card no longer counts
+            assert (await crm.today_view("whieda", igor))["done_today"] == 3
+            assert (await crm.today_view("whieda", petr))["done_today"] == 0  # per account
 
             # ---- «Через час встреча» ------------------------------------------------------------------
             now = datetime.now(timezone.utc).replace(microsecond=0)
