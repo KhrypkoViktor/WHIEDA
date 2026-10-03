@@ -235,7 +235,7 @@ async def test_keys_refusal_is_explained(whieda_tenant, sent):
     ), patch("app.telegram.academy.preview_admin_ids", return_value=frozenset()):
         result = await handle_keys_command(whieda_tenant, _msg("ключи kurs 3"), "kurs", 3, trace_id="k3")
     assert result["status"] == "shelf_expired"
-    assert "Полка Академии не оплачена" in sent.await_args.kwargs["text"]
+    assert "Академия не оплачена" in sent.await_args.kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -253,7 +253,7 @@ async def test_my_courses_shows_counts_without_names(whieda_tenant, sent):
     assert result["route"] == "academy_my_courses"
     text = sent.await_args.kwargs["text"]
     assert "погашено 1 из 3" in text and "учеников: 1" in text and "опубликован" in text
-    assert "Полка Академии не оплачена" in text
+    assert "Академия не оплачена" in text
 
 
 @pytest.mark.asyncio
@@ -340,7 +340,7 @@ async def test_shelf_payment_notice_names_the_shelf_term_not_the_site(sent):
                "period_end": datetime(2026, 12, 25, 10, tzinfo=timezone.utc)}
     await notify_academy_payment(payment, chat_id=7001, title="Полка Академии на 3 месяца")
     text = sent.await_args.kwargs["text"]
-    assert "Полка Академии оплачена до 25.12.2026" in text and "ключи" in text
+    assert "Академия оплачена до 25.12.2026" in text and "ключи" in text
     assert "Сайт:" not in text and "Доступ до" not in text
 
 

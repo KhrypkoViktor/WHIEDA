@@ -1,4 +1,4 @@
-"""Access keys for Academy courses — the «полка» model (owner, 25.09.2026).
+"""Access keys for Academy courses — the author model (owner, 25.09.2026; «Автор Академии» since 02.10).
 
 An author pays for a place on the shelf (``academy_shelf``); students pay the
 author directly, and the author hands out keys. A key is a 12-character code
@@ -48,7 +48,7 @@ KEY_ERROR_TEXT = {
     "course_not_found": "Курса с таким адресом нет. Проверьте адрес курса в «мои курсы».",
     "course_not_published": "Курс ещё не опубликован — ключи можно выдать после публикации.",
     "not_author": "Выдавать ключи к этому курсу может только его автор.",
-    "shelf_expired": "Полка Академии не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться. Продлите полку в кабинете.",
+    "shelf_expired": "Академия не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться. Продлите Академию в кабинете.",
     "bad_count": f"Количество ключей — от 1 до {MAX_KEYS_PER_BATCH} за раз.",
     "key_not_found": "Ключ не найден. Проверьте ссылку или попросите у автора новую.",
     "key_revoked": "Этот ключ отозван автором. Попросите у автора новый.",
@@ -304,6 +304,7 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
             """
             select 1 as ok from academy_access
             where tenant_id = %s and course_id = %s::uuid and telegram_user_id = %s and revoked_at is null
+              and (expires_at is null or expires_at > now())
             """,
             (tenant_id, key["course_id"], int(telegram_user_id)),
         )
@@ -319,7 +320,7 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
             raise AcademyKeyError("course_unavailable")
         author = str(key.get("author_actor_id") or "")
         if author and not await shelf_active(conn, tenant_id, author):
-            # Решение лида 25.09: полка автора истекла — ключ не гасится, ученик идёт к автору.
+            # Решение лида 25.09: размещение автора истекло — ключ не гасится, ученик идёт к автору.
             from app.academy.service import author_contact
 
             raise AcademyKeyError("author_shelf_expired", {"author_contact": await author_contact(conn, tenant_id, author)})
@@ -333,7 +334,8 @@ async def redeem_key(tenant_id: str, code: str, telegram_user_id: int) -> Redeem
                 insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
                 values (%s, %s::uuid, %s, 'key', %s)
                 on conflict (tenant_id, course_id, telegram_user_id)
-                do update set revoked_at = null, source = 'key', payment_ref = excluded.payment_ref, granted_at = now()
+                do update set revoked_at = null, expires_at = null, source = 'key', payment_ref = excluded.payment_ref,
+                              granted_at = now()
                 """,
                 (tenant_id, key["course_id"], int(telegram_user_id), normalized),
             )

@@ -66,3 +66,20 @@ def test_crm_is_called_wwc_crm_in_the_bot():
     assert not any("ежедневник" in text.lower() for text in shown), shown
     # The old word still opens it.
     assert bot.is_crm_text("ежедневник") and bot.is_crm_text("WWC CRM")
+
+
+# Академия v2 (02.10.2026, решение владельца): слово «полка» убрано — везде «Академия»,
+# автор = «Автор Академии». Проверяем и пакет academy: его ошибки видит человек.
+ACADEMY_FACING = USER_FACING + ("academy",)
+
+
+def _academy_literals():
+    for name in ACADEMY_FACING:
+        for path in (APP / name).rglob("*.py"):
+            for match in _RU_LITERAL.finditer(path.read_text(encoding="utf-8")):
+                yield path.name, match.group(1)
+
+
+def test_no_shelf_wording_anywhere_a_person_reads():
+    offenders = [(f, s) for f, s in _academy_literals() if re.search(r"\bполк[аиуеоы]", s, re.I)]
+    assert not offenders, offenders

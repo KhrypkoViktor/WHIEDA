@@ -11,6 +11,9 @@ services:
     volumes:
       # Host secret (created by owner); required for WWC_MARKETS_GOOGLE_CREDENTIALS_PATH.
       - /opt/whieda-platform-staging/secrets/wwc-markets-sync.json:/opt/whieda-platform-staging/secrets/wwc-markets-sync.json:ro
+      # Академия v2: тот же каталог загрузок, что у боя (база общая). Воркер staging его не видит —
+      # видео перекодирует только боевой воркер.
+      - ${PLATFORM_ACADEMY_MEDIA_HOST_DIR:-/opt/whieda-platform-core/media/academy}:/opt/whieda-platform-core/media/academy
     depends_on:
       - redis
     restart: unless-stopped

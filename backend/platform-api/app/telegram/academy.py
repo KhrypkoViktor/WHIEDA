@@ -16,7 +16,7 @@ Text commands «начать обучение», «мой план», «акад
 the coach's first week were two competing «first weeks» nobody finished
 (owner, 23.09.2026). The objection practice («коуч», «коуч ответ …») stays.
 
-Authors on the shelf (owner, 25.09.2026), private chat only:
+Authors of the Academy (owner, 25.09.2026), private chat only:
   «ключи <slug> <N>» — N access keys as ``t.me/<bot>?start=course_<код>`` links
                        (more than 20 — one text file);
   «мои курсы»        — per course: status, keys redeemed / issued, students.
@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.academy.author import course_brief, review_course
 from app.academy.keys import (
     KEY_ERROR_TEXT,
     MAX_KEYS_PER_BATCH,
@@ -84,6 +85,12 @@ _TEXT_RE = re.compile(
 )
 _KEYS_RE = re.compile(r"^/?ключи(?:\s+([a-z0-9]+(?:-[a-z0-9]+)*))?(?:\s+(\d{1,4}))?\s*$", re.I)
 _MY_COURSES_RE = re.compile(r"^/?мои\s+курсы\s*$", re.I)
+# Премодерация курсов (лид, 02.10.2026): карточка владельцу с кнопками решения.
+_REVIEW_CALLBACK_RE = re.compile(r"^acadrev:(ok|no):([0-9a-f-]{36})$")
+_RETURN_PROMPT_RE = re.compile(r"^↩️ Курс «.*» \(([a-z0-9]+(?:-[a-z0-9]+)*)\) — что поправить\?")
+_RETURN_COMMAND_RE = re.compile(r"^/?вернуть\s+([a-z0-9]+(?:-[a-z0-9]+)*)\s+(.+)$", re.I | re.S)
+NOT_IN_REVIEW_TEXT = "Курс «{title}» уже не на проверке."
+ALREADY_DRAFT_TEXT = "Курс «{title}» и так в черновике."
 KEYS_INLINE_LIMIT = 20  # больше — одним текстовым файлом (сообщение Telegram ≤ 4096 символов)
 
 LOCK_TEXT = {
@@ -120,7 +127,7 @@ def key_error_text(exc: AcademyKeyError) -> str:
 
 
 def purchase_lock_text(contact: dict[str, Any] | None) -> str:
-    """Замок purchase_required: доступ выдаёт автор курса («полка»), не поддержка."""
+    """Замок purchase_required: доступ выдаёт автор курса, не поддержка."""
     who = author_contact_label(contact)
     if not who:
         return LOCK_TEXT["purchase_required"]
@@ -129,6 +136,42 @@ def purchase_lock_text(contact: dict[str, Any] | None) -> str:
         "Получите у автора ключ — ссылку на бота — и откройте её: курс откроется сразу. "
         "Если у вас код из 12 символов, отправьте боту: /start course_<код>"
     )
+
+
+def _when(opens_at: Any) -> str:
+    if not opens_at:
+        return ""
+    try:
+        moment = opens_at if isinstance(opens_at, datetime) else datetime.fromisoformat(str(opens_at))
+    except ValueError:
+        return ""
+    return _date(moment)
+
+
+def lesson_lock_text(reason: str | None, opens_at: Any = None, contact: dict[str, Any] | None = None) -> str:
+    """Замок урока (Академия v2): после предыдущего, по дате, через N дней, по ключу."""
+    code = str(reason or "")
+    if code == "after_prev":
+        return "🔒 Урок откроется, когда пройдёте предыдущий."
+    if code.startswith(("date:", "days:")):
+        when = _when(opens_at)
+        if when:
+            return f"🔒 Урок откроется {when}."
+        days = code[len("days:"):]
+        if code.startswith("days:") and days.isdigit():
+            return f"🔒 Урок откроется через {days} дн. после старта курса."
+    if code == "purchase":
+        return purchase_lock_text(contact)
+    return "🔒 Урок пока закрыт."
+
+
+HOMEWORK_LINE = {
+    "none": "Домашка: сдайте её на странице урока.",
+    "submitted": "Домашка на проверке у автора.",
+    "returned": "Домашку вернули — посмотрите комментарий на странице урока.",
+    "accepted": "Домашка принята ✓",
+}
+WAITING_REVIEW_TEXT = "Домашка на проверке у автора. Следующий урок откроется после проверки."
 
 
 async def academy_button_rows(tenant_id: str, telegram_user_id: int | None) -> list[list[dict[str, Any]]]:
@@ -160,7 +203,7 @@ def _lesson_card(
     course: dict[str, Any], lesson: dict[str, Any], lessons_total: int, lessons_done: int, *, open_url: str | None = None
 ) -> tuple[str, dict]:
     lines = [
-        f"🎓 {course['title']} · урок {lesson['position']} из {lessons_total}",
+        f"🎓 {course['title']} · урок {lesson.get('number') or lesson['position']} из {lessons_total}",
         "",
         lesson["title"],
     ]
@@ -173,6 +216,8 @@ def _lesson_card(
     lines += ["", f"Пройдено {lessons_done} из {lessons_total} {_progress_bar(lessons_done, lessons_total)}"]
     if lesson.get("done"):
         lines.append("✓ Этот урок уже отмечен.")
+    if HOMEWORK_LINE.get(str(lesson.get("assignment_status") or "")):
+        lines.append(HOMEWORK_LINE[str(lesson["assignment_status"])])
     slug = course["slug"]
     keyboard = {
         "inline_keyboard": [
@@ -184,6 +229,12 @@ def _lesson_card(
     return "\n".join(lines), keyboard
 
 
+def _mark(lesson: dict[str, Any]) -> str:
+    if lesson.get("locked"):
+        return "🔒"
+    return "✓" if lesson.get("complete", lesson.get("done")) else "○"
+
+
 def _all_lessons(course: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple[str, dict]:
     lines = [f"🎓 {course['title']}", f"Пройдено {course['lessons_done']} из {course['lessons_total']}", ""]
     module = None
@@ -191,10 +242,9 @@ def _all_lessons(course: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple
         if lesson.get("module_title") and lesson["module_title"] != module:
             module = lesson["module_title"]
             lines += ["", module]
-        mark = "✓" if lesson.get("done") else "○"
-        lines.append(f"{mark} {lesson['position']}. {lesson['short_title']}")
+        lines.append(f"{_mark(lesson)} {lesson.get('number') or lesson['position']}. {lesson['short_title']}")
     rows = [
-        [{"text": f"{'✓' if lesson.get('done') else '○'} {lesson['position']}. {lesson['short_title']}"[:60],
+        [{"text": f"{_mark(lesson)} {lesson.get('number') or lesson['position']}. {lesson['short_title']}"[:60],
           "callback_data": f"acad:l:{course['slug']}:{lesson['position']}"}]
         for lesson in lessons
     ]
@@ -217,14 +267,30 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
     if not lessons:
         await _send(chat_id, "В курсе пока нет уроков.")
         return {"status": "empty"}
+    all_lessons_button = {"inline_keyboard": [[{"text": "📋 Все уроки", "callback_data": f"acad:all:{slug}"}]]}
     if position is None:
-        lesson = next((row for row in lessons if not row["done"]), None)
+        if "next_lesson" in course:
+            lesson = next((row for row in lessons if row["slug"] == course["next_lesson"]), None)
+        else:  # старый формат плана: первый неотмеченный
+            lesson = next((row for row in lessons if not row["done"]), None)
         if lesson is None:
+            unfinished = [row for row in lessons if not row.get("complete", row.get("done"))]
+            if unfinished:
+                waiting = any(row.get("assignment_status") == "submitted" for row in lessons)
+                locked = next((row for row in unfinished if row.get("locked")), None)
+                if waiting and (locked is None or locked.get("lock_reason") == "after_prev"):
+                    await _send(chat_id, WAITING_REVIEW_TEXT, all_lessons_button)
+                    return {"status": "waiting_review"}
+                if locked is not None:
+                    await _send(
+                        chat_id, lesson_lock_text(locked.get("lock_reason"), locked.get("opens_at")), all_lessons_button
+                    )
+                    return {"status": "locked"}
             await _send(
                 chat_id,
                 f"🎉 Курс «{course['title']}» пройден: {course['lessons_total']} из {course['lessons_total']}.\n\n"
                 "Уроки остаются открыты — можно вернуться к любому.",
-                {"inline_keyboard": [[{"text": "📋 Все уроки", "callback_data": f"acad:all:{slug}"}]]},
+                all_lessons_button,
             )
             return {"status": "completed"}
     else:
@@ -232,6 +298,9 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
         if lesson is None:
             await _send(chat_id, "Такого урока нет.")
             return {"status": "lesson_not_found"}
+    if lesson.get("locked"):
+        await _send(chat_id, lesson_lock_text(lesson.get("lock_reason"), lesson.get("opens_at")), all_lessons_button)
+        return {"status": "locked"}
     # Ссылка сразу входит на сайт (#wwc-login): человек уже в боте, второй вход не нужен.
     open_url = await with_site_login(
         lesson_url(course["slug"], lesson["slug"]), tenant_id=tenant_id, telegram_user_id=viewer.telegram_user_id
@@ -266,9 +335,91 @@ async def show_academy_home(tenant_id: str, chat_id: int, telegram_user_id: int)
     return {"status": "courses"}
 
 
+async def _handle_review_callback(
+    tenant: TenantContext, callback: TelegramCallbackQuery, decision: str, course_id: str, *, trace_id: str
+) -> dict[str, Any]:
+    """«Опубликовать» / «Вернуть» на карточке курса — только владелец (preview-админ)."""
+    route = "academy_course_review"
+    if callback.chat_type != "private":
+        return {"ok": True, "route": route, "status": "private_chat_required", "trace_id": trace_id}
+    viewer = await load_viewer(tenant.tenant_id, callback.user_id)
+    if not viewer.is_preview_admin:
+        await _send(callback.chat_id, "Решение по курсу принимает владелец.")
+        return {"ok": False, "route": route, "status": "not_owner", "trace_id": trace_id}
+    if decision == "no":
+        brief = await course_brief(tenant.tenant_id, course_id)
+        if not brief:
+            await _send(callback.chat_id, "Курс не найден.")
+            return {"ok": False, "route": route, "status": "course_not_found", "trace_id": trace_id}
+        if brief["status"] not in ("review", "published"):
+            # Уже опубликованный курс «Вернуть» тоже снимает: тот же вопрос о причине.
+            await _send(callback.chat_id, ALREADY_DRAFT_TEXT.format(title=brief["title"]))
+            return {"ok": False, "route": route, "status": "not_published", "trace_id": trace_id}
+        await _send(
+            callback.chat_id,
+            f"↩️ Курс «{brief['title']}» ({brief['slug']}) — что поправить? Ответьте на это сообщение одной строкой.",
+            {"force_reply": True, "input_field_placeholder": "Что поправить"},
+        )
+        return {"ok": True, "route": route, "status": "reason_asked", "trace_id": trace_id}
+    try:
+        result = await review_course(tenant.tenant_id, viewer, course_id=course_id, decision="published", note="")
+    except AcademyError as exc:
+        title = str(exc.extra.get("title") or "")
+        await _send(
+            callback.chat_id,
+            NOT_IN_REVIEW_TEXT.format(title=title) if exc.code == "not_in_review" and title else "Курс не найден.",
+        )
+        return {"ok": False, "route": route, "status": exc.code, "trace_id": trace_id}
+    await _send(callback.chat_id, f"✅ Курс «{result['title']}» опубликован. Автору отправлен ответ.")
+    return {"ok": True, "route": route, "status": "published", "trace_id": trace_id}
+
+
+async def _try_course_return(tenant: TenantContext, msg: TelegramMessage, text: str, *, trace_id: str) -> dict | None:
+    """Причина возврата курса: ответ владельца на вопрос бота или «вернуть <адрес> <причина>»."""
+    if int(msg.user_id) not in preview_admin_ids():
+        return None
+    slug = note = None
+    reply = ((msg.raw or {}).get("message") or {}).get("reply_to_message") or {}
+    if (reply.get("from") or {}).get("is_bot"):
+        prompt = _RETURN_PROMPT_RE.match(str(reply.get("text") or ""))
+        if prompt:
+            slug, note = prompt.group(1), text
+    if slug is None:
+        command = _RETURN_COMMAND_RE.match(text)
+        if command:
+            slug, note = command.group(1).lower(), command.group(2)
+    if slug is None:
+        return None
+    route = "academy_course_review"
+    viewer = await load_viewer(tenant.tenant_id, msg.user_id)
+    try:
+        result = await review_course(tenant.tenant_id, viewer, slug=slug, decision="returned", note=note)
+    except AcademyError as exc:
+        title = str(exc.extra.get("title") or slug)
+        texts = {
+            "not_in_review": NOT_IN_REVIEW_TEXT.format(title=title),
+            "not_published": ALREADY_DRAFT_TEXT.format(title=title),
+            "comment_required": "Напишите, что поправить, — одной строкой.",
+            "comment_too_long": "Слишком длинно — уложитесь в одну строку.",
+        }
+        await _send(msg.chat_id, texts.get(exc.code, "Курс не найден."))
+        return {"ok": False, "route": route, "status": exc.code, "trace_id": trace_id}
+    reason = " ".join(str(note).split())
+    if result.get("was") == "published":
+        await _send(msg.chat_id, f"↩️ Курс «{result['title']}» снят с публикации: {reason}")
+        return {"ok": True, "route": route, "status": "unpublished", "trace_id": trace_id}
+    await _send(msg.chat_id, f"↩️ Курс «{result['title']}» вернули автору: {reason}")
+    return {"ok": True, "route": route, "status": "returned", "trace_id": trace_id}
+
+
 async def try_handle_academy_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
+    review = _REVIEW_CALLBACK_RE.fullmatch(callback.data or "")
+    if review:
+        binding = current_bot_binding()
+        await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=binding.bot_token)
+        return await _handle_review_callback(tenant, callback, review.group(1), review.group(2), trace_id=trace_id)
     match = _CALLBACK_RE.fullmatch(callback.data)
     if not match:
         return None
@@ -301,6 +452,9 @@ async def try_handle_academy_callback(
             await _send(callback.chat_id, text, keyboard)
             result = {"status": "all_lessons"}
     except AcademyError as exc:
+        if exc.code == "lesson_locked":
+            await _send(callback.chat_id, lesson_lock_text(exc.extra.get("lock_reason"), exc.extra.get("opens_at")))
+            return {"ok": False, "route": "academy", "status": exc.code, "trace_id": trace_id}
         await _show_lock(
             callback.chat_id,
             exc.code if exc.code in LOCK_TEXT else "academy_not_open",
@@ -314,6 +468,9 @@ async def try_handle_academy_text(tenant: TenantContext, msg: TelegramMessage, *
     """Old «обучение» commands → the Academy, but only where it is open.
     «ключи …» and «мои курсы» — the author's tools (the shelf)."""
     text = str(msg.text or "").strip()
+    returned = await _try_course_return(tenant, msg, text, trace_id=trace_id)
+    if returned is not None:
+        return returned
     if not is_academy_text(text):
         return None
     keys = _KEYS_RE.match(text)
@@ -380,7 +537,7 @@ async def _usage_text(tenant_id: str, telegram_user_id: int, is_admin: bool) -> 
 async def handle_keys_command(
     tenant: TenantContext, msg: TelegramMessage, slug: str | None, count: int | None, *, trace_id: str
 ) -> dict[str, Any]:
-    """«ключи <slug> <N>» от автора курса (полка оплачена) или владельца."""
+    """«ключи <slug> <N>» от Автора Академии (Академия оплачена) или владельца."""
     tenant_id = tenant.tenant_id
     is_admin = int(msg.user_id) in preview_admin_ids()
     if not slug:
@@ -417,7 +574,7 @@ async def handle_keys_command(
     return {"ok": True, "route": "academy_keys", "status": "issued_file", "count": len(links), "trace_id": trace_id}
 
 
-_STATUS_LABEL = {"draft": "черновик — на проверке у владельца", "published": "опубликован"}
+_STATUS_LABEL = {"draft": "черновик", "review": "на проверке у владельца", "published": "опубликован"}
 
 
 async def handle_my_courses(tenant: TenantContext, msg: TelegramMessage, *, trace_id: str) -> dict[str, Any] | None:
@@ -433,9 +590,9 @@ async def handle_my_courses(tenant: TenantContext, msg: TelegramMessage, *, trac
     lines = ["🎓 Мои курсы"]
     paid_until = await shelf_paid_until(tenant_id, actor_ids)
     if paid_until and paid_until > datetime.now(timezone.utc):
-        lines.append(f"Полка Академии оплачена до {_date(paid_until)}.")
+        lines.append(f"Академия оплачена до {_date(paid_until)}.")
     elif not is_admin:
-        lines.append("Полка Академии не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться.")
+        lines.append("Академия не оплачена — новые ключи не выдаются. Ученики с доступом продолжают учиться.")
     for row in courses:
         lines += [
             "",
@@ -474,7 +631,10 @@ async def handle_course_start_token(
         viewer = await load_viewer(tenant_id, msg.user_id)
         outline = await course_outline(tenant_id, result.course_slug, viewer)
         lessons = outline["lessons"]
-        lesson = next((row for row in lessons if not row["done"]), lessons[0] if lessons else None)
+        upcoming = outline["course"].get("next_lesson")
+        lesson = next((row for row in lessons if row["slug"] == upcoming), None) or next(
+            (row for row in lessons if not row["done"]), lessons[0] if lessons else None
+        )
         if lesson:
             url = await with_site_login(
                 lesson_url(result.course_slug, lesson["slug"]), tenant_id=tenant_id, telegram_user_id=msg.user_id
@@ -499,14 +659,14 @@ def is_academy_payment(payment: dict[str, Any] | None) -> bool:
 
 
 async def notify_academy_payment(payment: dict[str, Any], *, chat_id: int, title: str) -> None:
-    """Оплата полки или курса подтверждена. Общее «Сайт: … Доступ до: …» здесь
-    врёт: у полки свой срок, курс — без срока."""
+    """Оплата Академии автора или курса подтверждена. Общее «Сайт: … Доступ до: …» здесь
+    врёт: у Академии автора свой срок, курс — без срока."""
     product = str(payment.get("product_code") or "")
     head = f"Оплата подтверждена: {title}." if title else "Оплата подтверждена."
     if product == SHELF_PRODUCT_CODE:
         lines = [
             head,
-            f"Полка Академии оплачена до {_date(payment.get('period_end'))}.",
+            f"Академия оплачена до {_date(payment.get('period_end'))}.",
             "Ключи ученикам: «ключи <адрес курса> <сколько>». Статистика: «мои курсы».",
         ]
     else:

@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any
 
+from app.academy.media_service import cleanup_abandoned_uploads
+from app.academy.transcode import TranscodeSlot
 from app.db import fetch_all, get_pool, tenant_connection
 from app.jobs.n8n_integration import trigger_lead_delivery
 from app.jobs.outbox import ensure_outbox_table
@@ -17,6 +19,7 @@ from app.telegram.delivery import (
     send_telegram_text,
 )
 from app.telegram.inbox import safe_error_summary
+from app.telegram.site_login import with_site_login
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,8 @@ DUE_MAX_ATTEMPTS = 3
 DUE_PASS_BUDGET_SEC = 20.0
 # A worker killed mid-send (SIGTERM) leaves rows «processing»; older than this — dead.
 DUE_STUCK_AFTER = "1 hour"
+# Академия v2: брошенные загрузки с диска — раз в час.
+ACADEMY_CLEANUP_INTERVAL_SEC = 3600.0
 
 
 async def process_pending_outbox(batch_size: int = 20) -> int:
@@ -190,6 +195,16 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
     login_user = payload.get("site_login_user_id")
     if isinstance(markup, dict) and markup and isinstance(login_user, int) and not isinstance(login_user, bool):
         markup = await _signed_in_markup(markup, tenant_id=binding.tenant.tenant_id, telegram_user_id=login_user)
+    button = payload.get("site_button")
+    if isinstance(button, dict) and button.get("url"):
+        # Академия: кнопка входит на сайт сразу; ссылку со входом делаем в момент отправки.
+        url = await with_site_login(
+            str(button["url"]), tenant_id=binding.tenant.tenant_id, telegram_user_id=button.get("telegram_user_id")
+        )
+        row = [{"text": str(button.get("text") or "Открыть")[:64], "url": url}]
+        # Кнопки решения (премодерация курса) остаются, кнопка сайта — последней строкой.
+        rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
+        markup = {"inline_keyboard": [*(rows if isinstance(rows, list) else []), row]}
     with outbound_binding_guard(binding.bot_token):
         result = await send_telegram_text(
             chat_id=chat_id,
@@ -369,11 +384,39 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     return result
 
 
+async def academy_notifications_step() -> int:
+    """Академия v2: уведомления о домашках своим ботом (PLATFORM_ACADEMY_NOTIFY_BINDING), когда он
+    не среди PLATFORM_SCHEDULED_NOTIFY_BINDINGS (staging). Этот бот только отправляет свои строки,
+    утро CRM им не планируется. Бот из общего списка обходит scheduled_notifications_step."""
+    settings = get_settings()
+    binding_id = settings.platform_academy_notify_binding.strip()
+    if not binding_id or binding_id in settings.parsed_scheduled_notify_bindings():
+        return 0
+    try:
+        binding = await resolve_bot_binding_context(binding_id)
+    except Exception as exc:
+        logger.warning(
+            "academy_notify_binding_unavailable",
+            extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+        )
+        return 0
+    if binding is None:
+        return 0
+    return await process_due_notifications({binding.binding_id: binding})
+
+
 async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     await init_pool_for_worker()
     last_due = last_plan = float("-inf")
+    # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
+    transcode = TranscodeSlot()
+    last_cleanup = float("-inf")
     while True:
         await process_pending_outbox()
+        try:
+            await transcode.step()
+        except Exception:
+            logger.exception("academy_transcode_step_failed")
         now = time.monotonic()
         if now - last_due >= DUE_NOTIFY_INTERVAL_SEC:
             plan_crm = now - last_plan >= CRM_DIGEST_INTERVAL_SEC
@@ -384,6 +427,16 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await scheduled_notifications_step(plan_crm=plan_crm)
             except Exception:
                 logger.exception("scheduled_notifications_step_failed")
+            try:
+                await academy_notifications_step()
+            except Exception:
+                logger.exception("academy_notifications_step_failed")
+        if now - last_cleanup >= ACADEMY_CLEANUP_INTERVAL_SEC:
+            last_cleanup = now
+            try:
+                await cleanup_abandoned_uploads()
+            except Exception:
+                logger.exception("academy_cleanup_failed")
         await asyncio.sleep(poll_interval_sec)
 
 
