@@ -318,17 +318,30 @@ async def test_belarus_pays_in_wwc_to_the_belarus_account(whieda_tenant, whieda_
     assert "5 WWC$ (500 ₽)" in text and "SUNRAYSWORD" in text
 
 
+ORDERED_AT = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+
+
+def _receipt_context(*, waiting=ORDERED_AT, waits_for_file=False, open_ticket=None):
+    """The checks before a photo counts as a shop receipt (review 03.10.2026)."""
+    return (
+        patch("app.telegram.shop.waiting_order_at", AsyncMock(return_value=waiting)),
+        patch("app.telegram.shop._request_waits_for_file", AsyncMock(return_value=waits_for_file)),
+        patch("app.telegram.shop.get_open_ticket_for_user", AsyncMock(return_value=open_ticket)),
+    )
+
+
 @pytest.mark.asyncio
 async def test_receipt_goes_to_the_owner_with_paid_and_reject_buttons(whieda_tenant, whieda_bot_binding, shop_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 21})
     copy = AsyncMock(return_value={"ok": True, "message_id": 20})
     relay = AsyncMock()
-    ticket = _ticket(forum_chat_id=FORUM, forum_thread_id=901)
+    ticket = _ticket(forum_chat_id=FORUM, forum_thread_id=901, last_message_at=ORDERED_AT)
+    waiting, waits, latest = _receipt_context(open_ticket=ticket)
     with patch("app.telegram.shop.send_telegram_text", send), patch("app.telegram.shop.copy_telegram_message", copy), patch(
         "app.telegram.shop.take_receipt", AsyncMock(return_value=[_order(status="receipt")])
     ) as take, patch("app.telegram.shop.get_ticket", AsyncMock(return_value=ticket)), patch(
         "app.telegram.shop.record_relayed_message", AsyncMock()
-    ), patch("app.telegram.processor.try_handle_support_message", relay):
+    ), patch("app.telegram.processor.try_handle_support_message", relay), waiting, waits, latest:
         result = await process_core_telegram_update(whieda_tenant, _private(photo=True), "t6", binding=whieda_bot_binding)
     assert result["route"] == "shop" and result["status"] == "receipt"
     assert take.await_args.kwargs == {"telegram_user_id": BUYER, "file_id": "receipt-file"}
@@ -348,9 +361,103 @@ async def test_receipt_goes_to_the_owner_with_paid_and_reject_buttons(whieda_ten
 @pytest.mark.asyncio
 async def test_photo_without_a_waiting_order_is_left_to_the_tunnel(whieda_tenant, whieda_bot_binding, shop_env):
     relay = AsyncMock(return_value={"ok": True, "route": "support_relay"})
-    with patch("app.telegram.shop.take_receipt", AsyncMock(return_value=[])), patch("app.telegram.processor.try_handle_support_message", relay):
+    take = AsyncMock()
+    waiting, waits, latest = _receipt_context(waiting=None)
+    with patch("app.telegram.shop.take_receipt", take), patch("app.telegram.processor.try_handle_support_message", relay), waiting, waits, latest:
         result = await process_core_telegram_update(whieda_tenant, _private(photo=True), "t7", binding=whieda_bot_binding)
     assert result["route"] == "support_relay"
+    take.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["renewal_waits_for_the_receipt", "newer_gemini_ticket", "owner_reply_in_private_chat"],
+)
+async def test_a_photo_for_another_flow_is_not_taken_as_a_shop_receipt(whieda_tenant, whieda_bot_binding, shop_env, case):
+    """Неоплаченный заказ не забирает чужие фото: чек продления, скриншот в заявке Gemini,
+    Reply владельца партнёру (ревью 03.10.2026)."""
+    take = AsyncMock()
+    later = ORDERED_AT + timedelta(minutes=5)
+    gemini = _ticket(channel_code="gemini", admin_telegram_user_id=KARINA, last_message_at=later)
+    update = _private(photo=True)
+    waits_for_file, open_ticket = False, None
+    if case == "renewal_waits_for_the_receipt":
+        waits_for_file = True
+    elif case == "newer_gemini_ticket":
+        open_ticket = gemini
+    else:
+        update = _private(photo=True, user=OWNER)
+        update["message"]["reply_to_message"] = {"message_id": 3, "from": {"id": 1, "is_bot": True}, "text": "#S-40 · Ольга"}
+    waiting, waits, latest = _receipt_context(waits_for_file=waits_for_file, open_ticket=open_ticket)
+    other_flow = AsyncMock(return_value={"ok": True, "route": "other_flow"})
+    with patch("app.telegram.shop.take_receipt", take), patch("app.telegram.processor.try_handle_support_message", other_flow), waiting, waits, latest:
+        result = await process_core_telegram_update(whieda_tenant, update, "t7b", binding=whieda_bot_binding)
+    assert result["route"] == "other_flow"
+    take.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_receipt_falls_back_to_the_owners_chat_and_is_released_when_nothing_arrives(whieda_tenant, whieda_bot_binding, shop_env):
+    ticket = _ticket(forum_chat_id=FORUM, forum_thread_id=901, last_message_at=ORDERED_AT)
+
+    async def topic_deleted(**kwargs):
+        return {"ok": False} if kwargs["chat_id"] == str(FORUM) else {"ok": True, "message_id": 5}
+
+    send = AsyncMock(side_effect=topic_deleted)
+    release = AsyncMock(return_value=True)
+    waiting, waits, latest = _receipt_context(open_ticket=ticket)
+    with patch("app.telegram.shop.send_telegram_text", send), patch("app.telegram.shop.copy_telegram_message", AsyncMock(return_value={"ok": True})), patch(
+        "app.telegram.shop.take_receipt", AsyncMock(return_value=[_order(status="receipt")])
+    ), patch("app.telegram.shop.get_ticket", AsyncMock(return_value=ticket)), patch(
+        "app.telegram.shop.record_relayed_message", AsyncMock()
+    ), patch("app.telegram.shop.release_receipt", release), waiting, waits, latest:
+        result = await process_core_telegram_update(whieda_tenant, _private(photo=True), "t7c", binding=whieda_bot_binding)
+    assert result["status"] == "receipt"
+    to_owner = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(OWNER)][0]
+    assert to_owner["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"shop:paid:{ORDER_TOKEN}"
+    release.assert_not_awaited()
+
+    send = AsyncMock(side_effect=RuntimeError("telegram timeout"))
+    buyer_send = AsyncMock(return_value={"ok": True, "message_id": 6})
+
+    async def everything_fails_but_the_buyer(**kwargs):
+        if kwargs["chat_id"] == str(BUYER):
+            return await buyer_send(**kwargs)
+        return await send(**kwargs)
+
+    waiting, waits, latest = _receipt_context(open_ticket=ticket)
+    with patch("app.telegram.shop.send_telegram_text", AsyncMock(side_effect=everything_fails_but_the_buyer)), patch(
+        "app.telegram.shop.copy_telegram_message", AsyncMock(return_value={"ok": True})
+    ), patch("app.telegram.shop.take_receipt", AsyncMock(return_value=[_order(status="receipt")])), patch(
+        "app.telegram.shop.get_ticket", AsyncMock(return_value=ticket)
+    ), patch("app.telegram.shop.record_relayed_message", AsyncMock()), patch("app.telegram.shop.release_receipt", release), waiting, waits, latest:
+        lost = await process_core_telegram_update(whieda_tenant, _private(photo=True), "t7d", binding=whieda_bot_binding)
+    assert lost["status"] == "receipt_not_delivered"
+    assert release.await_args.kwargs == {"order_id": ORDER}  # заказ снова ждёт чек, а не висит без кнопок
+    assert buyer_send.await_args.kwargs["text"].startswith("Чек не удалось передать Виктору.")
+
+
+@pytest.mark.asyncio
+async def test_buy_again_after_the_receipt_resends_the_owners_buttons(whieda_tenant, whieda_bot_binding, shop_env):
+    send = AsyncMock(return_value={"ok": True, "message_id": 11})
+    ticket = _ticket(created=False, forum_chat_id=FORUM, forum_thread_id=901)
+    with patch("app.telegram.shop.send_telegram_text", send), patch(
+        "app.telegram.support.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 2})
+    ), patch("app.telegram.shop.get_item", AsyncMock(return_value=_item(status="published"))), patch(
+        "app.telegram.shop.ensure_telegram_actor", AsyncMock(return_value="a")
+    ), patch("app.telegram.shop.resolve_partner_ref", AsyncMock(return_value=(None, None))), patch(
+        "app.telegram.shop.open_or_reuse_ticket", AsyncMock(return_value=ticket)
+    ), patch("app.telegram.shop.open_order", AsyncMock(return_value=_order(status="receipt", created=False))), patch(
+        "app.telegram.shop.record_relayed_message", AsyncMock()
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _callback("shop:buy:preza-vozrazheniya:RU"), "t7e", binding=whieda_bot_binding)
+    assert result["status"] == "order_opened"
+    in_topic = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(FORUM)][0]
+    assert in_topic["message_thread_id"] == 901 and "Покупатель снова нажал «Купить»" in in_topic["text"]
+    assert in_topic["reply_markup"]["inline_keyboard"][0][1]["callback_data"] == f"shop:reject:{ORDER_TOKEN}"
+    to_buyer = [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(BUYER)]
+    assert to_buyer == ["Чек получен. Виктор проверит оплату и подтвердит заказ — сообщение придёт сюда."]
 
 
 @pytest.mark.asyncio

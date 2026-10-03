@@ -350,6 +350,36 @@ async def open_order(
     return {**existing, "created": False}
 
 
+async def waiting_order_at(tenant_id: str, *, telegram_user_id: int, now: datetime | None = None) -> datetime | None:
+    """Когда человек последний раз оформил заказ, который ждёт чек (свежий ``new``); None — такого нет."""
+    since = (now or datetime.now(timezone.utc)) - STALE_AFTER
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select max(updated_at) as at from shop_orders
+            where tenant_id = %s and telegram_user_id = %s and status = 'new' and updated_at >= %s
+            """,
+            (tenant_id, int(telegram_user_id), since),
+        )
+    return (row or {}).get("at")
+
+
+async def release_receipt(tenant_id: str, *, order_id: str) -> bool:
+    """Чек не дошёл до владельца — заказ снова ждёт чек: покупатель пришлёт его ещё раз."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update shop_orders set status = 'new', receipt_file_id = null, receipt_at = null, updated_at = now()
+            where tenant_id = %s and order_id = %s::uuid and status = 'receipt'
+            returning order_id
+            """,
+            (tenant_id, str(order_id)),
+        )
+    return row is not None
+
+
 async def take_receipt(
     tenant_id: str, *, telegram_user_id: int, file_id: str, now: datetime | None = None
 ) -> list[dict[str, Any]]:

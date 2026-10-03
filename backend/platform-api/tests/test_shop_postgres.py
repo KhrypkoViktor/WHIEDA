@@ -97,7 +97,7 @@ def test_order_receipt_paid_gives_the_file_and_the_course_once(monkeypatch):
             from app.db import fetch_all, tenant_connection
             from app.shop.service import (
                 ShopError, confirm_order, file_link, get_item, list_purchases, open_order, reject_order,
-                resolve_partner_ref, take_receipt, update_item,
+                release_receipt, resolve_partner_ref, take_receipt, update_item, waiting_order_at,
             )
             from app.support.service import list_open_tickets_for_admin, open_or_reuse_ticket
 
@@ -145,10 +145,18 @@ def test_order_receipt_paid_gives_the_file_and_the_course_once(monkeypatch):
             assert (again["currency"], again["amount_minor"], again["partner_ref_code"]) == ("WUSD", 500, "olga")
 
             # 4. A receipt moves both waiting orders to «receipt»; an old order does not take photos.
+            assert await waiting_order_at("whieda", telegram_user_id=BUYER) is not None
+            assert await waiting_order_at("whieda", telegram_user_id=STRANGER) is None
             assert await take_receipt("whieda", telegram_user_id=BUYER, file_id="f", now=datetime.now(timezone.utc) + timedelta(days=4)) == []
             taken = await take_receipt("whieda", telegram_user_id=BUYER, file_id="receipt-1")
             assert sorted(o["order_id"] for o in taken) == sorted([file_order["order_id"], course_order["order_id"]])
             assert {o["status"] for o in taken} == {"receipt"} and await take_receipt("whieda", telegram_user_id=BUYER, file_id="x") == []
+            assert await waiting_order_at("whieda", telegram_user_id=BUYER) is None
+            # The buttons never reached the owner: the order waits for the receipt again.
+            assert await release_receipt("whieda", order_id=file_order["order_id"]) is True
+            assert await release_receipt("whieda", order_id=file_order["order_id"]) is False
+            retaken = await take_receipt("whieda", telegram_user_id=BUYER, file_id="receipt-2")
+            assert [(o["order_id"], o["receipt_file_id"]) for o in retaken] == [(file_order["order_id"], "receipt-2")]
 
             # 5. «Оплачено»: the file and the course open once; a second press changes nothing.
             paid_file = await confirm_order("whieda", order_id=file_order["order_id"], paid_by=OWNER)

@@ -37,12 +37,21 @@ from app.shop.service import (
     open_order,
     price_rub_minor,
     reject_order,
+    release_receipt,
     resolve_partner_ref,
     set_item_status,
     take_receipt,
     unavailable_reason,
+    waiting_order_at,
 )
-from app.support.service import CHANNEL_SHOP, get_ticket, open_or_reuse_ticket, record_relayed_message, ticket_label
+from app.support.service import (
+    CHANNEL_SHOP,
+    get_open_ticket_for_user,
+    get_ticket,
+    open_or_reuse_ticket,
+    record_relayed_message,
+    ticket_label,
+)
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
 from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc
@@ -51,9 +60,12 @@ from app.telegram.support import (
     _display,
     _in_forum,
     _open_forum_topic,
+    _reply_to_message_id,
+    _request_waits_for_file,
     _send_site_header,
     _send_to_admin,
     _site_header_lines,
+    is_support_admin,
     show_services,
 )
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -74,6 +86,7 @@ NOT_AVAILABLE_TEXT = "Этот товар сейчас недоступен. В�
 NO_OWNER_TEXT = "Мастерская пока не подключена. Напишите Виктору: @sunraysword."
 COURSE_NOT_READY_TEXT = "Курс готовится — продажа откроется, когда он будет готов."
 RECEIPT_TEXT = "Чек получен. Виктор проверит оплату и подтвердит заказ — сообщение придёт сюда."
+RECEIPT_LOST_TEXT = "Чек не удалось передать Виктору. Пришлите его сюда ещё раз через пару минут."
 FORBIDDEN_TEXT = "Оплату заказов Мастерской подтверждает только Виктор."
 STATUS_WORDS = {"new": "ждёт оплату", "receipt": "ждёт проверки чека", "paid": "оплачен",
                 "delivered": "оплачен, доступ открыт", "cancelled": "отменён"}
@@ -246,8 +259,13 @@ async def _buy(
         delivered_chat_id=int(ticket["forum_chat_id"]) if _in_forum(ticket) else int(ticket["admin_telegram_user_id"]),
         delivered_message_id=delivered.get("message_id"),
     )
-    # Чек уже у Виктора — второй раз реквизиты не нужны.
-    await _send(callback.chat_id, RECEIPT_TEXT if order["status"] == "receipt" else payment_text(item, order, ticket))
+    if order["status"] == "receipt":
+        # Чек уже пришёл: реквизиты второй раз не нужны, а владельцу — снова кнопки
+        # (вдруг первое сообщение с ними потерялось).
+        await _send_decision(tenant, order, ticket, _decision_text(order, ticket, "Покупатель снова нажал «Купить»; чек — выше в заявке."))
+        await _send(callback.chat_id, RECEIPT_TEXT)
+    else:
+        await _send(callback.chat_id, payment_text(item, order, ticket))
     logger.info(
         "shop_order_opened",
         extra={"trace_id": trace_id, "item": item["code"], "order_created": order["created"], "ticket": ticket_label(ticket),
@@ -268,31 +286,68 @@ def _decision_keyboard(order: dict[str, Any]) -> dict[str, Any]:
     ]]}
 
 
-async def _receipt_to_owner(tenant: TenantContext, msg: TelegramMessage, order: dict[str, Any]) -> None:
-    """Чек — в тему заявки (или личку владельца) с «Оплачено <сумма>» / «Отклонить»."""
-    ticket = await get_ticket(tenant.tenant_id, ticket_id=order["ticket_id"]) if order.get("ticket_id") else None
-    live = ticket is not None and ticket["status"] == "open"
-    if live and _in_forum(ticket):
-        chat, thread = int(ticket["forum_chat_id"]), int(ticket["forum_thread_id"])
-    elif live:
-        chat, thread = int(ticket["admin_telegram_user_id"]), None
-    else:
-        chat, thread = _owner_id(), None
-    if chat is None:
-        return
-    await copy_telegram_message(
-        chat_id=str(chat), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
-        bot_token=current_bot_binding().bot_token, message_thread_id=thread,
-    )
+def _decision_targets(ticket: dict[str, Any] | None) -> list[tuple[int, int | None]]:
+    """Куда нести чек с кнопками: тема заявки (или личка, где идёт заявка), запасной путь —
+    личка владельца (тему удалили, заявку закрыли, бот другой среды)."""
+    targets: list[tuple[int, int | None]] = []
+    if ticket is not None and ticket["status"] == "open":
+        if _in_forum(ticket):
+            targets.append((int(ticket["forum_chat_id"]), int(ticket["forum_thread_id"])))
+        else:
+            targets.append((int(ticket["admin_telegram_user_id"]), None))
+    owner = _owner_id()
+    if owner is not None and (owner, None) not in targets:
+        targets.append((owner, None))
+    return targets
+
+
+async def _send_decision(
+    tenant: TenantContext, order: dict[str, Any], ticket: dict[str, Any] | None, text: str, *, msg: TelegramMessage | None = None
+) -> bool:
+    """Чек (копия ``msg``) и строка с «Оплачено <сумма>» / «Отклонить» владельцу.
+    False — не дошло никуда: тогда заказ нельзя держать в «receipt» без кнопок."""
+    for chat, thread in _decision_targets(ticket):
+        try:
+            if msg is not None:
+                await copy_telegram_message(
+                    chat_id=str(chat), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
+                    bot_token=current_bot_binding().bot_token, message_thread_id=thread,
+                )
+            sent = await _send(chat, text, reply_markup=_decision_keyboard(order), thread_id=thread)
+        except Exception:
+            logger.warning("shop_decision_delivery_failed", extra={"order_id": order["order_id"]}, exc_info=True)
+            continue
+        if not sent.get("ok"):
+            logger.warning("shop_decision_delivery_failed", extra={"order_id": order["order_id"]})
+            continue
+        if ticket is not None and msg is not None:
+            await record_relayed_message(
+                tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), direction="user_to_admin", text="Чек по заказу",
+                telegram_file_id=msg.file_id, source_chat_id=msg.chat_id, source_message_id=msg.message_id,
+                delivered_chat_id=chat, delivered_message_id=sent.get("message_id"),
+            )
+        return True
+    return False
+
+
+def _decision_text(order: dict[str, Any], ticket: dict[str, Any] | None, note: str) -> str:
     who = _client_label(ticket) if ticket else f"Покупатель id {int(order['telegram_user_id'])}"
-    text = "\n".join([who, f"Чек по заказу: {order['item_title']} — {money(int(order['amount_minor']), str(order['currency']))}", "Чек выше."])
-    delivered = await _send(chat, text, reply_markup=_decision_keyboard(order), thread_id=thread)
-    if ticket:
-        await record_relayed_message(
-            tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), direction="user_to_admin", text="Чек по заказу",
-            telegram_file_id=msg.file_id, source_chat_id=msg.chat_id, source_message_id=msg.message_id,
-            delivered_chat_id=chat, delivered_message_id=delivered.get("message_id"),
-        )
+    amount = money(int(order["amount_minor"]), str(order["currency"]))
+    return "\n".join([who, f"Чек по заказу: {order['item_title']} — {amount}", note])
+
+
+async def _receipt_belongs_to_shop(tenant: TenantContext, msg: TelegramMessage, since: Any) -> bool:
+    """Фото — чек Мастерской, только если его не ждёт другой поток: продление или анкета
+    сайта ждут файл (30.09.2026), человек пишет в другой открытой заявке (Gemini,
+    «Поддержка») позже, чем оформил заказ, или владелец/администратор отвечает Reply."""
+    if _reply_to_message_id(msg) is not None and (is_support_admin(msg.user_id) or _is_owner(msg.user_id)):
+        return False
+    if await _request_waits_for_file(tenant, msg):
+        return False
+    ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id)
+    if ticket and str(ticket.get("channel_code") or "") != CHANNEL_SHOP and ticket["last_message_at"] > since:
+        return False
+    return True
 
 
 async def try_handle_shop_message(tenant: TenantContext, msg: TelegramMessage, *, trace_id: str) -> dict[str, Any] | None:
@@ -308,19 +363,32 @@ async def try_handle_shop_message(tenant: TenantContext, msg: TelegramMessage, *
     if not msg.file_id:
         return None
     try:
-        orders = await take_receipt(tenant.tenant_id, telegram_user_id=msg.user_id, file_id=msg.file_id)
+        since = await waiting_order_at(tenant.tenant_id, telegram_user_id=msg.user_id)
     except RuntimeError as exc:
         # Routing checks run without a database pool (same rule as support.py).
         if "database pool is not initialized" in str(exc):
             return None
         raise
+    if since is None or not await _receipt_belongs_to_shop(tenant, msg, since):
+        return None
+    orders = await take_receipt(tenant.tenant_id, telegram_user_id=msg.user_id, file_id=msg.file_id)
     if not orders:
         return None
+    delivered = 0
     for order in orders:
-        await _receipt_to_owner(tenant, msg, order)
+        ticket = await get_ticket(tenant.tenant_id, ticket_id=order["ticket_id"]) if order.get("ticket_id") else None
+        if await _send_decision(tenant, order, ticket, _decision_text(order, ticket, "Чек выше."), msg=msg):
+            delivered += 1
+        else:
+            # Без кнопок у владельца заказ застрял бы в «receipt»: пусть снова ждёт чек.
+            await release_receipt(tenant.tenant_id, order_id=order["order_id"])
+    if not delivered:
+        await _send(msg.chat_id, RECEIPT_LOST_TEXT)
+        logger.warning("shop_receipt_not_delivered", extra={"trace_id": trace_id, "orders": [o["order_id"] for o in orders]})
+        return {"ok": False, "route": "shop", "status": "receipt_not_delivered", "trace_id": trace_id}
     await _send(msg.chat_id, RECEIPT_TEXT)
     logger.info("shop_receipt_received", extra={"trace_id": trace_id, "orders": [o["order_id"] for o in orders]})
-    return {"ok": True, "route": "shop", "status": "receipt", "orders": len(orders), "trace_id": trace_id}
+    return {"ok": True, "route": "shop", "status": "receipt", "orders": delivered, "trace_id": trace_id}
 
 
 # ---- «Оплачено» / «Отклонить» ----------------------------------------------------------
