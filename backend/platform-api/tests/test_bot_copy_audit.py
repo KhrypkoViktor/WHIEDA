@@ -39,3 +39,30 @@ def test_no_points_wording_anywhere_a_person_reads():
 def test_no_bare_w_dollar_in_copy():
     offenders = [(f, s) for f, s in _literals() if re.search(r"(?<![A-Z])W\$", s)]
     assert not offenders, offenders
+
+
+# WWC CRM (02.10.2026): the bot names the product «WWC CRM», not «Ежедневник»;
+# the same money words apply to its texts.
+def _crm_literals():
+    for path in (APP / "crm").rglob("*.py"):
+        for match in _RU_LITERAL.finditer(path.read_text(encoding="utf-8")):
+            yield path.name, match.group(1)
+
+
+def test_crm_copy_has_no_points_and_no_bare_w_dollar():
+    offenders = [
+        (f, s) for f, s in _crm_literals() if re.search(r"\bбалл", s, re.I) or re.search(r"(?<![A-Z])W\$", s)
+    ]
+    assert not offenders, offenders
+
+
+def test_crm_is_called_wwc_crm_in_the_bot():
+    from app.crm import bot, messages
+
+    named = [bot.CRM_BUTTON_LABEL, bot.OPEN_BUTTON_LABEL, bot.OPEN_TEXT, messages.DIGEST_TITLE]
+    assert all("WWC CRM" in text for text in named), named
+    shown = [*named, *bot.LOCK_TEXT.values(), messages.OPEN_TODAY_LABEL, messages.OPEN_CARD_LABEL,
+             *messages.GROUP_HEADERS.values()]
+    assert not any("ежедневник" in text.lower() for text in shown), shown
+    # The old word still opens it.
+    assert bot.is_crm_text("ежедневник") and bot.is_crm_text("WWC CRM")

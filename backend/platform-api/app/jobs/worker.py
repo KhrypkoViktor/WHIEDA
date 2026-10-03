@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5
 
 # Scheduled notifications (platform_outbox.due_at, V14): the CRM morning message.
+# CRM v2 (V20) adds «Через час встреча» (app.crm.meetings).
 DUE_NOTIFY_INTERVAL_SEC = 30.0
 CRM_DIGEST_INTERVAL_SEC = 300.0
 DUE_BATCH_SIZE = 50
@@ -158,12 +159,37 @@ def _final_delivery_error(exc: Exception) -> bool:
     return str(exc).endswith((":400", ":403"))
 
 
+async def _signed_in_markup(markup: dict[str, Any], *, tenant_id: str, telegram_user_id: int) -> dict[str, Any]:
+    """URL buttons to the partner's site become sign-in links (#wwc-login=…), made
+    now: the single-use token never sits in platform_outbox and its 30 minutes
+    start at sending. A failed login keeps the plain link (with_site_login)."""
+    from app.telegram.site_login import with_site_login
+
+    rows = []
+    for row in markup.get("inline_keyboard") or []:
+        buttons = []
+        for button in row if isinstance(row, list) else []:
+            if isinstance(button, dict) and button.get("url"):
+                button = {
+                    **button,
+                    "url": await with_site_login(
+                        str(button["url"]), tenant_id=tenant_id, telegram_user_id=telegram_user_id
+                    ),
+                }
+            buttons.append(button)
+        rows.append(buttons)
+    return {**markup, "inline_keyboard": rows}
+
+
 async def _send_due_notification(binding: BotBindingContext, payload: dict[str, Any]) -> None:
     chat_id = str(payload.get("chat_id") or "").strip()
     text = str(payload.get("text") or "")
     if not chat_id or not text.strip():
         raise TelegramDeliveryUnknown("due_notification_empty")
     markup = payload.get("reply_markup")
+    login_user = payload.get("site_login_user_id")
+    if isinstance(markup, dict) and markup and isinstance(login_user, int) and not isinstance(login_user, bool):
+        markup = await _signed_in_markup(markup, tenant_id=binding.tenant.tenant_id, telegram_user_id=login_user)
     with outbound_binding_guard(binding.bot_token):
         result = await send_telegram_text(
             chat_id=chat_id,
@@ -325,7 +351,9 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     result: dict[str, int] = {}
     if plan_crm:
         from app.crm.digest import enqueue_crm_digests
+        from app.crm.meetings import enqueue_meeting_reminders
         from app.crm.service import crm_feature_enabled
+        from app.crm.service import purge_deleted_everywhere
 
         if crm_feature_enabled():
             crm_tenants = {
@@ -334,6 +362,9 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
                 if binding.tenant.entitlements.get("crm")
             }
             result["crm_digests"] = await enqueue_crm_digests(crm_tenants)
+            # WWC CRM v2: «Через час встреча» and erasing cards past «Вернуть».
+            result["crm_meetings"] = await enqueue_meeting_reminders(crm_tenants)
+            result["crm_purged"] = await purge_deleted_everywhere(list(crm_tenants))
     result["due_sent"] = await process_due_notifications(bindings)
     return result
 

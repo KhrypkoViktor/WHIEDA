@@ -144,6 +144,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
         async def proof() -> None:
             from app.crm import service as crm
             from app.crm.digest import enqueue_crm_digests
+            from app.crm.queries import list_contacts
             from app.db import fetch_all, fetch_one, tenant_connection
             from app.jobs.outbox import enqueue_outbox_event
             from app.jobs.worker import process_due_notifications, process_pending_outbox
@@ -205,10 +206,13 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             detail = await crm.get_contact("whieda", igor, anna["id"])
             assert [n["body"] for n in detail["notes"]] == ["Была на презентации, думает"]
 
-            assert [c["name"] for c in await crm.list_contacts("whieda", igor, q="928")] == ["Анна Петрова"]
-            assert [c["name"] for c in await crm.list_contacts("whieda", igor, q="анна")] == ["Анна Петрова"]
-            assert [c["name"] for c in await crm.list_contacts("whieda", igor, q="соседка")] == ["Анна Петрова"]
-            assert [c["name"] for c in await crm.list_contacts("whieda", igor, status="new")] == ["Борис"]
+            async def names(**kwargs) -> list[str]:
+                return [c["name"] for c in (await list_contacts("whieda", igor, **kwargs))["items"]]
+
+            assert await names(q="928") == ["Анна Петрова"]
+            assert await names(q="анна") == ["Анна Петрова"]
+            assert await names(q="соседка") == ["Анна Петрова"]
+            assert await names(status="new") == ["Борис"]
 
             csv_text = await crm.export_csv("whieda", igor)
             assert csv_text.startswith("﻿Имя;Телефон;Откуда знакомы;Статус;Следующий шаг;Дата;Заметки\r\n")
@@ -226,7 +230,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                 with pytest.raises(crm.CrmError) as foreign:
                     await call
                 assert foreign.value.status == 404
-            assert await crm.list_contacts("whieda", petr) == []
+            assert (await list_contacts("whieda", petr))["items"] == []
             assert await rows("select contact_id from crm_contacts", tenant="other") == []  # RLS
 
             moved = await crm.set_timezone("whieda", igor, "Asia/Yekaterinburg")
@@ -243,6 +247,11 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             await crm.delete_contact("whieda", igor, anna["id"])
             with pytest.raises(crm.CrmError):
                 await crm.get_contact("whieda", igor, anna["id"])
+            # CRM v2: deletion is a mark for «Вернуть»; the purge after 24 hours erases
+            # the card with its notes (cascade), as v1 did at once.
+            assert await crm.purge_deleted_contacts("whieda") == 0
+            admin(f"update crm_contacts set deleted_at = now() - interval '25 hours' where contact_id = '{anna['id']}'")
+            assert await crm.purge_deleted_contacts("whieda") == 1
             assert await rows("select note_id from crm_notes where contact_id = %s::uuid", (anna["id"],)) == []
 
             # ---- 2. site lead → card --------------------------------------------------
@@ -322,7 +331,9 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert digest["status"] == "scheduled" and digest["due_at"] is not None
             assert digest["payload"]["chat_id"] == "7001"
             assert digest["payload"]["url"] == "https://igor.wwc.best/crm/#today"
-            assert digest["payload"]["text"].startswith("Сегодня в ежедневнике: пригласить на встречу — ")
+            assert digest["payload"]["text"].startswith("Доброе утро! Сегодня в WWC CRM:\n\n📞 Позвонить\n• ")
+            assert "• Борис — пригласить на встречу" in digest["payload"]["text"]
+            assert digest["payload"]["site_login_user_id"] == 7001
 
             # The old outbox worker handles its own events and leaves due rows alone.
             async with tenant_connection("whieda") as conn:
@@ -350,10 +361,15 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
                                            payload={"chat_id": "2", "text": "retry", "binding_id": "whieda-advisor-bot"},
                                            due_at=now + timedelta(hours=1))
             send = AsyncMock(return_value={"ok": True, "message_id": 10})
-            with patch("app.jobs.worker.send_telegram_text", send):
+            login = AsyncMock(side_effect=lambda url, **_: url.split("#", 1)[0] + "#wwc-login=t")
+            with patch("app.jobs.worker.send_telegram_text", send), patch("app.telegram.site_login.with_site_login", login):
                 assert await process_due_notifications({"whieda": _binding()}) == 1
                 assert await process_due_notifications({"whieda": _binding()}) == 0
             assert send.await_count == 1
+            # The site buttons are signed in when sent (CRM v2), not when planned.
+            assert login.await_count == len(digest["payload"]["reply_markup"]["inline_keyboard"])
+            assert send.await_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["url"] == (
+                "https://igor.wwc.best/crm/#wwc-login=t")
             assert send.await_args.kwargs["chat_id"] == "7001"
             assert send.await_args.kwargs["bot_token"] == "test-token"
             assert send.await_args.kwargs["text"] == digest["payload"]["text"]

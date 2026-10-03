@@ -154,6 +154,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
     "partner_library": frozenset({"partner_library_items"}),
     "crm": frozenset({"platform_accounts", "crm_contacts", "crm_notes"}),
 }
+# WWC CRM v2 (platform_crm_v20.sql, 02.10.2026): лента карточки и шаблоны сообщений.
+FEATURE_TABLES["crm"] = FEATURE_TABLES["crm"] | frozenset({"crm_activities", "crm_templates"})
 
 
 def parse_disabled_features(raw: str | None) -> set[str]:

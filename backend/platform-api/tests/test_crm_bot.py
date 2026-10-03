@@ -35,12 +35,14 @@ def _msg(text: str, chat_type: str = "private") -> TelegramMessage:
     return TelegramMessage(chat_id=5, user_id=5, message_id=1, text=text, chat_type=chat_type, file_id=None, raw={})
 
 
-@pytest.mark.parametrize("text", ["ежедневник", "Ежедневник", "/crm", "CRM", "мои контакты", "Мой ежедневник!", "срм"])
+@pytest.mark.parametrize("text", ["ежедневник", "Ежедневник", "/crm", "CRM", "мои контакты", "Мой ежедневник!", "срм",
+                                  "WWC CRM", "wwc crm", "Открыть WWC CRM", "открыть crm"])
 def test_trigger_words(text):
     assert bot.is_crm_text(text)
 
 
-@pytest.mark.parametrize("text", ["контакты", "мои контакты партнёров", "академия", "ежедневник дела на завтра", ""])
+@pytest.mark.parametrize("text", ["контакты", "мои контакты партнёров", "академия", "ежедневник дела на завтра", "",
+                                  "wwc", "crm дела"])
 def test_other_text_is_not_mine(text):
     assert not bot.is_crm_text(text)
 
@@ -50,7 +52,7 @@ async def test_cabinet_button_only_for_those_who_can_open():
     login = AsyncMock(side_effect=lambda url, **_: url + "#wwc-login=t")
     with patch.object(bot, "load_viewer", AsyncMock(return_value=PAID)), patch.object(bot, "with_site_login", login):
         rows = await bot.crm_button_rows(WITH_CRM, 5)
-    assert rows == [[{"text": "📒 Ежедневник", "url": "https://igor.wwc.best/crm/#wwc-login=t"}]]
+    assert rows == [[{"text": "📒 WWC CRM", "url": "https://igor.wwc.best/crm/#wwc-login=t"}]]
 
     with patch.object(bot, "load_viewer", AsyncMock(return_value=UNPAID)):
         assert await bot.crm_button_rows(WITH_CRM, 5) == []
@@ -80,7 +82,9 @@ async def test_word_opens_the_diary_with_a_login_link():
         result = await bot.try_handle_crm_text(WITH_CRM, _msg("ежедневник"), trace_id="t1")
     assert result["status"] == "open"
     markup = send.await_args.kwargs["reply_markup"]
-    assert markup == {"inline_keyboard": [[{"text": "📒 Открыть ежедневник", "url": "https://igor.wwc.best/crm/#wwc-login=t"}]]}
+    assert markup == {"inline_keyboard": [[{"text": "📒 Открыть WWC CRM", "url": "https://igor.wwc.best/crm/#wwc-login=t"}]]}
+    assert send.await_args.kwargs["text"].startswith("📒 WWC CRM — ")
+    assert "ежедневник" not in send.await_args.kwargs["text"].lower()
 
 
 @pytest.mark.asyncio
