@@ -50,6 +50,7 @@ MIGRATIONS = (
     "platform_support_tickets_v8.sql",
     "platform_support_forum_v9.sql",
     "platform_support_site_forum_v16.sql",
+    "platform_cabinet_v21.sql",  # кабинет партнёра /me/ (02.10.2026); от v17/v18 не зависит
     "platform_marketing_consent_v17.sql",
     "platform_pricing_october_v18.sql",
     "platform_academy_lms_v19.sql",

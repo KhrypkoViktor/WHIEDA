@@ -49,6 +49,14 @@ from app.telegram.renewal_requests import (
     try_start_renewal_by_text,
 )
 from app.telegram.wwc_services import try_handle_wwc_service_text
+# Личный кабинет /me/ (02.10.2026): модерация профиля сайта, «Продлить» и «Поддержка» с сайта.
+from app.telegram.cabinet_profile import (
+    try_handle_profile_callback,
+    try_handle_profile_reject_reason,
+    try_handle_profile_requests_command,
+)
+from app.telegram.renewal_requests import is_renewal_start_token, start_renewal_from_link
+from app.telegram.support import is_support_start_token, open_site_support
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
     try_handle_site_request_message,
@@ -479,6 +487,10 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
+        # Заявка на изменение сайта из кабинета /me/: кнопки владельца (на любом профиле).
+        profile_callback_result = await try_handle_profile_callback(tenant, callback, trace_id=trace_id)
+        if profile_callback_result is not None:
+            return profile_callback_result
         support_callback_result = await try_handle_support_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -555,6 +567,11 @@ async def _process_core_telegram_update_scoped(
 
     # Services card, the support administrator's replies, and attachments from
     # a subscriber inside an open support ticket.
+    # Причина отказа в заявке на изменение сайта — Reply владельца на вопрос бота.
+    profile_reason_result = await try_handle_profile_reject_reason(tenant, msg, trace_id=trace_id)
+    if profile_reason_result is not None:
+        return profile_reason_result
+
     support_result = await try_handle_support_message(tenant, msg, trace_id=trace_id)
     if support_result is not None:
         return support_result
@@ -592,6 +609,10 @@ async def _process_core_telegram_update_scoped(
     if referral_admin_result is not None:
         return referral_admin_result
 
+    profile_requests_result = await try_handle_profile_requests_command(tenant, msg, trace_id=trace_id)
+    if profile_requests_result is not None:
+        return profile_requests_result
+
     start_token = parse_start_token(msg.text)
     if start_token:
         # Подпись ссылки — на секрете вебхука этого бота (не на глобальном
@@ -608,6 +629,15 @@ async def _process_core_telegram_update_scoped(
             return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
         if is_services_start_token(start_token):
             return await show_services(msg.chat_id, trace_id=trace_id)
+        if is_renewal_start_token(start_token):
+            # «Продлить» с сайта — как кнопка «Продлить платформу»; на minimal — вручную.
+            if manual_operations:
+                await _manual_operation_notice(msg.chat_id)
+                return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
+            return await start_renewal_from_link(tenant, msg, trace_id=trace_id)
+        if is_support_start_token(start_token):
+            # «Написать в поддержку» с сайта — то же обращение, что /support.
+            return await open_site_support(tenant, msg, trace_id=trace_id)
         if is_pro_start_token(start_token):
             if manual_operations:
                 await _manual_operation_notice(msg.chat_id)

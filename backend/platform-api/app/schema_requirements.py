@@ -28,6 +28,10 @@ OPTIONAL_FEATURE_PACKAGES: dict[str, tuple[str, ...]] = {
     "crm": ("crm",),
 }
 
+# Счётчик WWC CRM для кабинета /me/ (app/cabinet_crm, 02.10.2026) читает таблицы CRM —
+# он часть функции «crm»: кабинет-ядро зовёт его только при включённой CRM.
+OPTIONAL_FEATURE_PACKAGES["crm"] = OPTIONAL_FEATURE_PACKAGES["crm"] + ("cabinet_crm",)
+
 FEATURE_TABLES: dict[str, frozenset[str]] = {
     "core": frozenset(
         {
@@ -100,6 +104,11 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "partner_product_access",
             "partner_price_overrides",
             "partner_payments",
+            # Личный кабинет партнёра /me/ (platform_cabinet_v21.sql, 02.10.2026):
+            # заявки на изменение сайта, ручные шаги пути, фото профиля.
+            "partner_profile_requests",
+            "partner_journey_marks",
+            "partner_media",
             # support tunnel (subscriber <-> service administrator via the bot)
             "support_tickets",
             "support_messages",

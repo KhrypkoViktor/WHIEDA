@@ -1091,3 +1091,11 @@ async def _request_waits_for_file(tenant: TenantContext, msg: TelegramMessage) -
             return False
         raise
     return bool(site) and str(site["status"]) in _SITE_FILE_STEPS
+
+
+# «Написать в поддержку» с сайта (кабинет /me/, 02.10.2026): t.me/<бот>?start=support.
+SUPPORT_START_TOKEN = "support"
+
+
+def is_support_start_token(token: str) -> bool:
+    return str(token or "").strip().lower() == SUPPORT_START_TOKEN

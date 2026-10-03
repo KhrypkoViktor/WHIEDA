@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from app.cart.web_links import CALCULATOR_WEB_URL
 from app.referral_bonus.service import (
@@ -16,9 +16,13 @@ from app.referral_bonus.service import (
     cancel_bonus_redemption_intent,
     confirm_bonus_redemption_intent,
     create_bonus_redemption_intent,
+    bonus_entry_label,
     ensure_telegram_actor,
     get_or_create_invite_code,
+    list_bonus_ledger,
+    list_referrals,
     referral_dashboard,
+    referral_status_label,
 )
 from app.settings import get_settings
 from app.telegram.academy import academy_button_rows
@@ -76,55 +80,32 @@ def _token_from_uuid(value: Any) -> str:
     return str(value).replace("-", "")
 
 
+def _date(value: Any) -> str:
+    return value.strftime("%d.%m.%Y") if isinstance(value, datetime) else ""
+
+
 def _history_text(entries: list[dict[str, Any]]) -> str:
     if not entries:
         return "История бонусов пока пуста."
     lines = ["История бонусов:", ""]
     for entry in entries[:10]:
-        created_at = entry.get("created_at")
-        if isinstance(created_at, datetime):
-            date = created_at.strftime("%d.%m.%Y")
-        else:
-            date = ""
-        description = str(entry.get("description") or entry.get("entry_type") or "Операция")
-        lines.append(f"{date}  {_points(int(entry['amount_minor']))} — {description}".strip())
+        lines.append(f"{_date(entry.get('created_at'))}  {_points(int(entry['amount_minor']))} — {bonus_entry_label(entry)}".strip())
     return "\n".join(lines)
 
 
 def _referrals_text(entries: list[dict[str, Any]]) -> str:
     if not entries:
         return "Вы пока никого не пригласили."
-    status_labels = {
-        "active": "сайт активен",
-        "grace": "льготный период",
-        "suspended": "оплата просрочена",
-        "no_subscription": "ожидает оплаты",
-        "no_site": "сайт не создан",
-    }
-    request_labels = {
-        "awaiting_country": "оформляет заявку",
-        "awaiting_subdomain": "оформляет заявку",
-        "awaiting_photo": "оформляет заявку",
-        "awaiting_text": "оформляет заявку",
-        "awaiting_payment": "ожидает оплаты",
-        "pending_confirmation": "оплата на проверке",
-        "pending_provisioning": "сайт создаётся",
-    }
     lines = ["Мои рефералы", ""]
     for entry in entries[:20]:
         name = str(entry.get("display_name") or "Партнёр")
         username = str(entry.get("telegram_username") or "").strip()
         if username and not username.startswith("@"):
             username = f"@{username}"
-        status = status_labels.get(str(entry.get("subscription_status") or ""), "статус уточняется")
-        request_status = request_labels.get(str(entry.get("site_request_status") or ""))
-        if request_status and str(entry.get("subscription_status") or "") in {"no_site", "no_subscription"}:
-            status = request_status
-        attributed_at = entry.get("attributed_at")
-        date = attributed_at.strftime("%d.%m.%Y") if isinstance(attributed_at, datetime) else ""
+        date = _date(entry.get("attributed_at"))
         identity = " ".join(part for part in (name, username) if part)
         suffix = f" · {date}" if date else ""
-        lines.append(f"• {identity} — {status}{suffix}")
+        lines.append(f"• {identity} — {referral_status_label(entry)}{suffix}")
     return "\n".join(lines)
 
 
@@ -149,6 +130,33 @@ def _dashboard_keyboard(
     has_site: bool,
     minimal: bool,
     telegram_user_id: int | None = None,
+    academy_rows: list[list[dict[str, Any]]] | None = None,
+    site_login_url: str | None = None,
+    cabinet_url: str | None = None,
+) -> dict[str, Any]:
+    markup = _dashboard_rows(
+        bot_username=bot_username,
+        invite_code=invite_code,
+        site_url=site_url,
+        has_site=has_site,
+        minimal=minimal,
+        academy_rows=academy_rows,
+        site_login_url=site_login_url,
+    )
+    if cabinet_url:
+        # Личный кабинет на сайте (/me/, 02.10.2026) — первая кнопка: там всё,
+        # что раньше было текстом кабинета (приглашённые, история, профиль сайта).
+        markup["inline_keyboard"].insert(0, [{"text": CABINET_BUTTON_LABEL, "url": cabinet_url}])
+    return markup
+
+
+def _dashboard_rows(
+    *,
+    bot_username: str,
+    invite_code: str,
+    site_url: str,
+    has_site: bool,
+    minimal: bool,
     academy_rows: list[list[dict[str, Any]]] | None = None,
     site_login_url: str | None = None,
 ) -> dict[str, Any]:
@@ -231,6 +239,47 @@ async def _actor_for_telegram(
     )
 
 
+CABINET_BUTTON_LABEL = "Открыть кабинет"
+CABINET_PATH = "me/"
+
+
+def cabinet_page_url(site_url: str | None) -> str:
+    """Кабинет /me/ на сайте партнёра (одна сборка на каждом поддомене) или на wwc.best."""
+    base = str(site_url or "").split("#", 1)[0].split("?", 1)[0].strip() or "https://wwc.best/"
+    return base.rstrip("/") + "/" + CABINET_PATH
+
+
+def _site_status_line(site: dict[str, Any] | None) -> str:
+    if not site:
+        return "Сайт: пока нет."
+    host = urlsplit(str(site.get("url") or "")).hostname or "wwc.best"
+    status = str(site.get("subscription_status") or "no_subscription")
+    if status == "active":
+        paid_until = site.get("paid_until")
+        until = f" до {paid_until.strftime('%d.%m.%Y')}" if isinstance(paid_until, datetime) else ""
+        return f"Сайт {host}: активен{until}, ещё {int(site.get('days_remaining') or 0)} дн."
+    if status == "grace":
+        return f"Сайт {host}: оплаченный срок закончился, идёт льготный период."
+    return f"Сайт {host}: ждёт продления."
+
+
+def cabinet_text(site: dict[str, Any] | None, *, balance_minor: int, link: str) -> str:
+    """Кабинет в боте коротко: статус, баланс, ссылка; остальное — на сайте (02.10.2026)."""
+    return "\n".join(
+        [
+            "Личный кабинет",
+            "",
+            _site_status_line(site),
+            f"Баланс: {wwc(balance_minor)}",
+            "",
+            "Ваша реферальная ссылка:",
+            link,
+            "",
+            "Приглашённые, история WWC$ и профиль сайта — в кабинете на сайте.",
+        ]
+    )
+
+
 def site_offer_text(inviter_name: str) -> str:
     """Один экран под одно действие (текст владельца, 17.09.2026). Без баланса
     и рефссылки: человек ещё ничего не купил, кабинет ему сейчас — шум."""
@@ -295,42 +344,7 @@ async def show_referral_dashboard(
     site = dashboard.get("site") or {}
     minimal = get_settings().telegram_ui_profile == "minimal"
     site_url = str(site.get("url") or "https://wwc.best/")
-    status = str(site.get("subscription_status") or "no_subscription")
-    days = int(site.get("days_remaining") or 0)
-    paid_until = site.get("paid_until")
-    paid_until_text = paid_until.strftime("%d.%m.%Y") if isinstance(paid_until, datetime) else "—"
-    if status == "active":
-        access_line = f"Сайт активен: ещё {days} дн."
-    elif status == "grace":
-        access_line = "Оплаченный период завершён. Действует льготный срок."
-    elif site:
-        access_line = "Сайт ожидает продления."
-    else:
-        access_line = "Персональный сайт ещё не создан."
-    lines = [
-            "Личный кабинет",
-            "",
-            access_line,
-            f"Оплачено до: {paid_until_text}",
-            f"Сайт: {site_url}",
-            f"Баланс: {wwc(int(dashboard['balance_wusd_minor']))}",
-            "",
-            "Ваша реферальная ссылка:",
-            link,
-            "",
-            f"Приглашено: {dashboard['invited_count']}",
-            f"Оплатили сайт: {dashboard['paid_count']}",
-    ]
-    if not minimal:
-        lines.extend(
-            [
-                "",
-                "20% начисляется с первой оплаты платформы и 10% с продлений.",
-                "Каждые 30 WWC$ автоматически продлевают ваш сайт ещё на 3 месяца.",
-                "WWC$ — внутренняя валюта: ими оплачиваются платформа, клуб и курсы, вывести деньгами нельзя.",
-            ]
-        )
-    text = "\n".join(lines)
+    text = cabinet_text(site or None, balance_minor=int(dashboard["balance_wusd_minor"]), link=link)
     await _deliver(
         telegram_chat_id,
         text,
@@ -346,6 +360,9 @@ async def show_referral_dashboard(
             + await crm_button_rows(tenant, telegram_user_id),
             # «Мой сайт» входит на сайт сам — партнёру не нужно второй раз подтверждать Telegram.
             site_login_url=await with_site_login(site_url, tenant_id=tenant.tenant_id, telegram_user_id=telegram_user_id),
+            cabinet_url=await with_site_login(
+                cabinet_page_url(site_url), tenant_id=tenant.tenant_id, telegram_user_id=telegram_user_id
+            ),
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}
@@ -425,12 +442,12 @@ async def try_handle_referral_callback(
     )
     action, token = match.groups()
     if action == "history":
-        dashboard = await referral_dashboard(tenant.tenant_id, actor_id=actor_id)
-        await _deliver(callback.chat_id, _history_text(dashboard["history"]))
+        page = await list_bonus_ledger(tenant.tenant_id, actor_id, limit=10)
+        await _deliver(callback.chat_id, _history_text(page["items"]))
         return {"ok": True, "route": "referral_history", "trace_id": trace_id}
     if action == "list":
-        dashboard = await referral_dashboard(tenant.tenant_id, actor_id=actor_id)
-        await _deliver(callback.chat_id, _referrals_text(dashboard["referrals"]))
+        page = await list_referrals(tenant.tenant_id, actor_id, limit=20)
+        await _deliver(callback.chat_id, _referrals_text(page["items"]))
         return {"ok": True, "route": "referral_list", "trace_id": trace_id}
     if action.startswith("redeem:"):
         plan_code = action.removeprefix("redeem:")

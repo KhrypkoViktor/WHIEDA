@@ -33,6 +33,13 @@ SOCIALS_CONTRACT_KEYS = {
     "youtubeUrl",
     "tiktokUrl",
     "telegramChannelUrl",
+    # контакты партнёра из кабинета /me/ (02.10.2026)
+    "phone",
+    "whatsapp",
+    "viber",
+    "maxUrl",
+    "email",
+    "address",
 }
 
 
@@ -153,6 +160,12 @@ async def test_public_ref_full_public_contract(client, monkeypatch):
         "youtubeUrl": "https://www.youtube.com/@olga",
         "tiktokUrl": None,
         "telegramChannelUrl": None,
+        "phone": None,
+        "whatsapp": None,
+        "viber": None,
+        "maxUrl": None,
+        "email": None,
+        "address": None,
     }
     assert set(consultant["socials"]) == SOCIALS_CONTRACT_KEYS
 
@@ -296,3 +309,35 @@ async def test_load_public_ref_by_subdomain_binds_tenant_and_issued_map(monkeypa
     assert "partner_subscriptions" in captured["query"]
     assert "partner_subscription_state" in captured["query"]
     assert "public_profile->>'subdomain'" in captured["query"]
+
+
+@pytest.mark.asyncio
+async def test_public_ref_carries_cabinet_bio_and_contacts(client, monkeypatch):
+    """Кабинет /me/ (02.10.2026): после «Применить» сайт берёт «о себе» и контакты из API."""
+
+    async def fake_load(tenant_id: str, ref_code: str):
+        return {
+            "ref_code": "makarova",
+            "display_mode": "named",
+            "enabled": True,
+            "profile_version": 9,
+            "public_profile": {
+                "display_name": "Марина Макарова",
+                "bio": "Помогаю разобраться в продуктах.\n\nПишите.",
+                "contacts": {"phone": "+79680605888", "whatsapp": "+79680605888", "max_url": "https://max.ru/u/abc"},
+                "email": "legacy@mail.ru",
+                "socials": {"telegram_channel_url": "https://t.me/dohod_dla_vsex"},
+            },
+        }
+
+    monkeypatch.setattr("app.ref.routes.load_public_ref", fake_load)
+    body = (await client.get("/v1/public/ref/makarova", headers={"host": "wwc.best"})).json()
+    consultant = body["consultant"]
+    assert consultant["bio"] == "Помогаю разобраться в продуктах.\n\nПишите."
+    socials = consultant["socials"]
+    assert set(socials) == SOCIALS_CONTRACT_KEYS
+    assert socials["phone"] == socials["whatsapp"] == "+79680605888"
+    assert socials["maxUrl"] == "https://max.ru/u/abc"
+    assert socials["email"] is None  # ключ верхнего уровня не публикуется — только contacts
+    assert socials["viber"] is None and socials["address"] is None
+    assert socials["telegramChannelUrl"] == "https://t.me/dohod_dla_vsex"

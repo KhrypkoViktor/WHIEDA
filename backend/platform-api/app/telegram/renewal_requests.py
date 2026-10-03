@@ -324,3 +324,28 @@ async def try_start_renewal_by_text(
         return None
     await _prompt(msg.chat_id, request, tenant.tenant_id)
     return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}
+
+
+# «Продлить» с сайта (кабинет /me/, 02.10.2026): t.me/<бот>?start=renew — то же
+# продление, что кнопка «Продлить платформу» в кабинете бота. На боевом профиле
+# minimal продление ручное: processor отвечает про ручное оформление, как на кнопку.
+RENEWAL_START_TOKEN = "renew"
+
+
+def is_renewal_start_token(token: str) -> bool:
+    return str(token or "").strip().lower() == RENEWAL_START_TOKEN
+
+
+async def start_renewal_from_link(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any]:
+    if msg.chat_type != "private":
+        return {"ok": True, "route": "renewal", "status": "private_chat_required", "trace_id": trace_id}
+    actor_id = await _actor(tenant, msg)
+    try:
+        request = await begin_renewal_request(tenant.tenant_id, actor_id)
+    except RenewalRequestError as exc:
+        await _deliver(msg.chat_id, str(exc))
+        return {"ok": False, "route": "renewal", "status": "no_site", "trace_id": trace_id}
+    await _prompt(msg.chat_id, request, tenant.tenant_id)
+    return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}

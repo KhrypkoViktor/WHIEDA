@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import math
@@ -314,6 +315,255 @@ async def ensure_telegram_actor(
     raise RuntimeError("could not register Telegram actor")
 
 
+# ---- «Мои рефералы» и «История WWC$» -----------------------------------------
+# Одни и те же выборки для бота (кабинет, кнопки «Мои рефералы» / «История
+# WWC$») и для кабинета на сайте (/me/referrals, /me/bonus-ledger): постранично,
+# по ключу (created_at, id) от новых к старым, курсор непрозрачный.
+
+REFERRALS_PAGE_MAX = 50
+LEDGER_PAGE_MAX = 50
+
+# Подписи, которые видит пригласивший (бот и сайт).
+REFERRAL_SUBSCRIPTION_LABELS = {
+    "active": "сайт активен",
+    "grace": "льготный период",
+    "suspended": "оплата просрочена",
+    "no_subscription": "ожидает оплаты",
+    "no_site": "сайт не создан",
+}
+REFERRAL_REQUEST_LABELS = {
+    "awaiting_country": "оформляет заявку",
+    "awaiting_subdomain": "оформляет заявку",
+    "awaiting_photo": "оформляет заявку",
+    "awaiting_text": "оформляет заявку",
+    "awaiting_payment": "ожидает оплаты",
+    "pending_confirmation": "оплата на проверке",
+    "pending_provisioning": "сайт создаётся",
+}
+
+
+class InvalidPageCursorError(ValueError):
+    """The cursor did not come from us (or was cut)."""
+
+
+def encode_page_cursor(created_at: datetime, key: str) -> str:
+    raw = json.dumps([created_at.isoformat(), str(key)], separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def decode_page_cursor(cursor: str | None) -> tuple[datetime, str] | None:
+    value = str(cursor or "").strip()
+    if not value:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        stamp, key = json.loads(raw.decode("utf-8"))
+        moment = datetime.fromisoformat(str(stamp))
+        if moment.tzinfo is None or not isinstance(key, str) or not key or len(key) > 200:
+            raise ValueError("cursor shape")
+    except (ValueError, TypeError, UnicodeDecodeError) as exc:
+        raise InvalidPageCursorError("invalid page cursor") from exc
+    return moment, key
+
+
+def _page_limit(limit: int, maximum: int) -> int:
+    return max(1, min(int(limit), maximum))
+
+
+def referral_site_state(entry: dict[str, Any]) -> Literal["paid", "waiting", "no_site"]:
+    """«сайт оплачен / ждёт / нет сайта» для списка приглашённых на сайте."""
+    status = str(entry.get("subscription_status") or "")
+    if status in {"active", "grace"}:
+        return "paid"
+    if status == "no_site" and not entry.get("site_request_status"):
+        return "no_site"
+    return "waiting"
+
+
+def referral_status_label(entry: dict[str, Any]) -> str:
+    status = str(entry.get("subscription_status") or "")
+    label = REFERRAL_SUBSCRIPTION_LABELS.get(status, "статус уточняется")
+    request_label = REFERRAL_REQUEST_LABELS.get(str(entry.get("site_request_status") or ""))
+    if request_label and status in {"no_site", "no_subscription"}:
+        return request_label
+    return label
+
+
+def bonus_entry_label(entry: dict[str, Any]) -> str:
+    """«За что» по строке partner_bonus_ledger. Служебные описания пишет код
+    по-английски — человеку показываем русские; описание, которое набрал
+    владелец (корректировка, сторно), — как есть."""
+    description = " ".join(str(entry.get("description") or "").split())
+    if description.startswith("Referral bonus: first payment"):
+        return "Бонус: первая оплата сайта приглашённым"
+    if description.startswith("Referral bonus: renewal"):
+        return "Бонус: продление сайта приглашённым"
+    if description.startswith("Automatic points redemption"):
+        return "Продление сайта за WWC$ (автоматически)"
+    if description.startswith("Bonus redemption"):
+        return "Продление сайта за WWC$"
+    if description.startswith("Bonus offset"):
+        return "Оплата WWC$"
+    if description.startswith("Gemini:"):
+        return "Gemini: доля партнёра за продажу"
+    if description:
+        return description[:200]
+    return {
+        "credit": "Начисление",
+        "debit": "Списание",
+        "reversal": "Отмена начисления",
+        "admin_adjustment": "Корректировка",
+    }.get(str(entry.get("entry_type") or ""), "Операция")
+
+
+async def _referral_counts(conn: Any, tenant_id: str, actor_id: str) -> dict[str, int]:
+    counts = await fetch_one(
+        conn,
+        """
+        select
+          count(*) as invited_count,
+          count(*) filter (
+            where exists (
+              select 1
+              from referral_profiles rp
+              join partner_subscriptions ps
+                on ps.tenant_id = rp.tenant_id and ps.ref_code = rp.ref_code
+              where rp.tenant_id = a.tenant_id
+                and rp.owner_id = a.invitee_actor_id
+                and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
+            )
+          ) as paid_count
+        from partner_referral_attributions a
+        where a.tenant_id = %s and a.inviter_actor_id = %s
+        """,
+        (tenant_id, actor_id),
+    )
+    return {
+        "invited_count": int((counts or {}).get("invited_count") or 0),
+        "paid_count": int((counts or {}).get("paid_count") or 0),
+    }
+
+
+async def _referrals_page(
+    conn: Any, tenant_id: str, actor_id: str, *, limit: int, after: tuple[datetime, str] | None
+) -> tuple[list[dict[str, Any]], str | None]:
+    after_at, after_id = after if after else (None, None)
+    rows = await fetch_all(
+        conn,
+        """
+        select
+          a.invitee_actor_id,
+          la.display_name,
+          la.telegram_username,
+          a.created_at as attributed_at,
+          rp.ref_code,
+          ps.paid_until,
+          case
+            when rp.ref_code is null then 'no_site'
+            else partner_subscription_state(ps.paid_until, now())
+          end as subscription_status,
+          sr.status as site_request_status
+        from partner_referral_attributions a
+        join lead_actors la
+          on la.tenant_id = a.tenant_id and la.actor_id = a.invitee_actor_id
+        left join lateral (
+          select profile.ref_code
+          from referral_profiles profile
+          where profile.tenant_id = a.tenant_id
+            and profile.owner_id = a.invitee_actor_id
+            and profile.enabled = true
+          order by profile.ref_code
+          limit 1
+        ) rp on true
+        left join partner_subscriptions ps
+          on ps.tenant_id = a.tenant_id and ps.ref_code = rp.ref_code
+        left join lateral (
+          select request.status
+          from partner_site_requests request
+          where request.tenant_id = a.tenant_id
+            and request.actor_id = a.invitee_actor_id
+          order by request.created_at desc
+          limit 1
+        ) sr on true
+        where a.tenant_id = %(tenant_id)s and a.inviter_actor_id = %(actor_id)s
+          and (
+            %(after_at)s::timestamptz is null
+            or (a.created_at, a.invitee_actor_id) < (%(after_at)s::timestamptz, %(after_id)s::text)
+          )
+        order by a.created_at desc, a.invitee_actor_id desc
+        limit %(limit)s
+        """,
+        {"tenant_id": tenant_id, "actor_id": actor_id, "after_at": after_at, "after_id": after_id, "limit": limit + 1},
+    )
+    items = [dict(row) for row in rows[:limit]]
+    cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        cursor = encode_page_cursor(last["attributed_at"], str(last["invitee_actor_id"]))
+    return items, cursor
+
+
+async def _ledger_page(
+    conn: Any, tenant_id: str, actor_id: str, *, limit: int, after: tuple[datetime, str] | None
+) -> tuple[list[dict[str, Any]], str | None]:
+    after_at, after_id = after if after else (None, None)
+    if after_id is not None:
+        try:
+            after_id = str(uuid.UUID(after_id))
+        except ValueError as exc:
+            raise InvalidPageCursorError("invalid page cursor") from exc
+    rows = await fetch_all(
+        conn,
+        """
+        select entry_id, entry_type, amount_minor, product_code, description, created_at
+        from partner_bonus_ledger
+        where tenant_id = %(tenant_id)s and actor_id = %(actor_id)s
+          and (
+            %(after_at)s::timestamptz is null
+            or (created_at, entry_id) < (%(after_at)s::timestamptz, %(after_id)s::uuid)
+          )
+        order by created_at desc, entry_id desc
+        limit %(limit)s
+        """,
+        {"tenant_id": tenant_id, "actor_id": actor_id, "after_at": after_at, "after_id": after_id, "limit": limit + 1},
+    )
+    items = [dict(row) for row in rows[:limit]]
+    cursor = None
+    if len(rows) > limit and items:
+        last = items[-1]
+        cursor = encode_page_cursor(last["created_at"], str(last["entry_id"]))
+    return items, cursor
+
+
+async def referral_counts(tenant_id: str, actor_id: str) -> dict[str, int]:
+    async with tenant_connection(tenant_id) as conn:
+        return await _referral_counts(conn, tenant_id, actor_id)
+
+
+async def list_referrals(
+    tenant_id: str, actor_id: str, *, limit: int = 20, cursor: str | None = None
+) -> dict[str, Any]:
+    """Приглашённые этого актора: бот («Мои рефералы») и /me/referrals."""
+    after = decode_page_cursor(cursor)
+    async with tenant_connection(tenant_id) as conn:
+        items, next_cursor = await _referrals_page(
+            conn, tenant_id, actor_id, limit=_page_limit(limit, REFERRALS_PAGE_MAX), after=after
+        )
+    return {"items": items, "next_cursor": next_cursor}
+
+
+async def list_bonus_ledger(
+    tenant_id: str, actor_id: str, *, limit: int = 10, cursor: str | None = None
+) -> dict[str, Any]:
+    """Начисления и списания WWC$: бот («История WWC$») и /me/bonus-ledger."""
+    after = decode_page_cursor(cursor)
+    async with tenant_connection(tenant_id) as conn:
+        items, next_cursor = await _ledger_page(
+            conn, tenant_id, actor_id, limit=_page_limit(limit, LEDGER_PAGE_MAX), after=after
+        )
+    return {"items": items, "next_cursor": next_cursor}
+
+
 async def referral_dashboard(
     tenant_id: str,
     *,
@@ -331,40 +581,9 @@ async def referral_dashboard(
             """,
             (tenant_id, actor_id),
         )
-        counts = await fetch_one(
-            conn,
-            """
-            select
-              count(*) as invited_count,
-              count(*) filter (
-                where exists (
-                  select 1
-                  from referral_profiles rp
-                  join partner_subscriptions ps
-                    on ps.tenant_id = rp.tenant_id and ps.ref_code = rp.ref_code
-                  where rp.tenant_id = a.tenant_id
-                    and rp.owner_id = a.invitee_actor_id
-                    and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
-                )
-              ) as paid_count
-            from partner_referral_attributions a
-            where a.tenant_id = %s and a.inviter_actor_id = %s
-            """,
-            (tenant_id, actor_id),
-        )
-        history = await fetch_one(
-            conn,
-            """
-            select coalesce(json_agg(rows order by created_at desc), '[]'::json) as entries
-            from (
-              select entry_type, amount_minor, product_code, description, created_at
-              from partner_bonus_ledger
-              where tenant_id = %s and actor_id = %s
-              order by created_at desc
-              limit %s
-            ) rows
-            """,
-            (tenant_id, actor_id, max(1, min(history_limit, 30))),
+        counts = await _referral_counts(conn, tenant_id, actor_id)
+        history, _ = await _ledger_page(
+            conn, tenant_id, actor_id, limit=max(1, min(history_limit, 30)), after=None
         )
         plans = await fetch_one(
             conn,
@@ -395,52 +614,7 @@ async def referral_dashboard(
             """,
             (tenant_id, actor_id),
         )
-        referrals = await fetch_one(
-            conn,
-            """
-            select coalesce(json_agg(rows order by attributed_at desc), '[]'::json) as entries
-            from (
-              select
-                a.invitee_actor_id,
-                la.display_name,
-                la.telegram_username,
-                a.created_at as attributed_at,
-                rp.ref_code,
-                ps.paid_until,
-                case
-                  when rp.ref_code is null then 'no_site'
-                  else partner_subscription_state(ps.paid_until, now())
-                end as subscription_status,
-                sr.status as site_request_status
-              from partner_referral_attributions a
-              join lead_actors la
-                on la.tenant_id = a.tenant_id and la.actor_id = a.invitee_actor_id
-              left join lateral (
-                select profile.ref_code
-                from referral_profiles profile
-                where profile.tenant_id = a.tenant_id
-                  and profile.owner_id = a.invitee_actor_id
-                  and profile.enabled = true
-                order by profile.ref_code
-                limit 1
-              ) rp on true
-              left join partner_subscriptions ps
-                on ps.tenant_id = a.tenant_id and ps.ref_code = rp.ref_code
-              left join lateral (
-                select request.status
-                from partner_site_requests request
-                where request.tenant_id = a.tenant_id
-                  and request.actor_id = a.invitee_actor_id
-                order by request.created_at desc
-                limit 1
-              ) sr on true
-              where a.tenant_id = %s and a.inviter_actor_id = %s
-              order by a.created_at desc
-              limit 20
-            ) rows
-            """,
-            (tenant_id, actor_id),
-        )
+        referrals, _ = await _referrals_page(conn, tenant_id, actor_id, limit=20, after=None)
     amount_minor = int((balance or {}).get("amount_minor") or 0)
     site_info: dict[str, Any] | None = None
     if site:
@@ -464,12 +638,12 @@ async def referral_dashboard(
     return {
         "actor_id": actor_id,
         "balance_wusd_minor": amount_minor,
-        "invited_count": int((counts or {}).get("invited_count") or 0),
-        "paid_count": int((counts or {}).get("paid_count") or 0),
-        "history": list((history or {}).get("entries") or []),
+        "invited_count": counts["invited_count"],
+        "paid_count": counts["paid_count"],
+        "history": history,
         "plans": list((plans or {}).get("items") or []),
         "site": site_info,
-        "referrals": list((referrals or {}).get("entries") or []),
+        "referrals": referrals,
     }
 
 

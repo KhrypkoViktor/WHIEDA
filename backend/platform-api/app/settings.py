@@ -327,6 +327,29 @@ class Settings(BaseSettings):
         default="wwc.best",
         validation_alias="PLATFORM_COOKIE_SHARED_DOMAINS",
     )
+    # Личный кабинет партнёра /me/ (v1, 02.10.2026).
+    platform_leader_pilot_telegram_ids: str = Field(
+        default="688931415",
+        validation_alias="PLATFORM_LEADER_PILOT_TELEGRAM_IDS",
+        description=(
+            "Comma-separated Telegram user IDs that get the «leader» tier of the "
+            "cabinet before a leader_cabinet price exists (pilot, like the CRM pilot). "
+            "Leader also needs paid PRO. Default: the owner's account."
+        ),
+    )
+    platform_partner_media_public_base: str = Field(
+        default="https://wwc.best",
+        validation_alias="PLATFORM_PARTNER_MEDIA_PUBLIC_BASE",
+        description=(
+            "Origin of cabinet photo URLs (/api/v1/content-access/partner-media/<id>.jpg). "
+            "The bytes live in the shared database, so staging writes production URLs."
+        ),
+    )
+    platform_club_group_url: str = Field(
+        default="https://t.me/c/4338290116/12",
+        validation_alias="PLATFORM_CLUB_GROUP_URL",
+        description="Link to the club group the cabinet shows to CLUB members (pinned post).",
+    )
 
     platform_partner_library_storage_backend: Literal["local", "filesystem", "s3"] = Field(
         default="local",
@@ -451,6 +474,11 @@ class Settings(BaseSettings):
         raw = self.platform_crm_pilot_telegram_ids.strip()
         if raw == "*":
             return None
+        return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
+
+    def parsed_leader_pilot(self) -> frozenset[int]:
+        """Telegram user IDs of the leader pilot (empty — nobody)."""
+        raw = self.platform_leader_pilot_telegram_ids
         return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
 
     def parsed_scheduled_notify_bindings(self) -> tuple[str, ...]:
