@@ -13,6 +13,10 @@ reference for a signed link of the viewer when the lesson is read.
 A bare ``https://…`` in the author's text becomes a link when the Markdown is rendered
 (``BareLinks``, 05.10.2026); a ready link, code and ``media:<uuid>`` are not touched.
 
+A link that leaves the site (``http``/``https``) opens in a new tab, so the student keeps
+the lesson page: ``sanitize_html`` adds ``target="_blank"`` after nh3, on the way in and
+on the way out — stored lessons need no re-render for it.
+
 A lesson's test (V35) is a fenced block with the language ``quiz`` holding JSON:
 ``split_quiz`` cuts it out of the raw Markdown before rendering — answers and
 hints never reach the lesson HTML (``app.academy.quiz`` checks the JSON).
@@ -116,6 +120,9 @@ _MEDIA_MENTION_RE = re.compile(rf"media:({_MEDIA_ID})", re.I)
 # Подставляются только настоящие ссылки внутри тегов (после nh3 значения атрибутов — в двойных кавычках).
 _TAG_RE = re.compile(r"<[^<>]+>")
 _ATTR_RE = re.compile(rf'\s(src|href)="media:({_MEDIA_ID})"', re.I)
+# Ссылка наружу без target. После nh3 «<», «>» и «"» внутри значений атрибутов экранированы,
+# поэтому «<a …>» — всегда настоящий тег, а href="…" — его настоящий атрибут.
+_LINK_OUT_RE = re.compile(r'<a(?=\s)(?![^<>]*\starget=")(?=[^<>]*\shref="(?:https?:)?//)', re.I)
 # Тест урока: ```quiz … ``` (или ~~~quiz), закрывающий забор — тот же, что открывающий.
 _QUIZ_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*quiz[ \t]*\r?$", re.M)
 _QUIZ_BLOCK_RE = re.compile(
@@ -149,7 +156,7 @@ def split_quiz(body_md: str | None) -> tuple[str, dict[str, Any] | None]:
 
 
 def sanitize_html(raw: str | None) -> str:
-    return nh3.clean(
+    clean = nh3.clean(
         str(raw or ""),
         tags=ALLOWED_TAGS,
         attributes=ALLOWED_ATTRIBUTES,
@@ -159,6 +166,7 @@ def sanitize_html(raw: str | None) -> str:
         set_tag_attribute_values={"img": {"loading": "lazy"}},
         strip_comments=True,
     )
+    return _LINK_OUT_RE.sub('<a target="_blank"', clean)
 
 
 def render_markdown(source: str | None) -> str:

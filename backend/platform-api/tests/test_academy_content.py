@@ -193,6 +193,55 @@ def test_bare_address_cannot_smuggle_markup():
             assert not re.search(r"\son\w+=|<script|javascript:", tag, flags=re.I), (source, html)
 
 
+def test_link_out_opens_in_a_new_tab():
+    # Ученик не теряет страницу урока: ссылка наружу — в новой вкладке, с rel от nh3.
+    for html in (
+        render_markdown("[Сайт](https://example.com/a)"),
+        render_markdown("https://example.com/a"),
+        sanitize_html('<a href="http://example.com/a">x</a>'),
+        sanitize_html('<a href="//example.com/a">x</a>'),
+        sanitize_html('<a href="https://example.com/a" target="_top" title="t">x</a>'),
+        sanitize_html('<a target="_blank" href="https://example.com/a">x</a>'),
+    ):
+        assert html.count('target="_blank"') == 1, html
+        assert 'rel="noopener noreferrer"' in html
+    stored = sanitize_html('<p><a href="https://example.com/a">x</a></p>')
+    assert sanitize_html(stored) == stored  # очистка на выходе не меняет уже очищенное
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        '<a href="/academy/?course=kurs">x</a>',
+        '<a href="#shag-2">x</a>',
+        '<a href="mailto:a@example.com">x</a>',
+        '<a href="tel:+375291234567">x</a>',
+        f'<a href="media:{MEDIA_ID}">x</a>',
+        '<a title="href=&quot;https://example.com/a&quot;" href="/academy/">x</a>',
+    ],
+)
+def test_links_inside_the_site_keep_the_tab(link):
+    assert "target=" not in sanitize_html(link)
+    assert "target=" not in sanitize_html('<img alt=\'<a href="https://example.com/a">\' src="/a.png">')
+
+
+def test_cleaned_tags_never_hold_raw_angle_brackets_or_quotes():
+    # На этом стоят правки тегов после nh3 (resolve_media, новая вкладка): «<», «>» и «"» внутри
+    # значений атрибутов экранированы, значит «<…>» в очищенном HTML — всегда настоящий тег.
+    hostile = (
+        f'<p><img alt="<img" src="media:{MEDIA_ID}"> &quot; src=x onerror=alert(1) x=&quot;</p>'
+        '<a title="<a onmouseover=alert(1) &quot; x" href="https://example.com/a">t</a>'
+        '<img alt="a > b < c" src="/a.png">'
+    )
+    clean = sanitize_html(hostile)
+    for tag in re.findall(r'<(?:[^<>"]|"[^"]*")+>', clean):
+        for value in re.findall(r'="([^"]*)"', tag):
+            assert "<" not in value and ">" not in value, tag
+    for html in (clean, resolve_media(clean, {}), resolve_media(clean, {MEDIA_ID: "/academy-media/k?u=1&e=2&s=x"})):
+        for tag in re.findall(r"<[^<>]+>", html):
+            assert not re.search(r"\son\w+=", re.sub(r'"[^"]*"', '""', tag)), html
+
+
 def test_author_views_clean_stored_html_too():
     from app.academy.author import _course_out, _lesson_out
 
