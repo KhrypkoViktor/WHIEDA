@@ -118,19 +118,6 @@ insert into shop_items (
   confirmer, status, sort_order, requisites_note, delivery_note
 ) values
   (
-    -- Владелец 06.10.2026: курс продаётся одной кнопкой «Купить» всем — и без сайта.
-    'whieda', 'kurs-online-start', 'course', 'courses',
-    'Курс «Онлайн-старт: 4 недели практики»',
-    'Практикум с Виктором: личный бренд и заявки через интернет',
-    'Четыре недели живых занятий: распаковка личного бренда, контент-завод с нейросетью, где брать людей и как довести разговор до заказа.' || chr(10) || chr(10)
-      || 'Суббота 12:00–14:00 — практика, среда 17:30–18:30 — разбор (МСК/Минск; время ориентировочное). Домашние задания проверяет Виктор.' || chr(10) || chr(10)
-      || 'Доступ откроется в Академии сразу после подтверждения оплаты.',
-    10000, 1000000, null, 'online-start-4w', null,
-    'owner', 'published', 5,
-    null,
-    'Ссылки на эфиры — в уроках «Суббота: практика» и «Среда: разбор вопросов». Вопросы пишите сюда.'
-  ),
-  (
     'whieda', 'konsultaciya', 'service', 'services',
     'Консультация с Виктором',
     'Маркетинг, воронки, автоматизация, техника — 1,5 часа онлайн',
@@ -203,9 +190,26 @@ insert into shop_items (
   )
 on conflict (tenant_id, code) do nothing;
 
--- Клубная цена «Онлайн-старта»: 75 WWC$ (7 500 ₽). Только если владелец её ещё не менял.
-update shop_items set price_club_wusd_minor = 7500
- where tenant_id = 'whieda' and code = 'kurs-online-start' and price_club_wusd_minor is null;
+-- Владелец 06.10.2026: «Онлайн-старт» продаётся одной кнопкой «Купить» всем — и без сайта;
+-- участнику клуба — 75 WUSD (7 500 ₽). Цена — во вставке: повторный прогон V22 не вернёт
+-- клубную цену, если владелец её снял (on conflict do nothing).
+insert into shop_items (
+  tenant_id, code, kind, category, title, subtitle, description_md,
+  price_wusd_minor, price_rub_minor, price_club_wusd_minor, course_slug,
+  confirmer, status, sort_order, requisites_note, delivery_note
+) values (
+    'whieda', 'kurs-online-start', 'course', 'courses',
+    'Курс «Онлайн-старт: 4 недели практики»',
+    'Практикум с Виктором: личный бренд и заявки через интернет',
+    'Четыре недели живых занятий: распаковка личного бренда, контент-завод с нейросетью, где брать людей и как довести разговор до заказа.' || chr(10) || chr(10)
+      || 'Суббота 12:00–14:00 — практика, среда 17:30–18:30 — разбор (МСК/Минск; время ориентировочное). Домашние задания проверяет Виктор.' || chr(10) || chr(10)
+      || 'Доступ откроется в Академии сразу после подтверждения оплаты.',
+    10000, 1000000, 7500, 'online-start-4w',
+    'owner', 'published', 5,
+    null,
+    'Ссылки на эфиры — в уроках «Суббота: практика» и «Среда: разбор вопросов». Вопросы пишите сюда.'
+  )
+on conflict (tenant_id, code) do nothing;
 
 alter table shop_items enable row level security;
 drop policy if exists shop_items_tenant_isolation on shop_items;

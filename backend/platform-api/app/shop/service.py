@@ -799,6 +799,15 @@ def clean_item_fields(body: dict[str, Any], *, kind: str) -> dict[str, Any]:
     return out
 
 
+def _check_club_price(item: dict[str, Any]) -> None:
+    """Клубная цена — не выше обычной, и в рублях тоже (иначе клубу дороже, чем всем)."""
+    club = item.get("price_club_wusd_minor")
+    if club is None:
+        return
+    if int(club) > int(item["price_wusd_minor"]) or int(club) * RUB_PER_WUSD > price_rub_minor(item):
+        raise ShopError(400, "club_price_above_price")
+
+
 async def _check_references(conn: Any, tenant_id: str, fields: dict[str, Any]) -> None:
     """Обложка — картинка Академии, файл — файл Академии, курс — существующий курс."""
     for field, kind in (("cover_media_id", "image"), ("file_media_id", "file")):
@@ -825,6 +834,7 @@ async def update_item(tenant_id: str, code: str, body: dict[str, Any], *, update
     fields = clean_item_fields(body, kind=str(item["kind"]))
     if not fields:
         return item
+    _check_club_price({**item, **fields})
     assignments = ", ".join(f"{column} = %s" for column in fields)
     async with tenant_connection(tenant_id) as conn:
         await _check_references(conn, tenant_id, fields)
@@ -855,6 +865,7 @@ async def create_item(tenant_id: str, body: dict[str, Any], *, updated_by: int) 
         raise ShopError(400, "external_url_required")
     data.setdefault("status", "draft")
     fields = clean_item_fields(data, kind=kind)
+    _check_club_price(fields)
     columns = ["tenant_id", "code", "kind", *fields, "updated_by_telegram_user_id"]
     values = [tenant_id, code, kind, *fields.values(), int(updated_by)]
     async with tenant_connection(tenant_id) as conn:

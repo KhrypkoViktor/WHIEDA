@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -47,6 +48,23 @@ def test_owner_can_set_and_clear_the_club_price():
     assert clean_item_fields({"price_club_wusd": None}, kind="course") == {"price_club_wusd_minor": None}
     with pytest.raises(ShopError):
         clean_item_fields({"price_club_wusd": -1}, kind="course")
+
+
+def test_v22_has_no_dollar_sign_and_seeds_the_club_price_in_the_insert():
+    sql = (Path(__file__).resolve().parents[3] / "postgres/sql/platform_shop_v22.sql").read_text(encoding="utf-8")
+    assert "$" not in sql  # production applies SQL through n8n, which eats dollar signs
+    assert "update shop_items" not in sql  # a rerun must not bring back a club price the owner removed
+
+
+def test_club_price_above_the_regular_one_is_refused():
+    from app.shop.service import _check_club_price
+
+    _check_club_price(ONLINE)
+    for over in ({"price_club_wusd_minor": 10001}, {"price_rub_minor": 700000}):
+        with pytest.raises(ShopError) as exc:
+            _check_club_price({**ONLINE, **over})
+        assert exc.value.code == "club_price_above_price"
+    _check_club_price({**ONLINE, "price_club_wusd_minor": None})
 
 
 # ---- the card ---------------------------------------------------------------------------
@@ -96,7 +114,8 @@ async def test_card_button_for_a_hidden_item_says_it_is_not_available(whieda_ten
 async def test_a_club_member_orders_at_the_club_price(whieda_tenant, whieda_bot_binding, shop_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 11})
     opened = AsyncMock(return_value=_order(item_code="kurs-online-start", item_title=ONLINE["title"], amount_minor=750000))
-    with patch("app.telegram.shop.send_telegram_text", send), patch("app.telegram.support.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 12})), patch(
+    owner = AsyncMock(return_value={"ok": True, "message_id": 12})
+    with patch("app.telegram.shop.send_telegram_text", send), patch("app.telegram.support.send_telegram_text", owner), patch(
         "app.telegram.shop.get_item", AsyncMock(return_value=ONLINE)
     ), patch("app.telegram.shop.ensure_telegram_actor", AsyncMock(return_value="telegram:whieda:70007")), patch(
         "app.telegram.shop.resolve_partner_ref", AsyncMock(return_value=(None, None))
@@ -109,6 +128,7 @@ async def test_a_club_member_orders_at_the_club_price(whieda_tenant, whieda_bot_
     assert result["status"] == "order_opened"
     assert opened.await_args.kwargs["club"] is True and opened.await_args.kwargs["ticket_id"] == TICKET
     assert "7 500 ₽" in send.await_args.kwargs["text"]
+    assert any("клубная цена" in str(call.kwargs.get("text")) for call in owner.await_args_list)
 
 
 # ---- the Academy lock in the bot ---------------------------------------------------------

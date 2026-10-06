@@ -261,6 +261,8 @@ async def _buy(
         country_code=country, partner_ref_code=partner_ref, partner_ref_source=source, club=club,
     )
     price = both(int(order["amount_minor"]), str(order["currency"]))
+    if club:
+        price += " · клубная цена"  # иначе 7 500 ₽ за курс за 10 000 похоже на недоплату
     if ticket["created"]:
         hint = (
             "Пишите в эту тему — ответ уйдёт покупателю." if _in_forum(ticket)
