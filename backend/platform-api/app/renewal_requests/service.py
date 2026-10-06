@@ -9,16 +9,15 @@ from app.subscriptions.pricing import PaymentLine
 from app.subscriptions.service import record_payment_lines_in_connection
 
 # Каталог услуг продления (V13, 24.09.2026) — строки partner_subscription_plans:
-# сайт на 3/6/12 месяцев, пакет «сайт + клуб», любые курсы course_<slug> и
-# полка Академии для авторов (academy_shelf, V15 25.09.2026).
+# сайт на 3/6/12 месяцев, пакет «сайт + клуб» и полка Академии для авторов
+# (academy_shelf, V15 25.09.2026). Курсы здесь больше не продаются (владелец,
+# 06.10.2026: «старое всё сжечь») — только карточкой Мастерской.
 # Клуб через продление отдельно не продаётся: только пакетом с сайтом; пробный месяц
-# клуба (V18) владелец записывает командой «оплата … клуб 40 WWC$ 1». Курс
-# добавляется одной строкой в таблицу тарифов — здесь ничего менять не надо.
+# клуба (V18) владелец записывает командой «оплата … клуб 40 WWC$ 1».
 _OFFER_FILTER = """
     active = true and valid_from <= now()
     and (valid_until is null or valid_until > now())
-    and (product_code in ('platform_subscription', 'bundle_pro_club', 'academy_shelf')
-         or product_code like 'course!_%%' escape '!')
+    and product_code in ('platform_subscription', 'bundle_pro_club', 'academy_shelf')
 """
 
 
@@ -235,7 +234,7 @@ async def set_renewal_country(
 ) -> dict[str, Any]:
     country = str(country_code or "").strip().upper()
     if country not in {"BY", "RU"}:
-        raise RenewalRequestError("Выберите Беларусь или Россию.")
+        raise RenewalRequestError("Выберите способ оплаты: WWC$ (Беларусь и другие страны) или рубли (Россия).")
     async with tenant_connection(tenant_id) as conn:
         request = await fetch_one(
             conn,

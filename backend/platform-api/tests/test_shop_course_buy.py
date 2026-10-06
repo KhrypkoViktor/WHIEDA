@@ -74,12 +74,17 @@ def test_card_tells_everyone_about_the_club_price_and_a_member_gets_it():
     text = card_text(ONLINE)
     assert "Цена: 10 000 ₽ или 100 WWC$." in text and "Участникам клуба — 7 500 ₽ или 75 WWC$." in text
     rows = card_keyboard(ONLINE, ref=None, country=None)["inline_keyboard"]
-    assert [b["text"] for row in rows for b in row] == ["Купить — 10 000 ₽ · Россия", "Купить — 100 WWC$ · Беларусь"]
+    # Германия, Кипр и все остальные — не только Россия и Беларусь (владелец, 06.10.2026).
+    assert [b["text"] for row in rows for b in row] == [
+        "Купить — 10 000 ₽ · Россия", "Купить — 100 WWC$ · Беларусь", "Купить — 100 WWC$ · другая страна",
+    ]
 
     member = card_text(ONLINE, club=True)
     assert "Цена для вас как участника клуба: 7 500 ₽ или 75 WWC$ (обычная — 10 000 ₽ или 100 WWC$)." in member
     rows = card_keyboard(ONLINE, ref=None, country="BY", club=True)["inline_keyboard"]
-    assert [b["text"] for row in rows for b in row] == ["Купить — 75 WWC$ · Беларусь", "Купить — 7 500 ₽ · Россия"]
+    assert [b["text"] for row in rows for b in row] == [
+        "Купить — 75 WWC$ · Беларусь", "Купить — 7 500 ₽ · Россия", "Купить — 75 WWC$ · другая страна",
+    ]
     assert rows[0][0]["callback_data"] == "shop:buy:kurs-online-start:BY"
 
 
@@ -189,3 +194,21 @@ async def test_academy_home_with_one_locked_course_offers_buy(whieda_tenant, whi
     sent = send.await_args.kwargs
     assert "Цена для вас как участника клуба" in sent["text"]
     assert sent["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "shop:card:kurs-online-start"
+
+
+# ---- другая страна (06.10.2026) ---------------------------------------------------------
+
+
+def test_another_country_pays_in_wwc_and_hears_how():
+    from app.telegram.shop import OTHER_COUNTRY_NOTE, payment_text
+
+    assert price_for_country(ONLINE, "WW") == ("WUSD", 10000)
+    assert price_for_country(ONLINE, "WW", club=True) == ("WUSD", 7500)
+    other = payment_text(ONLINE, _order(country_code=None, currency="WUSD", amount_minor=10000), _ticket())
+    assert "SUNRAYSWORD" in other and OTHER_COUNTRY_NOTE in other
+    belarus = payment_text(ONLINE, _order(country_code="BY", currency="WUSD", amount_minor=10000), _ticket())
+    assert "SUNRAYSWORD" in belarus and OTHER_COUNTRY_NOTE not in belarus
+    rows = card_keyboard(ONLINE, ref="nnm", country="BY")["inline_keyboard"]
+    assert [row[0]["callback_data"] for row in rows] == [
+        "shop:buy:kurs-online-start:BY:nnm", "shop:buy:kurs-online-start:RU:nnm", "shop:buy:kurs-online-start:WW:nnm",
+    ]

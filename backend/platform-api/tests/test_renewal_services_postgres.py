@@ -3,8 +3,8 @@
 Красочко оплатила 105 WUSD пакетом «сайт + клуб», а диалог продления знал
 только «платформу на 3/6/12 месяцев» и записал 30 WUSD за сайт. Теперь:
   * пакет раскладывается на сайт и клуб, оба срока продлеваются;
-  * курс — разовая покупка, добавляется одной строкой в тарифы, даёт доступ
-    в Академии (course_slug тарифа → academy_access, полка V15 25.09.2026);
+  * курс в продлении больше не продаётся (владелец, 06.10.2026: «старое всё
+    сжечь») — только карточкой Мастерской, даже если строка курса есть в тарифах;
   * клуб отдельно не предлагается, только пакетом с сайтом.
 """
 
@@ -60,7 +60,7 @@ def test_bundle_and_course_renewals_record_every_line():
 
             offers = [o["plan_code"] for o in await list_renewal_offers("whieda")]
             assert offers[:4] == ["platform_3m", "platform_6m", "platform_12m", "bundle_pro_club_3m"]
-            assert "course_neuro" in offers
+            assert "course_neuro" not in offers
             # Клуба отдельно и подключения сайта в продлении нет.
             assert "club_3m" not in offers and "club_1m" not in offers and "site_setup" not in offers
 
@@ -92,22 +92,9 @@ def test_bundle_and_course_renewals_record_every_line():
             )
             assert club == [{"ok": True}]
 
-            # Курс за W$: разовая строка без срока и доступ в Академии.
-            req = await begin_renewal_request("whieda", "proof-partner")
-            req = await set_renewal_plan("whieda", "proof-partner", "course_neuro")
-            assert req["access_months"] == 0
-            req = await set_renewal_country("whieda", "proof-partner", "BY")
-            assert req["currency"] == "WUSD" and req["amount_minor"] == 15_000
-            req = await submit_renewal_payment_proof("whieda", "proof-partner", chat_id=6001, message_id=2, file_id="r2")
-            await confirm_renewal_request("whieda", request_id=str(req["request_id"]), admin_telegram_user_id=1)
-            course = await rows(
-                "select a.source, a.telegram_user_id, a.revoked_at from academy_access a"
-                " join academy_courses c on c.tenant_id = a.tenant_id and c.course_id = a.course_id"
-                " where c.slug = 'neuro'"
-            )
-            assert course == [{"source": "purchase", "telegram_user_id": 6001, "revoked_at": None}]
-            assert await rows(
-                "select 1 from partner_product_access where ref_code = 'petrovna' and product_code = 'course_neuro'"
-            ) == []
+            # Курс через продление выбрать нельзя: старый путь сожжён.
+            await begin_renewal_request("whieda", "proof-partner")
+            with pytest.raises(RenewalRequestError):
+                await set_renewal_plan("whieda", "proof-partner", "course_neuro")
 
         db.run_with_app(proof)

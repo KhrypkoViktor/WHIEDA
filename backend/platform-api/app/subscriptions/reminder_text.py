@@ -27,7 +27,7 @@ _MONTHS = (
 )
 
 _PAYMENT_LINES = {
-    "BY": "Беларусь: 30 WWC$ (3 000 ₽) на аккаунт <code>SUNRAYSWORD</code>",
+    "BY": "Беларусь и другие страны: 30 WWC$ (3 000 ₽) на аккаунт <code>SUNRAYSWORD</code>",
     "RU": "Россия: 3 000 ₽ (30 WWC$) по номеру <code>+79282372677</code>, Т-Банк",
 }
 

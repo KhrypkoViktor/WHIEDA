@@ -253,8 +253,8 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             chat_id,
             "В какой стране вы будете оплачивать и работать?",
             reply_markup={"inline_keyboard": [[
-                {"text": "Беларусь", "callback_data": "site:country:BY"},
-                {"text": "Россия", "callback_data": "site:country:RU"},
+                {"text": "WWC$ · Беларусь и другие страны", "callback_data": "site:country:BY"},
+                {"text": "₽ · Россия", "callback_data": "site:country:RU"},
             ]]},
         )
     elif status == "awaiting_subdomain":

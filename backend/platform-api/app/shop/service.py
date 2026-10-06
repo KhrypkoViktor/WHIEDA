@@ -42,8 +42,11 @@ STATUSES = ("draft", "pilot", "published", "archived")
 KINDS = ("service", "course", "digital", "external")
 CATEGORIES = ("services", "courses", "materials", "tools")
 COUNTRIES = ("RU", "BY")
-# Россия платит в рублях, Беларусь — в WWC$ (как продление и заявка на сайт).
-COUNTRY_CURRENCY = {"RU": "RUB", "BY": "WUSD"}
+# Россия платит в рублях; Беларусь и любая другая страна (Германия, Кипр, …) — в WWC$
+# переводом в кабинете WHIEDA (владелец, 06.10.2026: «у нас много немцев»). «Другая
+# страна» (WW) хранится в заказе без страны: country_code = null.
+OTHER_COUNTRY = "WW"
+COUNTRY_CURRENCY = {"RU": "RUB", "BY": "WUSD", OTHER_COUNTRY: "WUSD"}
 RUB_PER_WUSD = 100
 BYN_PER_WUSD_TENTHS = 35  # 1 WWC$ = 3,5 BYN
 # Брошенный заказ не забирает чужие фото (как заявка на сайт, STALE_AFTER).
@@ -378,7 +381,7 @@ async def open_order(
     if unavailable_reason(item):
         raise ShopError(409, "not_for_sale")
     currency, amount = price_for_country(item, country_code, club=club)
-    country = str(country_code).upper()
+    country = None if str(country_code).upper() == OTHER_COUNTRY else str(country_code).upper()
     async with tenant_connection(tenant_id) as conn:
         created = await fetch_one(
             conn,

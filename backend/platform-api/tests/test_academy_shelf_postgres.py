@@ -12,6 +12,8 @@ paid ``course_<код>`` line opens the course (``partner_subscription_plans.cou
     same message is issued once;
   * a lapsed shelf — no new keys and no redeeming (nothing spent), the student keeps learning;
   * a paid course line with ``course_slug`` → ``academy_access``; without it — the payment stays.
+    Courses are no longer offered in the renewal menu (owner, 06.10.2026): the line
+    comes from the owner's «оплата … курс» command, i.e. record_payment_lines.
 """
 
 from __future__ import annotations
@@ -111,6 +113,7 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             from app.academy.service import AcademyError, course_outline, list_courses, load_viewer
             from app.db import fetch_all, tenant_connection
             from app.renewal_requests.service import (
+                RenewalRequestError,
                 begin_renewal_request,
                 confirm_renewal_request,
                 list_renewal_offers,
@@ -273,11 +276,26 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             owner_keys = await issue_keys_for_telegram("whieda", "kurs-igorya", 1, 2, is_admin=True)
             assert len(owner_keys.codes) == 2
 
-            # 11. Оплата курса с course_slug → доступ владельцу профиля.
+            # 11. Оплата курса с course_slug → доступ владельцу профиля. Через меню продления
+            #     курс больше не купить (владелец, 06.10.2026) — строку пишет команда «оплата».
             buyer = await load_viewer("whieda", 6001)
             neuro = next(c for c in await list_courses("whieda", buyer) if c["slug"] == "neuro")
             assert neuro["lock_reason"] == "purchase_required"
-            await pay("proof-partner", "course_neuro", 21)
+            with pytest.raises(RenewalRequestError):
+                await pay("proof-partner", "course_neuro", 21)
+            from app.subscriptions.pricing import PaymentLine
+            from app.subscriptions.service import record_payment_lines_in_connection
+
+            async def record_course(ref_code: str, plan_code: str, message_id: int) -> dict:
+                async with tenant_connection("whieda") as conn:
+                    return await record_payment_lines_in_connection(
+                        conn, tenant_id="whieda", ref_code=ref_code,
+                        lines=[PaymentLine(plan_code, 15000, "WUSD", 0, False, "")],
+                        received_minor=15000, currency="WUSD", telegram_chat_id=1, telegram_message_id=message_id,
+                        telegram_user_id=1,
+                    )
+
+            await record_course("petrovna", "course_neuro", 21)
             bought = await rows(
                 "select a.source, a.payment_ref = l.payment_id::text as ref_ok from academy_access a"
                 " join partner_payment_ledger l on l.product_code = 'course_neuro'"
@@ -290,18 +308,9 @@ def test_academy_shelf_keys_and_payments(monkeypatch):
             assert await rows("select 1 from partner_product_access where left(product_code, 7) = 'course_'") == []
 
             # 12. Курс без course_slug и владелец без Telegram: платёж проходит, доступа нет.
-            done = await pay("proof-partner", "course_nocourse", 22)
-            assert done["status"] == "confirmed"
-            from app.subscriptions.pricing import PaymentLine
-            from app.subscriptions.service import record_payment_lines_in_connection
-
-            async with tenant_connection("whieda") as conn:
-                paid = await record_payment_lines_in_connection(
-                    conn, tenant_id="whieda", ref_code="nobody",
-                    lines=[PaymentLine("course_neuro", 15000, "WUSD", 0, False, "")],
-                    received_minor=15000, currency="WUSD", telegram_chat_id=1, telegram_message_id=23,
-                    telegram_user_id=1,
-                )
+            done = await record_course("petrovna", "course_nocourse", 22)
+            assert [line["product_code"] for line in done["lines"]] == ["course_nocourse"]
+            paid = await record_course("nobody", "course_neuro", 23)
             assert [line["product_code"] for line in paid["lines"]] == ["course_neuro"]
             assert await rows("select count(*)::int as n from academy_access where source = 'purchase'") == [{"n": 1}]
 

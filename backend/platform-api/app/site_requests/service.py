@@ -143,7 +143,7 @@ async def set_site_request_country(
 ) -> dict[str, Any]:
     country = str(country_code or "").strip().upper()
     if country not in {"BY", "RU"}:
-        raise SiteRequestError("Выберите Беларусь или Россию.")
+        raise SiteRequestError("Выберите способ оплаты: WWC$ (Беларусь и другие страны) или рубли (Россия).")
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,

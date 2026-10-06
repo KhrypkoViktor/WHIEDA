@@ -215,7 +215,9 @@ def test_card_asks_the_country_and_shows_both_prices():
     assert "Цена: 500 ₽ или 5 WWC$." in text and "Откуда будете оплачивать?" in text
     assert "**" not in text and "Презентация в PDF: 21 слайд." in text
     rows = card_keyboard(_item(), ref="nnm", country=None)["inline_keyboard"]
-    assert [b["text"] for row in rows for b in row] == ["Купить — 500 ₽ · Россия", "Купить — 5 WWC$ · Беларусь"]
+    assert [b["text"] for row in rows for b in row] == [
+        "Купить — 500 ₽ · Россия", "Купить — 5 WWC$ · Беларусь", "Купить — 5 WWC$ · другая страна",
+    ]
     assert rows[0][0]["callback_data"] == "shop:buy:preza-vozrazheniya:RU:nnm"
     by_first = card_keyboard(SERVICE, ref=None, country="BY")["inline_keyboard"]
     assert by_first[0][0]["text"] == "Заказать — 100 WWC$ · Беларусь"
@@ -238,7 +240,11 @@ async def test_start_link_shows_the_card_to_the_owner_in_pilot(whieda_tenant, wh
     sent = send.await_args.kwargs
     assert sent["chat_id"] == str(OWNER) and sent["text"].startswith("Презентация «Мастерство работы с возражениями»")
     buttons = [b["callback_data"] for row in sent["reply_markup"]["inline_keyboard"] for b in row]
-    assert buttons == ["shop:buy:preza-vozrazheniya:RU:olga-samtsova", "shop:buy:preza-vozrazheniya:BY:olga-samtsova"]
+    assert buttons == [
+        "shop:buy:preza-vozrazheniya:RU:olga-samtsova",
+        "shop:buy:preza-vozrazheniya:BY:olga-samtsova",
+        "shop:buy:preza-vozrazheniya:WW:olga-samtsova",
+    ]
 
 
 @pytest.mark.asyncio

@@ -297,5 +297,10 @@ def test_online_start_is_sold_to_anyone_and_a_club_member_pays_the_club_price(mo
             assert (member["currency"], member["amount_minor"]) == ("RUB", 750000)
             assert member_by["order_id"] == member["order_id"]  # тот же заказ, страну сменили до чека
             assert (member_by["currency"], member_by["amount_minor"]) == ("WUSD", 7500)
+            # Другая страна (Германия, Кипр…): WWC$, в заказе без страны — проходит CHECK базы.
+            member_ww = await open_order("whieda", item=item, telegram_user_id=CLUB, ticket_id=None, country_code="WW",
+                                         partner_ref_code=None, partner_ref_source=None, club=True)
+            assert member_ww["order_id"] == member["order_id"]
+            assert (member_ww["country_code"], member_ww["currency"], member_ww["amount_minor"]) == (None, "WUSD", 7500)
 
         db.run_with_app(proof)

@@ -124,8 +124,8 @@ async def _prompt(chat_id: int, request: dict[str, Any], tenant_id: str) -> None
             "Выберите страну оплаты.",
             reply_markup={
                 "inline_keyboard": [[
-                    {"text": "Беларусь", "callback_data": "renew:country:BY"},
-                    {"text": "Россия", "callback_data": "renew:country:RU"},
+                    {"text": "WWC$ · Беларусь и другие страны", "callback_data": "renew:country:BY"},
+                    {"text": "₽ · Россия", "callback_data": "renew:country:RU"},
                 ], _cancel_row()]
             },
         )
