@@ -93,7 +93,7 @@ def test_sale_lifecycle_deposit_and_partner_share():
 
 
 @pytest.mark.integration
-def test_licence_reminder_and_low_deposit_notice_fire_once():
+def test_licence_reminder_fires_once_and_no_deposit_notice():
     from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock, patch
 
@@ -122,13 +122,14 @@ def test_licence_reminder_and_low_deposit_notice_fire_once():
             await activate_sale("whieda", sale_id=str(sale["sale_id"]), activated_until=now + timedelta(days=5))
             send = AsyncMock(return_value={"ok": True, "message_id": 1})
             with patch("app.service_sales.reminders.send_telegram_text", send):
-                first = await send_service_notices(tenant_id="whieda", binding_id="whieda-advisor-bot", bot_token="t", admin_telegram_user_id=KARINA, owner_telegram_user_id=OWNER, now=now)
-                second = await send_service_notices(tenant_id="whieda", binding_id="whieda-advisor-bot", bot_token="t", admin_telegram_user_id=KARINA, owner_telegram_user_id=OWNER, now=now)
-            # Deposit is −2 990 (no top-ups): below one licence → one notice; the licence nudge once.
-            assert first == {"licence_reminders": 1, "low_deposit_notice": True}
-            assert second == {"licence_reminders": 0, "low_deposit_notice": False}
+                first = await send_service_notices(tenant_id="whieda", binding_id="whieda-advisor-bot", bot_token="t", now=now)
+                second = await send_service_notices(tenant_id="whieda", binding_id="whieda-advisor-bot", bot_token="t", now=now)
+            # The deposit is below one licence (−2 990, no top-ups), but the owner asked for no
+            # deposit notice (06.10.2026): only the licence nudge to the client and its ticket topic.
+            assert first == {"licence_reminders": 1}
+            assert second == {"licence_reminders": 0}
             chats = sorted(c.kwargs["chat_id"] for c in send.await_args_list)
-            assert chats == sorted(["437", str(KARINA), str(OWNER)])
+            assert chats == ["437"]
             assert "заканчивается" in [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == "437"][0]["text"]
 
         db.run_with_app(proof)

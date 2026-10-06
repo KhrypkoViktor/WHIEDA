@@ -1,21 +1,20 @@
 """Daily service notices, run by the partner-reminders timer (09:00 MSK):
 
 * a week before a licence ends — the client gets a nudge and the ticket's
-  topic gets a line (a reason to sell the renewal), once per sale;
-* the deposit with the administrator is below one licence — the «Отчёты»
-  topic (or the owner and the administrator directly) hears it once a day.
+  topic gets a line (a reason to sell the renewal), once per sale.
+
+The «deposit below one licence» notice was removed on the owner's request
+(06.10.2026): the owner does not keep a deposit with the administrator.
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db import fetch_all, fetch_one, tenant_connection
-from app.service_sales.service import month_report
-from app.support.service import get_forum, ticket_label
+from app.support.service import ticket_label
 from app.telegram.delivery import send_telegram_text
-from app.telegram.money import money
 
 LICENCE_REMINDER_DAYS = 7
 
@@ -47,25 +46,6 @@ async def mark_licence_reminded(tenant_id: str, *, sale_id: str) -> None:
         )
 
 
-async def notice_already_sent(tenant_id: str, *, key: str, on: date) -> bool:
-    async with tenant_connection(tenant_id) as conn:
-        row = await fetch_one(
-            conn,
-            "select 1 as x from service_notice_log where tenant_id = %s and notice_key = %s and sent_on = %s",
-            (tenant_id, key, on),
-        )
-    return bool(row)
-
-
-async def mark_notice_sent(tenant_id: str, *, key: str, on: date) -> None:
-    async with tenant_connection(tenant_id) as conn:
-        await fetch_one(
-            conn,
-            "insert into service_notice_log (tenant_id, notice_key, sent_on) values (%s, %s, %s) on conflict do nothing returning notice_key",
-            (tenant_id, key, on),
-        )
-
-
 def licence_client_text(row: dict[str, Any]) -> str:
     until = row["activated_until"].strftime("%d.%m.%Y")
     return (
@@ -79,12 +59,10 @@ async def send_service_notices(
     tenant_id: str,
     binding_id: str,
     bot_token: str,
-    admin_telegram_user_id: int | None,
-    owner_telegram_user_id: int | None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     moment = now or datetime.now(timezone.utc)
-    out: dict[str, Any] = {"licence_reminders": 0, "low_deposit_notice": False}
+    out: dict[str, Any] = {"licence_reminders": 0}
 
     for row in await list_due_licence_reminders(tenant_id, now=moment):
         await send_telegram_text(chat_id=str(row["user_chat_id"]), text=licence_client_text(row), bot_token=bot_token)
@@ -96,17 +74,4 @@ async def send_service_notices(
         await mark_licence_reminded(tenant_id, sale_id=str(row["sale_id"]))
         out["licence_reminders"] += 1
 
-    if admin_telegram_user_id is not None:
-        report = await month_report(tenant_id, admin_telegram_user_id=admin_telegram_user_id)
-        today = moment.date()
-        if report["low_balance"] and not await notice_already_sent(tenant_id, key="low_deposit", on=today):
-            text = f"Депозит у администратора: {money(report['deposit_balance_minor'], 'RUB')} — меньше одной лицензии. Виктор, пополните («перевёл 20000»)."
-            forum = await get_forum(tenant_id, binding_id=binding_id)
-            if forum and forum.get("reports_thread_id"):
-                await send_telegram_text(chat_id=str(forum["chat_id"]), text=text, bot_token=bot_token, message_thread_id=int(forum["reports_thread_id"]))
-            else:
-                for chat in {admin_telegram_user_id, owner_telegram_user_id} - {None}:
-                    await send_telegram_text(chat_id=str(chat), text=text, bot_token=bot_token)
-            await mark_notice_sent(tenant_id, key="low_deposit", on=today)
-            out["low_deposit_notice"] = True
     return out
