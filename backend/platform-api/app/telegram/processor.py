@@ -81,6 +81,8 @@ from app.telegram.support import (
     show_services,
     try_handle_support_forum_message,
     try_handle_support_message,
+    accept_unrouted_attachment,
+    try_handle_support_media,
     try_relay_user_message,
 )
 from app.telegram.club_group import try_handle_club_join
@@ -583,6 +585,11 @@ async def _process_core_telegram_update_scoped(
     # Services card, the support administrator's replies, and attachments from
     # a subscriber inside an open support ticket.
     # Причина отказа в заявке на изменение сайта — Reply владельца на вопрос бота.
+    # Голосовое, видео, кружок без подписи: дальше по цепочке их никто не ждёт.
+    if msg.chat_type == "private" and msg.media_file_id and not msg.file_id and not msg.text:
+        media_result = await try_handle_support_media(tenant, msg, trace_id=trace_id)
+        return media_result or {"ok": True, "route": "ignored_media"}
+
     profile_reason_result = await try_handle_profile_reject_reason(tenant, msg, trace_id=trace_id)
     if profile_reason_result is not None:
         return profile_reason_result
@@ -617,6 +624,11 @@ async def _process_core_telegram_update_scoped(
         if renewal_by_text is not None:
             return renewal_by_text
 
+    # Фото или файл, которые не взяла ни одна заявка, — в поддержку, а не в никуда.
+    if msg.chat_type == "private" and msg.attachment_id:
+        unrouted = await accept_unrouted_attachment(tenant, msg, trace_id=trace_id)
+        if unrouted is not None:
+            return unrouted
     if not msg.text:
         return {"ok": True, "route": "ignored_media"}
 

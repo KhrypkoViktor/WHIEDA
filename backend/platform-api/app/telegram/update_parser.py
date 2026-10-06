@@ -23,6 +23,18 @@ class TelegramMessage:
     thread_id: int | None = None
     is_forum: bool = False
     from_bot: bool = False
+    # Voice, video, video note, audio, sticker: only support relays them; file_id
+    # stays photo/document, because receipts and the site photo step rely on it.
+    media_file_id: str | None = None
+    media_kind: str | None = None
+
+    @property
+    def attachment_id(self) -> str | None:
+        return self.file_id or self.media_file_id
+
+
+# Order matters: a GIF arrives as both «animation» and «document» — the document wins above.
+_RELAY_ONLY_MEDIA = ("voice", "video_note", "video", "audio", "animation", "sticker")
 
 
 @dataclass
@@ -81,7 +93,14 @@ def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
         file_id = str((photos[-1] or {}).get("file_id") or "").strip()
     if not file_id and isinstance(document, dict):
         file_id = str(document.get("file_id") or "").strip()
-    if (not text and not file_id) or chat_id is None or user_id is None:
+    media_file_id, media_kind = "", None
+    if not file_id:
+        for kind in _RELAY_ONLY_MEDIA:
+            item = message.get(kind)
+            if isinstance(item, dict) and str(item.get("file_id") or "").strip():
+                media_file_id, media_kind = str(item["file_id"]).strip(), kind
+                break
+    if (not text and not file_id and not media_file_id) or chat_id is None or user_id is None:
         return None
     username = str(user.get("username") or "").strip() or None
     return TelegramMessage(
@@ -96,6 +115,8 @@ def parse_telegram_message(update: dict[str, Any]) -> TelegramMessage | None:
         thread_id=_thread_id(message),
         is_forum=bool(chat.get("is_forum")),
         from_bot=bool(user.get("is_bot")),
+        media_file_id=media_file_id or None,
+        media_kind=media_kind,
     )
 
 

@@ -71,8 +71,17 @@ mv "$next/backend/platform-api" "$live"
 rmdir "$next/backend" "$next"
 printf '%s' "$revision" > "$root/RELEASE_REVISION"
 
+# Recreating a container drops its docker logs: keep them (06.10.2026 — a lost
+# partner photo could not be traced after two releases the same day).
+save_logs() {
+  mkdir -p "$root/logs"
+  docker compose logs --no-color --timestamps api worker 2>&1 | gzip > "$root/logs/$target-$1-$stamp.log.gz" || true
+  find "$root/logs" -name '*.log.gz' -mtime +30 -delete 2>/dev/null || true
+}
+
 restore() {
   echo "ROLLBACK: $revision never became ready; restoring $previous_revision" >&2
+  save_logs "failed-$revision"
   rm -rf "$live"
   mv "$backup/platform-api-replaced" "$live"
   printf '%s' "$previous_revision" > "$root/RELEASE_REVISION"
@@ -80,6 +89,7 @@ restore() {
   docker compose up -d --no-deps api worker
 }
 
+save_logs "before-$revision"
 docker compose up -d --no-deps api worker
 
 echo "== waiting for readiness"

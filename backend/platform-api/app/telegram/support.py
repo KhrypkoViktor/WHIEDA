@@ -117,6 +117,28 @@ SUPPORT_INVITE_TEXT = (
     "фото, текст о себе — или задайте вопрос. Всё, что пришлёте сюда, попадёт к команде WWC; "
     "ответ придёт в этот чат."
 )
+# Вложение без «Поддержки» (06.10.2026: фото Лебедевич пропало молча): бот сам
+# открывает обращение. Стикер и GIF обращения не открывают — это не просьба.
+_ATTACHMENT_WORDS = {
+    "voice": "голосовое", "video_note": "видеокружок", "video": "видео", "audio": "аудио",
+    "animation": "GIF", "sticker": "стикер",
+}
+_NO_AUTO_TICKET = frozenset({"animation", "sticker"})
+
+
+def attachment_word(msg: TelegramMessage) -> str:
+    if msg.media_kind:
+        return _ATTACHMENT_WORDS.get(msg.media_kind, "вложение")
+    return "фото" if ((msg.raw or {}).get("message") or {}).get("photo") else "файл"
+
+
+def attachment_opened_text(label: str, word: str) -> str:
+    return (
+        f"Получили {word} и передали команде WWC — обращение {label}.\n\n"
+        "Напишите сюда, что с ним сделать (например, поставить фото на сайт), — ответ придёт в этот чат."
+    )
+
+
 # Owner commands the support admin may also use on staging; never relayed.
 _OWNER_COMMAND_TOKENS = {
     "оплата", "/pay", "статус", "/status", "/due", "бонусы", "/bonuses", "реферер", "/referrer",
@@ -486,6 +508,7 @@ async def _open_tunnel(
     offer: Offer | None,
     trace_id: str,
     channel: str = CHANNEL_GEMINI,
+    opened_by_attachment: str | None = None,
 ) -> dict[str, Any]:
     kind = forum_kind_for_channel(channel)
     route = "support" if kind == FORUM_KIND_SITE else "services"
@@ -513,6 +536,8 @@ async def _open_tunnel(
         # The owner sees who writes and which site it is about.
         header = "\n".join(_site_header_lines(ticket, site))
         user_text = f"Обращение {label} открыто.\n\n{SUPPORT_INVITE_TEXT}"
+        if opened_by_attachment:
+            user_text = attachment_opened_text(label, opened_by_attachment)
         who = "партнёру"
     elif offer:
         header = f"{client} · Заказ: {offer.title} — {offer.price_text}"
@@ -534,8 +559,13 @@ async def _open_tunnel(
     else:
         hint = f"Ответьте на это сообщение (Reply) — ответ уйдёт {who if kind == FORUM_KIND_SITE else 'человеку'}."
         delivered_chat = admin
+    if opened_by_attachment:
+        hint = f"Бот открыл обращение сам: пришло {opened_by_attachment} без «Поддержки».\n" + hint
     if kind != FORUM_KIND_SITE:
         hint += "\nВопрос не про Gemini (сайт, платформа)? Ответьте на сообщение клиента словами «в поддержку» — оно уйдёт команде WWC."
+    if not ticket["created"] and opened_by_attachment:
+        # Альбом: соседнее фото уже открыло обращение — само вложение уйдёт в тему следом.
+        return {"ok": True, "route": route, "status": "ticket_reused", "kind": kind, "ticket": label, "trace_id": trace_id}
     if not ticket["created"]:
         # Заявка уже открыта: вторую шапку с кнопками не шлём — одна строка.
         again = "партнёр снова нажал «Поддержка»" if kind == FORUM_KIND_SITE else (
@@ -752,15 +782,17 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
     # Кнопки — только в шапке темы, не под каждым сообщением клиента
     # (владелец, 27.09.2026: «очень много лишнего»).
     markup = None
-    if msg.file_id:
-        # A photo or document: copy it (no forward header, no contact leak), then
-        # a text line the admin can Reply to.
+    attachment = msg.attachment_id
+    if attachment:
+        # A photo, file, voice or video: copy it (no forward header, no contact
+        # leak), then a text line the admin can Reply to.
         await copy_telegram_message(
             chat_id=str(admin), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
             bot_token=current_bot_binding().bot_token,
             message_thread_id=int(ticket["forum_thread_id"]) if _in_forum(ticket) else None,
         )
-        delivered = await _send_to_admin(ticket, f"{header}\n(вложение выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
+        what = "вложение" if msg.file_id else attachment_word(msg)
+        delivered = await _send_to_admin(ticket, f"{header}\n({what} выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
     else:
         delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=markup)
     result = await record_relayed_message(
@@ -768,13 +800,60 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
         ticket_id=str(ticket["ticket_id"]),
         direction="user_to_admin",
         text=msg.text,
-        telegram_file_id=msg.file_id,
+        telegram_file_id=attachment,
         source_chat_id=msg.chat_id,
         source_message_id=msg.message_id,
         delivered_chat_id=admin,
         delivered_message_id=delivered.get("message_id"),
     )
+    if attachment and not result["duplicate"]:
+        await _attachment_receipt(msg)
     return {"ok": True, "route": "support_relay", "direction": "user_to_admin", "ticket": label, "duplicate": result["duplicate"], "trace_id": trace_id}
+
+
+async def _attachment_receipt(msg: TelegramMessage) -> None:
+    """👍 на вложении партнёра: оно дошло до команды. Без лишних сообщений в чате;
+    в альбоме Telegram даёт реагировать только на первое фото — остальное не страшно."""
+    try:
+        await set_message_reaction(
+            chat_id=str(msg.chat_id), message_id=msg.message_id, emoji="👍", bot_token=current_bot_binding().bot_token
+        )
+    except Exception:  # квитанция не должна ронять пересылку
+        logger.warning("support_attachment_receipt_failed", exc_info=True)
+
+
+async def accept_unrouted_attachment(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any] | None:
+    """Вложение, которое не взяла ни одна заявка: в открытое обращение, а если его
+    нет — бот открывает обращение по сайту сам. Раньше такое фото молча пропадало."""
+    if msg.chat_type != "private" or not msg.attachment_id or is_support_admin(msg.user_id) or _is_owner(msg.user_id):
+        return None
+    ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id)
+    if ticket is None:
+        if msg.media_kind in _NO_AUTO_TICKET or not tenant.entitlements.get("site_support", False):
+            return None
+        if _admin_for_kind(FORUM_KIND_SITE) is None:
+            return None
+        opened = await _open_tunnel(
+            tenant, msg, offer=None, trace_id=trace_id, channel=CHANNEL_SITE, opened_by_attachment=attachment_word(msg)
+        )
+        ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id, channel_code=CHANNEL_SITE)
+        if ticket is None:
+            return opened
+        relayed = await _relay_user_to_admin(tenant, msg, ticket, trace_id=trace_id)
+        return {**relayed, "status": opened.get("status")}
+    return await _relay_user_to_admin(tenant, msg, ticket, trace_id=trace_id)
+
+
+async def try_handle_support_media(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any] | None:
+    """Голосовое, видео, кружок без подписи в личке: только поддержке. Заявки на
+    сайт, продления и чеки их не ждут, советнику нечего ответить."""
+    if is_support_admin(msg.user_id) or _is_owner(msg.user_id):
+        return await try_handle_support_admin_message(tenant, msg, trace_id=trace_id)
+    return await accept_unrouted_attachment(tenant, msg, trace_id=trace_id)
 
 
 async def try_relay_user_message(
@@ -806,7 +885,8 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
     label = ticket_label(ticket)
     user_chat = int(ticket["user_chat_id"])
     prefix = f"Ответ команды WWC по обращению {label}" if _is_site(ticket) else f"Ответ администратора по заявке {label}"
-    if msg.file_id:
+    attachment = msg.attachment_id
+    if attachment:
         await copy_telegram_message(
             chat_id=str(user_chat), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
             bot_token=current_bot_binding().bot_token,
@@ -819,7 +899,7 @@ async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, tick
         ticket_id=str(ticket["ticket_id"]),
         direction="admin_to_user",
         text=msg.text,
-        telegram_file_id=msg.file_id,
+        telegram_file_id=attachment,
         source_chat_id=msg.chat_id,
         source_message_id=msg.message_id,
         delivered_chat_id=user_chat,
@@ -965,7 +1045,7 @@ async def _try_orders_topic_reply(tenant: TenantContext, msg: TelegramMessage, *
     if not reply or reply.get("message_id") == msg.thread_id or not (reply.get("from") or {}).get("is_bot"):
         return None
     admin = _admin_for_kind(FORUM_KIND_SITE)
-    if admin is None or msg.user_id != admin or not (msg.text.strip() or msg.file_id):
+    if admin is None or msg.user_id != admin or not (msg.text.strip() or msg.attachment_id):
         return None
     source = str(reply.get("text") or reply.get("caption") or "")
     found = _PARTNER_ID_RE.search(source)
