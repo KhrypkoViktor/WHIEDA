@@ -55,10 +55,12 @@ def test_v22_twice_seeds_the_catalog_and_the_pilot_is_for_the_owner_only(monkeyp
             rows = conn.execute("select code, kind, status, partner_share_wusd_minor, confirmer from shop_items order by sort_order").fetchall()
             db.grant_api_role(conn)
         assert [r[0] for r in rows] == [
-            "konsultaciya", "snyat-blok", "lending", "kurs-vozrazheniya", "kurs-prodazhi", "preza-vozrazheniya", "gemini",
+            "kurs-online-start", "konsultaciya", "snyat-blok", "lending", "kurs-vozrazheniya", "kurs-prodazhi",
+            "preza-vozrazheniya", "gemini",
         ]
-        assert {r[0]: r[2] for r in rows}["gemini"] == "published"
-        assert {r[2] for r in rows if r[0] != "gemini"} == {"pilot"}
+        published = {"gemini", "kurs-online-start"}  # «Онлайн-старт» продаётся всем с 06.10.2026
+        assert {r[0] for r in rows if r[2] == "published"} == published
+        assert {r[2] for r in rows if r[0] not in published} == {"pilot"}
         assert {r[3] for r in rows} == {0}  # доли партнёру в v1 нет
         assert {r[0]: r[4] for r in rows}["gemini"] == "services_admin" and {r[4] for r in rows if r[0] != "gemini"} == {"owner"}
 
@@ -66,20 +68,23 @@ def test_v22_twice_seeds_the_catalog_and_the_pilot_is_for_the_owner_only(monkeyp
             from app.shop.service import public_catalog
 
             guest = await public_catalog("whieda", viewer_id=None)
-            assert [i["code"] for i in guest["items"]] == ["gemini"] and guest["preview"] is False
-            gemini = guest["items"][0]
+            assert [i["code"] for i in guest["items"]] == ["kurs-online-start", "gemini"] and guest["preview"] is False
+            online = guest["items"][0]
+            assert online["prices"] == {"wusd": 100, "rub": 10000, "byn": 350, "club_wusd": 75, "club_rub": 7500}
+            assert online["cta"]["start"] == "shop_kurs-online-start"
+            gemini = guest["items"][1]
             assert gemini["cta"] == {"kind": "bot", "start": "gemini", "url": "https://t.me/WHIEDA_Advisor_bot?start=gemini"}
             assert gemini["price_text"] == "6 мес — 3 990 ₽ · 18 мес — 4 490 ₽"
             assert not any("share" in key for key in gemini)
             owner = await public_catalog("whieda", viewer_id=OWNER)
-            assert owner["preview"] is True and len(owner["items"]) == 7
+            assert owner["preview"] is True and len(owner["items"]) == 8
             preza = next(i for i in owner["items"] if i["code"] == "preza-vozrazheniya")
             assert preza["prices"] == {"wusd": 5, "rub": 500, "byn": 17.5}
             assert preza["cta"]["start"] == "shop_preza-vozrazheniya" and preza["description_html"].startswith("<p>")
             prodazhi = next(i for i in owner["items"] if i["code"] == "kurs-prodazhi")
             assert prodazhi["available"] is False  # курса «Продажи» ещё нет
             stranger = await public_catalog("whieda", viewer_id=STRANGER)
-            assert [i["code"] for i in stranger["items"]] == ["gemini"]
+            assert [i["code"] for i in stranger["items"]] == ["kurs-online-start", "gemini"]
 
         db.run_with_app(proof)
 
@@ -212,5 +217,85 @@ def test_order_receipt_paid_gives_the_file_and_the_course_once(monkeypatch):
             assert second["created"] is True and second["order_id"] != first["order_id"]
             paid_service = await confirm_order("whieda", order_id=second["order_id"], paid_by=OWNER)
             assert paid_service["delivered"] is False and paid_service["order"]["status"] == "paid"
+
+        db.run_with_app(proof)
+
+
+CLUB = 90001
+NO_CLUB = 90002
+EXPIRED = 90003
+CLUB_SEED = f"""
+insert into lead_actors (actor_id, tenant_id, display_name, telegram_user_id, telegram_chat_id) values
+  ('telegram:whieda:{CLUB}', 'whieda', 'В клубе', {CLUB}, '{CLUB}'),
+  ('telegram:whieda:{NO_CLUB}', 'whieda', 'Без клуба', {NO_CLUB}, '{NO_CLUB}'),
+  ('telegram:whieda:{EXPIRED}', 'whieda', 'Клуб истёк', {EXPIRED}, '{EXPIRED}');
+insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode) values
+  ('clubber', 'whieda', 'telegram:whieda:{CLUB}', 'named'),
+  ('nocl', 'whieda', 'telegram:whieda:{NO_CLUB}', 'named'),
+  ('oldclub', 'whieda', 'telegram:whieda:{EXPIRED}', 'named');
+insert into partner_subscriptions (tenant_id, ref_code, paid_until) values
+  ('whieda', 'clubber', now() + interval '60 days'),
+  ('whieda', 'nocl', now() + interval '60 days'),
+  ('whieda', 'oldclub', now() + interval '60 days');
+insert into partner_product_access (tenant_id, ref_code, product_code, paid_until) values
+  ('whieda', 'clubber', 'club_subscription', now() + interval '30 days'),
+  ('whieda', 'oldclub', 'club_subscription', now() - interval '1 day');
+insert into academy_courses (tenant_id, slug, title, access_rule, status)
+values ('whieda', 'online-start-4w', 'Онлайн-старт: 4 недели практики', 'purchase', 'published');
+"""
+
+
+@pytest.mark.integration
+def test_online_start_is_sold_to_anyone_and_a_club_member_pays_the_club_price(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_shop_club") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn, MIGRATIONS)
+            conn.execute(SEED)
+            conn.execute(CLUB_SEED)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy.service import AcademyViewer, course_outline, list_courses
+            from app.db import tenant_connection
+            from app.shop.service import course_offers, get_item, is_club_member, open_order
+
+            # Клуб: действующий club_subscription у профиля этого человека; истёкший и чужой — нет.
+            assert await is_club_member("whieda", CLUB) is True
+            assert await is_club_member("whieda", NO_CLUB) is False
+            assert await is_club_member("whieda", EXPIRED) is False
+            assert await is_club_member("whieda", 123456) is False  # человек без профиля
+            assert await is_club_member("whieda", BUYER) is False
+
+            # Карточка Мастерской есть только у опубликованного курса (возражения — pilot).
+            async with tenant_connection("whieda") as conn:
+                offers = await course_offers(conn, "whieda", ["online-start-4w", "vozrazheniya"])
+            assert list(offers) == ["online-start-4w"]
+            assert offers["online-start-4w"]["start"] == "shop_kurs-online-start"
+            assert offers["online-start-4w"]["url"] == "https://t.me/WHIEDA_Advisor_bot?start=shop_kurs-online-start"
+            assert offers["online-start-4w"]["prices"]["club_wusd"] == 75
+
+            # Академия для сайта: у закрытого платного курса — purchase, у курса без карточки — нет.
+            stranger = AcademyViewer(telegram_user_id=123456, is_preview_admin=False, partner_paid=False)
+            listed = {c["slug"]: c for c in await list_courses("whieda", stranger)}
+            assert listed["online-start-4w"]["lock_reason"] == "purchase_required"
+            assert listed["online-start-4w"]["purchase"]["code"] == "kurs-online-start"
+            assert "purchase" not in listed["vozrazheniya"]  # ключ у автора, как раньше
+            outline = await course_outline("whieda", "online-start-4w", stranger, allow_locked=True)
+            assert outline["course"]["purchase"]["start"] == "shop_kurs-online-start"
+
+            # Заказ: человеку без сайта — обычная цена, участнику клуба — клубная.
+            item = await get_item("whieda", "kurs-online-start")
+            plain = await open_order("whieda", item=item, telegram_user_id=123456, ticket_id=None, country_code="RU",
+                                     partner_ref_code=None, partner_ref_source=None)
+            member = await open_order("whieda", item=item, telegram_user_id=CLUB, ticket_id=None, country_code="RU",
+                                      partner_ref_code=None, partner_ref_source=None, club=True)
+            member_by = await open_order("whieda", item=item, telegram_user_id=CLUB, ticket_id=None, country_code="BY",
+                                         partner_ref_code=None, partner_ref_source=None, club=True)
+            assert (plain["currency"], plain["amount_minor"]) == ("RUB", 1000000)
+            assert (member["currency"], member["amount_minor"]) == ("RUB", 750000)
+            assert member_by["order_id"] == member["order_id"]  # тот же заказ, страну сменили до чека
+            assert (member_by["currency"], member_by["amount_minor"]) == ("WUSD", 7500)
 
         db.run_with_app(proof)

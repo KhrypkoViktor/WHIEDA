@@ -59,7 +59,8 @@ from app.academy.service import (
     preview_admin_ids,
     set_lesson_done,
 )
-from app.db import tenant_connection
+from app.db import fetch_one, tenant_connection
+from app.shop.service import course_offers, is_club_member
 from app.settings import get_settings
 from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url
 from app.telegram.bindings import current_bot_binding
@@ -124,6 +125,27 @@ def key_error_text(exc: AcademyKeyError) -> str:
         if who:
             return f"Автор курса не продлил размещение — напишите ему: {who}. Ключ не потрачен."
     return KEY_ERROR_TEXT.get(exc.code, KEY_ERROR_TEXT["key_not_found"])
+
+
+def offer_lock_text(title: str, prices: dict[str, Any], *, club: bool) -> str:
+    """Замок курса, который продаётся в Мастерской: цена и что будет после «Купить»."""
+    price = f"{_num(prices['rub'])} ₽ / {_num(prices['wusd'])} WWC$"
+    lines = [f"«{title}» — платный курс."]
+    if prices.get("club_wusd") is not None and club:
+        lines.append(f"Цена для вас как участника клуба: {_num(prices['club_rub'])} ₽ / {_num(prices['club_wusd'])} WWC$ (обычная — {price}).")
+    else:
+        lines.append(f"Цена: {price}.")
+        if prices.get("club_wusd") is not None:
+            lines.append(f"Участникам клуба — {_num(prices['club_rub'])} ₽ / {_num(prices['club_wusd'])} WWC$.")
+    lines += ["", "Нажмите «Купить курс»: бот пришлёт реквизиты, вы переведёте и пришлёте сюда чек. "
+                  "Виктор подтвердит оплату — и курс откроется здесь и на сайте."]
+    return "\n".join(lines)
+
+
+def _num(value: Any) -> str:
+    number = float(value)
+    text = f"{number:,.0f}" if number.is_integer() else f"{number:,.2f}"
+    return text.replace(",", "\u00a0")
 
 
 def purchase_lock_text(contact: dict[str, Any] | None) -> str:
@@ -251,14 +273,57 @@ def _all_lessons(course: dict[str, Any], lessons: list[dict[str, Any]]) -> tuple
     return "\n".join(lines).replace("\n\n\n", "\n\n"), {"inline_keyboard": rows}
 
 
-async def _show_lock(chat_id: int, reason: str, author_contact: dict[str, Any] | None = None) -> None:
+async def _show_lock(
+    chat_id: int,
+    reason: str,
+    author_contact: dict[str, Any] | None = None,
+    *,
+    tenant_id: str | None = None,
+    course: dict[str, Any] | None = None,
+    user_id: int | None = None,
+) -> None:
     keyboard = None
     if reason == "pro_required":
         keyboard = {"inline_keyboard": [[{"text": "Продлить платформу", "callback_data": "renew:start"}]]}
     if reason == "purchase_required":
+        offer = (course or {}).get("purchase") or await _course_offer(tenant_id, course)
+        if offer:
+            # Курс продаётся в Мастерской: покупает любой, без сайта и профиля (владелец, 06.10.2026).
+            club = bool(user_id) and offer["prices"].get("club_wusd") is not None and await is_club_member(tenant_id, int(user_id))
+            await _send(
+                chat_id,
+                offer_lock_text(str(course.get("title") or ""), offer["prices"], club=club),
+                {"inline_keyboard": [[{"text": "Купить курс", "callback_data": f"shop:card:{offer['code']}"}]]},
+            )
+            return
         await _send(chat_id, purchase_lock_text(author_contact))
         return
     await _send(chat_id, LOCK_TEXT.get(reason, LOCK_TEXT["academy_not_open"]), keyboard)
+
+
+async def _course_brief(tenant_id: str, slug: str | None) -> dict[str, Any] | None:
+    """Название курса для замка: course_outline без доступа бросает ошибку, а не курс."""
+    if not slug:
+        return None
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            "select slug, title from academy_courses where tenant_id = %s and slug = %s and status = 'published'",
+            (tenant_id, slug),
+        )
+    return dict(row) if row else None
+
+
+async def _course_offer(tenant_id: str | None, course: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not tenant_id or not course or not course.get("slug"):
+        return None
+    try:
+        async with tenant_connection(tenant_id) as conn:
+            offers = await course_offers(conn, tenant_id, [str(course["slug"])])
+    except Exception:  # Мастерская недоступна — остаётся прежний замок «к автору»
+        logger.warning("academy_course_offer_failed", exc_info=True, extra={"course": course.get("slug")})
+        return None
+    return offers.get(str(course["slug"]))
 
 
 async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug: str, position: int | None) -> dict[str, Any]:
@@ -322,7 +387,10 @@ async def show_academy_home(tenant_id: str, chat_id: int, telegram_user_id: int)
     if len(courses) == 1:
         course = courses[0]
         if course["locked"]:
-            await _show_lock(chat_id, course["lock_reason"], course.get("author_contact"))
+            await _show_lock(
+                chat_id, course["lock_reason"], course.get("author_contact"),
+                tenant_id=tenant_id, course=course, user_id=telegram_user_id,
+            )
             return {"status": course["lock_reason"]}
         return await _show_course(tenant_id, chat_id, viewer, course["slug"], None)
     lines = ["🎓 Академия WWC", ""]
@@ -455,10 +523,14 @@ async def try_handle_academy_callback(
         if exc.code == "lesson_locked":
             await _send(callback.chat_id, lesson_lock_text(exc.extra.get("lock_reason"), exc.extra.get("opens_at")))
             return {"ok": False, "route": "academy", "status": exc.code, "trace_id": trace_id}
+        slug = course_slug or les_slug or done_slug or all_slug
         await _show_lock(
             callback.chat_id,
             exc.code if exc.code in LOCK_TEXT else "academy_not_open",
             exc.extra.get("author_contact"),
+            tenant_id=tenant_id,
+            course=await _course_brief(tenant_id, slug) if exc.code == "purchase_required" else None,
+            user_id=callback.user_id,
         )
         return {"ok": False, "route": "academy", "status": exc.code, "trace_id": trace_id}
     return {"ok": True, "route": "academy", **result, "trace_id": trace_id}

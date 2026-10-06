@@ -273,6 +273,9 @@ async def list_courses(tenant_id: str, viewer: AcademyViewer) -> list[dict[str, 
         )
         names = await _author_names(conn, tenant_id, authors)
         covers = await load_media(conn, tenant_id, [course["cover_media_id"] for course in courses])
+        offers = await _purchase_offers(
+            conn, tenant_id, [course["slug"] for course in courses if locks[course["course_id"]] == "purchase_required"]
+        )
     out = []
     for course in courses:
         lock = locks[course["course_id"]]
@@ -294,6 +297,9 @@ async def list_courses(tenant_id: str, viewer: AcademyViewer) -> list[dict[str, 
         if lock == "purchase_required":
             # Доступ выдаёт автор курса: ученик берёт у него ключ.
             item["author_contact"] = contacts.get(str(course.get("author_actor_id") or ""))
+            if course["slug"] in offers:
+                # …или курс продаётся в Мастерской: кнопка «Купить» ведёт в бота.
+                item["purchase"] = offers[course["slug"]]
         out.append(item)
     return out
 
@@ -612,7 +618,26 @@ async def course_outline(
     }
     if view.lock_extra.get("author_contact") is not None or view.lock == "purchase_required":
         payload_course["author_contact"] = view.lock_extra.get("author_contact")
+    if view.lock == "purchase_required":
+        async with tenant_connection(tenant_id) as conn:
+            offer = (await _purchase_offers(conn, tenant_id, [course["slug"]])).get(course["slug"])
+        if offer:
+            payload_course["purchase"] = offer
     return {"course": payload_course, "modules": _module_payload(modules, summaries, lessons), "lessons": summaries}
+
+
+async def _purchase_offers(conn: Any, tenant_id: str, slugs: list[str]) -> dict[str, dict[str, Any]]:
+    """Карточки Мастерской для платных курсов; сбой — без кнопки «Купить», страница жива."""
+    if not slugs:
+        return {}
+    from app.shop.service import course_offers  # Мастерская импортирует Академию: только здесь
+
+    try:
+        async with conn.transaction():  # точка сохранения: сбой не ломает остальной запрос страницы
+            return await course_offers(conn, tenant_id, slugs)
+    except Exception:
+        logger.warning("academy_purchase_offers_failed", exc_info=True, extra={"courses": slugs})
+        return {}
 
 
 async def _latest_submission(conn: Any, tenant_id: str, lesson_id: str, telegram_user_id: int) -> dict[str, Any] | None:

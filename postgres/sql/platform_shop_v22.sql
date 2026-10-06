@@ -31,6 +31,9 @@ create table if not exists shop_items (
   price_wusd_minor bigint not null check (price_wusd_minor >= 0),
   price_rub_minor bigint check (price_rub_minor is null or price_rub_minor >= 0),
   price_byn_minor bigint check (price_byn_minor is null or price_byn_minor >= 0),
+  -- цена для участника клуба (WWC Leader CLUB, активный club_subscription) в WUSD;
+  -- в рублях — ×100. null — одна цена для всех (владелец, 06.10.2026)
+  price_club_wusd_minor bigint check (price_club_wusd_minor is null or price_club_wusd_minor >= 0),
   -- цена словами вместо одной суммы (Gemini: два срока)
   price_text text check (price_text is null or length(price_text) <= 120),
   cover_media_id uuid,
@@ -49,8 +52,13 @@ create table if not exists shop_items (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (tenant_id, code),
-  check (kind <> 'external' or external_url is not null)
+  check (kind <> 'external' or external_url is not null),
+  check (price_club_wusd_minor is null or price_club_wusd_minor <= price_wusd_minor)
 );
+
+-- База, где уже лежал первый вариант V22 (тестовые стенды), получает колонку здесь.
+alter table shop_items add column if not exists price_club_wusd_minor bigint
+  check (price_club_wusd_minor is null or price_club_wusd_minor >= 0);
 
 create index if not exists idx_shop_items_status
   on shop_items (tenant_id, status, sort_order);
@@ -109,6 +117,19 @@ insert into shop_items (
   price_wusd_minor, price_rub_minor, price_text, course_slug, external_url,
   confirmer, status, sort_order, requisites_note, delivery_note
 ) values
+  (
+    -- Владелец 06.10.2026: курс продаётся одной кнопкой «Купить» всем — и без сайта.
+    'whieda', 'kurs-online-start', 'course', 'courses',
+    'Курс «Онлайн-старт: 4 недели практики»',
+    'Практикум с Виктором: личный бренд и заявки через интернет',
+    'Четыре недели живых занятий: распаковка личного бренда, контент-завод с нейросетью, где брать людей и как довести разговор до заказа.' || chr(10) || chr(10)
+      || 'Суббота 12:00–14:00 — практика, среда 17:30–18:30 — разбор (МСК/Минск; время ориентировочное). Домашние задания проверяет Виктор.' || chr(10) || chr(10)
+      || 'Доступ откроется в Академии сразу после подтверждения оплаты.',
+    10000, 1000000, null, 'online-start-4w', null,
+    'owner', 'published', 5,
+    null,
+    'Ссылки на эфиры — в уроках «Суббота: практика» и «Среда: разбор вопросов». Вопросы пишите сюда.'
+  ),
   (
     'whieda', 'konsultaciya', 'service', 'services',
     'Консультация с Виктором',
@@ -181,6 +202,10 @@ insert into shop_items (
     null, null
   )
 on conflict (tenant_id, code) do nothing;
+
+-- Клубная цена «Онлайн-старта»: 75 WWC$ (7 500 ₽). Только если владелец её ещё не менял.
+update shop_items set price_club_wusd_minor = 7500
+ where tenant_id = 'whieda' and code = 'kurs-online-start' and price_club_wusd_minor is null;
 
 alter table shop_items enable row level security;
 drop policy if exists shop_items_tenant_isolation on shop_items;

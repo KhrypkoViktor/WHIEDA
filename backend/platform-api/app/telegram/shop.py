@@ -27,15 +27,18 @@ from app.shop.service import (
     EXTERNAL_START_PREFIX,
     STATUSES,
     ShopError,
+    club_price_wusd_minor,
     confirm_order,
     description_text,
     get_item,
     is_shop_admin,
+    is_club_member,
     item_visible,
     known_country,
     list_items,
     open_order,
     price_rub_minor,
+    priced_for,
     reject_order,
     release_receipt,
     resolve_partner_ref,
@@ -76,6 +79,7 @@ logger = logging.getLogger(__name__)
 _START_RE = re.compile(r"^shop_([a-z0-9]+(?:-[a-z0-9]+)*)(?:_([a-z0-9][a-z0-9_-]{0,40}))?\Z")
 _BUY_RE = re.compile(r"^shop:buy:([a-z0-9]+(?:-[a-z0-9]+)*):(RU|BY)(?::([a-z0-9][a-z0-9_-]{0,40}))?\Z")
 _DECIDE_RE = re.compile(r"^shop:(paid|reject):([0-9a-f]{32})\Z")
+_CARD_RE = re.compile(r"^shop:card:([a-z0-9]+(?:-[a-z0-9]+)*)\Z")
 _SHOWCASE_RE = re.compile(r"^/?витрина(?:\s+([a-z0-9-]+)\s+([a-z]+))?\s*$", re.IGNORECASE)
 CALLBACK_DATA_LIMIT = 64  # Telegram: callback_data — до 64 байт
 
@@ -135,14 +139,24 @@ def buy_callback(code: str, country: str, ref: str | None) -> str:
     return data
 
 
-def card_text(item: dict[str, Any]) -> str:
+def _price_line(item: dict[str, Any]) -> str:
+    return f"{money(price_rub_minor(item), 'RUB')} или {wwc(int(item['price_wusd_minor']))}"
+
+
+def card_text(item: dict[str, Any], *, club: bool = False) -> str:
     lines = [str(item["title"])]
     if item.get("subtitle"):
         lines.append(str(item["subtitle"]))
     description = description_text(item)
     if description:
         lines += ["", description]
-    lines += ["", f"Цена: {money(price_rub_minor(item), 'RUB')} или {wwc(int(item['price_wusd_minor']))}."]
+    club_wusd = club_price_wusd_minor(item)
+    if club_wusd is not None and club:
+        lines += ["", f"Цена для вас как участника клуба: {_price_line(priced_for(item, club=True))} (обычная — {_price_line(item)})."]
+    else:
+        lines += ["", f"Цена: {_price_line(item)}."]
+        if club_wusd is not None:
+            lines.append(f"Участникам клуба — {_price_line(priced_for(item, club=True))}.")
     if unavailable_reason(item) == "course_not_ready":
         lines += ["", COURSE_NOT_READY_TEXT]
     else:
@@ -150,9 +164,10 @@ def card_text(item: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def card_keyboard(item: dict[str, Any], *, ref: str | None, country: str | None) -> dict[str, Any] | None:
+def card_keyboard(item: dict[str, Any], *, ref: str | None, country: str | None, club: bool = False) -> dict[str, Any] | None:
     if unavailable_reason(item):
         return None
+    item = priced_for(item, club=club)
     verb = "Заказать" if item["kind"] == "service" else "Купить"
     buttons = {
         "RU": {"text": f"{verb} — {money(price_rub_minor(item), 'RUB')} · Россия", "callback_data": buy_callback(item["code"], "RU", ref)},
@@ -178,10 +193,16 @@ async def handle_shop_start(tenant: TenantContext, msg: TelegramMessage, token: 
             return await show_services(msg.chat_id, trace_id=trace_id)
         await _send(msg.chat_id, f"{item['title']}: {url}")
         return {"ok": True, "route": "shop", "status": "external_link", "trace_id": trace_id}
-    country = await known_country(tenant.tenant_id, msg.user_id)
-    await _send(msg.chat_id, card_text(item), reply_markup=card_keyboard(item, ref=ref, country=country))
+    await send_card(tenant.tenant_id, msg.chat_id, msg.user_id, item, ref=ref)
     logger.info("shop_card_shown", extra={"trace_id": trace_id, "item": item["code"], "with_ref": bool(ref)})
     return {"ok": True, "route": "shop", "status": "card", "item": item["code"], "trace_id": trace_id}
+
+
+async def send_card(tenant_id: str, chat_id: int, user_id: int, item: dict[str, Any], *, ref: str | None) -> None:
+    """Карточка с ценой для этого человека (участнику клуба — клубная) и кнопками стран."""
+    club = await is_club_member(tenant_id, user_id) if club_price_wusd_minor(item) is not None else False
+    country = await known_country(tenant_id, user_id)
+    await _send(chat_id, card_text(item, club=club), reply_markup=card_keyboard(item, ref=ref, country=country, club=club))
 
 
 # ---- order -----------------------------------------------------------------------------
@@ -234,9 +255,10 @@ async def _buy(
     )
     if ticket["created"]:
         ticket = await _open_forum_topic(tenant, ticket)
+    club = await is_club_member(tenant.tenant_id, callback.user_id) if club_price_wusd_minor(item) is not None else False
     order = await open_order(
         tenant.tenant_id, item=item, telegram_user_id=callback.user_id, ticket_id=str(ticket["ticket_id"]),
-        country_code=country, partner_ref_code=partner_ref, partner_ref_source=source,
+        country_code=country, partner_ref_code=partner_ref, partner_ref_source=source, club=club,
     )
     price = both(int(order["amount_minor"]), str(order["currency"]))
     if ticket["created"]:
@@ -475,7 +497,8 @@ async def try_handle_shop_callback(
         return None
     decide = _DECIDE_RE.fullmatch(data)
     buy = None if decide else _BUY_RE.fullmatch(data)
-    if not decide and not buy:
+    card = None if decide or buy else _CARD_RE.fullmatch(data)
+    if not decide and not buy and not card:
         return None
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=current_bot_binding().bot_token)
     if decide:
@@ -483,6 +506,14 @@ async def try_handle_shop_callback(
         return await _decide(tenant, callback, decide.group(1), decide.group(2), trace_id=trace_id)
     if callback.chat_type != "private":
         return {"ok": True, "route": "shop", "status": "private_chat_required", "trace_id": trace_id}
+    if card:
+        # «Купить курс» на замке Академии → та же карточка, что по ссылке shop_<code>.
+        item = await get_item(tenant.tenant_id, card.group(1))
+        if not item_visible(item, admin=is_shop_admin(callback.user_id)) or item["kind"] == "external":
+            await _send(callback.chat_id, NOT_AVAILABLE_TEXT.format(url=_site_base() + SHOP_PAGE_PATH))
+            return {"ok": False, "route": "shop", "status": "not_available", "trace_id": trace_id}
+        await send_card(tenant.tenant_id, callback.chat_id, callback.user_id, item, ref=None)
+        return {"ok": True, "route": "shop", "status": "card", "item": item["code"], "trace_id": trace_id}
     code, country, ref = buy.groups()
     return await _buy(tenant, callback, code, country, ref, trace_id=trace_id)
 

@@ -66,7 +66,7 @@ class ShopError(Exception):
 
 _ITEM_COLUMNS = """
 code, kind, category, title, subtitle, description_md, description_html,
-price_wusd_minor, price_rub_minor, price_byn_minor, price_text,
+price_wusd_minor, price_rub_minor, price_byn_minor, price_club_wusd_minor, price_text,
 cover_media_id::text as cover_media_id, course_slug, file_media_id::text as file_media_id,
 external_url, partner_share_wusd_minor, confirmer, status, sort_order,
 requisites_note, delivery_note, updated_by_telegram_user_id, created_at, updated_at
@@ -96,13 +96,27 @@ def price_byn_minor(item: dict[str, Any]) -> int:
     return (int(item["price_wusd_minor"]) * BYN_PER_WUSD_TENTHS + 5) // 10
 
 
-def price_for_country(item: dict[str, Any], country: str) -> tuple[str, int]:
+def club_price_wusd_minor(item: dict[str, Any]) -> int | None:
+    value = item.get("price_club_wusd_minor")
+    return int(value) if value is not None else None
+
+
+def priced_for(item: dict[str, Any], *, club: bool) -> dict[str, Any]:
+    """Товар с ценой для этого покупателя: участнику клуба — клубная (₽ = WWC$ × 100)."""
+    club_wusd = club_price_wusd_minor(item)
+    if not club or club_wusd is None:
+        return item
+    return {**item, "price_wusd_minor": club_wusd, "price_rub_minor": club_wusd * RUB_PER_WUSD, "price_byn_minor": None}
+
+
+def price_for_country(item: dict[str, Any], country: str, *, club: bool = False) -> tuple[str, int]:
     """Валюта и сумма заказа по стране оплаты."""
     code = str(country or "").upper()
     if code not in COUNTRY_CURRENCY:
         raise ShopError(400, "bad_country")
     currency = COUNTRY_CURRENCY[code]
-    return currency, price_rub_minor(item) if currency == "RUB" else int(item["price_wusd_minor"])
+    priced = priced_for(item, club=club)
+    return currency, price_rub_minor(priced) if currency == "RUB" else int(priced["price_wusd_minor"])
 
 
 def major(minor: Any) -> int | float:
@@ -112,11 +126,16 @@ def major(minor: Any) -> int | float:
 
 
 def prices_out(item: dict[str, Any]) -> dict[str, int | float]:
-    return {
+    out = {
         "wusd": major(item["price_wusd_minor"]),
         "rub": major(price_rub_minor(item)),
         "byn": major(price_byn_minor(item)),
     }
+    club = club_price_wusd_minor(item)
+    if club is not None:
+        out["club_wusd"] = major(club)
+        out["club_rub"] = major(club * RUB_PER_WUSD)
+    return out
 
 
 # ---- who sees what ----------------------------------------------------------------------
@@ -293,6 +312,53 @@ async def resolve_partner_ref(
     return (str(first["ref_code"]), "attribution") if first else (None, None)
 
 
+async def is_club_member(tenant_id: str, telegram_user_id: int) -> bool:
+    """Активный клуб (club_subscription не истёк) у одного из профилей этого человека."""
+    async with tenant_connection(tenant_id) as conn:
+        actors = await actor_ids_for_telegram(conn, tenant_id, int(telegram_user_id))
+        if not actors:
+            return False
+        row = await fetch_one(
+            conn,
+            """
+            select 1 as ok from referral_profiles rp
+            join partner_product_access pa
+              on pa.tenant_id = rp.tenant_id and pa.ref_code = rp.ref_code
+             and pa.product_code = 'club_subscription' and pa.paid_until > now()
+            where rp.tenant_id = %s and rp.enabled = true and rp.owner_id = any(%s)
+            limit 1
+            """,
+            (tenant_id, actors),
+        )
+    return bool(row)
+
+
+async def course_offers(conn: Any, tenant_id: str, slugs: list[str]) -> dict[str, dict[str, Any]]:
+    """Курсы Академии, которые продаются в Мастерской (опубликованная карточка kind=course):
+    ``{course_slug: {code, start, url, prices}}`` — кнопка «Купить» в боте и на сайте."""
+    wanted = sorted({str(slug) for slug in slugs if slug})
+    if not wanted:
+        return {}
+    rows = await fetch_all(
+        conn,
+        f"""
+        select {_ITEM_COLUMNS} from shop_items
+        where tenant_id = %s and kind = 'course' and status = 'published' and course_slug = any(%s)
+        order by sort_order, code
+        """,
+        (tenant_id, wanted),
+    )
+    bot = get_settings().telegram_bot_username
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slug = str(row["course_slug"])
+        if slug in out:
+            continue
+        start = f"{BOT_START_PREFIX}{row['code']}"
+        out[slug] = {"code": row["code"], "start": start, "url": bot_link(bot, start), "prices": prices_out(row)}
+    return out
+
+
 # ---- orders -----------------------------------------------------------------------------
 
 
@@ -305,11 +371,13 @@ async def open_order(
     country_code: str,
     partner_ref_code: str | None,
     partner_ref_source: str | None,
+    club: bool = False,
 ) -> dict[str, Any]:
-    """Новый заказ или уже открытый на этот товар (до оплаты — один); ``created``."""
+    """Новый заказ или уже открытый на этот товар (до оплаты — один); ``created``.
+    ``club`` — покупатель в клубе: сумма по клубной цене, если она у товара есть."""
     if unavailable_reason(item):
         raise ShopError(409, "not_for_sale")
-    currency, amount = price_for_country(item, country_code)
+    currency, amount = price_for_country(item, country_code, club=club)
     country = str(country_code).upper()
     async with tenant_connection(tenant_id) as conn:
         created = await fetch_one(
@@ -632,7 +700,8 @@ def _iso(value: datetime | None) -> str | None:
 
 _TEXT_LIMITS = {"title": 200, "subtitle": 300, "description_md": 20000, "price_text": 120,
                 "requisites_note": 1000, "delivery_note": 1000, "external_url": 500}
-_PRICE_FIELDS = {"price_wusd": "price_wusd_minor", "price_rub": "price_rub_minor", "price_byn": "price_byn_minor"}
+_PRICE_FIELDS = {"price_wusd": "price_wusd_minor", "price_rub": "price_rub_minor", "price_byn": "price_byn_minor",
+                 "price_club_wusd": "price_club_wusd_minor"}
 EDITABLE_FIELDS = frozenset(
     {"title", "subtitle", "description_md", "category", "price_text", "status", "sort_order", "cover_media_id",
      "file_media_id", "course_slug", "external_url", "requisites_note", "delivery_note", *_PRICE_FIELDS}
