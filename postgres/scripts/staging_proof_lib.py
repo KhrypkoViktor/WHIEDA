@@ -66,6 +66,7 @@ APPLY_ORDER = [
     "platform_crm_v20.sql",
     "platform_cabinet_v21.sql",
     "platform_shop_v22.sql",
+    "platform_site_request_quick_v23.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

@@ -56,6 +56,7 @@ MIGRATIONS = (
     "platform_academy_lms_v19.sql",
     "platform_crm_v20.sql",
     "platform_shop_v22.sql",  # Мастерская WWC (03.10.2026): после support_tickets (v8)
+    "platform_site_request_quick_v23.sql",  # анкета: имя, «Пропустить», голосовое (08.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

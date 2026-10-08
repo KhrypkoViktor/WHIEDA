@@ -40,6 +40,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 set_site_request_contacts,
                 set_site_request_country,
                 set_site_request_intro,
+                set_site_request_name,
                 set_site_request_photo,
                 set_site_request_plan,
                 set_site_request_subdomain,
@@ -53,6 +54,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             req = await begin_site_request("whieda", "proof-new")
             assert req["status"] == "awaiting_country"
             await set_site_request_country("whieda", "proof-new", "RU")
+            await set_site_request_name("whieda", "proof-new", "Анастасия Сошникова")  # V23: имя после страны
             await set_site_request_subdomain("whieda", "proof-new", "anastasy")
             await set_site_request_photo("whieda", "proof-new", "file-1")
             req = await set_site_request_intro("whieda", "proof-new", "Косметолог-эстетист, семь лет в сфере красоты и омоложения.")
@@ -97,6 +99,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 )
             await begin_site_request("whieda", "proof-two")
             await set_site_request_country("whieda", "proof-two", "BY")
+            await set_site_request_name("whieda", "proof-two", "Ольга Новикова")
             await set_site_request_subdomain("whieda", "proof-two", "kira2")
             await set_site_request_photo("whieda", "proof-two", "file-2")
             await set_site_request_intro("whieda", "proof-two", "Помогаю людям спокойно разбираться в продуктах и привычках.")

@@ -66,6 +66,7 @@ from app.telegram.support import is_support_start_token, open_site_support
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
     try_handle_site_request_message,
+    try_handle_site_request_voice,
 )
 from app.telegram.referral_admin import (
     try_handle_referral_admin_callback,
@@ -587,6 +588,10 @@ async def _process_core_telegram_update_scoped(
     # Причина отказа в заявке на изменение сайта — Reply владельца на вопрос бота.
     # Голосовое, видео, кружок без подписи: дальше по цепочке их никто не ждёт.
     if msg.chat_type == "private" and msg.media_file_id and not msg.file_id and not msg.text:
+        if not manual_operations:
+            site_voice = await try_handle_site_request_voice(tenant, msg, trace_id=trace_id)
+            if site_voice is not None:
+                return site_voice
         media_result = await try_handle_support_media(tenant, msg, trace_id=trace_id)
         return media_result or {"ok": True, "route": "ignored_media"}
 

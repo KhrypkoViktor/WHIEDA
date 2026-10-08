@@ -149,7 +149,7 @@ async def set_site_request_country(
             conn,
             """
             update partner_site_requests
-            set country_code = %s, status = 'awaiting_subdomain', updated_at = now()
+            set country_code = %s, status = 'awaiting_name', updated_at = now()
             where tenant_id = %s and actor_id = %s and status = 'awaiting_country'
             returning *
             """,
@@ -157,6 +157,92 @@ async def set_site_request_country(
         )
     if not row:
         raise SiteRequestError("Заявка уже перешла к следующему шагу.")
+    return row
+
+
+def clean_partner_name(value: str) -> str:
+    """Имя и фамилия для сайта (V23): два слова и больше, без ссылок и цифр."""
+    name = " ".join(str(value or "").split())
+    words = [w for w in name.split(" ") if w]
+    if len(words) < 2 or len(name) > 120 or any(ch.isdigit() for ch in name) or "/" in name or "@" in name:
+        raise SiteRequestError("Напишите имя и фамилию — так вас увидят на сайте. Например: Наталья Иванова.")
+    return name
+
+
+async def set_site_request_name(tenant_id: str, actor_id: str, name: str) -> dict[str, Any]:
+    value = clean_partner_name(name)
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set partner_name = %s, status = 'awaiting_subdomain', updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = 'awaiting_name'
+            returning *
+            """,
+            (value, tenant_id, actor_id),
+        )
+    if not row:
+        raise SiteRequestError("Сейчас имя не ожидается.")
+    return row
+
+
+# Шаги, которые можно пропустить (владелец, 08.10.2026): обязательны только имя и адрес.
+# Фото — позже, текст — стандартный, контакты — из Telegram.
+SKIPPABLE_STEPS: dict[str, tuple[str, str]] = {
+    "awaiting_photo": ("awaiting_text", "фото"),
+    "awaiting_text": ("awaiting_contacts", "текст о себе"),
+    "awaiting_contacts": ("awaiting_plan", "контакты"),
+}
+
+
+async def skip_site_request_step(tenant_id: str, actor_id: str) -> tuple[dict[str, Any], str]:
+    """«Пропустить»: шаг закрывается пустым. Возвращает заявку и что пропущено."""
+    async with tenant_connection(tenant_id) as conn:
+        current = await fetch_one(
+            conn,
+            """
+            select status from partner_site_requests
+            where tenant_id = %s and actor_id = %s
+              and status not in ('provisioned', 'rejected', 'cancelled')
+            order by created_at desc limit 1
+            for update
+            """,
+            (tenant_id, actor_id),
+        )
+        step = SKIPPABLE_STEPS.get(str((current or {}).get("status") or ""))
+        if not step:
+            raise SiteRequestError("Этот шаг пропустить нельзя.")
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set status = %s, updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = %s
+            returning *
+            """,
+            (step[0], tenant_id, actor_id, current["status"]),
+        )
+    if not row:
+        raise SiteRequestError("Заявка уже перешла к следующему шагу.")
+    return row, step[1]
+
+
+async def set_site_request_intro_voice(tenant_id: str, actor_id: str, file_id: str) -> dict[str, Any]:
+    """Голосовое вместо текста о себе (V23): текст расшифруем сами."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set intro_voice_file_id = %s, status = 'awaiting_contacts', updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = 'awaiting_text'
+            returning *
+            """,
+            (file_id, tenant_id, actor_id),
+        )
+    if not row:
+        raise SiteRequestError("Сейчас текст не ожидается.")
     return row
 
 
@@ -241,8 +327,8 @@ async def set_site_request_intro(
     tenant_id: str, actor_id: str, intro_text: str
 ) -> dict[str, Any]:
     value = str(intro_text or "").strip()
-    if len(value) < 20:
-        raise SiteRequestError("Напишите о себе хотя бы 2-3 предложения.")
+    if len(value) < 2:
+        raise SiteRequestError("Напишите пару слов о себе или нажмите «Пропустить».")
     if len(value) > 3000:
         raise SiteRequestError("Текст длиннее 3000 знаков. Пришлите более короткий вариант.")
     async with tenant_connection(tenant_id) as conn:

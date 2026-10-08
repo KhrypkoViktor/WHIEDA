@@ -21,9 +21,12 @@ from app.site_requests.service import (
     set_site_request_contacts,
     set_site_request_country,
     set_site_request_intro,
+    set_site_request_intro_voice,
+    set_site_request_name,
     set_site_request_photo,
     set_site_request_plan,
     set_site_request_subdomain,
+    skip_site_request_step,
     submit_site_payment_proof,
 )
 from app.site_requests.contacts import contacts_summary
@@ -45,9 +48,21 @@ logger = logging.getLogger(__name__)
 
 # Шаги анкеты, которые ждут вложение: фото и чек.
 SITE_FILE_STEPS = frozenset({"awaiting_photo", "awaiting_payment"})
+# Голосом можно рассказать о себе (владелец, 08.10.2026): «принимай голосовые».
+VOICE_KINDS = frozenset({"voice", "audio", "video_note"})
+SKIP_KEYBOARD = {"inline_keyboard": [[{"text": "Пропустить", "callback_data": "site:skip"}]]}
+
+
+def _callback_as_message(callback: TelegramCallbackQuery) -> TelegramMessage:
+    """Кнопка «Пропустить» — шаг анкеты без сообщения; владельцу нужен тот же тег партнёра."""
+    sender = ((callback.raw or {}).get("callback_query") or {}).get("from") or {}
+    return TelegramMessage(
+        chat_id=callback.chat_id, user_id=callback.user_id, message_id=0, text="", chat_type=callback.chat_type,
+        file_id=None, raw=callback.raw, username=str(sender.get("username") or "").strip() or None,
+    )
 
 _CALLBACK_RE = re.compile(
-    r"^site:(create|country:(?:BY|RU)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^site:(create|skip|country:(?:BY|RU)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -87,6 +102,7 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
 
 
 _STEP_LABELS = {
+    "awaiting_name": "имя и фамилия",
     "awaiting_subdomain": "адрес сайта",
     "awaiting_photo": "фото",
     "awaiting_text": "текст о себе",
@@ -102,7 +118,9 @@ def partner_tag(msg: TelegramMessage) -> str:
     return f"@{msg.username} · id {msg.chat_id}" if msg.username else f"id {msg.chat_id}"
 
 
-async def _notify_owner_step(tenant_id: str, msg: TelegramMessage, request: dict[str, Any], *, done: str) -> None:
+async def _notify_owner_step(
+    tenant_id: str, msg: TelegramMessage, request: dict[str, Any], *, done: str, skipped: bool = False, voice: bool = False
+) -> None:
     """Владелец узнаёт о каждом шаге заявки, а не только о чеке: люди бросали
     анкету на адресе или фото, и об этом никто не знал (владелец, 22.09.2026:
     «мне нужны алерты в бота, когда заполняют данные»). Фото копируется
@@ -111,18 +129,23 @@ async def _notify_owner_step(tenant_id: str, msg: TelegramMessage, request: dict
     if not owner_id.isdigit() or int(owner_id) == int(msg.chat_id):
         return
     who = partner_tag(msg)
-    if done == "фото" and msg.file_id:
+    if (done == "фото" and msg.file_id) or voice:
         await _copy_to_owner(tenant_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
     subdomain = request.get("requested_subdomain")
     lines = [
-        f"Заявка на сайт — {who}: {done} получено.",
+        f"Заявка на сайт — {who}: {done} — пропущено." if skipped else (
+            f"Заявка на сайт — {who}: {done} — голосовое." if voice else f"Заявка на сайт — {who}: {done} получено."
+        ),
+        *([f"Имя: {request['partner_name']}"] if request.get("partner_name") else []),
         f"Адрес: {subdomain}.wwc.best" if subdomain else "Адрес: ещё не выбран",
         f"Дальше: {_STEP_LABELS.get(str(request.get('status')), request.get('status'))}.",
     ]
-    if done == "текст о себе" and request.get("intro_text"):
+    if voice:
+        lines += ["", "Голосовое выше — текст для сайта расшифровать."]
+    if done == "текст о себе" and not voice and request.get("intro_text"):
         lines.append("")
         lines.append(str(request["intro_text"])[:700])
-    if done == "контакты":
+    if done == "контакты" and not skipped:
         # Владельцу — и как прислали, и как бот разобрал: разбор подсказка,
         # а исходник решает (V12, 24.09.2026).
         lines.append("")
@@ -257,6 +280,8 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
                 {"text": "₽ · Россия", "callback_data": "site:country:RU"},
             ]]},
         )
+    elif status == "awaiting_name":
+        await _deliver(chat_id, "Как вас зовут? Напишите имя и фамилию — так вас увидят на сайте.")
     elif status == "awaiting_subdomain":
         await _deliver(
             chat_id,
@@ -267,13 +292,16 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
         await _deliver(
             chat_id,
             "Пришлите ваше фото. Лучше портрет: вы в кадре, лицо видно, без мелкого текста. "
-            "Кадрирование и размер мы подправим сами.",
+            "Кадрирование и размер мы подправим сами.\n\nНет фото под рукой — нажмите «Пропустить», добавите позже.",
+            reply_markup=SKIP_KEYBOARD,
         )
     elif status == "awaiting_text":
         await _deliver(
             chat_id,
-            "Напишите 2-7 предложений о себе, своём опыте и о том, с чем к вам можно обратиться. "
-            "Мы сократим и приведём текст к формату сайта.",
+            "Расскажите в паре предложений о себе: чем занимаетесь и с чем к вам можно обратиться. "
+            "Можно голосовым — мы сами переведём в текст и приведём к формату сайта.\n\n"
+            "Не хотите писать — нажмите «Пропустить», поставим стандартное описание.",
+            reply_markup=SKIP_KEYBOARD,
         )
     elif status == "awaiting_contacts":
         # Люди присылают контакты одним сообщением — так и спрашиваем
@@ -295,8 +323,9 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
                 "Почта: name@mail.ru",
                 "Канал: t.me/mychannel",
                 "",
-                "Telegram возьмём этот. Чего нет — пропустите. Если ничего добавлять не нужно, напишите «нет».",
+                "Telegram возьмём этот. Чего нет — пропустите. Если ничего добавлять не нужно, нажмите «Пропустить».",
             ]),
+            reply_markup=SKIP_KEYBOARD,
         )
     elif status == "awaiting_plan":
         rub = request.get("country_code") == "RU"
@@ -365,6 +394,11 @@ async def try_handle_site_request_callback(
             return {"ok": True, "route": "site_request_confirm", "trace_id": trace_id}
 
         actor_id = await _actor(tenant, callback)
+        if action == "skip":
+            request, skipped = await skip_site_request_step(tenant.tenant_id, actor_id)
+            await _notify_owner_step(tenant.tenant_id, _callback_as_message(callback), request, done=skipped, skipped=True)
+            await _prompt_for_request(callback.chat_id, request)
+            return {"ok": True, "route": "site_request", "status": request["status"], "skipped": skipped, "trace_id": trace_id}
         if action == "create":
             request = await begin_site_request(tenant.tenant_id, actor_id)
         elif action.startswith("plan:"):
@@ -392,6 +426,33 @@ async def _welcome_to_club_and_channel(request: dict[str, Any], trace_id: str) -
         logger.exception("site_request_club_invite_failed", extra={"trace_id": trace_id})
 
 
+async def try_handle_site_request_voice(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
+) -> dict[str, Any] | None:
+    """Голосовое на шаге «о себе» — в анкету (V23); на любом другом шаге — None,
+    и голосовое уходит в поддержку."""
+    if msg.chat_type != "private" or msg.media_kind not in VOICE_KINDS or not msg.media_file_id:
+        return None
+    try:
+        actor_id = await _actor(tenant, msg)
+        request = await get_open_site_request(tenant.tenant_id, actor_id)
+    except RuntimeError as exc:
+        if "database pool is not initialized" in str(exc):
+            return None
+        raise
+    if not request or str(request["status"]) != "awaiting_text" or request_is_stale(request):
+        return None
+    try:
+        request = await set_site_request_intro_voice(tenant.tenant_id, actor_id, str(msg.media_file_id))
+    except SiteRequestError as exc:
+        await _deliver(msg.chat_id, str(exc))
+        return {"ok": False, "route": "site_request", "status": "rejected", "trace_id": trace_id}
+    await _notify_owner_step(tenant.tenant_id, msg, request, done="текст о себе", voice=True)
+    await _deliver(msg.chat_id, "Голосовое получили — текст для сайта сделаем сами.")
+    await _prompt_for_request(msg.chat_id, request)
+    return {"ok": True, "route": "site_request", "status": request["status"], "trace_id": trace_id}
+
+
 async def try_handle_site_request_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -416,7 +477,10 @@ async def try_handle_site_request_message(
         return None
     try:
         status = str(request["status"])
-        if status == "awaiting_subdomain" and msg.text:
+        if status == "awaiting_name" and msg.text:
+            request = await set_site_request_name(tenant.tenant_id, actor_id, msg.text)
+            await _notify_owner_step(tenant.tenant_id, msg, request, done="имя и фамилия")
+        elif status == "awaiting_subdomain" and msg.text:
             request = await set_site_request_subdomain(tenant.tenant_id, actor_id, msg.text)
             await _notify_owner_step(tenant.tenant_id, msg, request, done="адрес сайта")
         elif status == "awaiting_photo" and msg.file_id:
@@ -446,6 +510,7 @@ async def try_handle_site_request_message(
                     "\n".join(
                         [
                             f"Новая заявка на сайт — {partner_tag(msg)}.",
+                            f"Имя: {request.get('partner_name') or '—'}",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
                             f"Страна: {request['country_code']}",
                             f"Пакет: {'Платформа + Клуб' if str(request.get('plan_code') or 'site') == 'bundle' else 'сайт + настройка'}",
