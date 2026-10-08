@@ -97,7 +97,38 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     return {"ok": True, "route": "max_message", "answer_mode": core_response.get("answer_mode"), "trace_id": trace_id}
 
 
+async def handle_max_chat_membership(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
+    """Бота добавили в чат Max (или убрали): запоминаем — туда пойдут посты из
+    Telegram-канала; владельцу — строка в Telegram, чтобы видел, куда подключились."""
+    from app.max.client import get_chat
+    from app.max.crosspost import remember_max_chat
+    from app.settings import get_settings
+    from app.telegram.bindings import resolve_bot_binding_context
+    from app.telegram.delivery import send_telegram_text
+
+    added = event.kind == "chat_added"
+    info = await get_chat(int(event.chat_id)) if added else {}
+    title = str(info.get("title") or "").strip() or None
+    row = await remember_max_chat(
+        tenant.tenant_id, chat_id=int(event.chat_id), title=title, chat_type=str(info.get("type") or event.text),
+        is_channel=event.text == "channel", added_by=event.user_id or None, active=added,
+    )
+    owner = str(get_settings().platform_billing_owner_telegram_id or "").strip()
+    binding = await resolve_bot_binding_context("whieda-advisor-bot")
+    if owner.isdigit() and binding is not None:
+        name = (row or {}).get("title") or title or str(event.chat_id)
+        text = (
+            f"Бот WWC добавлен в Max: «{name}». Посты из Telegram-канала теперь повторяются и здесь."
+            if added else f"Бота WWC убрали из Max: «{name}». Посты туда больше не идут."
+        )
+        await send_telegram_text(chat_id=owner, text=text, bot_token=binding.bot_token)
+    logger.info("max_chat_membership", extra={"trace_id": trace_id, "added": added, "chat_id": event.chat_id})
+    return {"ok": True, "route": "max_chat", "added": added, "chat_id": event.chat_id}
+
+
 async def process_max_event(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
+    if event.kind in {"chat_added", "chat_removed"}:
+        return await handle_max_chat_membership(tenant, event, trace_id)
     if event.kind == "start":
         return await handle_max_start(tenant, event, trace_id)
     return await handle_max_message(tenant, event, trace_id)

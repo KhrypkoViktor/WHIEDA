@@ -282,11 +282,30 @@ async def telegram_webhook(
     )
     update = await request.json()
     trace_id = get_trace_id(request)
+    if "channel_post" in update or "edited_channel_post" in update:
+        # Пост «WWC Official channel» → чаты Max (V24); правки постов и чужие каналы — мимо.
+        post = update.get("channel_post")
+        source = get_settings().crosspost_telegram_channel_id
+        if post and source and int((post.get("chat") or {}).get("id") or 0) == int(source):
+            background_tasks.add_task(_crosspost_to_max, binding, post, trace_id)
+        return {"ok": True}
     if _durable_inbox_enabled(binding):
         if await _enqueue_durable_update(binding, update, trace_id, background_tasks):
             return {"ok": True}
     background_tasks.add_task(_process_telegram_update, binding, update, trace_id)
     return {"ok": True}
+
+
+async def _crosspost_to_max(binding: BotBindingContext, post: dict, trace_id: str | None) -> None:
+    from app.max.crosspost import crosspost_channel_post
+
+    if not get_settings().max_bot_token:
+        return
+    try:
+        result = await crosspost_channel_post(binding.tenant.tenant_id, post, bot_token=binding.bot_token)
+        logger.info("telegram_channel_post_crossposted", extra={"trace_id": trace_id, "status": result.get("status")})
+    except Exception:
+        logger.exception("telegram_channel_post_crosspost_failed", extra={"trace_id": trace_id})
 
 
 def _durable_inbox_enabled(binding: BotBindingContext) -> bool:

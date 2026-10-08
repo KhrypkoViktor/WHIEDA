@@ -80,7 +80,12 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_MAX_BOT_USERNAME",
         description="Имя бота в Max для ссылок https://max.ru/<name>?start=… (без @).",
     )
-    max_api_base: str = Field(default="https://platform-api2.max.ru", validation_alias="PLATFORM_MAX_API_BASE")
+    # platform-api2.max.ru из документации отвечает пустым ответом; рабочий — platform-api (06.10.2026).
+    max_api_base: str = Field(default="https://platform-api.max.ru", validation_alias="PLATFORM_MAX_API_BASE")
+    # Telegram-канал, посты которого бот повторяет в чатах Max (V24): «WWC Official channel».
+    crosspost_telegram_channel_id: int | None = Field(
+        default=-1002885760214, validation_alias="PLATFORM_CROSSPOST_TELEGRAM_CHANNEL_ID"
+    )
     telegram_bot_username: str | None = Field(
         default=None,
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",

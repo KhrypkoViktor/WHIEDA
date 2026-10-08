@@ -10,7 +10,7 @@ START_PREFIXES = ("/start", "start")
 
 @dataclass
 class MaxEvent:
-    kind: str  # "start" | "message"
+    kind: str  # "start" | "message" | "chat_added" | "chat_removed"
     user_id: int
     chat_id: int | None
     text: str  # для start — payload (ref_… / site_…), для message — текст
@@ -30,6 +30,18 @@ def _user_name(user: dict[str, Any]) -> tuple[str | None, str]:
 
 def parse_max_update(update: dict[str, Any]) -> MaxEvent | None:
     kind = str((update or {}).get("update_type") or "")
+    if kind in {"bot_added", "bot_removed"}:
+        # Бота добавили в группу или канал Max (или убрали): только так узнаём чаты бота (V24).
+        chat_id = _int_or_none(update.get("chat_id"))
+        if chat_id is None:
+            return None
+        user = update.get("user") or {}
+        username, display = _user_name(user) if user else (None, "")
+        return MaxEvent(
+            kind="chat_added" if kind == "bot_added" else "chat_removed",
+            user_id=int(user.get("user_id") or 0), chat_id=chat_id,
+            text="channel" if update.get("is_channel") else "chat", username=username, display_name=display, raw=update,
+        )
     if kind == "bot_started":
         user = update.get("user") or {}
         if user.get("user_id") is None:

@@ -122,6 +122,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "shop_items",
             "shop_orders",
             "shop_access",
+            # Посты Telegram-канала → чаты Max (platform_max_crosspost_v24.sql, 08.10.2026).
+            "max_chats",
+            "channel_crossposts",
             # advisor
             "platform_session_context",
             "advisor_structured_products",
