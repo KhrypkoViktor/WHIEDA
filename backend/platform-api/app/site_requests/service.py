@@ -160,6 +160,24 @@ async def set_site_request_country(
     return row
 
 
+# Адреса сайтов партнёров — только личные имена (владелец, 08.10.2026: «whieda — занят,
+# пусть не борзеют; бизнес и прочее — технические домены»). Слово целиком или часть
+# адреса из RESERVED_PARTS — отказ, адрес оставляем за WWC.
+RESERVED_SUBDOMAINS = frozenset({
+    "www", "api", "app", "admin", "mail", "smtp", "ftp", "cdn", "static", "media", "img", "files",
+    "dev", "test", "stage", "staging", "demo", "beta", "core", "n8n", "bot", "bots", "status",
+    "shop", "store", "masterskaya", "academy", "akademiya", "club", "klub", "support", "help", "start",
+    "business", "biznes", "office", "official", "news", "blog", "promo", "pay", "partner", "partners",
+    "team", "komanda", "company", "kompaniya", "catalog", "katalog", "efir", "biohacking", "leader", "lider",
+})
+RESERVED_PARTS = ("whieda", "wwc", "wiieda", "vieda")
+
+
+def subdomain_reserved(subdomain: str) -> bool:
+    value = str(subdomain or "").lower()
+    return value in RESERVED_SUBDOMAINS or any(part in value for part in RESERVED_PARTS)
+
+
 def clean_partner_name(value: str) -> str:
     """Имя и фамилия для сайта (V23): два слова и больше, без ссылок и цифр."""
     name = " ".join(str(value or "").split())
@@ -283,6 +301,11 @@ async def set_site_request_subdomain(
         raise SiteRequestError(
             "Напишите другое имя: латинские буквы, цифры и дефис, без пробелов."
         ) from exc
+    if subdomain_reserved(normalized):
+        raise SiteRequestError(
+            f"Адрес {normalized}.wwc.best занят. Для сайтов партнёров используем личные имена — "
+            "напишите имя или имя и фамилию латиницей, например: olga-ivanova."
+        )
     async with tenant_connection(tenant_id) as conn:
         if await subdomain_taken(conn, tenant_id, normalized, actor_id):
             raise SiteRequestError(

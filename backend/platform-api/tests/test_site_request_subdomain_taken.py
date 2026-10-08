@@ -47,3 +47,19 @@ def test_bot_rejects_taken_name_with_clear_message():
         with pytest.raises(service.SiteRequestError) as exc:
             asyncio.run(service.set_site_request_subdomain("whieda", "telegram:whieda:1", "Elena"))
     assert "elena.wwc.best уже занят" in str(exc.value)
+
+
+def test_brand_and_technical_addresses_are_not_given_to_partners():
+    """Владелец, 08.10.2026: whieda занят, адреса — только личные имена."""
+    import asyncio
+
+    import pytest as _pytest
+
+    from app.site_requests.service import SiteRequestError, set_site_request_subdomain, subdomain_reserved
+
+    for taken in ("whieda", "whieda-team", "my-wwc", "business", "admin", "academy", "shop"):
+        assert subdomain_reserved(taken), taken
+    for free in ("olga-ivanova", "shabimama", "albertteam", "tatiana"):
+        assert not subdomain_reserved(free), free
+    with _pytest.raises(SiteRequestError, match="личные имена"):
+        asyncio.run(set_site_request_subdomain("whieda", "actor", "WHIEDA"))
