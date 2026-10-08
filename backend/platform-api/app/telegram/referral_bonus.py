@@ -31,6 +31,7 @@ from app.telegram.bindings import current_bot_binding
 from app.telegram.site_login import with_site_login
 from app.telegram.money import wwc, wwc_signed
 from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
+from app.telegram.feedback import WISH_BUTTON
 from app.telegram.support import SERVICES_CARD_CALLBACK, SUPPORT_SITE_CALLBACK, open_site_support
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -177,7 +178,7 @@ def _dashboard_rows(
             [{"text": "Калькулятор", "url": CALCULATOR_WEB_URL}],
             gemini,
             wwc_bot,
-            [dict(SUPPORT_BUTTON)],
+            [dict(SUPPORT_BUTTON), dict(WISH_BUTTON)],
         ]
         if not has_site:
             rows.insert(1, order_site)
@@ -192,7 +193,7 @@ def _dashboard_rows(
         [{"text": "История WWC$", "callback_data": "referral:history"}],
         gemini,
         wwc_bot,
-        [dict(SUPPORT_BUTTON)],
+        [dict(SUPPORT_BUTTON), dict(WISH_BUTTON)],
     ]
     rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)
     # «Академия» — сразу под «Мой сайт» и продлением (курс «Запуск WWC»).

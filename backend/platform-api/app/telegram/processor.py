@@ -63,6 +63,7 @@ from app.telegram.shop import (
     try_handle_shop_message,
 )
 from app.telegram.support import is_support_start_token, open_site_support
+from app.telegram.feedback import try_handle_wish_callback, try_handle_wish_message
 from app.telegram.site_requests import (
     try_handle_site_request_callback,
     try_handle_site_request_message,
@@ -491,6 +492,11 @@ async def _process_core_telegram_update_scoped(
                 shop_decision_result = await try_handle_shop_callback(tenant, callback, trace_id=trace_id)
                 if shop_decision_result is not None:
                     return shop_decision_result
+            # «В работу / Сделано / Не будем» под пожеланием в теме «💡 Пожелания» (V25).
+            if callback.data.startswith("wish:"):
+                wish_decision_result = await try_handle_wish_callback(tenant, callback, trace_id=trace_id)
+                if wish_decision_result is not None:
+                    return wish_decision_result
             return {"ok": True, "route": "ignored_group_callback"}
         if manual_operations and callback.data.startswith(_MANUAL_OPERATION_CALLBACK_PREFIXES):
             await _manual_operation_notice(callback.chat_id, callback.callback_query_id)
@@ -505,6 +511,10 @@ async def _process_core_telegram_update_scoped(
         profile_callback_result = await try_handle_profile_callback(tenant, callback, trace_id=trace_id)
         if profile_callback_result is not None:
             return profile_callback_result
+        # «💡 Пожелание» (V25) и решения владельца, если группы нет и пост пришёл в личку.
+        wish_callback_result = await try_handle_wish_callback(tenant, callback, trace_id=trace_id)
+        if wish_callback_result is not None:
+            return wish_callback_result
         # Мастерская WWC (03.10.2026): «Купить» на карточке, «Оплачено / Отклонить» в личке владельца.
         shop_callback_result = await try_handle_shop_callback(tenant, callback, trace_id=trace_id)
         if shop_callback_result is not None:
@@ -588,12 +598,20 @@ async def _process_core_telegram_update_scoped(
     # Причина отказа в заявке на изменение сайта — Reply владельца на вопрос бота.
     # Голосовое, видео, кружок без подписи: дальше по цепочке их никто не ждёт.
     if msg.chat_type == "private" and msg.media_file_id and not msg.file_id and not msg.text:
+        wish_voice = await try_handle_wish_message(tenant, msg, trace_id=trace_id)
+        if wish_voice is not None:
+            return wish_voice
         if not manual_operations:
             site_voice = await try_handle_site_request_voice(tenant, msg, trace_id=trace_id)
             if site_voice is not None:
                 return site_voice
         media_result = await try_handle_support_media(tenant, msg, trace_id=trace_id)
         return media_result or {"ok": True, "route": "ignored_media"}
+
+    # «💡 Пожелание»: следующее сообщение — пожелание, раньше поддержки и заявок (V25).
+    wish_result = await try_handle_wish_message(tenant, msg, trace_id=trace_id)
+    if wish_result is not None:
+        return wish_result
 
     profile_reason_result = await try_handle_profile_reject_reason(tenant, msg, trace_id=trace_id)
     if profile_reason_result is not None:

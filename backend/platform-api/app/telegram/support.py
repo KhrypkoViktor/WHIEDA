@@ -354,7 +354,8 @@ def is_support_forum_traffic(update: dict[str, Any]) -> bool:
         chat = (callback.get("message") or {}).get("chat") or {}
         data = str(callback.get("data") or "")
         return chat.get("type") == "supergroup" and data.startswith(
-            ("svc:close:", "svc:move:", "sale:", "dep:", "site:confirm:", "site:reject:", "shop:paid:", "shop:reject:")
+            ("svc:close:", "svc:move:", "sale:", "dep:", "site:confirm:", "site:reject:", "shop:paid:", "shop:reject:",
+             "wish:prog:", "wish:done:", "wish:no:")
         )
     message = (update or {}).get("message") or {}
     chat = message.get("chat") or {}
@@ -1007,6 +1008,12 @@ async def try_handle_support_forum_message(
         return None
     ticket = await find_ticket_by_forum_thread(tenant.tenant_id, forum_chat_id=msg.chat_id, forum_thread_id=msg.thread_id)
     if ticket is None:
+        # Reply владельца на пост в теме «💡 Пожелания» — автору пожелания (V25).
+        from app.telegram.feedback import try_handle_wish_reply
+
+        wish_reply = await try_handle_wish_reply(tenant, msg, trace_id=trace_id)
+        if wish_reply is not None:
+            return wish_reply
         forum = await get_forum(tenant.tenant_id, binding_id=current_bot_binding().binding_id)
         if is_reports_topic(forum, msg.chat_id, msg.thread_id):
             await _send(msg.chat_id, "Команды: «отчёт», «баланс», «перевёл 20000», «тариф».", thread_id=msg.thread_id)

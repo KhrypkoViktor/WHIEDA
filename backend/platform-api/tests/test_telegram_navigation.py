@@ -181,6 +181,8 @@ def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
         "calculator",
         "support",
     }
+    # «Пожелание» (V25) — только у бота WWC: у чужого тенанта его некому читать.
+    assert [c["command"] for c in telegram_menu_commands(minimal=True, include_wish=True)][-1] == "wish"
 
 
 def test_standard_menu_commands_resolve_without_entering_advisor():

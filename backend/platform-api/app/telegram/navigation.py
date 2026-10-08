@@ -122,6 +122,7 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("events", "Встречи"),
     ("company", "О компании"),
     ("support", "Поддержка"),
+    ("wish", "Пожелание"),
 )
 
 # Production currently accepts site setup and payment confirmation manually through
@@ -131,6 +132,7 @@ MINIMAL_TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("invite", "Пригласить партнёра"),
     ("calculator", "Калькулятор"),
     ("support", "Поддержка"),
+    ("wish", "Пожелание"),
 )
 
 NAVIGATION_INTENT_KEYS: frozenset[str] = frozenset(MENU_INTENT_BY_LABEL.values())
@@ -341,12 +343,14 @@ def telegram_menu_commands(
     *,
     include_calculator: bool = True,
     minimal: bool = False,
+    include_wish: bool = False,
 ) -> list[dict[str, str]]:
+    """``include_wish`` — «Пожелание» только у бота WWC (V25): у чужих ботов его некому читать."""
     commands = MINIMAL_TELEGRAM_MENU_COMMANDS if minimal else TELEGRAM_MENU_COMMANDS
     return [
         {"command": command, "description": description}
         for command, description in commands
-        if include_calculator or command != "calculator"
+        if (include_calculator or command != "calculator") and (include_wish or command != "wish")
     ]
 
 

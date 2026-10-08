@@ -84,6 +84,9 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     )
     if not event.text:
         return {"ok": True, "route": "max_message", "status": "empty", "trace_id": trace_id}
+    wish = await _try_max_wish(tenant, event, trace_id)
+    if wish is not None:
+        return wish
     body = {
         "session": f"max:{event.chat_id or event.user_id}",
         "question": event.text,
@@ -124,6 +127,36 @@ async def handle_max_chat_membership(tenant: TenantContext, event: MaxEvent, tra
         await send_telegram_text(chat_id=owner, text=text, bot_token=binding.bot_token)
     logger.info("max_chat_membership", extra={"trace_id": trace_id, "added": added, "chat_id": event.chat_id})
     return {"ok": True, "route": "max_chat", "added": added, "chat_id": event.chat_id}
+
+
+async def _try_max_wish(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any] | None:
+    """«Пожелание» в Max (V25): как в Telegram — слово, потом само пожелание текстом.
+    Пост владельцу уходит в Telegram, в тему «💡 Пожелания»."""
+    from app.feedback.service import start_wish, submit_wish, waiting_wish
+    from app.telegram.bindings import binding_context_scope, resolve_bot_binding_context
+    from app.telegram.feedback import WISH_PROMPT, deliver_wish, is_wish_request, thanks_text
+
+    if not tenant.entitlements.get("site_support", False):
+        return None
+    if is_wish_request(event.text):
+        await start_wish(
+            tenant.tenant_id, channel=CHANNEL, user_id=event.user_id, chat_id=event.chat_id or event.user_id,
+            display=event.display_name, ref_code=None,
+        )
+        await _reply(event, WISH_PROMPT)
+        return {"ok": True, "route": "max_wish", "status": "awaiting", "trace_id": trace_id}
+    waiting = await waiting_wish(tenant.tenant_id, channel=CHANNEL, user_id=event.user_id)
+    if not waiting:
+        return None
+    row = await submit_wish(tenant.tenant_id, waiting["feedback_id"], text=event.text, file_id=None, media_kind=None)
+    if not row:
+        return None
+    binding = await resolve_bot_binding_context("whieda-advisor-bot")
+    if binding is not None:
+        with binding_context_scope(binding):
+            await deliver_wish(tenant, row)
+    await _reply(event, thanks_text(int(row["feedback_no"])))
+    return {"ok": True, "route": "max_wish", "status": "new", "no": int(row["feedback_no"]), "trace_id": trace_id}
 
 
 async def process_max_event(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:

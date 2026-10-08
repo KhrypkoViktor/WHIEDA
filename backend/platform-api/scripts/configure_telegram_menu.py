@@ -28,6 +28,7 @@ async def configure(binding_id: str, *, dry_run: bool) -> dict[str, object]:
         commands = telegram_menu_commands(
             include_calculator=binding.tenant.tenant_id == "whieda",
             minimal=get_settings().telegram_ui_profile == "minimal",
+            include_wish=bool(binding.tenant.entitlements.get("site_support", False)),
         )
         if not dry_run:
             result = await configure_telegram_command_menu(
