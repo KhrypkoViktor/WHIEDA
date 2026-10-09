@@ -481,7 +481,18 @@ async def _decide(
         return {"ok": True, "route": "shop_decision", "status": "rejected", "trace_id": trace_id}
     text, keyboard = _buyer_after_payment(result)
     await _send(buyer_chat, text, reply_markup=keyboard)
-    await _send(chat, _owner_after_payment(result), thread_id=thread)
+    group_note = ""
+    item = result.get("item") or {}
+    if str(item.get("kind") or "") == "course" and result["delivered"]:
+        # Группа потока: Телеграм не даёт боту добавлять людей — личная ссылка (09.10.2026).
+        from app.telegram.course_groups import GROUP_NOTE, invite_to_course_group
+
+        name = str((ticket or {}).get("user_display") or order["telegram_user_id"])
+        status = await invite_to_course_group(
+            course_slug=str(item.get("course_slug") or ""), chat_id=buyer_chat, user_id=int(order["telegram_user_id"]), name=name,
+        )
+        group_note = GROUP_NOTE.get(status, "")
+    await _send(chat, _owner_after_payment(result) + group_note, thread_id=thread)
     logger.info(
         "shop_order_paid",
         extra={"trace_id": trace_id, "order_id": order["order_id"], "item": order["item_code"], "delivered": result["delivered"]},
