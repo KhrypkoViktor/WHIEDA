@@ -33,7 +33,7 @@ from app.site_requests.contacts import contacts_summary
 from app.support.service import FORUM_KIND_SITE, get_forum, set_site_orders_thread
 from app.telegram.club_group import NEWS_CHANNEL_TEXT, invite_to_club
 from app.telegram.bindings import current_bot_binding
-from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc, wwc_signed
+from app.telegram.money import PAYMENT_RU, both, money, wwc, wwc_signed
 from app.telegram.delivery import (
     answer_callback_query,
     copy_telegram_message,
@@ -173,7 +173,7 @@ def _payment_text(request: dict[str, Any]) -> str:
             if rub else
             "Сайт на 3 месяца (PRO 30 WWC$) и его подключение (30 WWC$)"
         )
-    return f"{what}: {total}.\n{PAYMENT_RU if rub else PAYMENT_BY}\nПосле перевода пришлите сюда скриншот чека."
+    return f"{what}: {total}.\n{PAYMENT_RU}\nПосле перевода пришлите сюда скриншот чека."
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None, thread_id: int | None = None) -> None:
@@ -272,13 +272,11 @@ async def _actor(tenant: TenantContext, msg: TelegramMessage | TelegramCallbackQ
 async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
     status = str(request["status"])
     if status == "awaiting_country":
+        # Анкеты, начатые до 09.10.2026: страну больше не спрашиваем — оплата в рублях.
         await _deliver(
             chat_id,
-            "В какой стране вы будете оплачивать и работать?",
-            reply_markup={"inline_keyboard": [[
-                {"text": "WWC$ · Беларусь и другие страны", "callback_data": "site:country:BY"},
-                {"text": "₽ · Россия", "callback_data": "site:country:RU"},
-            ]]},
+            "Продолжим анкету: оплата сайта — переводом на карту Т-Банка в рублях.",
+            reply_markup={"inline_keyboard": [[{"text": "Продолжить", "callback_data": "site:country:RU"}]]},
         )
     elif status == "awaiting_name":
         await _deliver(chat_id, "Как вас зовут? Напишите имя и фамилию — так вас увидят на сайте.")
@@ -328,7 +326,7 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             reply_markup=SKIP_KEYBOARD,
         )
     elif status == "awaiting_plan":
-        rub = request.get("country_code") == "RU"
+        rub = True  # только рубли (09.10.2026), и для анкет, начатых с «Беларусью»
         await _deliver(
             chat_id,
             "Что оформляем?",

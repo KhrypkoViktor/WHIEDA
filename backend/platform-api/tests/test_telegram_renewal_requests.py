@@ -30,15 +30,12 @@ def _callback(data: str, *, user_id: int = 7001):
     return parsed
 
 
-def test_payment_text_is_country_specific():
-    by = _payment_text(
-        {"amount_minor": 5400, "currency": "WUSD", "country_code": "BY", "access_months": 6}
-    )
+def test_payment_text_is_roubles_to_t_bank_only():
+    """Только рубли на карту Т-Банк (владелец, 09.10.2026): реквизитов SUNRAYSWORD нет."""
     ru = _payment_text(
         {"amount_minor": 540000, "currency": "RUB", "country_code": "RU", "access_months": 6}
     )
-    assert "54 WWC$" in by and "SUNRAYSWORD" in by and "Т-Банк" not in by
-    assert "5 400 ₽" in ru and "Т-Банк" in ru and "SUNRAYSWORD" not in ru
+    assert "5 400 ₽" in ru and "Т-Банк" in ru and "SUNRAYSWORD" not in ru and "WWC$" not in ru
 
 
 @pytest.mark.asyncio

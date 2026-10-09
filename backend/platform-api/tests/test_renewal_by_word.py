@@ -53,7 +53,7 @@ async def test_partner_word_opens_the_period_question():
     text, markup = sent[0]
     assert text == "Что оплачиваете?"
     buttons = [row[0] for row in markup["inline_keyboard"]]
-    assert buttons[0] == {"text": "Сайт на 3 месяца — 30 W$ / 3 000 ₽", "callback_data": "renew:plan:platform_3m"}
+    assert buttons[0] == {"text": "Сайт на 3 месяца — 3 000 ₽", "callback_data": "renew:plan:platform_3m"}
     assert buttons[1]["callback_data"] == "renew:plan:bundle_pro_club_3m"
     assert buttons[-1]["callback_data"] == "renew:cancel"
 

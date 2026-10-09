@@ -38,7 +38,6 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 begin_site_request,
                 confirm_site_request,
                 set_site_request_contacts,
-                set_site_request_country,
                 set_site_request_intro,
                 set_site_request_name,
                 set_site_request_photo,
@@ -52,9 +51,9 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                     return [dict(r) for r in await fetch_all(conn, sql, params)]
 
             req = await begin_site_request("whieda", "proof-new")
-            assert req["status"] == "awaiting_country"
-            await set_site_request_country("whieda", "proof-new", "RU")
-            await set_site_request_name("whieda", "proof-new", "Анастасия Сошникова")  # V23: имя после страны
+            # Страну больше не спрашиваем — оплата только в рублях (09.10.2026); первым — имя (V23).
+            assert req["status"] == "awaiting_name" and req["country_code"] == "RU"
+            await set_site_request_name("whieda", "proof-new", "Анастасия Сошникова")
             await set_site_request_subdomain("whieda", "proof-new", "anastasy")
             await set_site_request_photo("whieda", "proof-new", "file-1")
             req = await set_site_request_intro("whieda", "proof-new", "Косметолог-эстетист, семь лет в сфере красоты и омоложения.")
@@ -98,7 +97,6 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                     "insert into lead_actors (actor_id, tenant_id, display_name, telegram_chat_id, telegram_user_id) values ('proof-two', 'whieda', 'Кира', '5003', 5003)"
                 )
             await begin_site_request("whieda", "proof-two")
-            await set_site_request_country("whieda", "proof-two", "BY")
             await set_site_request_name("whieda", "proof-two", "Ольга Новикова")
             await set_site_request_subdomain("whieda", "proof-two", "kira2")
             await set_site_request_photo("whieda", "proof-two", "file-2")
@@ -107,10 +105,10 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             req2 = await set_site_request_contacts("whieda", "proof-two", "нет")
             assert req2["status"] == "awaiting_plan" and req2["contacts"] == {}
             req2 = await set_site_request_plan("whieda", "proof-two", "site")
-            assert req2["currency"] == "WUSD" and req2["total_amount_minor"] == 6_000
+            assert req2["currency"] == "RUB" and req2["total_amount_minor"] == 600_000
             req2 = await submit_site_payment_proof("whieda", "proof-two", chat_id=5003, message_id=78, file_id="receipt-2")
             await confirm_site_request("whieda", request_id=str(req2["request_id"]), admin_telegram_user_id=1)
             ledger2 = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'kira2' order by product_code")
-            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger2] == [("platform_subscription", 3_000, 3), ("site_setup", 3_000, 0)]
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger2] == [("platform_subscription", 300_000, 3), ("site_setup", 300_000, 0)]
 
         db.run_with_app(proof)

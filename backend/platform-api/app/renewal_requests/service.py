@@ -232,9 +232,9 @@ async def set_renewal_period(
 async def set_renewal_country(
     tenant_id: str, actor_id: str, country_code: str
 ) -> dict[str, Any]:
-    country = str(country_code or "").strip().upper()
-    if country not in {"BY", "RU"}:
-        raise RenewalRequestError("Выберите способ оплаты: WWC$ (Беларусь и другие страны) или рубли (Россия).")
+    # Только рубли на карту Т-Банк (владелец, 09.10.2026: представители WHIEDA против оплаты
+    # во внутренней валюте). Старые кнопки «Беларусь / другая страна» ведут сюда же.
+    country = "RU"
     async with tenant_connection(tenant_id) as conn:
         request = await fetch_one(
             conn,

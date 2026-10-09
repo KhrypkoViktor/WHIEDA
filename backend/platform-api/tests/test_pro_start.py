@@ -41,7 +41,7 @@ async def test_start_pro_offers_renewal_to_partner_with_site(whieda_tenant, whie
     assert result["route"] == "pro_start" and result["has_site"] is True
     kwargs = send.await_args.kwargs
     assert kwargs["chat_id"] == "300"
-    assert "PRO (сайт)" in kwargs["text"] and "30 WWC$" in kwargs["text"] and "3 месяца" in kwargs["text"]
+    assert "PRO (сайт)" in kwargs["text"] and "3 000 ₽" in kwargs["text"] and "WWC$" not in kwargs["text"] and "3 месяца" in kwargs["text"]
     assert "W$" not in kwargs["text"].replace("WWC$", "")
     assert kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "renew:start"
 

@@ -58,7 +58,7 @@ from app.support.service import (
 )
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
-from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money, wwc
+from app.telegram.money import PAYMENT_RU, both, money
 from app.telegram.support import (
     _client_label,
     _display,
@@ -79,10 +79,7 @@ logger = logging.getLogger(__name__)
 
 _START_RE = re.compile(r"^shop_([a-z0-9]+(?:-[a-z0-9]+)*)(?:_([a-z0-9][a-z0-9_-]{0,40}))?\Z")
 _BUY_RE = re.compile(r"^shop:buy:([a-z0-9]+(?:-[a-z0-9]+)*):(RU|BY|WW)(?::([a-z0-9][a-z0-9_-]{0,40}))?\Z")
-OTHER_COUNTRY_NOTE = (
-    "Это перевод WWC$ в кабинете WHIEDA — из любой страны. Нет WWC$ или удобнее другой способ — "
-    "напишите сюда, подскажем."
-)
+
 _DECIDE_RE = re.compile(r"^shop:(paid|reject):([0-9a-f]{32})\Z")
 _CARD_RE = re.compile(r"^shop:card:([a-z0-9]+(?:-[a-z0-9]+)*)\Z")
 _SHOWCASE_RE = re.compile(r"^/?витрина(?:\s+([a-z0-9-]+)\s+([a-z]+))?\s*$", re.IGNORECASE)
@@ -145,7 +142,7 @@ def buy_callback(code: str, country: str, ref: str | None) -> str:
 
 
 def _price_line(item: dict[str, Any]) -> str:
-    return f"{money(price_rub_minor(item), 'RUB')} или {wwc(int(item['price_wusd_minor']))}"
+    return money(price_rub_minor(item), "RUB")
 
 
 def card_text(item: dict[str, Any], *, club: bool = False) -> str:
@@ -165,7 +162,7 @@ def card_text(item: dict[str, Any], *, club: bool = False) -> str:
     if unavailable_reason(item) == "course_not_ready":
         lines += ["", COURSE_NOT_READY_TEXT]
     else:
-        lines += ["", "Откуда будете оплачивать?"]
+        lines += ["", "Оплата — переводом на карту Т-Банка."]
     return "\n".join(lines)
 
 
@@ -174,16 +171,8 @@ def card_keyboard(item: dict[str, Any], *, ref: str | None, country: str | None,
         return None
     item = priced_for(item, club=club)
     verb = "Заказать" if item["kind"] == "service" else "Купить"
-    buttons = {
-        "RU": {"text": f"{verb} — {money(price_rub_minor(item), 'RUB')} · Россия", "callback_data": buy_callback(item["code"], "RU", ref)},
-        "BY": {"text": f"{verb} — {wwc(int(item['price_wusd_minor']))} · Беларусь", "callback_data": buy_callback(item["code"], "BY", ref)},
-        OTHER_COUNTRY: {
-            "text": f"{verb} — {wwc(int(item['price_wusd_minor']))} · другая страна",
-            "callback_data": buy_callback(item["code"], OTHER_COUNTRY, ref),
-        },
-    }
-    order = ("BY", "RU", OTHER_COUNTRY) if country == "BY" else ("RU", "BY", OTHER_COUNTRY)
-    return {"inline_keyboard": [[buttons[code]] for code in order]}
+    # Одна кнопка — рубли на карту Т-Банка (09.10.2026); country остаётся в подписи для совместимости.
+    return {"inline_keyboard": [[{"text": f"{verb} — {money(price_rub_minor(item), 'RUB')}", "callback_data": buy_callback(item["code"], "RU", ref)}]]}
 
 
 async def handle_shop_start(tenant: TenantContext, msg: TelegramMessage, token: str, *, trace_id: str) -> dict[str, Any]:
@@ -218,13 +207,11 @@ async def send_card(tenant_id: str, chat_id: int, user_id: int, item: dict[str, 
 
 
 def payment_text(item: dict[str, Any], order: dict[str, Any], ticket: dict[str, Any]) -> str:
-    details = PAYMENT_RU if order["currency"] == "RUB" else PAYMENT_BY
+    details = PAYMENT_RU
     lines = [
         f"Заказ {ticket_label(ticket)}: {order['item_title']} — {both(int(order['amount_minor']), str(order['currency']))}.",
         details,
     ]
-    if order["currency"] == "WUSD" and not order.get("country_code"):
-        lines.append(OTHER_COUNTRY_NOTE)
     if item.get("requisites_note"):
         lines.append(str(item["requisites_note"]))
     lines.append("После перевода пришлите сюда скриншот чека. Вопросы пишите сюда же — ответит Виктор.")
@@ -274,8 +261,6 @@ async def _buy(
     price = both(int(order["amount_minor"]), str(order["currency"]))
     if club:
         price += " · клубная цена"  # иначе 7 500 ₽ за курс за 10 000 похоже на недоплату
-    if country == OTHER_COUNTRY:
-        price += " · другая страна"
     if ticket["created"]:
         hint = (
             "Пишите в эту тему — ответ уйдёт покупателю." if _in_forum(ticket)

@@ -89,7 +89,7 @@ async def test_price_question_answers_with_the_price_list() -> None:
             )
     assert result == {"ok": True, "route": "wwc_prices", "trace_id": "t-2"}
     assert send.await_args.kwargs["text"] == PRICE_TEXT
-    assert "96 WWC$" in PRICE_TEXT  # 12 месяцев — 9 600 ₽ (owner, 22.09.2026)
+    assert "12 месяцев — 9 600 ₽" in PRICE_TEXT and "WWC$" not in PRICE_TEXT  # только рубли (09.10.2026)
 
 
 @pytest.mark.asyncio

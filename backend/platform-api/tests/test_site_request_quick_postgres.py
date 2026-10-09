@@ -105,8 +105,8 @@ def test_site_request_needs_only_name_and_address(monkeypatch: pytest.MonkeyPatc
                 return [b["callback_data"] for row in markup for b in row] == ["site:skip"]
 
             try:
-                await step(_callback(NATA, "site:create"))
-                _, to_user, _ = await step(_callback(NATA, "site:country:RU"))
+                # Страну не спрашиваем (09.10.2026): «Заказать сайт» — сразу имя.
+                _, to_user, _ = await step(_callback(NATA, "site:create"))
                 assert "имя и фамилию" in to_user[-1]["text"]
 
                 # Одно слово — не имя для сайта; два — да, и сразу адрес.

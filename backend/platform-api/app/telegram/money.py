@@ -52,7 +52,8 @@ def both(amount_minor: int, currency: str) -> str:
     if code == "WUSD":
         return f"{wwc(amount_minor)} ({format_minor(int(amount_minor) * RUB_PER_WWC)} ₽)"
     if code == "RUB":
-        return f"{format_minor(amount_minor)} ₽ ({wwc(int(amount_minor) // RUB_PER_WWC)})"
+        # Покупатель платит только рублями (09.10.2026): WWC$ рядом с ценой не показываем.
+        return f"{format_minor(amount_minor)} ₽"
     return money(amount_minor, currency)
 
 
@@ -60,4 +61,3 @@ def both(amount_minor: int, currency: str) -> str:
 # copies the number, so the partner does not retype it.
 PHONE_RU = "+79282372677"
 PAYMENT_RU = f"Переведите оплату по номеру <code>{PHONE_RU}</code>, Т-Банк."
-PAYMENT_BY = "Переведите оплату на аккаунт <code>SUNRAYSWORD</code>."

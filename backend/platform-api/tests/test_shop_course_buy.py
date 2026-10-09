@@ -30,9 +30,9 @@ OFFER = {"code": "kurs-online-start", "start": "shop_kurs-online-start",
 
 def test_club_price_is_used_only_for_a_club_member_and_roubles_follow_it():
     assert price_for_country(ONLINE, "RU") == ("RUB", 1000000)
-    assert price_for_country(ONLINE, "BY") == ("WUSD", 10000)
+    assert price_for_country(ONLINE, "BY") == ("RUB", 1000000)  # только рубли (09.10.2026)
     assert price_for_country(ONLINE, "RU", club=True) == ("RUB", 750000)
-    assert price_for_country(ONLINE, "BY", club=True) == ("WUSD", 7500)
+    assert price_for_country(ONLINE, "BY", club=True) == ("RUB", 750000)
     plain = _item(price_club_wusd_minor=None)
     assert price_for_country(plain, "RU", club=True) == price_for_country(plain, "RU")
     assert priced_for(plain, club=True) is plain
@@ -72,20 +72,16 @@ def test_club_price_above_the_regular_one_is_refused():
 
 def test_card_tells_everyone_about_the_club_price_and_a_member_gets_it():
     text = card_text(ONLINE)
-    assert "Цена: 10 000 ₽ или 100 WWC$." in text and "Участникам клуба — 7 500 ₽ или 75 WWC$." in text
+    assert "Цена: 10 000 ₽." in text and "Участникам клуба — 7 500 ₽." in text and "WWC$" not in text
     rows = card_keyboard(ONLINE, ref=None, country=None)["inline_keyboard"]
-    # Германия, Кипр и все остальные — не только Россия и Беларусь (владелец, 06.10.2026).
-    assert [b["text"] for row in rows for b in row] == [
-        "Купить — 10 000 ₽ · Россия", "Купить — 100 WWC$ · Беларусь", "Купить — 100 WWC$ · другая страна",
-    ]
+    # Одна кнопка — рубли на карту Т-Банка для всех (владелец, 09.10.2026).
+    assert [b["text"] for row in rows for b in row] == ["Купить — 10 000 ₽"]
 
     member = card_text(ONLINE, club=True)
-    assert "Цена для вас как участника клуба: 7 500 ₽ или 75 WWC$ (обычная — 10 000 ₽ или 100 WWC$)." in member
+    assert "Цена для вас как участника клуба: 7 500 ₽ (обычная — 10 000 ₽)." in member
     rows = card_keyboard(ONLINE, ref=None, country="BY", club=True)["inline_keyboard"]
-    assert [b["text"] for row in rows for b in row] == [
-        "Купить — 75 WWC$ · Беларусь", "Купить — 7 500 ₽ · Россия", "Купить — 75 WWC$ · другая страна",
-    ]
-    assert rows[0][0]["callback_data"] == "shop:buy:kurs-online-start:BY"
+    assert [b["text"] for row in rows for b in row] == ["Купить — 7 500 ₽"]
+    assert rows[0][0]["callback_data"] == "shop:buy:kurs-online-start:RU"
 
 
 @pytest.mark.asyncio
@@ -102,7 +98,7 @@ async def test_buy_course_button_opens_the_card_with_the_buyers_price(whieda_ten
     club.assert_awaited_once_with("whieda", BUYER)
     sent = send.await_args.kwargs
     first = sent["reply_markup"]["inline_keyboard"][0][0]["text"]
-    assert first == ("Купить — 7 500 ₽ · Россия" if member else "Купить — 10 000 ₽ · Россия")
+    assert first == ("Купить — 7 500 ₽" if member else "Купить — 10 000 ₽")
 
 
 @pytest.mark.asyncio
@@ -142,10 +138,10 @@ async def test_a_club_member_orders_at_the_club_price(whieda_tenant, whieda_bot_
 def test_offer_lock_text_names_the_price_and_what_happens_after_buy():
     text = offer_lock_text("Онлайн-старт: 4 недели практики", OFFER["prices"], club=False)
     assert text.startswith("«Онлайн-старт: 4 недели практики» — платный курс.")
-    assert "Цена: 10 000 ₽ / 100 WWC$." in text and "Участникам клуба — 7 500 ₽ / 75 WWC$." in text
+    assert "Цена: 10 000 ₽." in text and "Участникам клуба — 7 500 ₽." in text and "WWC$" not in text
     assert "пришлёте сюда чек" in text and "ключ" not in text
     member = offer_lock_text("Онлайн-старт: 4 недели практики", OFFER["prices"], club=True)
-    assert "Цена для вас как участника клуба: 7 500 ₽ / 75 WWC$ (обычная — 10 000 ₽ / 100 WWC$)." in member
+    assert "Цена для вас как участника клуба: 7 500 ₽ (обычная — 10 000 ₽)." in member
 
 
 @pytest.mark.asyncio
@@ -199,16 +195,10 @@ async def test_academy_home_with_one_locked_course_offers_buy(whieda_tenant, whi
 # ---- другая страна (06.10.2026) ---------------------------------------------------------
 
 
-def test_another_country_pays_in_wwc_and_hears_how():
-    from app.telegram.shop import OTHER_COUNTRY_NOTE, payment_text
+def test_old_country_buttons_all_pay_in_roubles():
+    from app.telegram.shop import payment_text
 
-    assert price_for_country(ONLINE, "WW") == ("WUSD", 10000)
-    assert price_for_country(ONLINE, "WW", club=True) == ("WUSD", 7500)
-    other = payment_text(ONLINE, _order(country_code=None, currency="WUSD", amount_minor=10000), _ticket())
-    assert "SUNRAYSWORD" in other and OTHER_COUNTRY_NOTE in other
-    belarus = payment_text(ONLINE, _order(country_code="BY", currency="WUSD", amount_minor=10000), _ticket())
-    assert "SUNRAYSWORD" in belarus and OTHER_COUNTRY_NOTE not in belarus
-    rows = card_keyboard(ONLINE, ref="nnm", country="BY")["inline_keyboard"]
-    assert [row[0]["callback_data"] for row in rows] == [
-        "shop:buy:kurs-online-start:BY:nnm", "shop:buy:kurs-online-start:RU:nnm", "shop:buy:kurs-online-start:WW:nnm",
-    ]
+    assert price_for_country(ONLINE, "WW") == ("RUB", 1000000)
+    assert price_for_country(ONLINE, "WW", club=True) == ("RUB", 750000)
+    text = payment_text(ONLINE, _order(country_code="RU", currency="RUB", amount_minor=1000000), _ticket())
+    assert "10 000 ₽" in text and "Т-Банк" in text and "SUNRAYSWORD" not in text and "WWC$" not in text

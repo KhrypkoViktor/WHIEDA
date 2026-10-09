@@ -140,14 +140,15 @@ def test_order_receipt_paid_gives_the_file_and_the_course_once(monkeypatch):
             )
             assert file_order["created"] and course_order["created"]
             assert (file_order["currency"], file_order["amount_minor"]) == ("RUB", 50000)
-            assert (course_order["currency"], course_order["amount_minor"]) == ("WUSD", 2500)
-            # «Купить» ещё раз до оплаты — тот же заказ; страну можно сменить до чека.
+            # Только рубли на карту Т-Банк (09.10.2026): и кнопка «Беларусь» — рубли.
+            assert (course_order["currency"], course_order["amount_minor"], course_order["country_code"]) == ("RUB", 250000, "RU")
+            # «Купить» ещё раз до оплаты — тот же заказ.
             again = await open_order(
                 "whieda", item=preza, telegram_user_id=BUYER, ticket_id=str(ticket["ticket_id"]), country_code="BY",
                 partner_ref_code=None, partner_ref_source=None,
             )
             assert again["created"] is False and again["order_id"] == file_order["order_id"]
-            assert (again["currency"], again["amount_minor"], again["partner_ref_code"]) == ("WUSD", 500, "olga")
+            assert (again["currency"], again["amount_minor"], again["partner_ref_code"]) == ("RUB", 50000, "olga")
 
             # 4. A receipt moves both waiting orders to «receipt»; an old order does not take photos.
             assert await waiting_order_at("whieda", telegram_user_id=BUYER) is not None
@@ -295,12 +296,11 @@ def test_online_start_is_sold_to_anyone_and_a_club_member_pays_the_club_price(mo
                                          partner_ref_code=None, partner_ref_source=None, club=True)
             assert (plain["currency"], plain["amount_minor"]) == ("RUB", 1000000)
             assert (member["currency"], member["amount_minor"]) == ("RUB", 750000)
-            assert member_by["order_id"] == member["order_id"]  # тот же заказ, страну сменили до чека
-            assert (member_by["currency"], member_by["amount_minor"]) == ("WUSD", 7500)
-            # Другая страна (Германия, Кипр…): WWC$, в заказе без страны — проходит CHECK базы.
+            assert member_by["order_id"] == member["order_id"]  # тот же заказ
+            assert (member_by["currency"], member_by["amount_minor"]) == ("RUB", 750000)  # только рубли (09.10.2026)
             member_ww = await open_order("whieda", item=item, telegram_user_id=CLUB, ticket_id=None, country_code="WW",
                                          partner_ref_code=None, partner_ref_source=None, club=True)
             assert member_ww["order_id"] == member["order_id"]
-            assert (member_ww["country_code"], member_ww["currency"], member_ww["amount_minor"]) == (None, "WUSD", 7500)
+            assert (member_ww["country_code"], member_ww["currency"], member_ww["amount_minor"]) == ("RU", "RUB", 750000)
 
         db.run_with_app(proof)

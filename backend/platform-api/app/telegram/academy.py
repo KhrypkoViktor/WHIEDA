@@ -129,14 +129,14 @@ def key_error_text(exc: AcademyKeyError) -> str:
 
 def offer_lock_text(title: str, prices: dict[str, Any], *, club: bool) -> str:
     """Замок курса, который продаётся в Мастерской: цена и что будет после «Купить»."""
-    price = f"{_num(prices['rub'])} ₽ / {_num(prices['wusd'])} WWC$"
+    price = f"{_num(prices['rub'])} ₽"
     lines = [f"«{title}» — платный курс."]
     if prices.get("club_wusd") is not None and club:
-        lines.append(f"Цена для вас как участника клуба: {_num(prices['club_rub'])} ₽ / {_num(prices['club_wusd'])} WWC$ (обычная — {price}).")
+        lines.append(f"Цена для вас как участника клуба: {_num(prices['club_rub'])} ₽ (обычная — {price}).")
     else:
         lines.append(f"Цена: {price}.")
         if prices.get("club_wusd") is not None:
-            lines.append(f"Участникам клуба — {_num(prices['club_rub'])} ₽ / {_num(prices['club_wusd'])} WWC$.")
+            lines.append(f"Участникам клуба — {_num(prices['club_rub'])} ₽.")
     lines += ["", "Нажмите «Купить курс»: бот пришлёт реквизиты, вы переведёте и пришлёте сюда чек. "
                   "Виктор подтвердит оплату — и курс откроется здесь и на сайте."]
     return "\n".join(lines)

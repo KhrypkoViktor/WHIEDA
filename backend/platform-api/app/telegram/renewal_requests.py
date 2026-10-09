@@ -27,7 +27,7 @@ from app.telegram.academy import is_academy_payment, notify_academy_payment
 from app.telegram.club_group import invite_to_club
 from app.telegram.billing import notify_payment_participants
 from app.telegram.bindings import current_bot_binding
-from app.telegram.money import PAYMENT_BY, PAYMENT_RU, both, money
+from app.telegram.money import PAYMENT_RU, both, money
 from app.telegram.delivery import answer_callback_query, copy_telegram_message, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -88,7 +88,7 @@ def _what(request: dict[str, Any]) -> str:
 
 def _payment_text(request: dict[str, Any]) -> str:
     amount = both(int(request["amount_minor"]), str(request["currency"]))
-    details = PAYMENT_RU if request["country_code"] == "RU" else PAYMENT_BY
+    details = PAYMENT_RU
     return "\n".join(
         [
             f"{_what(request)}: {amount}.",
@@ -99,11 +99,10 @@ def _payment_text(request: dict[str, Any]) -> str:
 
 
 def _offer_button(offer: dict[str, Any]) -> list[dict[str, str]]:
-    wusd = int(offer["price_wusd_minor"]) // 100
     rub = int(offer["price_rub_minor"]) // 100
     rub_text = f"{rub:,}".replace(",", " ")
     return [{
-        "text": f"{offer['title']} — {wusd} W$ / {rub_text} ₽",
+        "text": f"{offer['title']} — {rub_text} ₽",
         "callback_data": f"renew:plan:{offer['plan_code']}",
     }]
 
@@ -124,8 +123,7 @@ async def _prompt(chat_id: int, request: dict[str, Any], tenant_id: str) -> None
             "Выберите страну оплаты.",
             reply_markup={
                 "inline_keyboard": [[
-                    {"text": "WWC$ · Беларусь и другие страны", "callback_data": "renew:country:BY"},
-                    {"text": "₽ · Россия", "callback_data": "renew:country:RU"},
+                    {"text": "Продолжить — оплата в рублях", "callback_data": "renew:country:RU"},
                 ], _cancel_row()]
             },
         )
@@ -224,6 +222,9 @@ async def try_handle_renewal_callback(
             request = await set_renewal_country(
                 tenant.tenant_id, actor_id, action.rsplit(":", 1)[1]
             )
+        if request.get("status") == "awaiting_country":
+            # Страну не спрашиваем (09.10.2026): после услуги — сразу реквизиты в рублях.
+            request = await set_renewal_country(tenant.tenant_id, actor_id, "RU")
         await _prompt(callback.chat_id, request, tenant.tenant_id)
         return {"ok": True, "route": "renewal", "status": request["status"], "trace_id": trace_id}
     except RenewalRequestError as exc:

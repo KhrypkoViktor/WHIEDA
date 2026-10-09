@@ -61,7 +61,7 @@ async def set_site_request_plan(tenant_id: str, actor_id: str, plan_code: str) -
         )
         if not request:
             raise SiteRequestError("Сейчас выбор пакета не ожидается.")
-        currency = "RUB" if request["country_code"] == "RU" else "WUSD"
+        currency = "RUB"  # только рубли на карту Т-Банк (09.10.2026)
         lines = plan_lines(plan, currency)
         subscription = next(l.amount_minor for l in lines if l.product_code == "platform_subscription")
         row = await fetch_one(
@@ -127,8 +127,8 @@ async def begin_site_request(tenant_id: str, actor_id: str) -> dict[str, Any]:
         row = await fetch_one(
             conn,
             """
-            insert into partner_site_requests (tenant_id, actor_id, status)
-            values (%s, %s, 'awaiting_country')
+            insert into partner_site_requests (tenant_id, actor_id, status, country_code)
+            values (%s, %s, 'awaiting_name', 'RU')
             returning *
             """,
             (tenant_id, actor_id),
@@ -141,9 +141,9 @@ async def begin_site_request(tenant_id: str, actor_id: str) -> dict[str, Any]:
 async def set_site_request_country(
     tenant_id: str, actor_id: str, country_code: str
 ) -> dict[str, Any]:
-    country = str(country_code or "").strip().upper()
-    if country not in {"BY", "RU"}:
-        raise SiteRequestError("Выберите способ оплаты: WWC$ (Беларусь и другие страны) или рубли (Россия).")
+    # Только рубли на карту Т-Банк (владелец, 09.10.2026: представители WHIEDA против оплаты
+    # во внутренней валюте). Старые кнопки «Беларусь / другая страна» ведут сюда же.
+    country = "RU"
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,

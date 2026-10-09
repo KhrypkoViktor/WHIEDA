@@ -128,9 +128,11 @@ def test_prices_fall_back_to_wusd_and_byn_is_three_and_a_half():
     assert price_byn_minor(_item(price_byn_minor=36000)) == 36000  # своя цена в BYN важнее расчёта
 
 
-def test_price_by_country_russia_in_roubles_belarus_in_wwc():
+def test_every_country_pays_in_roubles():
+    """Только рубли на карту Т-Банк (владелец, 09.10.2026): старые кнопки BY / WW — тоже рубли."""
     assert price_for_country(_item(), "RU") == ("RUB", 50000)
-    assert price_for_country(_item(), "by") == ("WUSD", 500)
+    assert price_for_country(_item(), "by") == ("RUB", 50000)
+    assert price_for_country(_item(), "WW") == ("RUB", 50000)
     with pytest.raises(ShopError):
         price_for_country(_item(), "KZ")
 
@@ -210,17 +212,15 @@ def test_buy_callback_keeps_the_ref_while_it_fits_telegram_limit():
     assert data == "shop:buy:preza-vozrazheniya:RU" and len(data.encode()) <= CALLBACK_DATA_LIMIT
 
 
-def test_card_asks_the_country_and_shows_both_prices():
+def test_card_shows_the_rouble_price_and_one_button():
     text = card_text(_item())
-    assert "Цена: 500 ₽ или 5 WWC$." in text and "Откуда будете оплачивать?" in text
+    assert "Цена: 500 ₽." in text and "карту Т-Банка" in text and "WWC$" not in text
     assert "**" not in text and "Презентация в PDF: 21 слайд." in text
     rows = card_keyboard(_item(), ref="nnm", country=None)["inline_keyboard"]
-    assert [b["text"] for row in rows for b in row] == [
-        "Купить — 500 ₽ · Россия", "Купить — 5 WWC$ · Беларусь", "Купить — 5 WWC$ · другая страна",
-    ]
+    assert [b["text"] for row in rows for b in row] == ["Купить — 500 ₽"]
     assert rows[0][0]["callback_data"] == "shop:buy:preza-vozrazheniya:RU:nnm"
     by_first = card_keyboard(SERVICE, ref=None, country="BY")["inline_keyboard"]
-    assert by_first[0][0]["text"] == "Заказать — 100 WWC$ · Беларусь"
+    assert [b["text"] for row in by_first for b in row] == ["Заказать — 10 000 ₽"]
     assert card_keyboard(_item(kind="course", course_slug=None), ref=None, country=None) is None
 
 
@@ -240,11 +240,7 @@ async def test_start_link_shows_the_card_to_the_owner_in_pilot(whieda_tenant, wh
     sent = send.await_args.kwargs
     assert sent["chat_id"] == str(OWNER) and sent["text"].startswith("Презентация «Мастерство работы с возражениями»")
     buttons = [b["callback_data"] for row in sent["reply_markup"]["inline_keyboard"] for b in row]
-    assert buttons == [
-        "shop:buy:preza-vozrazheniya:RU:olga-samtsova",
-        "shop:buy:preza-vozrazheniya:BY:olga-samtsova",
-        "shop:buy:preza-vozrazheniya:WW:olga-samtsova",
-    ]
+    assert buttons == ["shop:buy:preza-vozrazheniya:RU:olga-samtsova"]
 
 
 @pytest.mark.asyncio
@@ -297,31 +293,33 @@ async def test_buy_opens_a_ticket_with_the_owner_an_order_and_sends_requisites(w
     assert (order_kw["partner_ref_code"], order_kw["partner_ref_source"]) == ("olga-samtsova", "link")
     header = support_send.await_args.kwargs
     assert header["chat_id"] == str(FORUM) and header["message_thread_id"] == 901
-    assert "Покупатель: Инна (@inna)" in header["text"] and "Заказ: Презентация «Мастерство работы с возражениями» — 500 ₽ (5 WWC$)" in header["text"]
+    assert "Покупатель: Инна (@inna)" in header["text"] and "Заказ: Презентация «Мастерство работы с возражениями» — 500 ₽" in header["text"]
     assert "Кто привёл: olga-samtsova (по ссылке партнёра)" in header["text"] and "Ждём чек." in header["text"]
     assert "Оплачено" not in str(header["reply_markup"])  # «Оплачено» — только под чеком
     to_buyer = send.await_args.kwargs
     assert to_buyer["chat_id"] == str(BUYER)
-    assert "Заказ #S-41: Презентация «Мастерство работы с возражениями» — 500 ₽ (5 WWC$)." in to_buyer["text"]
+    assert "Заказ #S-41: Презентация «Мастерство работы с возражениями» — 500 ₽." in to_buyer["text"]
     assert "Т-Банк" in to_buyer["text"] and "пришлите сюда скриншот чека" in to_buyer["text"]
     assert record.await_args.kwargs["delivered_chat_id"] == FORUM
 
 
 @pytest.mark.asyncio
-async def test_belarus_pays_in_wwc_to_the_belarus_account(whieda_tenant, whieda_bot_binding, shop_env):
+async def test_old_belarus_button_pays_in_roubles_to_t_bank(whieda_tenant, whieda_bot_binding, shop_env):
+    """Кнопка «Беларусь» из старого сообщения: заказ в рублях, реквизиты Т-Банка (09.10.2026)."""
     send = AsyncMock(return_value={"ok": True, "message_id": 11})
-    order = _order(country_code="BY", currency="WUSD", amount_minor=500, partner_ref_code=None, partner_ref_source=None)
+    order = _order(country_code="RU", currency="RUB", amount_minor=50000, partner_ref_code=None, partner_ref_source=None)
+    opened = AsyncMock(return_value=order)
     with patch("app.telegram.shop.send_telegram_text", send), patch("app.telegram.support.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 2})), patch(
         "app.telegram.shop.get_item", AsyncMock(return_value=_item(status="published"))
     ), patch("app.telegram.shop.ensure_telegram_actor", AsyncMock(return_value="a")), patch(
         "app.telegram.shop.resolve_partner_ref", AsyncMock(return_value=(None, None))
     ), patch("app.telegram.shop.open_or_reuse_ticket", AsyncMock(return_value=_ticket(created=False))), patch(
-        "app.telegram.shop.open_order", AsyncMock(return_value=order)
+        "app.telegram.shop.open_order", opened
     ), patch("app.telegram.shop.record_relayed_message", AsyncMock()):
         result = await process_core_telegram_update(whieda_tenant, _callback("shop:buy:preza-vozrazheniya:BY"), "t5", binding=whieda_bot_binding)
     assert result["status"] == "order_opened"
     text = send.await_args.kwargs["text"]
-    assert "5 WWC$ (500 ₽)" in text and "SUNRAYSWORD" in text
+    assert "500 ₽" in text and "Т-Банк" in text and "SUNRAYSWORD" not in text and "WWC$" not in text
 
 
 ORDERED_AT = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
