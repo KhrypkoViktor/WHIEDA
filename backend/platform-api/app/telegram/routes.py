@@ -286,7 +286,8 @@ async def telegram_webhook(
     if group.get("type") in {"group", "supergroup"}:
         # Группы, где бот состоит (курс, клуб, поддержка): id и название в журнал — Bot API
         # списка своих групп не даёт, а владелец просит сверять участников (09.10.2026).
-        logger.info("telegram_group_seen", extra={"group_chat_id": group.get("id"), "group_title": str(group.get("title") or "")[:120]})
+        # В тексте строки, не в extra: формат журнала Core поля extra не печатает.
+        logger.info("telegram_group_seen chat_id=%s title=%s", group.get("id"), str(group.get("title") or "")[:120])
     if "channel_post" in update or "edited_channel_post" in update:
         # Пост «WWC Official channel» → чаты Max (V24); правки постов и чужие каналы — мимо.
         post = update.get("channel_post")
