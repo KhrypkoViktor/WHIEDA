@@ -118,7 +118,18 @@ def test_site_request_needs_only_name_and_address(monkeypatch: pytest.MonkeyPatc
 
                 await step(_private(NATA, 12, text="sabimama"))
                 req = await request("nata")
-                assert req["status"] == "awaiting_photo"
+                assert req["status"] == "awaiting_lang" and req["site_lang"] == "ru"
+
+                # Язык сайта и визитки (V28, 10.10.2026): три кнопки, текстом не выбрать.
+                _, to_user, _ = await step(_private(NATA, 14, text="немецкий"))
+                markup = (to_user[-1].get("reply_markup") or {}).get("inline_keyboard") or []
+                assert [b["callback_data"] for row in markup for b in row] == ["site:lang:ru", "site:lang:en", "site:lang:de"]
+                assert (await request("nata"))["status"] == "awaiting_lang"
+                _, to_user, to_owner = await step(_callback(NATA, "site:lang:de"))
+                req = await request("nata")
+                assert req["status"] == "awaiting_photo" and req["site_lang"] == "de"
+                assert "язык сайта получено" in to_owner[0]["text"] and "Язык сайта: Deutsch" in to_owner[0]["text"]
+                assert skip_button(to_user)
 
                 # Фото пропускаем — и сразу «о себе», тоже с «Пропустить».
                 result, to_user, to_owner = await step(_callback(NATA, "site:skip"))

@@ -316,7 +316,7 @@ async def set_site_request_subdomain(
             conn,
             """
             update partner_site_requests
-            set requested_subdomain = %s, status = 'awaiting_photo', updated_at = now()
+            set requested_subdomain = %s, status = 'awaiting_lang', updated_at = now()
             where tenant_id = %s and actor_id = %s and status = 'awaiting_subdomain'
             returning *
             """,
@@ -324,6 +324,30 @@ async def set_site_request_subdomain(
         )
     if not row:
         raise SiteRequestError("Сейчас имя сайта не ожидается.")
+    return row
+
+
+SITE_LANGS: dict[str, str] = {"ru": "Русский", "en": "English", "de": "Deutsch"}
+
+
+async def set_site_request_lang(tenant_id: str, actor_id: str, lang: str) -> dict[str, Any]:
+    """Основной язык сайта и визитки (V28, 10.10.2026) — после адреса, дальше фото."""
+    code = str(lang or "").strip().lower()
+    if code not in SITE_LANGS:
+        raise SiteRequestError("Выберите язык кнопкой: Русский, English или Deutsch.")
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update partner_site_requests
+            set site_lang = %s, status = 'awaiting_photo', updated_at = now()
+            where tenant_id = %s and actor_id = %s and status = 'awaiting_lang'
+            returning *
+            """,
+            (code, tenant_id, actor_id),
+        )
+    if not row:
+        raise SiteRequestError("Сейчас язык сайта не ожидается.")
     return row
 
 

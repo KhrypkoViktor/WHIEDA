@@ -12,6 +12,7 @@ from app.referral_bonus.service import (
 )
 from app.settings import get_settings
 from app.site_requests.service import (
+    SITE_LANGS,
     SiteRequestError,
     begin_site_request,
     confirm_site_request,
@@ -22,6 +23,7 @@ from app.site_requests.service import (
     set_site_request_country,
     set_site_request_intro,
     set_site_request_intro_voice,
+    set_site_request_lang,
     set_site_request_name,
     set_site_request_photo,
     set_site_request_plan,
@@ -62,7 +64,7 @@ def _callback_as_message(callback: TelegramCallbackQuery) -> TelegramMessage:
     )
 
 _CALLBACK_RE = re.compile(
-    r"^site:(create|skip|country:(?:BY|RU)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^site:(create|skip|country:(?:BY|RU)|lang:(?:ru|en|de)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -104,6 +106,7 @@ async def _notify_referrer(request: dict[str, Any]) -> None:
 _STEP_LABELS = {
     "awaiting_name": "имя и фамилия",
     "awaiting_subdomain": "адрес сайта",
+    "awaiting_lang": "язык сайта",
     "awaiting_photo": "фото",
     "awaiting_text": "текст о себе",
     "awaiting_contacts": "контакты",
@@ -138,6 +141,8 @@ async def _notify_owner_step(
         ),
         *([f"Имя: {request['partner_name']}"] if request.get("partner_name") else []),
         f"Адрес: {subdomain}.wwc.best" if subdomain else "Адрес: ещё не выбран",
+        *([f"Язык сайта: {SITE_LANGS.get(str(request.get('site_lang')), request.get('site_lang'))}"]
+          if request.get("site_lang") and request.get("status") not in ("awaiting_name", "awaiting_subdomain", "awaiting_lang") else []),
         f"Дальше: {_STEP_LABELS.get(str(request.get('status')), request.get('status'))}.",
     ]
     if voice:
@@ -286,6 +291,17 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             "Напишите желаемый адрес сайта латиницей. Например: olesya.\n"
             "Получится: olesya.wwc.best",
         )
+    elif status == "awaiting_lang":
+        # Владелец, 10.10.2026: немцам — немецкий, Ольге Манько — английский.
+        await _deliver(
+            chat_id,
+            "На каком языке будут ваш сайт и визитка?\n\n"
+            "Сайт откроется на этом языке, визитка и ссылки, которые вы отправляете, — тоже. "
+            "Посетитель сможет переключить язык сам.",
+            reply_markup={"inline_keyboard": [[
+                {"text": label, "callback_data": f"site:lang:{code}"} for code, label in SITE_LANGS.items()
+            ]]},
+        )
     elif status == "awaiting_photo":
         await _deliver(
             chat_id,
@@ -401,6 +417,9 @@ async def try_handle_site_request_callback(
             request = await begin_site_request(tenant.tenant_id, actor_id)
         elif action.startswith("plan:"):
             request = await set_site_request_plan(tenant.tenant_id, actor_id, action.rsplit(":", 1)[1])
+        elif action.startswith("lang:"):
+            request = await set_site_request_lang(tenant.tenant_id, actor_id, action.rsplit(":", 1)[1])
+            await _notify_owner_step(tenant.tenant_id, _callback_as_message(callback), request, done="язык сайта")
         else:
             request = await set_site_request_country(
                 tenant.tenant_id, actor_id, action.rsplit(":", 1)[1]
@@ -510,7 +529,7 @@ async def try_handle_site_request_message(
                             f"Новая заявка на сайт — {partner_tag(msg)}.",
                             f"Имя: {request.get('partner_name') or '—'}",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
-                            f"Страна: {request['country_code']}",
+                            f"Язык сайта: {SITE_LANGS.get(str(request.get('site_lang') or 'ru'), 'Русский')}",
                             f"Пакет: {'Платформа + Клуб' if str(request.get('plan_code') or 'site') == 'bundle' else 'сайт + настройка'}",
                             f"Оплата: {money(int(request['total_amount_minor']), str(request['currency']))}",
                             "Чек выше.",

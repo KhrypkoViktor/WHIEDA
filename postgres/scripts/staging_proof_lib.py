@@ -70,6 +70,7 @@ APPLY_ORDER = [
     "platform_max_crosspost_v24.sql",
     "platform_feedback_v25.sql",
     "platform_chat_bridge_v27.sql",
+    "platform_site_request_lang_v28.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

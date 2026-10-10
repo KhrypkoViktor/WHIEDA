@@ -20,7 +20,7 @@ RELEASE_PACKAGE_SQL = "platform_tenant_release_package_v1.sql"
 PRICE_PLANE_SQL = "platform_tenant_release_price_plane_v1.sql"
 OUTBOX_SQL = "platform_telegram_durable_outbox_v1.sql"
 BINDING_CONTEXT_PATH = SQL_DIR / BINDING_CONTEXT_SQL
-EXPECTED_APPLY_COUNT = 50  # +telegram_consent_v1, +site_request_plans_v10 (19.09.2026), +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026), +crm_v14, +academy_v1, +academy_shelf_v15 (25.09.2026), +support_site_forum_v16 (26.09.2026)  # +marketing_consent_v17 (26.09.2026), +pricing_october_v18, +academy_lms_v19, +crm_v20, +cabinet_v21 (03.10.2026), +shop_v22 (06.10.2026), +site_request_quick_v23 (08.10.2026), +max_crosspost_v24, +feedback_v25, +chat_bridge_v27 (10.10.2026)
+EXPECTED_APPLY_COUNT = 51  # +telegram_consent_v1, +site_request_plans_v10 (19.09.2026), +lead_actor_channels_v11 (20.09.2026), +site_request_contacts_v12, +renewal_services_v13 (24.09.2026), +crm_v14, +academy_v1, +academy_shelf_v15 (25.09.2026), +support_site_forum_v16 (26.09.2026)  # +marketing_consent_v17 (26.09.2026), +pricing_october_v18, +academy_lms_v19, +crm_v20, +cabinet_v21 (03.10.2026), +shop_v22 (06.10.2026), +site_request_quick_v23 (08.10.2026), +max_crosspost_v24, +feedback_v25, +chat_bridge_v27, +site_request_lang_v28 (10.10.2026)
 BACKFILL_PLAN = SCRIPTS_DIR / "platform_bot_binding_context_backfill_plan_v1.sql"
 
 # Pinned in Gate B1 manifest. A dirty tree that rewrites the file must fail.
