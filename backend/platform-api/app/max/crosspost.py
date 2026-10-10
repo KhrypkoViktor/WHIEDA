@@ -85,19 +85,31 @@ def entities_to_html(text: str, entities: list[dict[str, Any]] | None) -> str:
     return "".join(out)
 
 
-def post_payload(post: dict[str, Any]) -> dict[str, Any]:
-    """Что из поста Telegram уходит в Max: текст (HTML) и одно вложение."""
+def _media(kind: str, item: dict[str, Any], filename: str | None = None) -> dict[str, Any]:
+    return {"kind": kind, "file_id": item.get("file_id"), "size": item.get("file_size"), "filename": filename}
+
+
+def post_payload(post: dict[str, Any], *, rich: bool = False) -> dict[str, Any]:
+    """Что из сообщения Telegram уходит в Max: текст (HTML) и одно вложение.
+
+    Канал (rich=False) везёт только фото и видео — остальное ссылкой на пост. Мост
+    группы потока (rich=True, V27) везёт ещё файлы, голосовые, аудио, гифки и кружки."""
     text = str(post.get("text") or post.get("caption") or "")
     entities = post.get("entities") or post.get("caption_entities") or []
     media: dict[str, Any] | None = None
     photos = post.get("photo") or []
     if photos:
-        best = photos[-1]
-        media = {"kind": "image", "file_id": best.get("file_id"), "size": best.get("file_size")}
+        media = _media("image", photos[-1])
     elif post.get("video"):
-        video = post["video"]
-        media = {"kind": "video", "file_id": video.get("file_id"), "size": video.get("file_size")}
-    elif post.get("animation") or post.get("document") or post.get("audio") or post.get("voice") or post.get("video_note"):
+        media = _media("video", post["video"], post["video"].get("file_name"))
+    elif rich and (post.get("animation") or post.get("video_note")):
+        media = _media("video", post.get("animation") or post["video_note"])
+    elif rich and post.get("document"):
+        media = _media("file", post["document"], post["document"].get("file_name"))
+    elif rich and (post.get("voice") or post.get("audio")):
+        item = post.get("voice") or post["audio"]
+        media = _media("audio", item, item.get("file_name") or ("voice.ogg" if post.get("voice") else None))
+    elif any(post.get(k) for k in ("animation", "document", "audio", "voice", "video_note", "sticker")):
         media = {"kind": "unsupported"}
     return {"html": entities_to_html(text, entities), "media": media}
 
@@ -151,13 +163,18 @@ async def claim(tenant_id: str, chat_id: int, *, message_id: int, media_group_id
 
 
 async def target_chats(tenant_id: str) -> list[int]:
+    """Чаты Max для постов канала. Группы потоков с мостом (V27) — никогда: туда идёт
+    только своя Telegram-группа, даже если флаг crosspost кто-то включит."""
+    from app.max.bridges import bridged_max_chat_ids
+
     async with tenant_connection(tenant_id) as conn:
         rows = await fetch_all(
             conn,
             "select chat_id from max_chats where tenant_id = %s and status = 'active' and crosspost order by created_at",
             (tenant_id,),
         )
-    return [int(r["chat_id"]) for r in rows]
+    bridged = bridged_max_chat_ids()
+    return [int(r["chat_id"]) for r in rows if int(r["chat_id"]) not in bridged]
 
 
 async def _finish(tenant_id: str, ids: list[str], status: str, delivered: list[Any], error: str | None) -> None:
@@ -184,7 +201,9 @@ async def download_telegram_file(bot_token: str, file_id: str) -> bytes:
         return response.content
 
 
-async def build_message(rows: list[dict[str, Any]], bot_token: str) -> tuple[str, list[dict[str, Any]]]:
+async def build_message(
+    rows: list[dict[str, Any]], bot_token: str, *, rich: bool = False
+) -> tuple[str, list[dict[str, Any]]]:
     """Текст (подпись альбома — первая непустая) и вложения Max для набора постов."""
     texts: list[str] = []
     attachments: list[dict[str, Any]] = []
@@ -193,7 +212,7 @@ async def build_message(rows: list[dict[str, Any]], bot_token: str) -> tuple[str
     for row in rows:
         post = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
         link = link or post_link(post)
-        payload = post_payload(post)
+        payload = post_payload(post, rich=rich)
         if payload["html"]:
             texts.append(payload["html"])
         media = payload["media"]
@@ -203,9 +222,11 @@ async def build_message(rows: list[dict[str, Any]], bot_token: str) -> tuple[str
             missing_media = True
             continue
         body = await download_telegram_file(bot_token, str(media["file_id"]))
-        attachments.append(await upload_max_media(media["kind"], body))
+        attachments.append(await upload_max_media(media["kind"], body, filename=media.get("filename")))
     text = "\n\n".join(texts)
-    if missing_media and link:
+    if missing_media and rich:
+        text = (text + "\n\n" if text else "") + "<i>Вложение больше 20 МБ или стикер — смотрите в Telegram-группе.</i>"
+    elif missing_media and link:
         text = (text + "\n\n" if text else "") + f'Видео и файлы — <a href="{html.escape(link, quote=True)}">в Telegram-канале</a>'
     return text[:MAX_TEXT_LIMIT], attachments
 

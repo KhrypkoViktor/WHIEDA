@@ -33,11 +33,15 @@ def test_message_with_typed_start_is_a_start_and_plain_text_is_a_question():
     assert question is not None and question.kind == "message" and question.text.startswith("стельки")
 
 
-def test_groups_bots_and_unknown_updates_are_ignored():
+def test_bots_and_unknown_updates_are_ignored_groups_go_to_the_bridge():
     assert parse_max_update({"update_type": "message_created", "message": {
-        "sender": {"user_id": 1, "is_bot": True}, "recipient": {"chat_id": 5, "chat_type": "dialog"}, "body": {"text": "x"}}}) is None
-    assert parse_max_update({"update_type": "message_created", "message": {
-        "sender": {"user_id": 1}, "recipient": {"chat_id": 5, "chat_type": "chat"}, "body": {"text": "x"}}}) is None
+        "sender": {"user_id": 1, "is_bot": True}, "recipient": {"chat_id": 5, "chat_type": "chat"}, "body": {"text": "x"}}}) is None
+    # Группа — не советнику, а мосту группы потока (V27): своё событие.
+    group = parse_max_update({"update_type": "message_created", "message": {
+        "sender": {"user_id": 1}, "recipient": {"chat_id": 5, "chat_type": "chat"}, "body": {"text": "x"}}})
+    assert group is not None and group.kind == "group_message" and group.chat_id == 5
+    joined = parse_max_update({"update_type": "user_added", "chat_id": 5, "user": {"user_id": 7, "first_name": "Ира"}, "inviter_id": 9})
+    assert joined is not None and joined.kind == "member_added" and joined.user_id == 7 and joined.text == "9"
     assert parse_max_update({"update_type": "message_removed"}) is None
 
 

@@ -9,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from app.advisor.service import handle_structured_query
 from app.db_feature_readiness import SchemaFeatureUnavailable, log_feature_unavailable
+from app.max.bridges import bridge_for_telegram
 from app.settings import get_settings
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.content_access import try_handle_content_access
@@ -288,6 +289,16 @@ async def telegram_webhook(
         # списка своих групп не даёт, а владелец просит сверять участников (09.10.2026).
         # В тексте строки, не в extra: формат журнала Core поля extra не печатает.
         logger.info("telegram_group_seen chat_id=%s title=%s", group.get("id"), str(group.get("title") or "")[:120])
+    bridge = bridge_for_telegram(group.get("id"))
+    if bridge is not None:
+        # Группа потока с мостом в Max (V27): сообщения владельца/куратора → Max, вступившие —
+        # проверка оплаты. Обычная обработка обновления идёт дальше как была.
+        background_tasks.add_task(_bridge_group_message, binding, bridge, update.get("message") or {}, trace_id)
+    callback = update.get("callback_query") or {}
+    if str(callback.get("data") or "").startswith("brg:"):
+        # Кнопки владельца «Удалить» / «Оставить» по вступившему без оплаты (V27).
+        background_tasks.add_task(_bridge_owner_callback, binding, callback, trace_id)
+        return {"ok": True}
     if "channel_post" in update or "edited_channel_post" in update:
         # Пост «WWC Official channel» → чаты Max (V24); правки постов и чужие каналы — мимо.
         post = update.get("channel_post")
@@ -312,6 +323,34 @@ async def _crosspost_to_max(binding: BotBindingContext, post: dict, trace_id: st
         logger.info("telegram_channel_post_crossposted", extra={"trace_id": trace_id, "status": result.get("status")})
     except Exception:
         logger.exception("telegram_channel_post_crosspost_failed", extra={"trace_id": trace_id})
+
+
+async def _bridge_group_message(binding: BotBindingContext, bridge: Any, message: dict, trace_id: str | None) -> None:
+    from app.max.bridge import bot_id_from_token, bridge_telegram_message, owner_telegram_id, telegram_role, watch_telegram_join
+
+    tenant_id = binding.tenant.tenant_id
+    try:
+        if message.get("new_chat_members"):
+            await watch_telegram_join(tenant_id, bridge, message, bot_token=binding.bot_token)
+            return
+        if not get_settings().max_bot_token:
+            return
+        role = telegram_role(message, bridge, owner_id=owner_telegram_id(), bot_id=bot_id_from_token(binding.bot_token))
+        if role is None:
+            return
+        result = await bridge_telegram_message(tenant_id, bridge, message, role=role, bot_token=binding.bot_token)
+        logger.info("telegram_group_bridged", extra={"trace_id": trace_id, "status": result.get("status")})
+    except Exception:
+        logger.exception("telegram_group_bridge_failed", extra={"trace_id": trace_id})
+
+
+async def _bridge_owner_callback(binding: BotBindingContext, callback: dict, trace_id: str | None) -> None:
+    from app.max.bridge import handle_owner_callback
+
+    try:
+        await handle_owner_callback(callback, bot_token=binding.bot_token)
+    except Exception:
+        logger.exception("telegram_bridge_callback_failed", extra={"trace_id": trace_id})
 
 
 def _durable_inbox_enabled(binding: BotBindingContext) -> bool:

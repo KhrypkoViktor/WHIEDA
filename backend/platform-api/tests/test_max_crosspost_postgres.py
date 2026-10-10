@@ -35,7 +35,7 @@ def test_channel_posts_reach_max_once_and_albums_go_as_one_message(monkeypatch: 
 
             tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={})
             send = AsyncMock(return_value={"ok": True})
-            upload = AsyncMock(side_effect=lambda kind, body: {"type": kind, "payload": {"token": f"tok-{body.decode()}"}})
+            upload = AsyncMock(side_effect=lambda kind, body, **kw: {"type": kind, "payload": {"token": f"tok-{body.decode()}"}})
             download = AsyncMock(side_effect=lambda token, file_id: file_id.encode())
             owner_note = AsyncMock(return_value={"ok": True})
             binding = type("B", (), {"bot_token": "tg"})()

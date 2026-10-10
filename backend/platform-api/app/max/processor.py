@@ -119,11 +119,20 @@ async def handle_max_chat_membership(tenant: TenantContext, event: MaxEvent, tra
     owner = str(get_settings().platform_billing_owner_telegram_id or "").strip()
     binding = await resolve_bot_binding_context("whieda-advisor-bot")
     if owner.isdigit() and binding is not None:
+        from app.max.bridges import bridge_for_max
+
         name = (row or {}).get("title") or title or str(event.chat_id)
-        text = (
-            f"Бот WWC добавлен в Max: «{name}». Посты из Telegram-канала теперь повторяются и здесь."
-            if added else f"Бота WWC убрали из Max: «{name}». Посты туда больше не идут."
-        )
+        bridge = bridge_for_max(event.chat_id)
+        if bridge is not None:
+            text = (
+                f"Бот WWC добавлен в Max: «{name}» — мост с Telegram-группой «{bridge.title}»."
+                if added else f"Бота WWC убрали из Max: «{name}». Мост с «{bridge.title}» остановлен."
+            )
+        else:
+            text = (
+                f"Бот WWC добавлен в Max: «{name}». Посты из Telegram-канала теперь повторяются и здесь."
+                if added else f"Бота WWC убрали из Max: «{name}». Посты туда больше не идут."
+            )
         await send_telegram_text(chat_id=owner, text=text, bot_token=binding.bot_token)
     logger.info("max_chat_membership", extra={"trace_id": trace_id, "added": added, "chat_id": event.chat_id})
     return {"ok": True, "route": "max_chat", "added": added, "chat_id": event.chat_id}
@@ -159,9 +168,31 @@ async def _try_max_wish(tenant: TenantContext, event: MaxEvent, trace_id: str) -
     return {"ok": True, "route": "max_wish", "status": "new", "no": int(row["feedback_no"]), "trace_id": trace_id}
 
 
+async def handle_max_group_event(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
+    """Группа Max: работает только мост группы потока (V27) — перенос сообщений в
+    Telegram и контроль состава. Остальные группы молча пропускаем."""
+    from app.max.bridge import bridge_max_message, watch_max_join
+    from app.max.bridges import bridge_for_max
+    from app.telegram.bindings import resolve_bot_binding_context
+
+    bridge = bridge_for_max(event.chat_id)
+    if bridge is None:
+        return {"ok": True, "route": "max_group", "status": "not_bridged", "trace_id": trace_id}
+    binding = await resolve_bot_binding_context("whieda-advisor-bot")
+    if binding is None:
+        return {"ok": False, "route": "max_group", "status": "no_telegram_bot", "trace_id": trace_id}
+    if event.kind == "member_added":
+        result = await watch_max_join(bridge, event.raw, bot_token=binding.bot_token)
+    else:
+        result = await bridge_max_message(tenant.tenant_id, bridge, event.raw, bot_token=binding.bot_token)
+    return {"route": "max_group", "trace_id": trace_id, **result}
+
+
 async def process_max_event(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
     if event.kind in {"chat_added", "chat_removed"}:
         return await handle_max_chat_membership(tenant, event, trace_id)
+    if event.kind in {"group_message", "member_added"}:
+        return await handle_max_group_event(tenant, event, trace_id)
     if event.kind == "start":
         return await handle_max_start(tenant, event, trace_id)
     return await handle_max_message(tenant, event, trace_id)

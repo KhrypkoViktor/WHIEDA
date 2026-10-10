@@ -36,9 +36,14 @@ def test_post_payload_takes_the_biggest_photo_and_marks_files_unsupported():
     photo = {"message_id": 7, "chat": {"id": -100, "username": "Whieda_world_club"}, "caption": "Новинка",
              "caption_entities": [{"type": "bold", "offset": 0, "length": 7}],
              "photo": [{"file_id": "small", "file_size": 10}, {"file_id": "big", "file_size": 900}]}
-    assert post_payload(photo) == {"html": "<b>Новинка</b>", "media": {"kind": "image", "file_id": "big", "size": 900}}
+    assert post_payload(photo) == {"html": "<b>Новинка</b>", "media": {"kind": "image", "file_id": "big", "size": 900, "filename": None}}
     assert post_link(photo) == "https://t.me/Whieda_world_club/7"
     assert post_payload({"text": "x", "document": {"file_id": "d"}})["media"] == {"kind": "unsupported"}
+    # Мост группы потока (V27) везёт файлы и голосовые вложением, канал — нет.
+    assert post_payload({"document": {"file_id": "d", "file_size": 3, "file_name": "a.pdf"}}, rich=True)["media"] == {
+        "kind": "file", "file_id": "d", "size": 3, "filename": "a.pdf"}
+    assert post_payload({"voice": {"file_id": "v"}}, rich=True)["media"]["kind"] == "audio"
+    assert post_payload({"sticker": {"file_id": "s"}}, rich=True)["media"] == {"kind": "unsupported"}
     assert post_payload({"text": "просто текст"})["media"] is None
 
 

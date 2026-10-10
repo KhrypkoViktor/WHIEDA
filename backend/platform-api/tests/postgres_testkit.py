@@ -59,6 +59,7 @@ MIGRATIONS = (
     "platform_site_request_quick_v23.sql",  # анкета: имя, «Пропустить», голосовое (08.10.2026)
     "platform_max_crosspost_v24.sql",  # посты Telegram-канала → чаты Max (08.10.2026)
     "platform_feedback_v25.sql",  # пожелания от всех (08.10.2026)
+    "platform_chat_bridge_v27.sql",  # мост группы потока Telegram <-> Max (10.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

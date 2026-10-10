@@ -10,7 +10,7 @@ START_PREFIXES = ("/start", "start")
 
 @dataclass
 class MaxEvent:
-    kind: str  # "start" | "message" | "chat_added" | "chat_removed"
+    kind: str  # "start" | "message" | "chat_added" | "chat_removed" | "group_message" | "member_added"
     user_id: int
     chat_id: int | None
     text: str  # для start — payload (ref_… / site_…), для message — текст
@@ -42,6 +42,17 @@ def parse_max_update(update: dict[str, Any]) -> MaxEvent | None:
             user_id=int(user.get("user_id") or 0), chat_id=chat_id,
             text="channel" if update.get("is_channel") else "chat", username=username, display_name=display, raw=update,
         )
+    if kind == "user_added":
+        # Человек вступил в группу Max (по ссылке или его добавили): контроль состава моста (V27).
+        chat_id = _int_or_none(update.get("chat_id"))
+        user = update.get("user") or {}
+        if chat_id is None or user.get("user_id") is None or update.get("is_channel"):
+            return None
+        username, display = _user_name(user)
+        return MaxEvent(
+            kind="member_added", user_id=int(user["user_id"]), chat_id=chat_id,
+            text=str(update.get("inviter_id") or ""), username=username, display_name=display, raw=update,
+        )
     if kind == "bot_started":
         user = update.get("user") or {}
         if user.get("user_id") is None:
@@ -57,10 +68,14 @@ def parse_max_update(update: dict[str, Any]) -> MaxEvent | None:
         recipient = message.get("recipient") or {}
         if sender.get("user_id") is None or sender.get("is_bot"):
             return None
-        if str(recipient.get("chat_type") or "dialog") != "dialog":
-            return None  # группы не обслуживаем
         text = str((message.get("body") or {}).get("text") or "").strip()
         username, display = _user_name(sender)
+        if str(recipient.get("chat_type") or "dialog") != "dialog":
+            # Группа: советник там не отвечает; сообщение нужно только мосту потока (V27).
+            return MaxEvent(
+                kind="group_message", user_id=int(sender["user_id"]), chat_id=_int_or_none(recipient.get("chat_id")),
+                text=text, username=username, display_name=display, raw=update,
+            )
         event = MaxEvent(
             kind="message", user_id=int(sender["user_id"]), chat_id=_int_or_none(recipient.get("chat_id")),
             text=text, username=username, display_name=display, raw=update,

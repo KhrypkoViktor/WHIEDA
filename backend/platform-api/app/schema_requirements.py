@@ -127,6 +127,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "channel_crossposts",
             # Пожелания от всех — бот, тема «💡 Пожелания», таблица учёта (platform_feedback_v25.sql).
             "partner_feedback",
+            # Мост группы потока Telegram <-> Max (platform_chat_bridge_v27.sql, 10.10.2026).
+            "chat_bridge_links",
+            "chat_bridge_inbox",
             # advisor
             "platform_session_context",
             "advisor_structured_products",
