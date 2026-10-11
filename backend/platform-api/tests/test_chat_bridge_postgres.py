@@ -101,10 +101,13 @@ def test_bridge_carries_owner_and_people_and_watches_who_joins(monkeypatch: pyte
                 assert send_max.await_args.kwargs["attachments"] == [{"type": "file", "payload": {"token": "tok-d1"}}]
                 assert upload.await_args.kwargs == {"filename": "zadanie.pdf"}
 
-                # Служебное «вступил», чужие участники и Самцова без ответа боту — в Max не идут.
+                # Служебное «вступил» — в Max не идёт; с 11.10 поток в режиме «all»: участники и
+                # Самцова (под своей подписью куратора) уходят всегда.
+                assert bridge.mode == "all"
                 assert role(_tg(12, OWNER, new_chat_members=[{"id": PAID}])) is None
-                assert role(_tg(13, PAID, text="привет")) is None
-                assert role(_tg(14, SAMTSOVA, text="всем привет")) is None
+                assert role(_tg(13, PAID, text="привет")) == "member"
+                assert role(_tg(14, SAMTSOVA, text="всем привет")) == "curator"
+                assert role(_tg(15, BOT, text="бот", **{"from": {"id": BOT, "is_bot": True}})) is None
 
                 # 2. Участница пишет в Max, отвечая на сообщение владельца — в Telegram с подписью и ответом на его пост.
                 result = await process_max_event(tenant, parse_max_update(_max(

@@ -62,7 +62,9 @@ def telegram_role(message: dict[str, Any], bridge: ChatBridge, *, owner_id: int 
     if owner_id and sender == owner_id:
         return "owner"
     if bridge.mode == "all":
-        return "member" if sender and not sender_info.get("is_bot") else None
+        if not sender or sender_info.get("is_bot"):
+            return None
+        return "curator" if sender in bridge.curators else "member"
     if sender in bridge.curators:
         replied = ((message.get("reply_to_message") or {}).get("from") or {}).get("id")
         if bot_id and replied and int(replied) == bot_id:
