@@ -53,13 +53,16 @@ def bot_id_from_token(token: str) -> int | None:
 
 
 def telegram_role(message: dict[str, Any], bridge: ChatBridge, *, owner_id: int | None, bot_id: int | None) -> str | None:
-    """Кого из Telegram-группы везём в Max: владельца — всегда, куратора — только ответом
-    на сообщение бота. Служебные сообщения («вступил», закреп) — никогда."""
+    """Кого из Telegram-группы везём в Max: владельца — всегда; в группе «all» (клуб) — всех;
+    в группе потока куратора — только ответом на сообщение бота. Служебные — никогда."""
     if not any(message.get(key) for key in _CONTENT_KEYS):
         return None
-    sender = int((message.get("from") or {}).get("id") or 0)
+    sender_info = message.get("from") or {}
+    sender = int(sender_info.get("id") or 0)
     if owner_id and sender == owner_id:
         return "owner"
+    if bridge.mode == "all":
+        return "member" if sender and not sender_info.get("is_bot") else None
     if sender in bridge.curators:
         replied = ((message.get("reply_to_message") or {}).get("from") or {}).get("id")
         if bot_id and replied and int(replied) == bot_id:
@@ -125,6 +128,9 @@ async def bridge_telegram_message(
         if role == "curator":
             name = bridge.curators.get(int((message.get("from") or {}).get("id") or 0)) or "Куратор"
             text = f"<b>{html.escape(name)}</b>:\n{text}" if text else f"<b>{html.escape(name)}</b>:"
+        elif role == "member":
+            label = f"<b>{html.escape(telegram_sender_name(message.get('from') or {}))}</b> · Telegram"
+            text = f"{label}\n{text}" if text else label
         reply_mid = await _max_mid_for(
             tenant_id, bridge.tg_chat_id, (message.get("reply_to_message") or {}).get("message_id")
         )
@@ -144,6 +150,13 @@ async def bridge_telegram_message(
     )
     logger.info("chat_bridge_tg_to_max", extra={"ok": ok, "posts": len(rows), "role": role})
     return {"ok": ok, "status": "sent" if ok else "failed", "mid": sent.get("mid")}
+
+
+def telegram_sender_name(sender: dict[str, Any]) -> str:
+    name = " ".join(p for p in (str(sender.get("first_name") or "").strip(), str(sender.get("last_name") or "").strip()) if p)
+    if not name and sender.get("username"):
+        name = f"@{sender['username']}"
+    return (name or "Участник")[:120]
 
 
 # ---- Max → Telegram ---------------------------------------------------------------------
@@ -296,6 +309,15 @@ async def bridge_max_message(tenant_id: str, bridge: ChatBridge, update: dict[st
 # ---- контроль состава -------------------------------------------------------------------
 
 
+async def has_access(tenant_id: str, bridge: ChatBridge, telegram_user_id: int) -> bool:
+    """Право быть в группе: активный клуб (группа клуба) или оплаченный курс (группа потока)."""
+    if bridge.access == "club":
+        from app.shop.service import is_club_member
+
+        return await is_club_member(tenant_id, int(telegram_user_id))
+    return await has_paid_course(tenant_id, bridge.course_item_code, int(telegram_user_id))
+
+
 async def has_paid_course(tenant_id: str, item_code: str, telegram_user_id: int) -> bool:
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
@@ -344,7 +366,7 @@ async def watch_telegram_join(tenant_id: str, bridge: ChatBridge, message: dict[
         if user_id == owner or user_id in bridge.curators:
             results.append({"user_id": user_id, "status": "staff"})
             continue
-        if await has_paid_course(tenant_id, bridge.course_item_code, user_id):
+        if await has_access(tenant_id, bridge, user_id):
             results.append({"user_id": user_id, "status": "paid"})
             continue
         if adder and adder != user_id:
@@ -355,9 +377,10 @@ async def watch_telegram_join(tenant_id: str, bridge: ChatBridge, message: dict[
                 results.append({"user_id": user_id, "status": "added_by_admin"})
                 continue
         index = BRIDGES.index(bridge)
+        paid = "активного клуба" if bridge.access == "club" else "оплаты курса"
         await _alert_owner(
-            f"⚠️ В Telegram-группу потока «{html.escape(bridge.title)}» вошёл {_person(member)}, id {user_id}.\n"
-            "Оплаты курса у него не вижу. Удалить из группы?",
+            f"⚠️ В Telegram-группу «{html.escape(bridge.title)}» вошёл {_person(member)}, id {user_id}.\n"
+            f"{paid.capitalize()} у него не вижу. Удалить из группы?",
             _buttons("tk", index, user_id), bot_token,
         )
         results.append({"user_id": user_id, "status": "alerted"})
@@ -388,7 +411,7 @@ async def watch_max_join(bridge: ChatBridge, update: dict[str, Any], *, bot_toke
         return {"status": "staff", "user_id": user_id}
     how = "по ссылке" if not inviter else f"(добавил участник id {inviter})"
     await _alert_owner(
-        f"⚠️ В Max-группу потока «{html.escape(bridge.title)}» вошёл {_person(user)} {how}.\n"
+        f"⚠️ В Max-группу «{html.escape(bridge.title)}» вошёл {_person(user)} {how}.\n"
         "В Max оплату не сверить — проверьте, что он оплатил. Удалить из группы?",
         _buttons("mk", BRIDGES.index(bridge), user_id), bot_token,
     )

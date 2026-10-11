@@ -189,3 +189,70 @@ def test_bridge_carries_owner_and_people_and_watches_who_joins(monkeypatch: pyte
             ]
 
         db.run_with_app(proof)
+
+
+CLUB_TG = -1004338290116
+CLUB_MAX = -79980845696385
+
+
+@pytest.mark.integration
+def test_club_bridge_carries_everyone_both_ways_and_checks_the_club(monkeypatch: pytest.MonkeyPatch):
+    """Клуб (11.10.2026): «двустороннее общение» — все участники в обе стороны; состав — по активному клубу."""
+    monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", str(OWNER))
+    monkeypatch.setenv("PLATFORM_MAX_BOT_TOKEN", "max-proof")
+    with temporary_database("whieda_club_bridge") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.max import bridge as bridge_mod
+            from app.max import crosspost
+            from app.max.bridges import bridge_for_max, bridge_for_telegram
+            from app.max.processor import process_max_event
+            from app.max.update_parser import parse_max_update
+            from app.tenancy import TenantContext
+
+            tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={})
+            club = bridge_for_telegram(CLUB_TG)
+            assert club is bridge_for_max(CLUB_MAX) and club.mode == "all" and club.access == "club"
+            send_max = AsyncMock(return_value={"ok": True, "mid": "mid.club.1"})
+            calls: list[tuple[str, dict]] = []
+
+            async def fake_tg(method, bot_token, data, files=None):
+                calls.append((method, data))
+                return {"ok": True, "message_id": 900}
+
+            binding = type("B", (), {"bot_token": TOKEN})()
+            member = {"message_id": 1, "chat": {"id": CLUB_TG, "type": "supergroup"}, "from": {"id": PAID, "first_name": "Анна", "last_name": "Ким"}, "text": "Всем привет"}
+            with patch.object(bridge_mod, "send_max_message", send_max), patch.object(bridge_mod, "_tg", side_effect=fake_tg), \
+                 patch.object(crosspost, "upload_max_media", AsyncMock()), \
+                 patch("app.shop.service.is_club_member", AsyncMock(side_effect=lambda tenant_id, uid: uid == PAID)), \
+                 patch.object(bridge_mod, "_tg_member_status", AsyncMock(return_value="member")), \
+                 patch("app.telegram.bindings.resolve_bot_binding_context", AsyncMock(return_value=binding)):
+                # Любой участник клуба из Telegram — в Max с подписью «Имя · Telegram»; владелец — без подписи.
+                role = bridge_mod.telegram_role(member, club, owner_id=OWNER, bot_id=BOT)
+                assert role == "member"
+                await bridge_mod.bridge_telegram_message("whieda", club, member, role=role, bot_token=TOKEN)
+                assert send_max.await_args.kwargs["chat_id"] == CLUB_MAX
+                assert send_max.await_args.kwargs["text"] == "<b>Анна Ким</b> · Telegram\nВсем привет"
+                own = {**member, "message_id": 2, "from": {"id": OWNER}, "text": "Эфир клуба в 20:00"}
+                assert bridge_mod.telegram_role(own, club, owner_id=OWNER, bot_id=BOT) == "owner"
+                assert bridge_mod.telegram_role({**member, "message_id": 3, "text": None, "new_chat_members": [{"id": 5}]}, club, owner_id=OWNER, bot_id=BOT) is None
+
+                # Из Max — в Telegram-группу клуба.
+                result = await process_max_event(tenant, parse_max_update({"update_type": "message_created", "message": {
+                    "sender": {"user_id": 5, "first_name": "Олег"}, "recipient": {"chat_id": CLUB_MAX, "chat_type": "chat"},
+                    "body": {"mid": "mid.oleg", "text": "Привет из Max"}}}), "t")
+                assert result["status"] == "sent" and calls[-1][1]["chat_id"] == CLUB_TG
+                assert calls[-1][1]["text"] == "<b>Олег</b> · Max\nПривет из Max"
+
+                # Состав: с активным клубом — тишина, без клуба — владельцу кнопки.
+                calls.clear()
+                joined = await bridge_mod.watch_telegram_join("whieda", club, {"chat": {"id": CLUB_TG}, "from": {"id": STRANGER},
+                    "new_chat_members": [{"id": STRANGER, "first_name": "Гость"}, {"id": PAID, "first_name": "Анна"}]}, bot_token=TOKEN)
+                assert [r["status"] for r in joined] == ["alerted", "paid"]
+                assert "Активного клуба у него не вижу" in calls[0][1]["text"]
+                assert calls[0][1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"brg:tk:1:{STRANGER}"
+
+        db.run_with_app(proof)
