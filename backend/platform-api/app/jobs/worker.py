@@ -38,6 +38,8 @@ DUE_PASS_BUDGET_SEC = 20.0
 DUE_STUCK_AFTER = "1 hour"
 # Академия v2: брошенные загрузки с диска — раз в час.
 ACADEMY_CLEANUP_INTERVAL_SEC = 3600.0
+# Встречи клуба (11.10.2026): напоминание за 2 часа в чаты клуба — проверка раз в минуту.
+CLUB_MEETINGS_INTERVAL_SEC = 60.0
 
 
 async def process_pending_outbox(batch_size: int = 20) -> int:
@@ -458,7 +460,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     last_due = last_plan = float("-inf")
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
-    last_cleanup = float("-inf")
+    last_cleanup = last_club = float("-inf")
     while True:
         await process_pending_outbox()
         try:
@@ -479,6 +481,14 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await academy_notifications_step()
             except Exception:
                 logger.exception("academy_notifications_step_failed")
+        if now - last_club >= CLUB_MEETINGS_INTERVAL_SEC:
+            last_club = now
+            try:
+                from app.telegram.club_meetings import club_meetings_step
+
+                await club_meetings_step()
+            except Exception:
+                logger.exception("club_meetings_step_failed")
         if now - last_cleanup >= ACADEMY_CLEANUP_INTERVAL_SEC:
             last_cleanup = now
             try:
