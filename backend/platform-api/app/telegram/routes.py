@@ -299,6 +299,10 @@ async def telegram_webhook(
         # Кнопки владельца «Удалить» / «Оставить» по вступившему без оплаты (V27).
         background_tasks.add_task(_bridge_owner_callback, binding, callback, trace_id)
         return {"ok": True}
+    if str(callback.get("data") or "").startswith("chpost:"):
+        # «Опубликовать» / «Отменить» под черновиком поста в канал (11.10.2026).
+        background_tasks.add_task(_channel_draft_callback, binding, callback, trace_id)
+        return {"ok": True}
     if "channel_post" in update or "edited_channel_post" in update:
         # Пост «WWC Official channel» → чаты Max (V24); правки постов и чужие каналы — мимо.
         post = update.get("channel_post")
@@ -351,6 +355,16 @@ async def _bridge_owner_callback(binding: BotBindingContext, callback: dict, tra
         await handle_owner_callback(callback, bot_token=binding.bot_token)
     except Exception:
         logger.exception("telegram_bridge_callback_failed", extra={"trace_id": trace_id})
+
+
+async def _channel_draft_callback(binding: BotBindingContext, callback: dict, trace_id: str | None) -> None:
+    from app.telegram.channel_posts import handle_draft_callback
+
+    try:
+        result = await handle_draft_callback(callback, tenant_id=binding.tenant.tenant_id, bot_token=binding.bot_token)
+        logger.info("channel_draft_callback", extra={"trace_id": trace_id, "status": result.get("status")})
+    except Exception:
+        logger.exception("channel_draft_callback_failed", extra={"trace_id": trace_id})
 
 
 def _durable_inbox_enabled(binding: BotBindingContext) -> bool:
