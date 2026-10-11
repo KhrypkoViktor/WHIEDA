@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlsplit
 
+from app.academy.showcases import is_showcase_host, warm_hosts
 from app.content_access.service import BOT_LOGIN_FRAGMENT, create_bot_login
 
 logger = logging.getLogger(__name__)
@@ -19,12 +20,16 @@ _SITE_SUFFIX = ".wwc.best"
 
 
 def _is_site(url: str) -> bool:
+    """wwc.best, *.wwc.best и адреса витрин Академии (academy.almira.by, V29)."""
     host = (urlsplit(url).hostname or "").lower()
-    return host == "wwc.best" or host.endswith(_SITE_SUFFIX)
+    return host == "wwc.best" or host.endswith(_SITE_SUFFIX) or is_showcase_host(host)
 
 
 async def with_site_login(url: str, *, tenant_id: str, telegram_user_id: int | None) -> str:
-    if not url or telegram_user_id is None or not _is_site(url):
+    if not url or telegram_user_id is None:
+        return url
+    await warm_hosts(tenant_id)
+    if not _is_site(url):
         return url
     parts = urlsplit(url)
     return_to = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")

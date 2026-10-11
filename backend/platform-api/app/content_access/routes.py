@@ -5,6 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from app.academy.showcases import login_bot_username, showcase_for_request
 from app.content_access.cookies import (
     clear_session_cookie,
     read_session_cookie,
@@ -57,6 +58,9 @@ async def _current_session(request: Request) -> dict[str, Any]:
 async def _create(body: ChallengeCreateBody, request: Request) -> dict:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
+    # Витрина Академии автора (academy.almira.by) входит через своего бота (V29).
+    showcase = await showcase_for_request(request, tenant.tenant_id)
+    bot_username = None if showcase.is_default else await login_bot_username(showcase)
     return await create_content_challenge(
         tenant.tenant_id,
         browser_nonce=body.browser_nonce,
@@ -65,6 +69,7 @@ async def _create(body: ChallengeCreateBody, request: Request) -> dict:
         visitor_session_id=body.visitor_session_id,
         ref=body.ref,
         context=body.context,
+        bot_username=bot_username,
     )
 
 

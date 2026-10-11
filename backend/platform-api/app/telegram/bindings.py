@@ -29,6 +29,8 @@ class BotBindingContext:
     processing_mode: ProcessingMode
     bot_token: str = field(repr=False)
     webhook_secret: str = field(repr=False)
+    # Бот витрины автора Академии (V29): обновления идут в процессор Академии, не WHIEDA.
+    showcase_id: str | None = None
 
 
 _current_binding: contextvars.ContextVar[BotBindingContext | None] = contextvars.ContextVar(
@@ -78,7 +80,11 @@ async def resolve_bot_binding_context(binding_id: str) -> BotBindingContext | No
                        b.webhook_secret_ref,
                        to_jsonb(b)->>'bot_token_ref' as bot_token_ref,
                        to_jsonb(b)->>'bot_username' as bot_username,
-                       to_jsonb(b)->>'processing_mode' as processing_mode
+                       to_jsonb(b)->>'processing_mode' as processing_mode,
+                       (select s.showcase_id from academy_showcases s
+                        where s.tenant_id = b.tenant_id and s.telegram_binding_id = b.binding_id
+                          and s.status = 'active' and not s.is_default
+                        limit 1) as showcase_id
                 from tenant_bot_bindings b
                 join tenants t on t.tenant_id = b.tenant_id
                 where b.binding_id = %s
@@ -126,6 +132,7 @@ async def resolve_bot_binding_context(binding_id: str) -> BotBindingContext | No
         processing_mode=validate_processing_mode(tenant, row.get("processing_mode")),
         bot_token=resolve_secret_ref(bot_token_ref),
         webhook_secret=resolve_secret_ref(webhook_secret_ref),
+        showcase_id=str(row["showcase_id"]) if row.get("showcase_id") else None,
     )
 
 

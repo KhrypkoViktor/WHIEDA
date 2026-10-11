@@ -384,25 +384,73 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
     return result
 
 
+async def showcase_notify_bindings(tenant_ids: set[str]) -> dict[str, BotBindingContext]:
+    """Боты витрин Академии (V29): уведомления учеников и автора витрины идут её ботом.
+
+    Строки берёт только процесс, у которого есть токен бота (бой): у staging токена
+    нет — binding не разрешается, и его строки он не трогает."""
+    from fastapi import HTTPException
+
+    from app.academy.showcases import load_showcases
+
+    out: dict[str, BotBindingContext] = {}
+    for tenant_id in sorted(tenant_ids):
+        for showcase in await load_showcases(tenant_id):
+            binding_id = showcase.telegram_binding_id
+            if not binding_id or binding_id in out:
+                continue
+            try:
+                binding = await resolve_bot_binding_context(binding_id)
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, dict) else {}
+                if detail.get("error") != "bot_binding_secret_unavailable":
+                    logger.warning(
+                        "showcase_notify_binding_unavailable",
+                        extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+                    )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "showcase_notify_binding_unavailable",
+                    extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
+                )
+                continue
+            if binding is not None and binding.tenant.tenant_id == tenant_id:
+                out[binding.binding_id] = binding
+    return out
+
+
 async def academy_notifications_step() -> int:
     """Академия v2: уведомления о домашках своим ботом (PLATFORM_ACADEMY_NOTIFY_BINDING), когда он
     не среди PLATFORM_SCHEDULED_NOTIFY_BINDINGS (staging). Этот бот только отправляет свои строки,
-    утро CRM им не планируется. Бот из общего списка обходит scheduled_notifications_step."""
+    утро CRM им не планируется. Бот из общего списка обходит scheduled_notifications_step.
+    Плюс боты витрин авторов (V29) тенантов этого процесса."""
     settings = get_settings()
+    by_id: dict[str, BotBindingContext] = {}
+    tenant_ids: set[str] = set()
     binding_id = settings.platform_academy_notify_binding.strip()
-    if not binding_id or binding_id in settings.parsed_scheduled_notify_bindings():
+    scheduled = settings.parsed_scheduled_notify_bindings()
+    for candidate in [binding_id, *scheduled]:
+        if not candidate:
+            continue
+        try:
+            binding = await resolve_bot_binding_context(candidate)
+        except Exception as exc:
+            logger.warning(
+                "academy_notify_binding_unavailable",
+                extra={"binding_id": candidate, "error": safe_error_summary(exc)},
+            )
+            continue
+        if binding is None:
+            continue
+        tenant_ids.add(binding.tenant.tenant_id)
+        if candidate == binding_id and binding_id not in scheduled:
+            by_id[binding.binding_id] = binding
+    for showcase_binding_id, binding in (await showcase_notify_bindings(tenant_ids)).items():
+        by_id.setdefault(showcase_binding_id, binding)
+    if not by_id:
         return 0
-    try:
-        binding = await resolve_bot_binding_context(binding_id)
-    except Exception as exc:
-        logger.warning(
-            "academy_notify_binding_unavailable",
-            extra={"binding_id": binding_id, "error": safe_error_summary(exc)},
-        )
-        return 0
-    if binding is None:
-        return 0
-    return await process_due_notifications({binding.binding_id: binding})
+    return await process_due_notifications(by_id)
 
 
 async def worker_loop(poll_interval_sec: float = 2.0) -> None:

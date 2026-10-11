@@ -111,6 +111,8 @@ def _fake_store(course: dict | None, *, shelf: bool):
             return course
         if "from academy_shelf" in query:
             return {"ok": 1} if shelf else None
+        if "from academy_showcases" in query:
+            return None  # не партнёр со своей витриной (V29)
         if "insert into academy_access_keys" in query:
             return {"code": params[2]}
         raise AssertionError(query)

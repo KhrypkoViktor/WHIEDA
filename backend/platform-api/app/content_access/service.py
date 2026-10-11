@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
+from app.academy.showcases import is_showcase_host, warm_hosts
 from app.cookie_domain import shared_cookie_domains
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
@@ -44,18 +45,24 @@ def extract_challenge_token(start_param: str) -> str:
 
 
 def _family_host(hostname: str | None) -> bool:
+    """wwc.best, *.wwc.best и точные адреса витрин Академии (academy.almira.by, V29).
+
+    Адреса витрин читаются из памяти процесса: асинхронный код перед проверкой
+    зовёт ``warm_hosts`` (create_content_challenge, create_bot_login, webapp login)."""
     host = str(hostname or "").strip().lower()
     if not host:
         return False
-    return any(host == d or host.endswith("." + d) for d in shared_cookie_domains())
+    if any(host == d or host.endswith("." + d) for d in shared_cookie_domains()):
+        return True
+    return is_showcase_host(host)
 
 
 def sanitize_return_to(raw: str) -> str:
     value = str(raw or "").strip()
     if any(ch in value for ch in ("\\", "\x00")) or len(value) > 500:
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
-    # Абсолютный адрес принимается только для своей семьи доменов (wwc.best и
-    # *.wwc.best): бот после подтверждения входа шлёт кнопку «Вернуться на сайт»
+    # Абсолютный адрес принимается только для своей семьи доменов (wwc.best,
+    # *.wwc.best и адреса витрин Академии): бот после подтверждения входа шлёт кнопку «Вернуться на сайт»
     # на тот же хост, где человек нажал «Войти» (27.09.2026 — вкладка во
     # встроенном браузере Telegram закрывается, и вход терялся). Схема только
     # https, без логина в адресе; путь проверяется теми же правилами, что ниже.
@@ -111,15 +118,20 @@ async def create_content_challenge(
     visitor_session_id: str | None = None,
     ref: str | None = None,
     context: dict[str, Any] | None = None,
+    bot_username: str | None = None,
 ) -> dict[str, Any]:
+    """``bot_username`` — бот витрины Академии (вход на её адресе через её бота);
+    по умолчанию бот процесса."""
     nonce = browser_nonce.strip()
     if len(nonce) < 16:
         raise HTTPException(status_code=400, detail={"error": "invalid_browser_nonce"})
 
     settings = get_settings()
-    if not settings.telegram_bot_username:
+    login_bot = str(bot_username or settings.telegram_bot_username or "").lstrip("@")
+    if not login_bot:
         raise HTTPException(status_code=503, detail={"error": "telegram_bot_username_not_configured"})
 
+    await warm_hosts(tenant_id)
     safe_return = sanitize_return_to(return_to)
     requested_scope = _scope(scope)
     session_raw = str(visitor_session_id or "").strip() or str(uuid.uuid4())
@@ -182,7 +194,7 @@ async def create_content_challenge(
         "ok": True,
         "challenge_id": challenge_id,
         "expires_at": expires_at.isoformat(),
-        "deep_link": build_content_deep_link(settings.telegram_bot_username, raw_challenge),
+        "deep_link": build_content_deep_link(login_bot, raw_challenge),
         "poll_interval_sec": 2,
     }
 
@@ -207,6 +219,7 @@ async def create_bot_login(
     redeems it through the ordinary poll endpoint, which sets the session
     cookie and marks the challenge used — single use, expires in ttl_minutes.
     """
+    await warm_hosts(tenant_id)
     safe_return = sanitize_return_to(return_to)
     nonce = secrets.token_urlsafe(24)
     challenge_id = str(uuid.uuid4())

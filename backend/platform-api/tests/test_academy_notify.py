@@ -74,9 +74,46 @@ async def test_staging_worker_sends_academy_notes_without_planning_crm(clean_env
 async def test_academy_bot_among_scheduled_ones_is_sent_by_the_usual_step(clean_env):
     from app.jobs import worker
 
+    from app.telegram.bindings import BotBindingContext
+    from app.tenancy import TenantContext
+
     clean_env.setenv("PLATFORM_SCHEDULED_NOTIFY_BINDINGS", "whieda-advisor-bot")
     clean_env.setenv("PLATFORM_ACADEMY_NOTIFY_BINDING", "whieda-advisor-bot")
     get_settings.cache_clear()
-    with patch.object(worker, "resolve_bot_binding_context", AsyncMock()) as resolve:
+    main = BotBindingContext(
+        binding_id="whieda-advisor-bot",
+        tenant=TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={}),
+        bot_token_ref="env:X", webhook_secret_ref="env:Y", bot_username="WHIEDA_Advisor_bot", status="active",
+        processing_mode="core", bot_token="t", webhook_secret="s",
+    )
+    with patch.object(worker, "resolve_bot_binding_context", AsyncMock(return_value=main)), patch.object(
+        worker, "showcase_notify_bindings", AsyncMock(return_value={})
+    ) as showcases, patch.object(worker, "process_due_notifications", AsyncMock(return_value=5)) as send:
         assert await worker.academy_notifications_step() == 0  # второй раз тот же бот не обходим
-    resolve.assert_not_awaited()
+    showcases.assert_awaited_once_with({"whieda"})  # боты витрин этого тенанта (V29)
+    send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_showcase_bots_are_sent_by_the_academy_step(clean_env):
+    """Бот витрины автора (V29) шлёт свои строки в том процессе, где есть его токен."""
+    from app.jobs import worker
+    from app.telegram.bindings import BotBindingContext
+    from app.tenancy import TenantContext
+
+    clean_env.setenv("PLATFORM_SCHEDULED_NOTIFY_BINDINGS", "whieda-advisor-bot")
+    get_settings.cache_clear()
+    tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={})
+
+    def binding(binding_id: str, username: str) -> BotBindingContext:
+        return BotBindingContext(
+            binding_id=binding_id, tenant=tenant, bot_token_ref="env:X", webhook_secret_ref="env:Y",
+            bot_username=username, status="active", processing_mode="core", bot_token="t", webhook_secret="s",
+        )
+
+    almira = binding("almira-academy-bot", "ALMIRA_I_bot")
+    with patch.object(worker, "resolve_bot_binding_context", AsyncMock(return_value=binding("whieda-advisor-bot", "W"))), patch.object(
+        worker, "showcase_notify_bindings", AsyncMock(return_value={"almira-academy-bot": almira})
+    ), patch.object(worker, "process_due_notifications", AsyncMock(return_value=1)) as send:
+        assert await worker.academy_notifications_step() == 1
+    assert send.await_args.args[0] == {"almira-academy-bot": almira}

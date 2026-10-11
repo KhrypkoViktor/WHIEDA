@@ -61,6 +61,7 @@ MIGRATIONS = (
     "platform_feedback_v25.sql",  # пожелания от всех (08.10.2026)
     "platform_chat_bridge_v27.sql",  # мост группы потока Telegram <-> Max (10.10.2026)
     "platform_site_request_lang_v28.sql",  # язык сайта и визитки в анкете (10.10.2026)
+    "platform_academy_showcases_v29.sql",  # витрины авторов Академии (11.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

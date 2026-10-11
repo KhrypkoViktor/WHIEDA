@@ -47,6 +47,7 @@ from app.academy.keys import (
     redeem_key,
     shelf_paid_until,
 )
+from app.academy.showcases import Showcase, showcase_default, showcase_for_binding, showcase_for_course
 from app.academy.service import (
     SHELF_PRODUCT_CODE,
     AcademyError,
@@ -101,9 +102,25 @@ LOCK_TEXT = {
 }
 
 
-def lesson_url(course_slug: str, lesson_slug: str) -> str:
-    base = str(get_settings().platform_academy_site_base or "https://wwc.best").rstrip("/")
-    return f"{base}/academy/?{urlencode({'course': course_slug, 'lesson': lesson_slug})}"
+def lesson_url(course_slug: str, lesson_slug: str, base: str | None = None) -> str:
+    """``base`` — адрес витрины автора курса (V29); по умолчанию общий адрес Академии."""
+    root = str(base or get_settings().platform_academy_site_base or "https://wwc.best").rstrip("/")
+    return f"{root}/academy/?{urlencode({'course': course_slug, 'lesson': lesson_slug})}"
+
+
+async def course_lesson_url(tenant_id: str, course_slug: str, lesson_slug: str) -> str:
+    """Урок на витрине автора курса: курс ALMIRA — academy.almira.by (V29)."""
+    showcase = await showcase_for_course(tenant_id, course_slug)
+    return lesson_url(course_slug, lesson_slug, showcase.base_url)
+
+
+async def bot_showcase(tenant_id: str) -> Showcase:
+    """Витрина бота, в котором идёт разговор: бот автора — его витрина, иначе общая."""
+    try:
+        binding_id = current_bot_binding().binding_id
+    except RuntimeError:
+        binding_id = None
+    return await showcase_for_binding(tenant_id, binding_id) or await showcase_default(tenant_id)
 
 
 def is_academy_text(text: str) -> bool:
@@ -368,19 +385,25 @@ async def _show_course(tenant_id: str, chat_id: int, viewer: AcademyViewer, slug
         return {"status": "locked"}
     # Ссылка сразу входит на сайт (#wwc-login): человек уже в боте, второй вход не нужен.
     open_url = await with_site_login(
-        lesson_url(course["slug"], lesson["slug"]), tenant_id=tenant_id, telegram_user_id=viewer.telegram_user_id
+        await course_lesson_url(tenant_id, course["slug"], lesson["slug"]),
+        tenant_id=tenant_id,
+        telegram_user_id=viewer.telegram_user_id,
     )
     text, keyboard = _lesson_card(course, lesson, course["lessons_total"], course["lessons_done"], open_url=open_url)
     await _send(chat_id, text, keyboard)
     return {"status": "lesson", "lesson": lesson["slug"]}
 
 
-async def show_academy_home(tenant_id: str, chat_id: int, telegram_user_id: int) -> dict[str, Any]:
+async def show_academy_home(
+    tenant_id: str, chat_id: int, telegram_user_id: int, showcase: Showcase | None = None
+) -> dict[str, Any]:
+    """Курсы витрины этого бота (V29): в боте автора — его курсы и купленные."""
     viewer = await load_viewer(tenant_id, telegram_user_id)
     if not academy_visible(viewer):
         await _show_lock(chat_id, "academy_not_open")
         return {"status": "academy_not_open"}
-    courses = await list_courses(tenant_id, viewer)
+    showcase = showcase or await bot_showcase(tenant_id)
+    courses = await list_courses(tenant_id, viewer, showcase)
     if not courses:
         await _send(chat_id, "Курсы появятся здесь совсем скоро.")
         return {"status": "no_courses"}
@@ -393,7 +416,7 @@ async def show_academy_home(tenant_id: str, chat_id: int, telegram_user_id: int)
             )
             return {"status": course["lock_reason"]}
         return await _show_course(tenant_id, chat_id, viewer, course["slug"], None)
-    lines = ["🎓 Академия WWC", ""]
+    lines = [f"🎓 {showcase.academy_title}", ""]
     rows = []
     for course in courses:
         mark = "🔒 " if course["locked"] else ""
@@ -709,7 +732,9 @@ async def handle_course_start_token(
         )
         if lesson:
             url = await with_site_login(
-                lesson_url(result.course_slug, lesson["slug"]), tenant_id=tenant_id, telegram_user_id=msg.user_id
+                await course_lesson_url(tenant_id, result.course_slug, lesson["slug"]),
+                tenant_id=tenant_id,
+                telegram_user_id=msg.user_id,
             )
             label = "📖 Открыть первый урок" if lesson["position"] == lessons[0]["position"] else "📖 Продолжить урок"
             keyboard = {

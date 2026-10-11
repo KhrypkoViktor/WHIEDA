@@ -39,6 +39,13 @@ import psycopg
 from app.academy.content import media_refs, resolve_media, sanitize_html
 from app.academy.keys import actor_ids_for_telegram
 from app.academy.media_service import load_media, media_links, media_summary
+from app.academy.showcases import (
+    Showcase,
+    default_showcase,
+    is_own_course,
+    load_showcases,
+    owner_actor_ids,
+)
 from app.academy.rules import (
     LessonIn,
     LessonLock,
@@ -170,6 +177,13 @@ async def _author_contacts(conn: Any, tenant_id: str, actor_ids: set[str]) -> di
         contact = _author_contact_from_row(row)
         if contact:
             contacts[str(row["actor_id"])] = contact
+    # Автор со своей витриной (V29): контакт и сайт витрины — у студии свой Telegram.
+    for showcase in await load_showcases(tenant_id) if actor_ids else []:
+        if showcase.owner_actor_id in actor_ids:
+            telegram = showcase.links.get("contact_telegram")
+            site_url = showcase.links.get("home_url")
+            if telegram or site_url:
+                contacts[showcase.owner_actor_id] = {"telegram": telegram or None, "site_url": site_url or None}
     return contacts
 
 
@@ -219,9 +233,30 @@ def is_staff_for(course: dict[str, Any], viewer: AcademyViewer, actor_ids: list[
     return viewer.is_preview_admin or bool(author and author in actor_ids)
 
 
-async def list_courses(tenant_id: str, viewer: AcademyViewer) -> list[dict[str, Any]]:
+def _showcase_keeps(
+    showcase: Showcase, course: dict[str, Any], *, own: bool, has_access: bool
+) -> bool:
+    """Курс на витрине: свой, купленный (виден всегда) или чужой по ``more_mode``."""
+    if own or has_access:
+        return True
+    if showcase.more_mode == "all":
+        return True
+    if showcase.more_mode == "no_pro":
+        return str(course.get("access_rule") or "") != "pro"
+    return False
+
+
+async def list_courses(
+    tenant_id: str, viewer: AcademyViewer, showcase: Showcase | None = None
+) -> list[dict[str, Any]]:
+    """Курсы витрины (V29): свои первыми (``section: own``), затем купленные и — по
+    ``more_mode`` — чужие (``section: more``). Замки от витрины не зависят."""
     if not academy_visible(viewer):
         return []
+    showcases = await load_showcases(tenant_id)
+    if showcase is None:
+        showcase = next((s for s in showcases if s.is_default), None) or default_showcase(tenant_id)
+    partner_owners = owner_actor_ids(showcases)
     async with tenant_connection(tenant_id) as conn:
         courses = await fetch_all(
             conn,
@@ -255,6 +290,15 @@ async def list_courses(tenant_id: str, viewer: AcademyViewer) -> list[dict[str, 
         )
         access = await _access_rows(conn, tenant_id, viewer.telegram_user_id)
         actor_ids = await viewer_actor_ids(conn, tenant_id, viewer.telegram_user_id)
+        sections: dict[str, str] = {}
+        kept = []
+        for course in courses:
+            own = is_own_course(showcase, course.get("author_actor_id"), partner_owners)
+            if _showcase_keeps(showcase, course, own=own, has_access=course["course_id"] in access):
+                sections[course["course_id"]] = "own" if own else "more"
+                kept.append(course)
+        # Свои курсы витрины — первыми; внутри групп прежний порядок (sort_order, title).
+        courses = sorted(kept, key=lambda course: sections[course["course_id"]] != "own")
         locks = {
             course["course_id"]: None
             if is_staff_for(course, viewer, actor_ids)
@@ -293,6 +337,7 @@ async def list_courses(tenant_id: str, viewer: AcademyViewer) -> list[dict[str, 
             "cover_url": media_links(cover, viewer.telegram_user_id).get("url") if cover else None,
             "price": price_out(course.get("price_wusd_minor"), course.get("price_currency")),
             "author_name": names.get(str(course.get("author_actor_id") or "")),
+            "section": sections[course["course_id"]],
         }
         if lock == "purchase_required":
             # Доступ выдаёт автор курса: ученик берёт у него ключ.

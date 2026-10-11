@@ -19,6 +19,7 @@ from typing import Any
 
 from app.academy.content import sanitize_html
 from app.academy.media_service import _valid_ids, load_media, media_summary
+from app.academy.showcases import showcase_for_author
 from app.academy.notify import (
     OPEN_BUTTON,
     OPEN_LESSON_BUTTON,
@@ -109,6 +110,7 @@ async def submit_homework(
             recipient = await author_telegram_id(conn, tenant_id, view.course.get("author_actor_id"))
             if recipient is not None:
                 student = await person(conn, tenant_id, viewer.telegram_user_id)
+                showcase = await showcase_for_author(tenant_id, view.course.get("author_actor_id"))
                 await enqueue_notification(
                     conn,
                     tenant_id,
@@ -117,7 +119,8 @@ async def submit_homework(
                     recipient=recipient,
                     text=submitted_text(student["name"], lesson["title"], view.course["title"]),
                     button_text=OPEN_BUTTON,
-                    url=author_inbox_url(saved["submission_id"]),
+                    url=author_inbox_url(saved["submission_id"], showcase.base_url),
+                    binding_id=showcase.telegram_binding_id,
                 )
         progress = await course_progress(conn, tenant_id, view, viewer.telegram_user_id)
     return {
@@ -261,6 +264,7 @@ async def review_submission(
                 """,
                 (status, note or None, viewer.telegram_user_id, tenant_id, row["submission_id"]),
             )
+        showcase = await showcase_for_author(tenant_id, row.get("author_actor_id"))
         await enqueue_notification(
             conn,
             tenant_id,
@@ -269,6 +273,7 @@ async def review_submission(
             recipient=int(row["telegram_user_id"]),
             text=reviewed_text(status, row["lesson_title"], note),
             button_text=OPEN_LESSON_BUTTON,
-            url=lesson_page_url(row["course_slug"], row["lesson_slug"]),
+            url=lesson_page_url(row["course_slug"], row["lesson_slug"], showcase.base_url),
+            binding_id=showcase.telegram_binding_id,
         )
     return {"ok": True, "submission_id": row["submission_id"], "status": status}

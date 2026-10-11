@@ -125,7 +125,19 @@ async def shelf_active(conn: Any, tenant_id: str, actor_id: str) -> bool:
         """,
         (tenant_id, actor_id, tenant_id, actor_id),
     )
-    return bool(row)
+    if row:
+        return True
+    # Партнёр со своей витриной Академии (V29, 11.10.2026): «Академия автора» без оплаты.
+    partner = await fetch_one(
+        conn,
+        """
+        select 1 as ok from academy_showcases
+        where tenant_id = %s and status = 'active' and owner_actor_id = %s
+        limit 1
+        """,
+        (tenant_id, actor_id),
+    )
+    return bool(partner)
 
 
 async def actor_ids_for_telegram(conn: Any, tenant_id: str, telegram_user_id: int) -> list[str]:

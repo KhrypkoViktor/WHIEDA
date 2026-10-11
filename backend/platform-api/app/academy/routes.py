@@ -62,6 +62,7 @@ from app.academy.service import (
     set_lesson_done,
     viewer_profile,
 )
+from app.academy.showcases import public_payload, showcase_for_request
 from app.content_access.routes import _current_session
 from app.tenancy import get_request_tenant
 
@@ -180,13 +181,24 @@ async def _chunk_body(request: Request) -> bytes:
 # ---- student ---------------------------------------------------------------------------------
 
 
+@router.get(f"{P}/showcase")
+async def showcase_site(request: Request, response: Response) -> dict[str, Any]:
+    """Оформление витрины до входа (V29): бренд, токены, бот, ссылки. Без сессии."""
+    response.headers["Cache-Control"] = "public, max-age=300"
+    tenant = get_request_tenant(request)
+    showcase = await showcase_for_request(request, tenant.tenant_id, allow_preview=True)
+    return {"ok": True, "showcase": await public_payload(showcase)}
+
+
 @router.get(f"{P}/courses")
 async def courses_site(request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
+    showcase = await showcase_for_request(request, tenant_id, allow_preview=True)
     return {
         "ok": True,
         "open": academy_visible(viewer),
-        "courses": await list_courses(tenant_id, viewer),
+        "showcase": showcase.showcase_id,
+        "courses": await list_courses(tenant_id, viewer, showcase),
         "viewer": await viewer_profile(tenant_id, viewer.telegram_user_id),
     }
 

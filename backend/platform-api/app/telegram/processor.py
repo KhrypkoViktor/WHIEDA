@@ -76,6 +76,8 @@ from app.telegram.referral_admin import (
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
+from app.telegram.showcase_bot import process_showcase_bot_update
+from app.academy.showcases import showcase_for_binding
 from app.telegram.pro_start import handle_pro_start, is_pro_start_token
 from app.telegram.support import (
     try_handle_support_callback,
@@ -447,11 +449,29 @@ async def _link_partner_chat(tenant: TenantContext, msg: TelegramMessage, trace_
         )
 
 
+async def _try_showcase_bot(tenant: TenantContext, update: dict[str, Any], trace_id: str) -> dict[str, Any] | None:
+    """Бот витрины автора Академии (V29) — свой процессор, только Академия.
+
+    Чей это бот, известно из binding (тот же запрос, что резолвит бота). Витрина не
+    прочиталась — бот молчит: ученик студии не должен попасть в кабинет и советника WHIEDA."""
+    binding = current_bot_binding()
+    if not binding.showcase_id:
+        return None
+    showcase = await showcase_for_binding(tenant.tenant_id, binding.binding_id)
+    if showcase is None:
+        logger.warning("showcase_bot_unavailable", extra={"trace_id": trace_id})
+        return {"ok": True, "route": "showcase_unavailable", "trace_id": trace_id}
+    return await process_showcase_bot_update(tenant, update, trace_id, showcase)
+
+
 async def _process_core_telegram_update_scoped(
     tenant: TenantContext,
     update: dict[str, Any],
     trace_id: str,
 ) -> dict[str, Any]:
+    showcase_result = await _try_showcase_bot(tenant, update, trace_id)
+    if showcase_result is not None:
+        return showcase_result
     manual_operations = _manual_partner_operations_only()
     admin_result = await try_handle_admin_login(update, trace_id=trace_id)
     if admin_result is not None:

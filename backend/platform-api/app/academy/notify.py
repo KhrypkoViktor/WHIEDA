@@ -8,6 +8,10 @@ into a button that signs the person in on the site (``with_site_login``) when th
 message goes out — no login token waits in the database. No bot configured → no
 notification (the homework itself is saved).
 
+Витрины (V29): курс автора со своей витриной — ссылка на её адрес и отправка её
+ботом (binding_id): его ученики пишут только этому боту. Карточка премодерации
+владельцу идёт ботом владельца.
+
 Links carry the place in the query, not in the fragment: ``with_site_login`` puts
 its own ``#wwc-login=…`` there. Author: ``/academy/author/?view=inbox&submission=<id>``;
 student: the lesson ``/academy/?course=…&lesson=…``.
@@ -48,24 +52,25 @@ def notify_binding_id() -> str | None:
     return scheduled[0] if scheduled else None
 
 
-def _site_base() -> str:
-    return str(get_settings().platform_academy_site_base or "https://wwc.best").rstrip("/")
+def _site_base(base: str | None = None) -> str:
+    """Адрес Академии: витрина автора курса (V29, Showcase.base_url), иначе общий."""
+    return str(base or get_settings().platform_academy_site_base or "https://wwc.best").rstrip("/")
 
 
-def author_inbox_url(submission_id: str) -> str:
-    return f"{_site_base()}/academy/author/?{urlencode({'view': 'inbox', 'submission': submission_id})}"
+def author_inbox_url(submission_id: str, base: str | None = None) -> str:
+    return f"{_site_base(base)}/academy/author/?{urlencode({'view': 'inbox', 'submission': submission_id})}"
 
 
-def lesson_page_url(course_slug: str, lesson_slug: str) -> str:
-    return f"{_site_base()}/academy/?{urlencode({'course': course_slug, 'lesson': lesson_slug})}"
+def lesson_page_url(course_slug: str, lesson_slug: str, base: str | None = None) -> str:
+    return f"{_site_base(base)}/academy/?{urlencode({'course': course_slug, 'lesson': lesson_slug})}"
 
 
-def course_page_url(course_slug: str) -> str:
-    return f"{_site_base()}/academy/?{urlencode({'course': course_slug})}"
+def course_page_url(course_slug: str, base: str | None = None) -> str:
+    return f"{_site_base(base)}/academy/?{urlencode({'course': course_slug})}"
 
 
-def author_course_url(course_slug: str) -> str:
-    return f"{_site_base()}/academy/author/?{urlencode({'course': course_slug})}"
+def author_course_url(course_slug: str, base: str | None = None) -> str:
+    return f"{_site_base(base)}/academy/author/?{urlencode({'course': course_slug})}"
 
 
 def lessons_word(count: int) -> str:
@@ -166,8 +171,11 @@ async def enqueue_notification(
     button_text: str,
     url: str,
     reply_markup: dict[str, Any] | None = None,
+    binding_id: str | None = None,
 ) -> bool:
-    binding_id = notify_binding_id()
+    """binding_id — бот витрины автора курса (V29): ученик и автор пишут этому боту.
+    По умолчанию — бот уведомлений Академии процесса."""
+    binding_id = binding_id or notify_binding_id()
     if not binding_id:
         logger.info("academy_notify_skipped_no_binding", extra={"tenant_id": tenant_id, "event_type": event_type})
         return False

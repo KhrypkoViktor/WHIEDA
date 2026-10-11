@@ -53,6 +53,7 @@ from app.academy.keys import shelf_active
 from app.academy.media_service import _valid_ids, load_media, media_summary
 from app.academy.rules import _parse_at, parse_unlock
 from app.academy.service import AcademyError, AcademyViewer, price_out, viewer_actor_ids
+from app.academy.showcases import partner_owner, showcase_for_author
 from app.db import fetch_all, fetch_one, tenant_connection
 
 AUTHOR_ACCESS_RULES = ("free", "purchase")
@@ -133,6 +134,22 @@ async def _author(conn: Any, tenant_id: str, viewer: AcademyViewer) -> Author:
                 (tenant_id, actor_ids),
             )
             is_author = bool(shelf_any)
+        if not is_author:
+            # Партнёр со своей витриной (V29): автор без оплаты «Академии автора».
+            is_author = await partner_owner(conn, tenant_id, actor_ids)
+        if is_author:
+            owned = await fetch_one(
+                conn,
+                """
+                select owner_actor_id from academy_showcases
+                where tenant_id = %s and status = 'active' and owner_actor_id = any(%s::text[])
+                limit 1
+                """,
+                (tenant_id, actor_ids),
+            )
+            if owned:
+                # Курсы партнёра пишутся на владельца витрины — они «свои» на его витрине.
+                primary = str(owned["owner_actor_id"])
     else:
         is_author = False
     if not (viewer.is_preview_admin or is_author):
@@ -263,6 +280,7 @@ async def author_courses(tenant_id: str, viewer: AcademyViewer) -> dict[str, Any
             (tenant_id, author.actor_ids),
         )
         active = bool(author.primary_actor_id) and await shelf_active(conn, tenant_id, str(author.primary_actor_id))
+        partner = await partner_owner(conn, tenant_id, author.actor_ids)
     return {
         "courses": [
             {
@@ -273,7 +291,8 @@ async def author_courses(tenant_id: str, viewer: AcademyViewer) -> dict[str, Any
             }
             for course in courses
         ],
-        "shelf": {"active": bool(active), "paid_until": _iso((paid or {}).get("paid_until"))},
+        # partner — своя витрина Академии (V29): размещение без срока, по договору партнёрства.
+        "shelf": {"active": bool(active), "paid_until": _iso((paid or {}).get("paid_until")), "partner": partner},
         "is_admin": author.is_admin,
     }
 
@@ -449,7 +468,8 @@ async def _send_for_review(conn: Any, tenant_id: str, course: dict[str, Any]) ->
         recipient=recipient,
         text=course_review_text(course["title"], (name_row or {}).get("display_name"), int(lessons["n"])),
         button_text=VIEW_COURSE_BUTTON,
-        url=course_page_url(course["slug"]),
+        # Владельцу — его ботом, а курс открывается на витрине автора (V29).
+        url=course_page_url(course["slug"], (await showcase_for_author(tenant_id, course.get("author_actor_id"))).base_url),
         reply_markup=course_review_markup(course["course_id"]),
     )
 
@@ -514,6 +534,7 @@ async def review_course(
             else:
                 event, text = COURSE_REVIEWED_EVENT, course_reviewed_text(status, course["title"], reason)
                 key = f"{event}:{course['course_id']}:{requested.isoformat() if requested else 'n'}"
+            showcase = await showcase_for_author(tenant_id, course.get("author_actor_id"))
             await enqueue_notification(
                 conn,
                 tenant_id,
@@ -522,7 +543,8 @@ async def review_course(
                 recipient=recipient,
                 text=text,
                 button_text=OPEN_CABINET_BUTTON,
-                url=author_course_url(course["slug"]),
+                url=author_course_url(course["slug"], showcase.base_url),
+                binding_id=showcase.telegram_binding_id,
             )
     return {"ok": True, "slug": course["slug"], "title": course["title"], "status": status, "was": was}
 

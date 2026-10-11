@@ -27,6 +27,7 @@ from urllib.parse import parse_qsl, urlparse
 
 from fastapi import HTTPException
 
+from app.academy.showcases import warm_hosts
 from app.content_access.service import BOT_LOGIN_FRAGMENT, create_bot_login, sanitize_return_to
 from app.db import fetch_all, tenant_connection
 from app.telegram.bindings import resolve_secret_ref
@@ -107,6 +108,7 @@ async def tenant_bot_tokens(tenant_id: str) -> list[str]:
 
 async def webapp_login_url(tenant_id: str, *, init_data: str, return_to: str) -> str:
     """Абсолютная ссылка на страницу сайта с одноразовым входом во фрагменте."""
+    await warm_hosts(tenant_id)
     safe = sanitize_return_to(return_to)
     if not safe.startswith("https://"):
         raise HTTPException(status_code=400, detail={"error": "invalid_return_to"})
