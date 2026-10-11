@@ -45,18 +45,24 @@
 - academy.almira.by через origin напрямую: страницы, ассеты, API 200, кука без Domain.
 - Вебхук ALMIRA: неверный секрет 403, сообщение из группы — молча.
 
+## academy.almira.by (11.10.2026, ~12:07)
+
+- CNAME academy → edge.wwc.best добавлен студией. Сертификат Let's Encrypt на прокси
+  (`/etc/letsencrypt/live/academy.almira.by`, до 09.01.2027, продление certbot.timer),
+  блок :443 `/etc/nginx/sites-available/academy-almira-ssl`, таймер выключен.
+- `curl -I https://academy.almira.by/` → 200: корень origin отдаёт саму Академию
+  (бэкап `/root/academy-almira.bak-20261011-root`); http → 301 на https.
+- В базе hosts витрины: `academy.almira.by` первым — ссылки бота ведут туда.
+
 ## Не проверено
 
 - Живой вход и бот в личке (нужен человек в Telegram): /start, вход, ключ, домашка.
-- academy.almira.by снаружи — ждёт DNS.
 
 ## Дальше
 
-1. DNS: Кирилл добавляет `academy CNAME edge.wwc.best` в hoster.by (или ключи API в
-   `D:\Projects\ALMIRA\.secrets\hoster_api.env` + `migration/hoster_dns.py`). Сертификат и :443 —
-   сами (таймер).
-2. После HTTPS: в базе поменять порядок hosts (SQL внизу `almira_showcase_data.sql`);
-   `python site_src/_patch38.py` → `build_site.py` → `build_prod.py` → `deploy_prod.sh`.
-3. Саша: войти на academy.almira.by/academy/author/ (личный Telegram), создать «Композицию».
-4. MAX: Академия в Max (вход, уведомления, бот ALMIRA в Max) — отдельный срез: ученик
+1. almira.by: `python site_src/_patch39.py` (имя _patch38 занял патч цен другой сессии) →
+   `build_site.py` → `build_prod.py` → `deploy_prod.sh` — после «да» Виктора и юрлица
+   платформы для политики.
+2. Саша: войти на academy.almira.by/academy/author/ (личный Telegram), создать «Композицию».
+3. MAX: Академия в Max (вход, уведомления, бот ALMIRA в Max) — отдельный срез: ученик
    сейчас = telegram_user_id во всех таблицах Академии.
