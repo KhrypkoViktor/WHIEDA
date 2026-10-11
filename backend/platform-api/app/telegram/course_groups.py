@@ -18,14 +18,25 @@ logger = logging.getLogger(__name__)
 COURSE_GROUPS: dict[str, tuple[int, str]] = {
     "online-start-4w": (-1004497305833, "WWC : AI \\ SMM 1й поток"),
 }
+# Та же группа в Max (мост V27, app/max/bridges.py): ссылка-приглашение от владельца
+# (11.10.2026, «скопировал тебе ссылку»). Бот в Max ссылки на закрытую группу не создаёт.
+COURSE_MAX_LINKS: dict[str, str] = {
+    "online-start-4w": "https://max.ru/join/dxn9bSet56xsAa0DwO8tNaNZNxDpandkBKX7tGe462E",
+}
 _IN_GROUP = {"member", "administrator", "creator", "restricted"}
 
 
-def invite_text(title: str, url: str) -> str:
-    return (
+def invite_text(title: str, url: str, max_link: str = "") -> str:
+    text = (
         f"Ваша личная ссылка в группу потока «{title}»:\n{url}\n\n"
         "Ссылка одноразовая — только для вас. В группе — живые занятия, вопросы и разборы."
     )
+    if max_link:
+        text += (
+            f"\n\nЭта же группа есть в Max — сообщения ходят в обе стороны:\n{max_link}\n"
+            "Выберите, где удобнее: Telegram или Max."
+        )
+    return text
 
 
 async def invite_to_course_group(*, course_slug: str, chat_id: int, user_id: int, name: str) -> str:
@@ -45,7 +56,8 @@ async def invite_to_course_group(*, course_slug: str, chat_id: int, user_id: int
     if not url:
         logger.warning("course_group_invite_failed", extra={"course": course_slug})
         return "failed"
-    sent = await send_telegram_text(chat_id=str(chat_id), text=invite_text(title, url), bot_token=token)
+    text = invite_text(title, url, COURSE_MAX_LINKS.get(str(course_slug), ""))
+    sent = await send_telegram_text(chat_id=str(chat_id), text=text, bot_token=token)
     return "invited" if sent.get("ok") else "failed"
 
 

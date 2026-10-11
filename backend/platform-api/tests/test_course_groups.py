@@ -31,6 +31,7 @@ async def test_buyer_gets_a_one_time_link_unless_already_in_the_group(whieda_bot
     if dm:
         kwargs = send.await_args.kwargs
         assert kwargs["chat_id"] == "7" and "https://t.me/+one" in kwargs["text"] and "одноразовая" in kwargs["text"]
+        assert "https://max.ru/join/" in kwargs["text"], "the same group in Max (11.10.2026)"
 
 
 @pytest.mark.asyncio
