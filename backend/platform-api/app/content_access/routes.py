@@ -21,6 +21,7 @@ from app.content_access.service import (
     validate_content_session,
 )
 from app.content_access.webapp_login import webapp_login_url
+from app.max.webapp import max_webapp
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.content_access.account import load_site_account
 from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
@@ -36,6 +37,7 @@ class ChallengeCreateBody(BaseModel):
     visitor_session_id: str | None = None
     ref: str | None = None
     context: dict[str, Any] | None = None
+    channel: str | None = None
 
 
 def _require_session(request: Request) -> str:
@@ -70,6 +72,7 @@ async def _create(body: ChallengeCreateBody, request: Request) -> dict:
         ref=body.ref,
         context=body.context,
         bot_username=bot_username,
+        channel=body.channel,
     )
 
 
@@ -221,6 +224,24 @@ async def telegram_webapp_login_v1(body: WebAppLoginBody, request: Request, resp
 @router.post("/api/v1/content-access/telegram-webapp-login")
 async def telegram_webapp_login_site(body: WebAppLoginBody, request: Request, response: Response) -> dict:
     return await _telegram_webapp_login(body, request, response)
+
+
+async def _max_webapp(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    """Мини-приложение Max /max-app/: подтвердить вход, привязать Max, войти внутри Max (11.10.2026)."""
+    response.headers["Cache-Control"] = "private, no-store"
+    tenant = get_request_tenant(request)
+    require_entitlement(tenant, "structure_basic")
+    return await max_webapp(tenant.tenant_id, init_data=body.init_data, return_to=body.return_to)
+
+
+@router.post("/v1/content-access/max-webapp")
+async def max_webapp_v1(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    return await _max_webapp(body, request, response)
+
+
+@router.post("/api/v1/content-access/max-webapp")
+async def max_webapp_site(body: WebAppLoginBody, request: Request, response: Response) -> dict:
+    return await _max_webapp(body, request, response)
 
 
 async def _review_originals(request: Request, response: Response) -> dict:

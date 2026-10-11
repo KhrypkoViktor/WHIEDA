@@ -132,6 +132,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # Мост группы потока Telegram <-> Max (platform_chat_bridge_v27.sql, 10.10.2026).
             "chat_bridge_links",
             "chat_bridge_inbox",
+            # Коды привязки Max для входа на сайт (platform_channel_link_codes_v30.sql, 11.10.2026).
+            "channel_link_codes",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

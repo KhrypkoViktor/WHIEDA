@@ -38,7 +38,7 @@ from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
 
-_COMMAND_RE = re.compile(r"^/(cabinet|referral|invite|support)(?:@\w+)?$", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"^/(cabinet|referral|invite|support|max)(?:@\w+)?$", re.IGNORECASE)
 _CALLBACK_RE = re.compile(
     r"^referral:(history|list|redeem:platform_(?:3|6|12)m|confirm|cancel)(?::([0-9a-f]{32}))?$"
 )
@@ -397,6 +397,42 @@ async def show_invitation(
     return {"ok": True, "route": "referral_invite", "actor_id": actor_id, "trace_id": trace_id}
 
 
+MAX_LINK_TEXT = (
+    "Вход на сайт через Max\n\n"
+    "Нажмите кнопку — откроется Max и запомнит, что это вы. Это нужно один раз.\n"
+    "Дальше на сайте: «Войти» → «Max».\n\n"
+    "Ссылка действует сутки и только для вас — не пересылайте её."
+)
+
+
+async def show_max_link(
+    tenant: TenantContext,
+    *,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+    raw_update: dict[str, Any],
+    trace_id: str,
+) -> dict[str, Any]:
+    """/max — ссылка привязки Max для входа на сайт (app/max/webapp.py, 11.10.2026)."""
+    await _actor_for_telegram(
+        tenant,
+        telegram_user_id=telegram_user_id,
+        telegram_chat_id=telegram_chat_id,
+        raw_update=raw_update,
+    )
+    try:
+        link = await create_max_link(tenant.tenant_id, telegram_user_id=telegram_user_id)
+    except HTTPException:
+        await _deliver(telegram_chat_id, "Вход через Max временно недоступен. Напишите в /support.")
+        return {"ok": False, "route": "max_link", "status": "unavailable", "trace_id": trace_id}
+    await _deliver(
+        telegram_chat_id,
+        MAX_LINK_TEXT,
+        reply_markup={"inline_keyboard": [[{"text": "Привязать Max", "url": link}]]},
+    )
+    return {"ok": True, "route": "max_link", "trace_id": trace_id}
+
+
 async def try_handle_referral_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -408,6 +444,14 @@ async def try_handle_referral_message(
     if command == "support":
         # Normally handled earlier by the support hook (processor); kept as a safety net.
         return await open_site_support(tenant, msg, trace_id=trace_id)
+    if command == "max":
+        return await show_max_link(
+            tenant,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+            raw_update=msg.raw,
+            trace_id=trace_id,
+        )
     if command == "invite":
         return await show_invitation(
             tenant,

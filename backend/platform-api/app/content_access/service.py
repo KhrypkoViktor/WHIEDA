@@ -37,6 +37,17 @@ def build_content_deep_link(bot_username: str, raw_challenge: str) -> str:
     return f"https://t.me/{username}?start={CONTENT_START_PREFIX}{raw_challenge}"
 
 
+# Вход через Max (11.10.2026): та же заявка, но ссылка открывает мини-приложение бота Max
+# (app/max/webapp.py) — подтверждение по подписи initData, бот Max ничего не отправляет.
+MAX_LOGIN_PREFIX = "login_"
+LOGIN_CHANNELS = frozenset({"telegram", "max"})
+
+
+def build_max_login_link(bot_username: str, raw_challenge: str) -> str:
+    username = bot_username.lstrip("@")
+    return f"https://max.ru/{username}?startapp={MAX_LOGIN_PREFIX}{raw_challenge}"
+
+
 def extract_challenge_token(start_param: str) -> str:
     value = (start_param or "").strip()
     if value.startswith(CONTENT_START_PREFIX):
@@ -119,17 +130,29 @@ async def create_content_challenge(
     ref: str | None = None,
     context: dict[str, Any] | None = None,
     bot_username: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """``bot_username`` — бот витрины Академии (вход на её адресе через её бота);
-    по умолчанию бот процесса."""
+    по умолчанию бот процесса. ``channel`` — где подтверждать: telegram (по умолчанию) или max."""
     nonce = browser_nonce.strip()
     if len(nonce) < 16:
         raise HTTPException(status_code=400, detail={"error": "invalid_browser_nonce"})
 
     settings = get_settings()
-    login_bot = str(bot_username or settings.telegram_bot_username or "").lstrip("@")
-    if not login_bot:
-        raise HTTPException(status_code=503, detail={"error": "telegram_bot_username_not_configured"})
+    login_channel = str(channel or "telegram").strip().lower()
+    if login_channel not in LOGIN_CHANNELS:
+        raise HTTPException(status_code=400, detail={"error": "invalid_login_channel"})
+    if login_channel == "max":
+        # У витрин Академии свой Telegram-бот, бота Max у них нет.
+        if bot_username:
+            raise HTTPException(status_code=400, detail={"error": "max_login_unavailable"})
+        login_bot = str(settings.max_bot_username or "").lstrip("@")
+        if not login_bot:
+            raise HTTPException(status_code=503, detail={"error": "max_bot_username_not_configured"})
+    else:
+        login_bot = str(bot_username or settings.telegram_bot_username or "").lstrip("@")
+        if not login_bot:
+            raise HTTPException(status_code=503, detail={"error": "telegram_bot_username_not_configured"})
 
     await warm_hosts(tenant_id)
     safe_return = sanitize_return_to(return_to)
@@ -194,7 +217,11 @@ async def create_content_challenge(
         "ok": True,
         "challenge_id": challenge_id,
         "expires_at": expires_at.isoformat(),
-        "deep_link": build_content_deep_link(login_bot, raw_challenge),
+        "deep_link": (
+            build_max_login_link(login_bot, raw_challenge)
+            if login_channel == "max"
+            else build_content_deep_link(login_bot, raw_challenge)
+        ),
         "poll_interval_sec": 2,
     }
 
