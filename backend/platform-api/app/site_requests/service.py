@@ -169,6 +169,8 @@ RESERVED_SUBDOMAINS = frozenset({
     "shop", "store", "masterskaya", "academy", "akademiya", "club", "klub", "support", "help", "start",
     "business", "biznes", "office", "official", "news", "blog", "promo", "pay", "partner", "partners",
     "team", "komanda", "company", "kompaniya", "catalog", "katalog", "efir", "biohacking", "leader", "lider",
+    # Витрины Академии авторов и служебное имя для их CNAME (V29, 11.10.2026).
+    "almira", "edge",
 })
 RESERVED_PARTS = ("whieda", "wwc", "wiieda", "vieda")
 

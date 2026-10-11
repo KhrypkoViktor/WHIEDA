@@ -21,6 +21,10 @@ PARTNER_DOMAIN = "wwc.best"
 RESERVED_SUBDOMAINS = frozenset(
     {
         "",
+        # Витрины Академии и служебное имя для CNAME авторов (V29, 11.10.2026).
+        "academy",
+        "almira",
+        "edge",
         "admin",
         "admin-staging",
         "api",
