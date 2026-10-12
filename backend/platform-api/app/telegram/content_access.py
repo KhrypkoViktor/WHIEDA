@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from app.content_access.service import CONTENT_START_PREFIX, confirm_content_from_telegram
 from app.cookie_domain import shared_cookie_domains
+from app.max.webapp import MAXLINK_PREFIX, redeem_link_request
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import send_telegram_text
 from app.telegram.update_parser import parse_start_token, parse_telegram_message
@@ -106,6 +107,47 @@ def _update_id(update: dict[str, Any]) -> int | None:
         return None
 
 
+_MAX_LINKED = "✅ Max привязан к вашему аккаунту WWC."
+_MAX_LINK_TEXTS: dict[str | None, str] = {
+    "confirmed": _MAX_LINKED + " Вход на сайт подтверждён — вернитесь в браузер, сайт уже открыт.\n\n"
+    "Дальше входите через Max — Telegram не понадобится.",
+    "expired": _MAX_LINKED + " Ссылка входа устарела — на сайте нажмите «Войти» → «Max» ещё раз.",
+    "used": _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
+    "not_found": _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
+    None: _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
+}
+_MAX_LINK_ERRORS = {
+    "expired": "Ссылка устарела. Откройте вход через Max на сайте ещё раз.",
+    "used": "Эта ссылка уже использована другим аккаунтом Telegram.",
+    "not_found": "Ссылка недействительна. Откройте вход через Max на сайте ещё раз.",
+}
+
+
+async def _link_max(msg: Any, code: str, *, update_id: int | None, trace_id: str | None) -> dict[str, Any]:
+    """/start maxlink_<код> — кнопка из мини-приложения Max (app/max/webapp.py, V31)."""
+    binding = current_bot_binding()
+    base = {"route": "max_link", "update_id": update_id, "trace_id": trace_id}
+    try:
+        result = await redeem_link_request(
+            binding.tenant.tenant_id,
+            code=code,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+            telegram_username=msg.username,
+        )
+    except Exception:
+        logger.warning("max_link_failed", extra={"trace_id": trace_id}, exc_info=True)
+        await deliver_text(msg.chat_id, "Не получилось привязать Max. Попробуйте ещё раз со страницы входа.")
+        return {**base, "ok": False, "status": "error"}
+    if result["status"] != "linked":
+        await deliver_text(msg.chat_id, _MAX_LINK_ERRORS.get(result["status"], _MAX_LINK_ERRORS["not_found"]))
+        return {**base, "ok": False, "status": result["status"]}
+    login = result.get("login")
+    markup = _return_markup(open_in_browser_url(result.get("return_to"))) if login == "confirmed" else None
+    await deliver_text(msg.chat_id, _MAX_LINK_TEXTS.get(login, _MAX_LINK_TEXTS[None]), markup)
+    return {**base, "ok": True, "status": "linked", "login": login}
+
+
 async def try_handle_content_access(
     update: dict[str, Any],
     *,
@@ -115,6 +157,10 @@ async def try_handle_content_access(
     msg = parse_telegram_message(update)
     if not msg:
         return None
+
+    start_token = parse_start_token(msg.text) or ""
+    if start_token.startswith(MAXLINK_PREFIX):
+        return await _link_max(msg, start_token[len(MAXLINK_PREFIX):], update_id=_update_id(update), trace_id=trace_id)
 
     challenge_token = parse_content_access_start(msg.text)
     if not challenge_token:

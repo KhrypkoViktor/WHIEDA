@@ -134,6 +134,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "chat_bridge_inbox",
             # Коды привязки Max для входа на сайт (platform_channel_link_codes_v30.sql, 11.10.2026).
             "channel_link_codes",
+            # Привязка Max одним нажатием из мини-приложения (platform_max_link_requests_v31.sql, 12.10.2026).
+            "max_link_requests",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

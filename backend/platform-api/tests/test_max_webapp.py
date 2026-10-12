@@ -21,7 +21,7 @@ from app.max import webapp
 from app.telegram.referral_bonus import is_referral_command
 
 TOKEN = "max-test-token"
-SETTINGS = SimpleNamespace(max_bot_token=TOKEN, max_bot_username="se_test_bot")
+SETTINGS = SimpleNamespace(max_bot_token=TOKEN, max_bot_username="se_test_bot", telegram_bot_username="WWC_test_bot")
 
 
 def _signed(user_id: int = 5001, start_param: str = "", token: str = TOKEN, auth_date: int | None = None) -> str:
@@ -44,6 +44,7 @@ class FakeDb:
         self.channels: dict[str, str] = {}
         self.actors: dict[str, int | None] = {"telegram:whieda:700": 700}
         self.codes: dict[str, dict] = {}
+        self.requests: dict[str, dict] = {}
 
     def add_code(self, raw: str, *, actor_id: str = "telegram:whieda:700", expired: bool = False, used_by: str | None = None) -> None:
         now = datetime.now(timezone.utc)
@@ -73,6 +74,21 @@ class FakeDb:
         if q.startswith("insert into channel_link_codes"):
             self.codes[params[0]] = {"actor_id": params[2], "expires_at": params[3], "used_at": None, "used_channel_user_id": None}
             return {"code_hash": params[0]}
+        # V31: заявка со стороны Max
+        if q.startswith("insert into max_link_requests"):
+            self.requests[params[0]] = {
+                "max_user_id": params[2], "username": params[3], "display_name": params[4],
+                "login_challenge_hash": params[5], "expires_at": params[6], "used_at": None, "used_by_telegram_user_id": None,
+            }
+            return {"code_hash": params[0]}
+        if q.startswith("select max_user_id"):
+            return self.requests.get(params[0])
+        if q.startswith("update max_link_requests"):
+            self.requests[params[1]].update(used_at=datetime.now(timezone.utc), used_by_telegram_user_id=params[0])
+            return {"code_hash": params[1]}
+        if q.startswith("insert into lead_actors"):
+            self.actors[params[0]] = params[3]
+            return {"actor_id": params[0]}
         raise AssertionError(f"unexpected query: {q[:80]}")
 
 
@@ -85,13 +101,16 @@ def db():
         yield object()
 
     confirm = AsyncMock(return_value={"ok": True})
+    by_hash = AsyncMock(return_value={"ok": True, "return_to": "https://wwc.best/me/"})
     with patch.object(webapp, "get_settings", return_value=SETTINGS), \
          patch.object(webapp, "tenant_connection", connection), \
          patch.object(webapp, "fetch_one", fake.fetch_one), \
          patch.object(webapp, "warm_hosts", AsyncMock()), \
          patch.object(webapp, "confirm_content_from_telegram", confirm), \
+         patch.object(webapp, "confirm_content_by_hash", by_hash), \
          patch.object(webapp, "create_bot_login", AsyncMock(return_value="cid.nonce")):
         fake.confirm = confirm
+        fake.by_hash = by_hash
         yield fake
 
 
@@ -110,8 +129,68 @@ async def test_linked_person_confirms_the_browser_login(db):
 @pytest.mark.asyncio
 async def test_unknown_max_user_is_asked_to_link_first(db):
     out = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_abc"), return_to=RETURN)
-    assert out == {"ok": True, "status": "not_linked", "url": ""}
+    assert out["status"] == "not_linked" and out["url"] == ""
     db.confirm.assert_not_awaited()
+    # 12.10.2026: одна кнопка в Telegram-бот вместо «отправьте /max»
+    assert out["telegram_url"].startswith("https://t.me/WWC_test_bot?start=maxlink_")
+    assert len(out["telegram_url"].split("start=", 1)[1]) <= 64, "Telegram start payload limit"
+    (request,) = db.requests.values()
+    assert request["max_user_id"] == "5001"
+    assert request["login_challenge_hash"] == hashlib.sha256(b"abc").hexdigest(), "the pending site login rides along"
+
+
+@pytest.mark.asyncio
+async def test_one_tap_in_telegram_links_max_and_confirms_the_waiting_login(db):
+    out = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_abc"), return_to=RETURN)
+    code = out["telegram_url"].split("maxlink_", 1)[1]
+    result = await webapp.redeem_link_request("whieda", code=code, telegram_user_id=700, telegram_chat_id=700, telegram_username="viktor")
+    assert result == {"status": "linked", "login": "confirmed", "return_to": "https://wwc.best/me/"}
+    assert db.channels["5001"] == "telegram:whieda:700"
+    db.by_hash.assert_awaited_once_with(
+        tenant_id="whieda", challenge_hash=hashlib.sha256(b"abc").hexdigest(), telegram_user_id=700, telegram_chat_id=700,
+    )
+    again = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_next"), return_to=RETURN)
+    assert again["status"] == "login_confirmed", "next time Max signs in by itself"
+    other = await webapp.redeem_link_request("whieda", code=code, telegram_user_id=999, telegram_chat_id=999, telegram_username=None)
+    assert other["status"] == "used" and db.channels["5001"] == "telegram:whieda:700"
+
+
+@pytest.mark.asyncio
+async def test_one_tap_without_waiting_login_and_for_a_new_telegram_person(db):
+    out = await webapp.max_webapp("whieda", init_data=_signed(user_id=6002), return_to=RETURN)
+    code = out["telegram_url"].split("maxlink_", 1)[1]
+    result = await webapp.redeem_link_request("whieda", code=code, telegram_user_id=801, telegram_chat_id=801, telegram_username=None)
+    assert result == {"status": "linked", "login": None, "return_to": ""}
+    assert db.channels["6002"] == "telegram:whieda:801" and db.actors["telegram:whieda:801"] == 801
+    db.by_hash.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_one_tap_link_does_not_bind(db):
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN)
+    code = out["telegram_url"].split("maxlink_", 1)[1]
+    next(iter(db.requests.values()))["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    result = await webapp.redeem_link_request("whieda", code=code, telegram_user_id=700, telegram_chat_id=700, telegram_username=None)
+    assert result["status"] == "expired" and "5001" not in db.channels
+    assert (await webapp.redeem_link_request("whieda", code="nope", telegram_user_id=700, telegram_chat_id=700, telegram_username=None))["status"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_telegram_start_maxlink_answers_in_plain_words():
+    from app.telegram import content_access as tg
+
+    update = {"update_id": 1, "message": {"message_id": 5, "text": "/start maxlink_Abc", "chat": {"id": 700, "type": "private"}, "from": {"id": 700, "username": "viktor"}}}
+    binding = SimpleNamespace(tenant=SimpleNamespace(tenant_id="whieda"), bot_token="t")
+    sent = []
+    with patch.object(tg, "current_bot_binding", return_value=binding), \
+         patch.object(tg, "redeem_link_request", AsyncMock(return_value={"status": "linked", "login": "confirmed", "return_to": "https://wwc.best/me/"})) as redeem, \
+         patch.object(tg, "deliver_text", AsyncMock(side_effect=lambda chat, text, markup=None: sent.append((text, markup)))):
+        out = await tg.try_handle_content_access(update, trace_id="t")
+    assert out["route"] == "max_link" and out["login"] == "confirmed"
+    redeem.assert_awaited_once_with("whieda", code="Abc", telegram_user_id=700, telegram_chat_id=700, telegram_username="viktor")
+    text, markup = sent[0]
+    assert "Max привязан" in text and "Вход на сайт подтверждён" in text
+    assert markup["inline_keyboard"][0][0]["web_app"]["url"].startswith("https://wwc.best/tg-open/")
 
 
 @pytest.mark.asyncio

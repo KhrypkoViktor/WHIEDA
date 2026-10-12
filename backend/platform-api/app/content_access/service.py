@@ -297,8 +297,28 @@ async def confirm_content_from_telegram(
     token = extract_challenge_token(challenge_token)
     if not token:
         raise HTTPException(status_code=400, detail={"error": "invalid_challenge_token"})
+    return await confirm_content_by_hash(
+        tenant_id=tenant_id,
+        challenge_hash=_hash_value(token),
+        telegram_user_id=telegram_user_id,
+        telegram_chat_id=telegram_chat_id,
+    )
 
-    challenge_hash = _hash_value(token)
+
+def challenge_hash_of(challenge_token: str) -> str:
+    """Хеш заявки, как его хранит content_access_challenges (для отложенного подтверждения, V31)."""
+    return _hash_value(extract_challenge_token(challenge_token))
+
+
+async def confirm_content_by_hash(
+    *,
+    tenant_id: str,
+    challenge_hash: str,
+    telegram_user_id: int,
+    telegram_chat_id: int | None = None,
+) -> dict[str, Any]:
+    """Подтвердить заявку по её хешу: так её подтверждает Telegram-бот после привязки Max (V31),
+    когда сам токен заявки у него не хранится."""
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,

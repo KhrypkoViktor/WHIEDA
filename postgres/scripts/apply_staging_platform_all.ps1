@@ -54,6 +54,7 @@ $Files = @(
     "platform_chat_bridge_v27.sql",
     "platform_site_request_lang_v28.sql",
     "platform_channel_link_codes_v30.sql",
+    "platform_max_link_requests_v31.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

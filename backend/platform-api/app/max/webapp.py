@@ -10,6 +10,9 @@
   * ``login_<challenge>`` — сайт в браузере ждёт подтверждения заявки (как ссылка t.me/…?start=content_access_…);
   * ``link_<код>`` — привязать этот Max к человеку, которого знает Telegram-бот (/max, V30);
   * без параметра — вход прямо внутри Max (одноразовая ссылка #wwc-login=…).
+Незнакомый Max (12.10.2026, владелец: «макс не хочет авторизовывать») получает кнопку
+``t.me/<бот>?start=maxlink_<код>``: Telegram-бот привязывает Max к нажавшему и сразу подтверждает этот вход
+(max_link_requests, V31). /max в Telegram-боте остаётся запасным путём.
 Сессии сайта по-прежнему на telegram_user_id: Max-пользователь находится через lead_actor_channels(max)
 → lead_actors.telegram_user_id.
 """
@@ -29,6 +32,8 @@ from app.academy.showcases import warm_hosts
 from app.content_access.service import (
     BOT_LOGIN_FRAGMENT,
     MAX_LOGIN_PREFIX,
+    challenge_hash_of,
+    confirm_content_by_hash,
     confirm_content_from_telegram,
     create_bot_login,
     sanitize_return_to,
@@ -42,6 +47,9 @@ logger = logging.getLogger("whieda.max.webapp")
 LOGIN_PREFIX = MAX_LOGIN_PREFIX
 LINK_PREFIX = "link_"
 LINK_CODE_TTL = timedelta(hours=24)
+# Обратная привязка (V31): мини-приложение → кнопка t.me/<бот>?start=maxlink_<код> (Telegram start ≤ 64 символа).
+MAXLINK_PREFIX = "maxlink_"
+LINK_REQUEST_TTL = timedelta(minutes=30)
 # initData живёт в sessionStorage мини-приложения: перезагрузка страницы шлёт ту же строку.
 INIT_DATA_MAX_AGE_SEC = 60 * 60
 
@@ -164,6 +172,129 @@ async def _redeem_link(conn: Any, tenant_id: str, code: str, user: dict[str, Any
     return "linked"
 
 
+async def _create_link_request(tenant_id: str, user: dict[str, Any], *, login_challenge_hash: str | None) -> str:
+    """Заявка со стороны Max (V31) → https://t.me/<бот>?start=maxlink_<код>. Без имени Telegram-бота — ''."""
+    bot = str(get_settings().telegram_bot_username or "").lstrip("@")
+    if not bot:
+        return ""
+    code = secrets.token_urlsafe(18)
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            insert into max_link_requests
+              (code_hash, tenant_id, max_user_id, username, display_name, login_challenge_hash, expires_at)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            returning code_hash
+            """,
+            (
+                _hash(code), tenant_id, str(user["id"]), str(user.get("username") or "") or None,
+                _display_name(user), login_challenge_hash, _utcnow() + LINK_REQUEST_TTL,
+            ),
+        )
+    return f"https://t.me/{bot}?start={MAXLINK_PREFIX}{code}"
+
+
+async def redeem_link_request(
+    tenant_id: str,
+    *,
+    code: str,
+    telegram_user_id: int,
+    telegram_chat_id: int | None,
+    telegram_username: str | None,
+) -> dict[str, Any]:
+    """Telegram-бот: /start maxlink_<код>. Привязать Max к нажавшему и подтвердить вход, ради которого
+    открывали Max.
+
+    status: linked | expired | used | not_found; login: confirmed | expired | used | not_found | None;
+    return_to — страница, где нажимали «Войти» (для кнопки «Открыть сайт»).
+    """
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select max_user_id, username, display_name, login_challenge_hash, expires_at, used_at,
+                   used_by_telegram_user_id
+            from max_link_requests where code_hash = %s limit 1
+            """,
+            (_hash(code),),
+        )
+        if not row:
+            return {"status": "not_found", "login": None, "return_to": ""}
+        if row.get("used_at"):
+            same = int(row.get("used_by_telegram_user_id") or 0) == int(telegram_user_id)
+            return {"status": "linked" if same else "used", "login": None, "return_to": ""}
+        if row["expires_at"] < _utcnow():
+            return {"status": "expired", "login": None, "return_to": ""}
+        actor = await fetch_one(
+            conn,
+            "select actor_id from lead_actors where tenant_id = %s and telegram_user_id = %s limit 1",
+            (tenant_id, int(telegram_user_id)),
+        )
+        if actor:
+            actor_id = str(actor["actor_id"])
+        else:
+            actor_id = f"telegram:{tenant_id}:{int(telegram_user_id)}"
+            await fetch_one(
+                conn,
+                """
+                insert into lead_actors (actor_id, tenant_id, display_name, telegram_user_id, telegram_chat_id, telegram_username)
+                values (%s, %s, %s, %s, %s, %s)
+                on conflict (actor_id) do update set telegram_user_id = excluded.telegram_user_id
+                returning actor_id
+                """,
+                (
+                    actor_id, tenant_id, str(row.get("display_name") or "") or f"Telegram {telegram_user_id}",
+                    int(telegram_user_id), None if telegram_chat_id is None else str(telegram_chat_id), telegram_username,
+                ),
+            )
+        await fetch_one(
+            conn,
+            """
+            insert into lead_actor_channels (tenant_id, actor_id, channel, channel_user_id, username, display_name)
+            values (%s, %s, 'max', %s, %s, %s)
+            on conflict (tenant_id, channel, channel_user_id) do update
+              set actor_id = excluded.actor_id,
+                  username = coalesce(excluded.username, lead_actor_channels.username),
+                  display_name = excluded.display_name,
+                  updated_at = now()
+            returning actor_id
+            """,
+            (tenant_id, actor_id, str(row["max_user_id"]), row.get("username"), str(row.get("display_name") or "")),
+        )
+        await fetch_one(
+            conn,
+            """
+            update max_link_requests set used_at = now(), used_by_telegram_user_id = %s
+            where code_hash = %s returning code_hash
+            """,
+            (int(telegram_user_id), _hash(code)),
+        )
+    logger.info("max_linked_from_telegram", extra={"tenant_id": tenant_id, "actor_id": actor_id})
+    login_hash = str(row.get("login_challenge_hash") or "")
+    if not login_hash:
+        return {"status": "linked", "login": None, "return_to": ""}
+    try:
+        confirmed = await confirm_content_by_hash(
+            tenant_id=tenant_id,
+            challenge_hash=login_hash,
+            telegram_user_id=int(telegram_user_id),
+            telegram_chat_id=telegram_chat_id,
+        )
+    except HTTPException as exc:
+        return {"status": "linked", "login": _login_status(exc), "return_to": ""}
+    return {"status": "linked", "login": "confirmed", "return_to": str(confirmed.get("return_to") or "")}
+
+
+def _login_status(exc: HTTPException) -> str:
+    error = (exc.detail or {}).get("error", "") if isinstance(exc.detail, dict) else ""
+    return {
+        "challenge_expired": "expired",
+        "challenge_already_used": "used",
+        "challenge_not_pending": "used",
+    }.get(error, "not_found")
+
+
 async def _in_app_url(tenant_id: str, telegram_user_id: int, return_to: str) -> str:
     safe = sanitize_return_to(return_to)
     if not safe.startswith("https://"):
@@ -191,7 +322,15 @@ async def max_webapp(tenant_id: str, *, init_data: str, return_to: str) -> dict[
             status = linked if linked == "linked" else f"link_{linked}"
         telegram_user_id = await _telegram_id_for_max(conn, tenant_id, max_user_id)
     if telegram_user_id is None:
-        return {"ok": True, "status": status if status.startswith("link_") else "not_linked", "url": ""}
+        # Незнакомый Max: одна кнопка в Telegram-бот — он знает человека, привяжет Max и подтвердит этот вход (V31).
+        login_hash = challenge_hash_of(start_param[len(LOGIN_PREFIX):]) if start_param.startswith(LOGIN_PREFIX) else None
+        telegram_url = await _create_link_request(tenant_id, user, login_challenge_hash=login_hash)
+        return {
+            "ok": True,
+            "status": status if status.startswith("link_") else "not_linked",
+            "url": "",
+            "telegram_url": telegram_url,
+        }
     if start_param.startswith(LOGIN_PREFIX):
         try:
             await confirm_content_from_telegram(
@@ -201,11 +340,6 @@ async def max_webapp(tenant_id: str, *, init_data: str, return_to: str) -> dict[
             )
             status = "login_confirmed"
         except HTTPException as exc:
-            error = (exc.detail or {}).get("error", "") if isinstance(exc.detail, dict) else ""
-            status = {
-                "challenge_expired": "login_expired",
-                "challenge_already_used": "login_used",
-                "challenge_not_pending": "login_used",
-            }.get(error, "login_not_found")
+            status = f"login_{_login_status(exc)}"
     url = await _in_app_url(tenant_id, telegram_user_id, return_to)
     return {"ok": True, "status": status, "url": url}
