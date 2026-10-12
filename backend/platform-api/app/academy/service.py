@@ -889,6 +889,37 @@ async def course_slug_for_product(conn: Any, tenant_id: str, product_code: str) 
     return str(row["course_slug"]) if row and row.get("course_slug") else None
 
 
+# Курс в подарок к покупке (владелец, 12.10.2026: «всем, кто купил курс — открыть бесплатный базовый курс»).
+# Строка academy_access source='gift' — открыт и без PRO, срок сайта на него не влияет.
+BONUS_COURSES: dict[str, tuple[str, ...]] = {"online-start-4w": ("zapusk-wwc",)}
+
+
+async def grant_bonus_courses(conn: Any, tenant_id: str, *, course_slug: str, telegram_user_id: int) -> list[str]:
+    """Выдать подарочные курсы к ``course_slug``. Возвращает слаги, которые нашлись в Академии."""
+    given: list[str] = []
+    for slug in BONUS_COURSES.get(course_slug, ()):
+        course = await fetch_one(
+            conn,
+            "select course_id::text as course_id from academy_courses where tenant_id = %s and slug = %s",
+            (tenant_id, slug),
+        )
+        if not course:
+            logger.warning("academy_bonus_course_missing", extra={"tenant_id": tenant_id, "course_slug": slug})
+            continue
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
+                values (%s, %s::uuid, %s, 'gift', %s)
+                on conflict (tenant_id, course_id, telegram_user_id)
+                do update set revoked_at = null, expires_at = null
+                """,
+                (tenant_id, course["course_id"], int(telegram_user_id), f"bonus:{course_slug}"),
+            )
+        given.append(slug)
+    return given
+
+
 async def grant_course_access(
     conn: Any, tenant_id: str, ref_code: str, course_slug: str, payment_ref: str
 ) -> int | None:
@@ -929,6 +960,7 @@ async def grant_course_access(
             """,
             (tenant_id, course["course_id"], telegram_user_id, payment_ref),
         )
+    await grant_bonus_courses(conn, tenant_id, course_slug=course_slug, telegram_user_id=telegram_user_id)
     return telegram_user_id
 
 
@@ -956,6 +988,7 @@ async def grant_course_to_telegram_user(
             """,
             (tenant_id, course["course_id"], int(telegram_user_id), payment_ref),
         )
+    await grant_bonus_courses(conn, tenant_id, course_slug=course_slug, telegram_user_id=int(telegram_user_id))
     return True
 
 
