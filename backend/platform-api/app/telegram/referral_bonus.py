@@ -7,7 +7,10 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
+from fastapi import HTTPException
+
 from app.cart.web_links import CALCULATOR_WEB_URL
+from app.max.webapp import create_max_link
 from app.referral_bonus.service import (
     InviterCard,
     BonusRedemptionError,

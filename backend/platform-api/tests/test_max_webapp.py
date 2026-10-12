@@ -272,3 +272,23 @@ async def test_unknown_login_channel_is_rejected_before_any_write():
 
 def test_max_command_reaches_the_cabinet_handler():
     assert is_referral_command("/max") and is_referral_command("/max@wwc_bot")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_max_command_sends_the_link_button_or_a_plain_apology(fails):
+    # 12.10.2026: /max падал с NameError (не было импортов) — бот отвечал «не удалось обработать».
+    from app.telegram import referral_bonus as rb
+
+    sent = []
+    create = AsyncMock(side_effect=HTTPException(status_code=404, detail={"error": "actor_not_found"})) if fails \
+        else AsyncMock(return_value="https://max.ru/se_test_bot?startapp=link_x")
+    with patch.object(rb, "_actor_for_telegram", AsyncMock(return_value="telegram:whieda:700")), \
+         patch.object(rb, "create_max_link", create), \
+         patch.object(rb, "_deliver", AsyncMock(side_effect=lambda chat, text, reply_markup=None: sent.append((text, reply_markup)))):
+        out = await rb.show_max_link(SimpleNamespace(tenant_id="whieda"), telegram_user_id=700, telegram_chat_id=700, raw_update={}, trace_id="t")
+    text, markup = sent[0]
+    if fails:
+        assert out["status"] == "unavailable" and "временно недоступен" in text and markup is None
+    else:
+        assert out["ok"] and markup["inline_keyboard"][0][0] == {"text": "Привязать Max", "url": "https://max.ru/se_test_bot?startapp=link_x"}
