@@ -6,7 +6,7 @@
   `core/academy-threads-20261013` (`3a71eab`, rebase на `core/max-login-20261011` = `89c87a2`),
   запушена. Это база для следующих веток Core (сессия «Site Team Lead» в курсе).
 - Сайт wwc.best: worktree `D:\Projects\_worktrees\wwc-site-academy-showcase`, ветка
-  `site/academy-showcase-20261011` (`da4b373`), запушена.
+  `site/academy-showcase-20261011` (`74126e4` = master `222ccb5` + 2 коммита Академии), запушена; бой wwc.best и academy.almira.by на `74126e4`, master продвинут fast-forward.
 - Курс: `D:\Projects\ALMIRA\_source\course-composition\` — `manifest.json` (18 видео Drive),
   `transcode.py` (720p + постер, как воркер Core), `build_course.py` → `course_igra-formy.sql`,
   `upload_media.py` (720.mp4 + poster.jpg → диск Core), `redownload.py` (докачка с `--continue`).
