@@ -63,6 +63,15 @@ from app.academy.service import (
     viewer_profile,
 )
 from app.academy.showcases import public_payload, showcase_for_request
+from app.academy.threads import (
+    author_thread,
+    get_profile,
+    lesson_works,
+    post_author_message,
+    post_student_message,
+    save_profile,
+    set_seen,
+)
 from app.content_access.routes import _current_session
 from app.tenancy import get_request_tenant
 
@@ -105,6 +114,11 @@ class CoursePatchBody(BaseModel):
     price: float | None = None
     currency: str | None = None
     status: str | None = None
+    # Витрина и работы группы (V32).
+    works_public: bool | None = None
+    review_days: int | None = None
+    landing_url: str | None = None
+    teaser: dict[str, Any] | None = None
 
 
 class ModuleBody(BaseModel):
@@ -138,6 +152,31 @@ class ReviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str
     comment: str | None = None
+
+
+class MessageBody(BaseModel):
+    """Сообщение нити домашки (V32): текст и файлы; about_media_id — замечание к фото ученика."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = ""
+    media_ids: list[str] = []
+    about_media_id: str | None = None
+
+
+class SeenBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    seen: bool = True
+
+
+class ProfileBody(BaseModel):
+    """Анкета ученика (V32): видна преподавателю и группе (имя и Instagram)."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = ""
+    city: str = ""
+    experience: str = ""
+    goal: str = ""
+    instagram: str = ""
 
 
 class PreviewBody(BaseModel):
@@ -232,6 +271,36 @@ async def submission_site(
     return await _guard(
         submit_homework(tenant_id, slug, lesson_slug, viewer, text=body.text, media_ids=body.media_ids)
     )
+
+
+@router.post(f"{P}/courses/{{slug}}/lessons/{{lesson_slug}}/submission/messages")
+async def submission_message_site(
+    slug: str, lesson_slug: str, body: MessageBody, request: Request, response: Response
+) -> dict[str, Any]:
+    """Вопрос или исправления ученика в своей нити домашки (V32)."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(
+        post_student_message(tenant_id, slug, lesson_slug, viewer, text=body.text, media_ids=body.media_ids)
+    )
+
+
+@router.get(f"{P}/courses/{{slug}}/lessons/{{lesson_slug}}/works")
+async def lesson_works_site(slug: str, lesson_slug: str, request: Request, response: Response) -> dict[str, Any]:
+    """Работы группы: все нити урока с именами и ответами преподавателя (works_public)."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(lesson_works(tenant_id, slug, lesson_slug, viewer))
+
+
+@router.get(f"{P}/profile")
+async def profile_site(request: Request, response: Response) -> dict[str, Any]:
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(get_profile(tenant_id, viewer))
+
+
+@router.put(f"{P}/profile")
+async def profile_save_site(body: ProfileBody, request: Request, response: Response) -> dict[str, Any]:
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(save_profile(tenant_id, viewer, body.model_dump()))
 
 
 # ---- media: signed files (declared before /media/{id}) ----------------------------------------
@@ -439,6 +508,30 @@ async def author_submissions(
 async def author_review(submission_id: str, body: ReviewBody, request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
     return await _guard(review_submission(tenant_id, submission_id, viewer, status=body.status, comment=body.comment))
+
+
+@router.get(f"{A}/submissions/{{submission_id}}")
+async def author_submission(submission_id: str, request: Request, response: Response) -> dict[str, Any]:
+    """Карточка работы с нитью и анкетой ученика; открытие помечает её просмотренной (V32)."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(author_thread(tenant_id, submission_id, viewer))
+
+
+@router.post(f"{A}/submissions/{{submission_id}}/messages")
+async def author_message(submission_id: str, body: MessageBody, request: Request, response: Response) -> dict[str, Any]:
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(
+        post_author_message(
+            tenant_id, submission_id, viewer,
+            text=body.text, media_ids=body.media_ids, about_media_id=body.about_media_id,
+        )
+    )
+
+
+@router.post(f"{A}/submissions/{{submission_id}}/seen")
+async def author_submission_seen(submission_id: str, body: SeenBody, request: Request, response: Response) -> dict[str, Any]:
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(set_seen(tenant_id, submission_id, viewer, seen=body.seen))
 
 
 @router.post(f"{A}/preview")

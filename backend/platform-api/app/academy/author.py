@@ -160,8 +160,11 @@ async def _author(conn: Any, tenant_id: str, viewer: AcademyViewer) -> Author:
 _COURSE_COLUMNS = """
     course_id::text as course_id, slug, title, subtitle, kind, status, access_rule, author_actor_id,
     description_md, description_html, cover_media_id::text as cover_media_id, price_wusd_minor, price_currency,
-    review_note, review_requested_at, created_at, updated_at
+    review_note, review_requested_at, created_at, updated_at,
+    works_public, review_days, teaser, landing_url
 """
+MAX_REVIEW_DAYS = 60
+_LANDING_RE = re.compile(r"^https://[^\s\"'<>]{1,300}$")
 
 
 async def _course_for(conn: Any, tenant_id: str, author: Author, slug: str, *, lock: bool = False) -> dict[str, Any]:
@@ -200,6 +203,11 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "review_requested_at": _iso(course.get("review_requested_at")),
         "created_at": _iso(course.get("created_at")),
         "updated_at": _iso(course.get("updated_at")),
+        # Витрина и работы группы (V32).
+        "works_public": bool(course.get("works_public")),
+        "review_days": int(course.get("review_days") or 0),
+        "teaser": course.get("teaser") or None,
+        "landing_url": course.get("landing_url") or None,
     }
 
 
@@ -371,10 +379,47 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
         changes["price_currency"] = currency
     if "status" in patch and patch["status"] not in COURSE_STATUSES:
         raise AcademyError(400, "bad_status")
+    if "works_public" in patch:
+        changes["works_public"] = bool(patch["works_public"])
+    if "review_days" in patch:
+        try:
+            days = int(patch["review_days"] or 0)
+        except (TypeError, ValueError) as exc:
+            raise AcademyError(400, "bad_review_days") from exc
+        if not 0 <= days <= MAX_REVIEW_DAYS:
+            raise AcademyError(400, "bad_review_days", {"limit": MAX_REVIEW_DAYS})
+        changes["review_days"] = days
+    if "landing_url" in patch:
+        landing = str(patch["landing_url"] or "").strip()
+        if landing and not _LANDING_RE.match(landing):
+            raise AcademyError(400, "bad_landing_url")
+        changes["landing_url"] = landing or None
     async with tenant_connection(tenant_id) as conn:
         author = await _author(conn, tenant_id, viewer)
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
-        known = set(media_refs(course.get("description_html") or "")) | {str(course.get("cover_media_id") or "")}
+        known = (
+            set(media_refs(course.get("description_html") or ""))
+            | {str(course.get("cover_media_id") or ""), str((course.get("teaser") or {}).get("media_id") or "")}
+        )
+        if "teaser" in patch:
+            # Видеообращение на витрине для закрытого курса: своё видео или embed провайдера.
+            teaser = patch["teaser"]
+            if teaser in (None, {}):
+                changes["teaser"] = None
+            elif isinstance(teaser, dict) and teaser.get("media_id"):
+                ids = _valid_ids([teaser["media_id"]])
+                if not ids:
+                    raise AcademyError(400, "bad_media")
+                await _check_media(conn, tenant_id, author, ids, ("video",), known=known, allow_processing=True)
+                changes["teaser"] = json.dumps({"media_id": ids[0]})
+            elif (
+                isinstance(teaser, dict)
+                and teaser.get("provider") in VIDEO_PROVIDERS
+                and _VIDEO_ID_RE.match(str(teaser.get("id") or ""))
+            ):
+                changes["teaser"] = json.dumps({"provider": teaser["provider"], "id": str(teaser["id"])})
+            else:
+                raise AcademyError(400, "bad_video", {"providers": list(VIDEO_PROVIDERS)})
         if "description_md" in patch:
             source = str(patch["description_md"] or "")
             html = _markdown(source)
@@ -416,7 +461,8 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
             changes["status"] = "draft"  # правка на проверке — снова черновик
         if changes:
             columns = ", ".join(
-                f"{name} = %s::uuid" if name == "cover_media_id" else f"{name} = %s" for name in changes
+                f"{name} = %s::uuid" if name == "cover_media_id" else f"{name} = %s::jsonb" if name == "teaser"
+                else f"{name} = %s" for name in changes
             )
             course = await fetch_one(
                 conn,

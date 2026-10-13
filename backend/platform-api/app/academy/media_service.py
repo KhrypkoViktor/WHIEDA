@@ -155,20 +155,36 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
                 return True
             if course_lock_reason(course, viewer, has_access_row=course["course_id"] in access) is None:
                 return True
+    # Домашка: фото сдачи и вложения нити (V32) — ученику, преподавателю и, когда у курса
+    # открыты работы группы, любому ученику с доступом к курсу.
     homework = await fetch_all(
         conn,
         """
-        select s.telegram_user_id, c.author_actor_id
+        select s.telegram_user_id, c.author_actor_id, c.course_id::text as course_id, c.access_rule, c.works_public
         from academy_submissions s
         join academy_lessons l on l.tenant_id = s.tenant_id and l.lesson_id = s.lesson_id
         join academy_courses c on c.tenant_id = l.tenant_id and c.course_id = l.course_id
-        where s.tenant_id = %s and s.media @> jsonb_build_array(%s::text)
+        where s.tenant_id = %(t)s
+          and (
+            s.media @> jsonb_build_array(%(m)s::text)
+            or exists (
+              select 1 from academy_submission_messages m
+              where m.tenant_id = s.tenant_id and m.submission_id = s.submission_id
+                and m.media @> jsonb_build_array(%(m)s::text)
+            )
+          )
         """,
-        (tenant_id, media_id),
+        {"t": tenant_id, "m": media_id},
     )
-    for item in homework:
-        if int(item["telegram_user_id"]) == viewer.telegram_user_id or is_staff_for(item, viewer, actor_ids):
-            return True
+    if homework:
+        access = await _access_rows(conn, tenant_id, viewer.telegram_user_id)
+        for item in homework:
+            if int(item["telegram_user_id"]) == viewer.telegram_user_id or is_staff_for(item, viewer, actor_ids):
+                return True
+            if item.get("works_public") and course_lock_reason(
+                item, viewer, has_access_row=item["course_id"] in access
+            ) is None:
+                return True
     return False
 
 

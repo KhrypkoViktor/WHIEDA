@@ -68,6 +68,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "academy_media",
             # Витрины авторов: адрес, бренд, бот (platform_academy_showcases_v29.sql, 11.10.2026).
             "academy_showcases",
+            # Домашка как переписка и анкета ученика (platform_academy_threads_v32.sql, 13.10.2026).
+            "academy_submission_messages",
+            "academy_profiles",
             # Согласие на рекламную рассылку в боте (platform_marketing_consent_v17.sql, 26.09.2026).
             "telegram_marketing_consents",
             "referral_profiles",

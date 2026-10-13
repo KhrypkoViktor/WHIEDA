@@ -64,6 +64,7 @@ MIGRATIONS = (
     "platform_academy_showcases_v29.sql",  # витрины авторов Академии (11.10.2026)
     "platform_channel_link_codes_v30.sql",  # привязка Max для входа на сайт (11.10.2026)
     "platform_max_link_requests_v31.sql",  # привязка Max одним нажатием (12.10.2026)
+    "platform_academy_threads_v32.sql",  # домашка как переписка, работы группы, анкета (13.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

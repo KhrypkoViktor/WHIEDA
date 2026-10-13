@@ -31,7 +31,8 @@ select 'whieda', course_id, 9001, 'key', timestamptz '2026-09-01 10:00+00' from 
 @pytest.mark.integration
 def test_v19_migration_twice_backfills_start_and_isolates_tenants():
     assert V19 in MIGRATIONS
-    before_v19 = [name for name in MIGRATIONS if name != V19]
+    # V32 (нить домашки) правит таблицы V19 — без V19 её тоже не прогнать.
+    before_v19 = [name for name in MIGRATIONS if name not in (V19, "platform_academy_threads_v32.sql")]
     with temporary_database("whieda_academy_v19") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
             db.apply_migrations(conn, before_v19)
@@ -374,7 +375,7 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             progress = await set_lesson_done("whieda", "akvarel", "b", student, done=True, source="bot")
             assert (progress["lessons_done"], progress["next_lesson"]["slug"]) == (2, "c")
             detail_c = await lesson_detail("whieda", "akvarel", "c", student)
-            assert detail_c["lesson"]["assignment"] == {"prompt_html": "<p>Пришлите фото заливки</p>", "required": True}
+            assert detail_c["lesson"]["assignment"] == {"prompt_html": "<p>Пришлите фото заливки</p>", "required": True, "review_days": 0}
 
             # 6. Ссылка на медиа по id: ученик с доступом — да, чужой — нет, автор — да.
             link = await media_url("whieda", FILE_ID, student)
@@ -775,11 +776,14 @@ def test_homework_submit_return_resubmit_accept_and_notify(monkeypatch, tmp_path
             assert locks(outline)["c"] == (False, None, "returned")
             assert outline["course"]["next_lesson"] == "c"
 
-            # 5. Пересдача — новая строка; приняли → урок завершён, неделя 3 открылась.
+            # 5. Пересдача — та же нить (V32): исправления — сообщением, статус снова «на проверке»,
+            #    автору — «Исправления от …»; приняли → урок завершён, неделя 3 открылась.
             again = await submit_homework("whieda", "akvarel", "c", student, text="С тенями", media_ids=[work])
             second_id = again["submission"]["submission_id"]
-            assert second_id != first_id
-            assert len([n for n in await notes() if n["event_type"] == "academy_hw_submitted"]) == 2
+            assert second_id == first_id and again["submission"]["status"] == "submitted"
+            assert [m["sender"] for m in again["submission"]["messages"]] == ["author", "student"]
+            assert len([n for n in await notes() if n["event_type"] == "academy_hw_submitted"]) == 1
+            assert (await notes())[-1]["payload"]["text"].startswith("🔁 Исправления от")
             await review_submission("whieda", second_id, author, status="accepted", comment="Отлично")
             assert (await notes())[-1]["payload"]["text"].startswith("✅ Домашка принята — урок «Заливка»")
             with pytest.raises(AcademyError) as accepted_already:
@@ -791,7 +795,7 @@ def test_homework_submit_return_resubmit_accept_and_notify(monkeypatch, tmp_path
             assert outline["course"]["lessons_done"] == 3
             assert await list_submissions("whieda", author, status="submitted") == []
             history = await list_submissions("whieda", author, status="all")
-            assert [item["status"] for item in history] == ["accepted", "returned"]
+            assert [item["status"] for item in history] == ["accepted"]
 
             # 6. Воркер шлёт уведомления ботом из настройки, кнопка входит на сайт сразу.
             send = AsyncMock(return_value={"ok": True, "message_id": 1})

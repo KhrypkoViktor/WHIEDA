@@ -351,7 +351,8 @@ async def list_courses(
 
 _COURSE_COLUMNS = """
     course_id::text as course_id, slug, title, subtitle, access_rule, kind, price_wusd_minor, price_currency,
-    author_actor_id, description_html, cover_media_id::text as cover_media_id, status
+    author_actor_id, description_html, cover_media_id::text as cover_media_id, status,
+    works_public, review_days, teaser, landing_url
 """
 
 
@@ -639,7 +640,10 @@ async def course_outline(
         module_rows = await _load_modules(conn, tenant_id, course["course_id"])
         lesson_rows = await _load_lessons(conn, tenant_id, course["course_id"], viewer.telegram_user_id)
         description = sanitize_html(course.get("description_html")) if course.get("description_html") else ""
-        media = await load_media(conn, tenant_id, [course.get("cover_media_id"), *media_refs(description)])
+        media = await load_media(
+            conn, tenant_id,
+            [course.get("cover_media_id"), *media_refs(description), (course.get("teaser") or {}).get("media_id")],
+        )
         author = str(course.get("author_actor_id") or "")
         names = await _author_names(conn, tenant_id, {author} if author else set())
     modules, lessons = build_structure(module_rows, lesson_rows)
@@ -660,6 +664,12 @@ async def course_outline(
         **_progress(summaries),
         "next_lesson": _next_slug(view, lessons, locks),
         "started_at": _iso(view.started_at),
+        # Витрина курса (V32): видеообращение и страница на сайте — для закрытого курса тоже;
+        # работы группы и срок ответа преподавателя — для открытого.
+        "teaser": video_out(course.get("teaser") or None, media, viewer.telegram_user_id),
+        "landing_url": course.get("landing_url") or None,
+        "works_public": bool(course.get("works_public")),
+        "review_days": int(course.get("review_days") or 0),
     }
     if view.lock_extra.get("author_contact") is not None or view.lock == "purchase_required":
         payload_course["author_contact"] = view.lock_extra.get("author_contact")
@@ -690,7 +700,7 @@ async def _latest_submission(conn: Any, tenant_id: str, lesson_id: str, telegram
         conn,
         """
         select submission_id::text as submission_id, text, media, status, author_comment, created_at, updated_at,
-               reviewed_at
+               reviewed_at, seen_at, student_seen_at, last_message_at
         from academy_submissions
         where tenant_id = %s and lesson_id = %s::uuid and telegram_user_id = %s
         order by created_at desc
@@ -771,14 +781,27 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
             (tenant_id, lesson_id),
         )
         submission = await _latest_submission(conn, tenant_id, lesson_id, viewer.telegram_user_id)
+        # Нить домашки (V32): сообщения ученика и преподавателя; открытие урока — прочтение ответов.
+        from app.academy.threads import load_messages, mark_student_seen, messages_media_ids, thread_out
+
+        thread_messages = (
+            (await load_messages(conn, tenant_id, [submission["submission_id"]])).get(submission["submission_id"], [])
+            if submission else []
+        )
         body = sanitize_html(row["body_html"])
         video = row.get("video") or None
         files = [str(item) for item in (row.get("files") or [])]
         media = await load_media(
             conn,
             tenant_id,
-            [*media_refs(body), *files, (video or {}).get("media_id"), *((submission or {}).get("media") or [])],
+            [
+                *media_refs(body), *files, (video or {}).get("media_id"),
+                *((submission or {}).get("media") or []), *messages_media_ids(thread_messages),
+            ],
         )
+        my_submission = thread_out(submission, thread_messages, media, viewer.telegram_user_id)
+        if my_submission and my_submission["unread"]:
+            await mark_student_seen(conn, tenant_id, submission["submission_id"])
     summaries = _summaries(lessons, locks)
     summary = summaries[index]
     urls = _signed_urls(media, viewer.telegram_user_id)
@@ -800,11 +823,16 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
             ],
             "live_url": row.get("live_url") if summary["kind"] == "live" else None,
             "assignment": (
-                {"prompt_html": sanitize_html(assignment["prompt_html"]), "required": bool(assignment["required"])}
+                {
+                    "prompt_html": sanitize_html(assignment["prompt_html"]),
+                    "required": bool(assignment["required"]),
+                    "review_days": int(course.get("review_days") or 0),
+                }
                 if assignment
                 else None
             ),
-            "my_submission": submission_out(submission, media, viewer.telegram_user_id),
+            "my_submission": my_submission,
+            "works_public": bool(course.get("works_public")),
         },
         "prev": summaries[index - 1] if index > 0 else None,
         "next": summaries[index + 1] if index + 1 < len(summaries) else None,

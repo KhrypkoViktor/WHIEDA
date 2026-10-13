@@ -14,12 +14,13 @@ preview admins; a course without an author goes to the billing owner.
 from __future__ import annotations
 
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from app.academy.content import sanitize_html
 from app.academy.media_service import _valid_ids, load_media, media_summary
 from app.academy.showcases import showcase_for_author
+from app.academy.threads import insert_message, student_card, student_thread_payload
 from app.academy.notify import (
     OPEN_BUTTON,
     OPEN_LESSON_BUTTON,
@@ -63,6 +64,19 @@ async def submit_homework(
         raise AcademyError(400, "bad_media")
     if not body and not wanted:
         raise AcademyError(400, "empty_submission")
+    # Нить одна на урок (V32): после «Вернули» исправления идут сообщением в ту же нить.
+    async with tenant_connection(tenant_id) as conn:
+        _view, probe = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
+        latest = await fetch_one(
+            conn,
+            "select status from academy_submissions where tenant_id = %s and lesson_id = %s::uuid"
+            " and telegram_user_id = %s order by created_at desc limit 1",
+            (tenant_id, probe["lesson_id"], viewer.telegram_user_id),
+        )
+    if latest and latest["status"] == "returned":
+        from app.academy.threads import post_student_message
+
+        return await post_student_message(tenant_id, slug, lesson_slug, viewer, text=text, media_ids=media_ids)
     async with tenant_connection(tenant_id) as conn:
         view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
         assignment = await fetch_one(
@@ -85,10 +99,10 @@ async def submit_homework(
         saved = await fetch_one(
             conn,
             """
-            insert into academy_submissions (tenant_id, lesson_id, telegram_user_id, text, media)
-            values (%s, %s::uuid, %s, %s, %s::jsonb)
+            insert into academy_submissions (tenant_id, lesson_id, telegram_user_id, text, media, last_message_at)
+            values (%s, %s::uuid, %s, %s, %s::jsonb, now())
             on conflict (tenant_id, lesson_id, telegram_user_id) where status <> 'returned'
-            do update set text = excluded.text, media = excluded.media, updated_at = now()
+            do update set text = excluded.text, media = excluded.media, updated_at = now(), last_message_at = now()
               where academy_submissions.status = 'submitted'
             returning submission_id::text as submission_id, text, media, status, author_comment,
                       created_at, updated_at, reviewed_at, (xmax = 0) as created
@@ -107,10 +121,11 @@ async def submit_homework(
                 (tenant_id, viewer.telegram_user_id, lesson["lesson_id"]),
             )
         if saved["created"]:
+            # Преподавателю — если витрина автора этого хочет (V32: у ALMIRA уведомления выключены).
+            showcase = await showcase_for_author(tenant_id, view.course.get("author_actor_id"))
             recipient = await author_telegram_id(conn, tenant_id, view.course.get("author_actor_id"))
-            if recipient is not None:
+            if recipient is not None and showcase.author_notify:
                 student = await person(conn, tenant_id, viewer.telegram_user_id)
-                showcase = await showcase_for_author(tenant_id, view.course.get("author_actor_id"))
                 await enqueue_notification(
                     conn,
                     tenant_id,
@@ -123,9 +138,10 @@ async def submit_homework(
                     binding_id=showcase.telegram_binding_id,
                 )
         progress = await course_progress(conn, tenant_id, view, viewer.telegram_user_id)
+        thread = await student_thread_payload(conn, tenant_id, lesson["lesson_id"], viewer.telegram_user_id)
     return {
         "ok": True,
-        "submission": submission_out(saved, media, viewer.telegram_user_id),
+        "submission": thread,
         "assignment_status": saved["status"],
         **progress,
     }
@@ -169,10 +185,14 @@ async def list_submissions(
             conn,
             """
             select s.submission_id::text as submission_id, s.telegram_user_id, s.text, s.media, s.status,
-                   s.author_comment, s.created_at, s.updated_at, s.reviewed_at,
+                   s.author_comment, s.created_at, s.updated_at, s.reviewed_at, s.seen_at, s.last_message_at,
+                   (select count(*) from academy_submission_messages m
+                     where m.tenant_id = s.tenant_id and m.submission_id = s.submission_id and m.sender = 'student'
+                       and (s.seen_at is null or m.created_at > s.seen_at)) as student_messages_unseen,
                    l.slug as lesson_slug, l.title as lesson_title, c.slug as course_slug, c.title as course_title,
                    coalesce(la.display_name, '') as student_display_name, la.telegram_username as student_username,
-                   a.prompt_html
+                   a.prompt_html,
+                   p.name as profile_name, p.city as profile_city, p.instagram as profile_instagram
             from academy_submissions s
             join academy_lessons l on l.tenant_id = s.tenant_id and l.lesson_id = s.lesson_id
             join academy_courses c on c.tenant_id = l.tenant_id and c.course_id = l.course_id
@@ -182,11 +202,12 @@ async def list_submissions(
               where tenant_id = s.tenant_id and telegram_user_id = s.telegram_user_id
               order by active desc limit 1
             ) la on true
+            left join academy_profiles p on p.tenant_id = s.tenant_id and p.telegram_user_id = s.telegram_user_id
             where s.tenant_id = %(tenant)s
               and (%(status)s = 'all' or s.status = %(status)s)
               and (%(course)s::text is null or c.slug = %(course)s::text)
               and (%(scope)s::text[] is null or c.author_actor_id = any(%(scope)s::text[]))
-            order by s.created_at desc
+            order by coalesce(s.last_message_at, s.created_at) desc, s.created_at desc
             limit %(limit)s
             """,
             {"tenant": tenant_id, "status": status, "course": course_slug, "scope": scope, "limit": int(limit)},
@@ -211,6 +232,11 @@ async def list_submissions(
                 "reviewed_at": _iso(row.get("reviewed_at")),
                 "student_name": name,
                 "student_username": username,
+                # Почта преподавателя (V32): непросмотренное — новая работа или вопрос ученика.
+                "student": student_card(row),
+                "seen_at": _iso(row.get("seen_at")),
+                "last_message_at": _iso(row.get("last_message_at")),
+                "unread": row.get("seen_at") is None or int(row.get("student_messages_unseen") or 0) > 0,
                 "course_slug": row["course_slug"],
                 "course_title": row["course_title"],
                 "lesson_slug": row["lesson_slug"],
@@ -259,17 +285,25 @@ async def review_submission(
             await cur.execute(
                 """
                 update academy_submissions
-                set status = %s, author_comment = %s, reviewed_at = now(), reviewed_by = %s, updated_at = now()
+                set status = %s, author_comment = %s, reviewed_at = now(), reviewed_by = %s, updated_at = now(),
+                    last_message_at = now(), seen_at = coalesce(seen_at, now())
                 where tenant_id = %s and submission_id = %s::uuid
                 """,
                 (status, note or None, viewer.telegram_user_id, tenant_id, row["submission_id"]),
+            )
+        if note:
+            # Комментарий решения — ещё и сообщение нити: ученик и группа видят его в переписке (V32).
+            await insert_message(
+                conn, tenant_id, submission_id=row["submission_id"], sender="author",
+                telegram_user_id=viewer.telegram_user_id, text=note, media_ids=[],
             )
         showcase = await showcase_for_author(tenant_id, row.get("author_actor_id"))
         await enqueue_notification(
             conn,
             tenant_id,
             event_type=REVIEWED_EVENT,
-            key=f"{REVIEWED_EVENT}:{row['submission_id']}",
+            # Нить одна (V32): «вернули» и «принято» по одной работе — разные уведомления.
+            key=f"{REVIEWED_EVENT}:{row['submission_id']}:{status}:{datetime.now(timezone.utc).isoformat()}",
             recipient=int(row["telegram_user_id"]),
             text=reviewed_text(status, row["lesson_title"], note),
             button_text=OPEN_LESSON_BUTTON,
