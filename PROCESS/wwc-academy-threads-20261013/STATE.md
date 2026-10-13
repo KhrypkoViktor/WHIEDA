@@ -1,0 +1,49 @@
+# STATE — домашка как переписка, курс ALMIRA «Игра формы» (13.10.2026)
+
+## Где
+
+- Core: worktree `D:\Projects\_worktrees\whieda-core-academy-showcase`, ветка
+  `core/academy-threads-20261013` (`3a71eab`, rebase на `core/max-login-20261011` = `89c87a2`),
+  запушена. Это база для следующих веток Core (сессия «Site Team Lead» в курсе).
+- Сайт wwc.best: worktree `D:\Projects\_worktrees\wwc-site-academy-showcase`, ветка
+  `site/academy-showcase-20261011` (`da4b373`), запушена.
+- Курс: `D:\Projects\ALMIRA\_source\course-composition\` — `manifest.json` (18 видео Drive),
+  `transcode.py` (720p + постер, как воркер Core), `build_course.py` → `course_igra-formy.sql`,
+  `upload_media.py` (720.mp4 + poster.jpg → диск Core), `redownload.py` (докачка с `--continue`).
+  Исходники 4K на сервер не уезжают — только 720p.
+
+## На бою (13.10.2026)
+
+- Core core=staging=`3a71eab` (бэкап `core-3a71eab-20261013T171008Z`). Миграция
+  `platform_academy_threads_v32.sql` в общей базе, APPLIED.log. V30/V31 — вход через Max
+  (чужие), поэтому нить домашки — V32; v29 и v32 добавлены в списки staging-миграций
+  (`EXPECTED_APPLY_COUNT = 55`, `test_staging_sql_order`: 55).
+- Витрина `almira`: `author_notify = false` (Саша заходит сама, уведомлений не ждёт).
+- Курс `igra-formy` (автор `almira`, purchase, 470 BYN, published, works_public, review_days 7,
+  landing https://almira.by/composition-play-of-shapes/, teaser — видео «Вступление»):
+  7 модулей (Добро пожаловать — open; недели 1–6 — after_prev), 20 уроков, 6 домашек
+  (dz-1…dz-6, required). Тексты — конспекты Саши (Drive «Курс по Композиции»), приветствие
+  адаптировано под платформу («Следующий шаг», «Моя анкета», «Работы группы»).
+  Видео: все 18 зарегистрированы (`academy_media`, status ready, владелец `almira`) и лежат
+  на диске Core (`/opt/whieda-platform-core/media/academy/whieda/academy/<media_id>/720.mp4`
+  + `poster.jpg`, 730 MB, размеры сверены); подписанная ссылка на видео отвечает 206
+  через academy.almira.by и wwc.best. Drive рвал соединение на больших файлах — докачка
+  `redownload.py` с `--continue`. Правки курса: `python build_course.py` →
+  `wwc_sql.py --file course_igra-formy.sql` (идемпотентно), новые видео — `upload_media.py`.
+- Доступ ученикам — ключами из кабинета автора (academy_access_keys), как раньше.
+
+## Сайт
+
+- Ученик: нить под домашкой, «Снять фото»/«Из галереи», «Работы группы», «Моя анкета»
+  (просьба представиться при открытых работах), «Ответ преподавателя — до N дней»,
+  водяной знак с именем, видеообращение и «Подробнее о курсе» у закрытого курса.
+- Преподаватель: почта с непросмотренным, карточка с анкетой, фото на весь экран / «Скачать»,
+  замечание к фото, ответ с файлами и видео, «Пометить просмотренным», решение отдельно;
+  в настройках курса — работы группы, срок ответа, страница на сайте, видеообращение.
+- Тест `referral-api-bootstrap` (реестр партнёров `public/wwc-api/referral-registry.js` отстал
+  от `src/data/referrals.js` с 09.10, коммит `8929302`) — не наш, сборка регенерирует файл.
+
+## Не сделано
+
+- Кнопка Академии на almira.by — не выводить (решение владельца); вход только из бота.
+- Бот ALMIRA в Max, перекрёстные продажи витрин — отдельные этапы.
