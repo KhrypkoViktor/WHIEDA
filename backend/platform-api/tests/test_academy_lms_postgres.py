@@ -349,8 +349,8 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             # Шапка кабинета: имя вошедшего для инициалов.
             from app.academy.service import viewer_profile
 
-            assert await viewer_profile("whieda", STUDENT) == {"name": "Мария", "username": "masha_s"}
-            assert await viewer_profile("whieda", STRANGER) == {"name": None, "username": None}
+            assert await viewer_profile("whieda", STUDENT) == {"name": "Мария", "username": "masha_s", "label": "Мария"}
+            assert await viewer_profile("whieda", STRANGER) == {"name": None, "username": None, "label": f"ID {STRANGER}"}
             with pytest.raises(AcademyError) as closed_done:
                 await set_lesson_done("whieda", "akvarel", "d", student, done=True, source="site")
             assert closed_done.value.code == "lesson_locked"

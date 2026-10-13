@@ -228,9 +228,18 @@ def test_thread_inbox_notifications_works_and_profile(monkeypatch, tmp_path):
             card = await author_thread("whieda", sid, sasha)
             assert card["submission"]["status"] == "returned"
             assert card["submission"]["messages"][-1]["text"] == "Переделай фон"
+            # Вопрос без фото статус не меняет — работа остаётся «возвращённой», преподавателю не
+            # придётся «возвращать» её заново; а форма сдачи — это исправления: снова «на проверке».
+            asked = await post_student_message("whieda", "kompoziciya", "urok-1", masha, text="Весь фон?", media_ids=[])
+            assert asked["submission"]["status"] == "returned"
             fixed = await submit_homework("whieda", "kompoziciya", "urok-1", masha, text="Исправила", media_ids=[])
             assert fixed["submission"]["submission_id"] == sid and fixed["submission"]["status"] == "submitted"
             assert fixed["submission"]["messages"][-1]["text"] == "Исправила"
+            assert fixed["submission"]["author_comment"] is None
+            # Преподаватель открыл карточку после вопроса — в почте непросмотренного больше нет.
+            await author_thread("whieda", sid, sasha)
+            [row] = await list_submissions("whieda", sasha, status="submitted")
+            assert row["unread"] is False
             async with tenant_connection("whieda") as conn:
                 count = await fetch_all(
                     conn, "select submission_id from academy_submissions where telegram_user_id = 9001"
@@ -255,6 +264,9 @@ def test_thread_inbox_notifications_works_and_profile(monkeypatch, tmp_path):
             assert mashas["student"]["instagram"] == "masha_art" and mashas["student"]["is_me"] is False
             assert mashas["status"] == "accepted" and mashas["media"][0]["url"]
             assert [m["text"] for m in mashas["messages"] if m["sender"] == "author"] == ["Линию тоньше", "Переделай фон", "Молодец"]
+            # Вопросы Маши без фото группе не видны; ника и города в карточке группы нет.
+            assert all(m["sender"] == "author" for m in mashas["messages"])
+            assert set(mashas["student"]) == {"name", "instagram", "is_me"} and "unread" not in mashas
             assert works["works"][0]["student"]["is_me"] is True
             async with tenant_connection("whieda") as conn:
                 async with conn.cursor() as cur:

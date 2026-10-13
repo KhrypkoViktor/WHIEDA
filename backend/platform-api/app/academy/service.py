@@ -445,14 +445,19 @@ async def _load_lessons(conn: Any, tenant_id: str, course_id: str, telegram_user
                l.position, l.title, l.short_title, l.result_text, l.est_minutes, l.kind, l.live_at, l.unlock,
                (p.lesson_id is not null) as done,
                a.required as assignment_required,
-               s.status as submission_status
+               s.status as submission_status,
+               s.unread as submission_unread
         from academy_lessons l
         left join academy_progress p
           on p.tenant_id = l.tenant_id and p.lesson_id = l.lesson_id and p.telegram_user_id = %(user)s
         left join academy_assignments a
           on a.tenant_id = l.tenant_id and a.lesson_id = l.lesson_id
         left join lateral (
-          select s.status from academy_submissions s
+          select s.status,
+                 (select count(*) from academy_submission_messages m
+                   where m.tenant_id = s.tenant_id and m.submission_id = s.submission_id and m.sender = 'author'
+                     and (s.student_seen_at is null or m.created_at > s.student_seen_at)) as unread
+          from academy_submissions s
           where s.tenant_id = l.tenant_id and s.lesson_id = l.lesson_id and s.telegram_user_id = %(user)s
           order by s.created_at desc
           limit 1
@@ -545,6 +550,8 @@ def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock, slugs: d
         # after_prev: урок, после которого откроется (сайт пишет «откроется после урока N»).
         "lock_after": (slugs or {}).get(lock.after or ""),
         "assignment_status": assignment_status(row),
+        # Непрочитанные ответы преподавателя (V32) — метка «Новый ответ» в содержании.
+        "unread": int(row.get("submission_unread") or 0),
     }
 
 
@@ -578,7 +585,10 @@ async def viewer_profile(tenant_id: str, telegram_user_id: int) -> dict[str, str
         row = None
     name = str((row or {}).get("display_name") or "").strip()
     username = str((row or {}).get("telegram_username") or "").strip().lstrip("@")
-    return {"name": name or None, "username": username or None}
+    # label — подпись водяного знака: всегда непустая (имя → @ник → id), иначе защита молча
+    # пропала бы у ученика с пустым или «точечным» именем в Telegram.
+    label = name or (f"@{username}" if username else f"ID {int(telegram_user_id)}")
+    return {"name": name or None, "username": username or None, "label": label}
 
 
 def _next_slug(view: CourseView, lessons: list[dict[str, Any]], locks: dict[str, LessonLock]) -> str | None:
@@ -802,6 +812,8 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
         my_submission = thread_out(submission, thread_messages, media, viewer.telegram_user_id)
         if my_submission and my_submission["unread"]:
             await mark_student_seen(conn, tenant_id, submission["submission_id"])
+        author_id = str(course.get("author_actor_id") or "")
+        author_name = (await _author_names(conn, tenant_id, {author_id})).get(author_id) if author_id else None
     summaries = _summaries(lessons, locks)
     summary = summaries[index]
     urls = _signed_urls(media, viewer.telegram_user_id)
@@ -809,6 +821,7 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
         "course": {
             "slug": course["slug"],
             "title": course["title"],
+            "author_name": author_name,
             **_progress(summaries),
         },
         "lesson": {

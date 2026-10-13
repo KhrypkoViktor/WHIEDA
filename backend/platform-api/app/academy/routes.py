@@ -161,6 +161,8 @@ class MessageBody(BaseModel):
     text: str = ""
     media_ids: list[str] = []
     about_media_id: str | None = None
+    # После «Вернули»: True — исправления (работа снова на проверке), False — вопрос; None — по фото.
+    resubmit: bool | None = None
 
 
 class SeenBody(BaseModel):
@@ -280,7 +282,9 @@ async def submission_message_site(
     """Вопрос или исправления ученика в своей нити домашки (V32)."""
     tenant_id, viewer = await _viewer(request, response)
     return await _guard(
-        post_student_message(tenant_id, slug, lesson_slug, viewer, text=body.text, media_ids=body.media_ids)
+        post_student_message(
+            tenant_id, slug, lesson_slug, viewer, text=body.text, media_ids=body.media_ids, resubmit=body.resubmit
+        )
     )
 
 

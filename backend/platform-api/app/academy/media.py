@@ -63,6 +63,7 @@ MIME_TYPES: dict[str, dict[str, str]] = {
         "audio/mpeg": "mp3",
         "audio/mp4": "m4a",
         "audio/x-m4a": "m4a",
+        "audio/ogg": "ogg",  # голосовые из Telegram
         "image/jpeg": "jpg",
         "image/png": "png",
         "image/webp": "webp",

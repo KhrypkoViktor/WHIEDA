@@ -174,29 +174,33 @@ async def insert_message(
 # ---- ученик ----------------------------------------------------------------------------------
 
 
-async def _student_thread(conn: Any, tenant_id: str, lesson_id: str, telegram_user_id: int) -> dict[str, Any] | None:
-    return await fetch_one(
-        conn,
-        """
+async def _student_thread(
+    conn: Any, tenant_id: str, lesson_id: str, telegram_user_id: int, *, lock: bool = False
+) -> dict[str, Any] | None:
+    sql = """
         select submission_id::text as submission_id, text, media, status, author_comment, created_at, updated_at,
                reviewed_at, seen_at, student_seen_at, last_message_at
         from academy_submissions
         where tenant_id = %s and lesson_id = %s::uuid and telegram_user_id = %s
         order by created_at desc
         limit 1
-        """,
-        (tenant_id, lesson_id, int(telegram_user_id)),
-    )
+        """
+    # lock — строка под замком до конца транзакции: «Принято» преподавателя не проскочит между
+    # проверкой статуса и записью сообщения.
+    return await fetch_one(conn, sql + (" for update" if lock else ""), (tenant_id, lesson_id, int(telegram_user_id)))
 
 
 async def post_student_message(
-    tenant_id: str, slug: str, lesson_slug: str, viewer: AcademyViewer, *, text: str | None, media_ids: list[Any]
+    tenant_id: str, slug: str, lesson_slug: str, viewer: AcademyViewer, *,
+    text: str | None, media_ids: list[Any], resubmit: bool | None = None,
 ) -> dict[str, Any]:
-    """Вопрос или исправления ученика в своей нити. После «Вернули» нить снова «на проверке»."""
+    """Вопрос или исправления ученика в своей нити. После «Вернули» работа снова «на проверке»,
+    когда это исправления: явно (resubmit) или по признаку — приложены фото. Вопрос без фото
+    статус не трогает: преподавателю не придётся заново «возвращать» работу из-за вопроса."""
     body, wanted = _clean_message(text, media_ids)
     async with tenant_connection(tenant_id) as conn:
         view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
-        head = await _student_thread(conn, tenant_id, lesson["lesson_id"], viewer.telegram_user_id)
+        head = await _student_thread(conn, tenant_id, lesson["lesson_id"], viewer.telegram_user_id, lock=True)
         if head is None:
             raise AcademyError(404, "submission_not_found")
         if head["status"] == "accepted":
@@ -210,16 +214,19 @@ async def post_student_message(
             conn, tenant_id, submission_id=head["submission_id"], sender="student",
             telegram_user_id=viewer.telegram_user_id, text=body, media_ids=wanted,
         )
-        reopened = head["status"] == "returned"
+        reopened = head["status"] == "returned" and (bool(wanted) if resubmit is None else bool(resubmit))
         async with conn.cursor() as cur:
             await cur.execute(
                 """
                 update academy_submissions
-                set status = case when status = 'returned' then 'submitted' else status end,
+                set status = case when %s then 'submitted' else status end,
+                    author_comment = case when %s then null else author_comment end,
+                    reviewed_at = case when %s then null else reviewed_at end,
+                    reviewed_by = case when %s then null else reviewed_by end,
                     last_message_at = now(), updated_at = now()
                 where tenant_id = %s and submission_id = %s::uuid
                 """,
-                (tenant_id, head["submission_id"]),
+                (reopened, reopened, reopened, reopened, tenant_id, head["submission_id"]),
             )
         await _notify_author(
             conn, tenant_id, view.course, lesson, submission_id=head["submission_id"],
@@ -332,7 +339,7 @@ async def author_thread(tenant_id: str, submission_id: str, viewer: AcademyViewe
     """Карточка работы: ученик, задание, нить. Открытие помечает работу просмотренной."""
     async with tenant_connection(tenant_id) as conn:
         row = await _staff_thread(conn, tenant_id, submission_id, viewer)
-        if row.get("seen_at") is None:
+        if await _is_course_author(conn, tenant_id, row, viewer):
             async with conn.cursor() as cur:
                 await cur.execute(
                     "update academy_submissions set seen_at = now() where tenant_id = %s and submission_id = %s::uuid",
@@ -342,10 +349,18 @@ async def author_thread(tenant_id: str, submission_id: str, viewer: AcademyViewe
         return await _author_thread_payload(conn, tenant_id, row, viewer.telegram_user_id)
 
 
+async def _is_course_author(conn: Any, tenant_id: str, row: dict[str, Any], viewer: AcademyViewer) -> bool:
+    """Отметки «просмотрено» — только от автора курса: владелец и администраторы видят карточку,
+    но чужую почту не трогают."""
+    actor_ids = await viewer_actor_ids(conn, tenant_id, viewer.telegram_user_id)
+    return str(row.get("author_actor_id") or "") in actor_ids
+
+
 async def _author_thread_payload(conn: Any, tenant_id: str, row: dict[str, Any], telegram_user_id: int) -> dict[str, Any]:
     messages = (await load_messages(conn, tenant_id, [row["submission_id"]])).get(row["submission_id"], [])
     media = await load_media(conn, tenant_id, [*(row.get("media") or []), *messages_media_ids(messages)])
     thread = thread_out(row, messages, media, telegram_user_id)
+    thread.pop("unread", None)  # счётчик ученика, преподавателю ни о чём
     return {
         "ok": True,
         "submission": {
@@ -413,14 +428,15 @@ async def post_author_message(
             telegram_user_id=viewer.telegram_user_id, text=body, media_ids=wanted,
             about_media_id=about[0] if about else None,
         )
+        is_author = str(row.get("author_actor_id") or "") in actor_ids
         async with conn.cursor() as cur:
             await cur.execute(
                 """
                 update academy_submissions
-                set last_message_at = now(), seen_at = coalesce(seen_at, now()), updated_at = now()
+                set last_message_at = now(), seen_at = case when %s then now() else seen_at end, updated_at = now()
                 where tenant_id = %s and submission_id = %s::uuid
                 """,
-                (tenant_id, row["submission_id"]),
+                (is_author, tenant_id, row["submission_id"]),
             )
         showcase = await showcase_for_author(tenant_id, row.get("author_actor_id"))
         await enqueue_notification(
@@ -478,15 +494,16 @@ async def lesson_works(
         )
     works = []
     for row in rows:
-        thread = thread_out(row, messages.get(row["submission_id"], []), media, viewer.telegram_user_id)
+        # Группе — работа и ответы преподавателя; вопросы ученика без фото — личная переписка.
+        shared = [m for m in messages.get(row["submission_id"], []) if m["sender"] == "author" or m.get("media")]
+        thread = thread_out(row, shared, media, viewer.telegram_user_id)
+        thread.pop("unread", None)
         card = student_card(row)
         works.append(
             {
                 **thread,
                 "student": {
                     "name": card["name"],
-                    "username": card["username"],
-                    "city": card["city"],
                     "instagram": card["instagram"],
                     "is_me": int(row["telegram_user_id"]) == viewer.telegram_user_id,
                 },

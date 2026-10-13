@@ -184,6 +184,23 @@ async def _course_for(conn: Any, tenant_id: str, author: Author, slug: str, *, l
     return course
 
 
+def _teaser_out(teaser: Any, media: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """Видеообращение: своё видео — со статусом обработки (сайт показывает «обрабатывается» /
+    «не удалось»), embed провайдера — как есть."""
+    if not isinstance(teaser, dict) or not teaser:
+        return None
+    media_id = str(teaser.get("media_id") or "")
+    if not media_id:
+        return teaser
+    row = media.get(media_id)
+    return {"media_id": media_id, "status": row["status"] if row else "missing"}
+
+
+def _teaser_media_id(course: dict[str, Any]) -> str | None:
+    teaser = course.get("teaser")
+    return str(teaser.get("media_id")) if isinstance(teaser, dict) and teaser.get("media_id") else None
+
+
 def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegram_user_id: int) -> dict[str, Any]:
     cover = media.get(str(course.get("cover_media_id") or ""))
     return {
@@ -206,7 +223,7 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         # Витрина и работы группы (V32).
         "works_public": bool(course.get("works_public")),
         "review_days": int(course.get("review_days") or 0),
-        "teaser": course.get("teaser") or None,
+        "teaser": _teaser_out(course.get("teaser"), media),
         "landing_url": course.get("landing_url") or None,
     }
 
@@ -278,7 +295,10 @@ async def author_courses(tenant_id: str, viewer: AcademyViewer) -> dict[str, Any
             """,
             (tenant_id, author.is_admin, author.actor_ids),
         )
-        covers = await load_media(conn, tenant_id, [course["cover_media_id"] for course in courses])
+        covers = await load_media(
+            conn, tenant_id,
+            [*[course["cover_media_id"] for course in courses], *[_teaser_media_id(course) for course in courses]],
+        )
         paid = await fetch_one(
             conn,
             """
@@ -475,7 +495,7 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
             )
         if submitted:
             await _send_for_review(conn, tenant_id, course)
-        media = await load_media(conn, tenant_id, [course.get("cover_media_id")])
+        media = await load_media(conn, tenant_id, [course.get("cover_media_id"), _teaser_media_id(course)])
     return {"ok": True, "course": _course_out(course, media, viewer.telegram_user_id)}
 
 
@@ -752,7 +772,8 @@ async def author_course(tenant_id: str, viewer: AcademyViewer, slug: str) -> dic
             (tenant_id, course["course_id"]),
         )
         media = await load_media(
-            conn, tenant_id, [course.get("cover_media_id"), *[(row.get("video") or {}).get("media_id") for row in lessons]]
+            conn, tenant_id,
+            [course.get("cover_media_id"), _teaser_media_id(course), *[(row.get("video") or {}).get("media_id") for row in lessons]],
         )
         active = bool(course.get("author_actor_id")) and await shelf_active(conn, tenant_id, str(course["author_actor_id"]))
 

@@ -115,7 +115,8 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
         conn,
         """
         select c.course_id::text as course_id, c.access_rule, c.author_actor_id,
-               (c.cover_media_id = %(m)s::uuid) as is_cover, c.description_html,
+               (c.cover_media_id = %(m)s::uuid or c.teaser ->> 'media_id' = %(m)s::text) as is_cover,
+               c.description_html,
                exists (
                  select 1 from academy_lessons l
                  where l.tenant_id = c.tenant_id and l.course_id = c.course_id and l.status = 'published'
@@ -130,6 +131,7 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
         where c.tenant_id = %(t)s and c.status = 'published'
           and (
             c.cover_media_id = %(m)s::uuid
+            or c.teaser ->> 'media_id' = %(m)s::text
             or strpos(lower(coalesce(c.description_html, '')), 'media:' || %(m)s::text) > 0
             or exists (
               select 1 from academy_lessons l

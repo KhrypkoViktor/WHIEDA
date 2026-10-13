@@ -69,14 +69,25 @@ async def submit_homework(
         _view, probe = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
         latest = await fetch_one(
             conn,
-            "select status from academy_submissions where tenant_id = %s and lesson_id = %s::uuid"
-            " and telegram_user_id = %s order by created_at desc limit 1",
+            """
+            select s.status, s.seen_at,
+                   exists (select 1 from academy_submission_messages m
+                           where m.tenant_id = s.tenant_id and m.submission_id = s.submission_id) as has_thread
+            from academy_submissions s
+            where s.tenant_id = %s and s.lesson_id = %s::uuid and s.telegram_user_id = %s
+            order by s.created_at desc limit 1
+            """,
             (tenant_id, probe["lesson_id"], viewer.telegram_user_id),
         )
-    if latest and latest["status"] == "returned":
+    # Правка «в тишине» (V19) — только пока преподаватель работу не открывал и переписки нет:
+    # иначе его замечание к фото указывало бы на снимок, которого больше нет, а в почте ничего
+    # не изменилось бы. После «Вернули» или первого просмотра всё идёт сообщением в ту же нить.
+    if latest and (latest["status"] == "returned" or latest["seen_at"] is not None or latest["has_thread"]):
         from app.academy.threads import post_student_message
 
-        return await post_student_message(tenant_id, slug, lesson_slug, viewer, text=text, media_ids=media_ids)
+        return await post_student_message(
+            tenant_id, slug, lesson_slug, viewer, text=text, media_ids=media_ids, resubmit=True
+        )
     async with tenant_connection(tenant_id) as conn:
         view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
         assignment = await fetch_one(
@@ -207,7 +218,11 @@ async def list_submissions(
               and (%(status)s = 'all' or s.status = %(status)s)
               and (%(course)s::text is null or c.slug = %(course)s::text)
               and (%(scope)s::text[] is null or c.author_actor_id = any(%(scope)s::text[]))
-            order by coalesce(s.last_message_at, s.created_at) desc, s.created_at desc
+            order by (s.seen_at is null or exists (
+                        select 1 from academy_submission_messages m
+                        where m.tenant_id = s.tenant_id and m.submission_id = s.submission_id
+                          and m.sender = 'student' and m.created_at > s.seen_at)) desc,
+                     coalesce(s.last_message_at, s.created_at) desc, s.created_at desc
             limit %(limit)s
             """,
             {"tenant": tenant_id, "status": status, "course": course_slug, "scope": scope, "limit": int(limit)},
