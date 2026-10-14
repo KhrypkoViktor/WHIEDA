@@ -122,10 +122,12 @@ async def get_open_ticket_for_user(
             select {_TICKET_COLUMNS} from support_tickets
             where tenant_id = %s and user_telegram_user_id = %s and status = 'open'
               and (%s::text is null or channel_code = %s)
+              -- без канала — только обращения WHIEDA: обращения Академии (academy:*) ведёт бот витрины
+              and (%s::text is not null or channel_code not like 'academy:%%')
             order by last_message_at desc
             limit 1
             """,
-            (tenant_id, int(user_telegram_user_id), channel_code, channel_code),
+            (tenant_id, int(user_telegram_user_id), channel_code, channel_code, channel_code),
         )
 
 
@@ -139,7 +141,8 @@ async def get_ticket(tenant_id: str, *, ticket_id: str) -> dict[str, Any] | None
 
 
 async def list_open_tickets_for_admin(
-    tenant_id: str, *, admin_telegram_user_id: int, limit: int = 10, forum_kind: str | None = None
+    tenant_id: str, *, admin_telegram_user_id: int, limit: int = 10, forum_kind: str | None = None,
+    academy: bool = False,
 ) -> list[dict[str, Any]]:
     """Open tickets still in private-chat mode; ``forum_kind`` narrows to the
     tickets that belong to one forum («site» or «services»)."""
@@ -150,12 +153,13 @@ async def list_open_tickets_for_admin(
             select {_TICKET_COLUMNS} from support_tickets
             where tenant_id = %s and admin_telegram_user_id = %s and status = 'open'
               and forum_thread_id is null
+              and (%s::boolean or channel_code not like 'academy:%%')
               and (%s::text is null or (case when channel_code = any(%s::text[]) then %s else %s end) = %s)
             order by last_message_at desc
             limit %s
             """,
             (
-                tenant_id, int(admin_telegram_user_id),
+                tenant_id, int(admin_telegram_user_id), academy,
                 forum_kind, list(SITE_FORUM_CHANNELS), FORUM_KIND_SITE, FORUM_KIND_SERVICES, forum_kind,
                 max(1, min(limit, 50)),
             ),

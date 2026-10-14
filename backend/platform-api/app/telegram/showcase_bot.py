@@ -7,8 +7,8 @@
 - кнопки Академии (``acad:*``), «ключи …» и «мои курсы» автора, «академия»;
 - на ``/start`` и любой другой текст — приветствие витрины, кнопка на сайт и курсы.
 
-Личка — только она. Группы, где состоит бот (у студии это группа заявок с сайта),
-бот молча пропускает. Политика обработки данных витрины — один раз, при первом
+Личка и группа обращений (/forum, темы). Прочие группы, где состоит бот (у студии это
+группа заявок с сайта), бот молча пропускает. Политика обработки данных витрины — один раз, при первом
 сообщении (запись в ``telegram_consents``, версия ``showcase:<id>:<дата>``).
 """
 
@@ -26,6 +26,7 @@ from app.telegram.consent import record_telegram_consent
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.site_login import with_site_login
+from app.telegram.showcase_support import support_buttons, try_handle_callback as try_handle_support_callback, try_handle_forum_message, try_handle_private_message
 from app.telegram.update_parser import parse_start_token, parse_telegram_callback, parse_telegram_message
 from app.tenancy import TenantContext
 
@@ -94,9 +95,8 @@ async def show_welcome(tenant: TenantContext, msg: Any, showcase: Showcase, *, t
         lines += ["", notice]
     url = await with_site_login(f"{showcase.base_url}/academy/", tenant_id=tenant_id, telegram_user_id=msg.user_id)
     rows = [[{"text": OPEN_ACADEMY_BUTTON, "url": url}]]
-    contact = showcase.links.get("contact_url")
-    if contact:
-        rows.append([{"text": showcase.links.get("contact_label") or "Написать автору", "url": contact}])
+    # Обращения (14.10.2026): «художнику» — автору витрины, «администратору» — её администратору.
+    rows.extend(support_buttons())
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": rows})
     result = await show_academy_home(tenant_id, msg.chat_id, msg.user_id, showcase)
     return {"ok": True, "route": "showcase_welcome", "showcase": showcase.showcase_id, **result, "trace_id": trace_id}
@@ -116,6 +116,10 @@ async def process_showcase_bot_update(
 
     callback = parse_telegram_callback(update)
     if callback:
+        # Обращения: «Написать …» в личке, «Закрыть обращение» — в личке адресата или в его теме.
+        support = await try_handle_support_callback(tenant, callback, showcase, trace_id=trace_id)
+        if support is not None:
+            return support
         if callback.chat_type != "private":
             return {"ok": True, "route": "showcase_ignored_group", "trace_id": trace_id}
         academy = await try_handle_academy_callback(tenant, callback, trace_id=trace_id)
@@ -125,6 +129,10 @@ async def process_showcase_bot_update(
         return {"ok": True, "route": "showcase_ignored_callback", "trace_id": trace_id}
 
     msg = parse_telegram_message(update)
+    if msg and msg.chat_type == "supergroup":
+        # Группа обращений: «/forum» и ответы в темах; остальные группы бот молча пропускает.
+        forum = await try_handle_forum_message(tenant, msg, showcase, trace_id=trace_id)
+        return forum if forum is not None else {"ok": True, "route": "showcase_ignored", "trace_id": trace_id}
     if not msg or msg.chat_type != "private":
         return {"ok": True, "route": "showcase_ignored", "trace_id": trace_id}
     await _ensure_actor(tenant, msg)
@@ -132,8 +140,17 @@ async def process_showcase_bot_update(
     start_token = parse_start_token(msg.text or "")
     if start_token and parse_course_start_token(start_token) is not None:
         return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
+    # Кнопки «Написать …» и ответы адресата через Reply — раньше команд Академии.
+    support = await try_handle_private_message(tenant, msg, showcase, trace_id=trace_id, early=True)
+    if support is not None:
+        return support
     if msg.text and not start_token:
         academy = await try_handle_academy_text(tenant, msg, trace_id=trace_id)
         if academy is not None:
             return academy
+    if not start_token:
+        # Открытое обращение: текст, фото, голосовое человека — адресату; плоский ответ адресата — человеку.
+        support = await try_handle_private_message(tenant, msg, showcase, trace_id=trace_id, early=False)
+        if support is not None:
+            return support
     return await show_welcome(tenant, msg, showcase, trace_id=trace_id)

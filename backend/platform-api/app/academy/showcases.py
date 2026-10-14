@@ -59,6 +59,8 @@ class Showcase:
     more_mode: str = "none"
     # Слать ли автору витрины уведомления о домашках (V32; у ALMIRA выключено: сама заходит).
     author_notify: bool = True
+    # Адресаты обращений бота (V33): admin_telegram_user_id, author_telegram_user_id.
+    support: dict[str, Any] = field(default_factory=dict)
 
     @property
     def base_url(self) -> str:
@@ -119,6 +121,7 @@ def _from_row(row: dict[str, Any]) -> Showcase:
         max_binding_id=str(row["max_binding_id"]) if row.get("max_binding_id") else None,
         more_mode=more if more in MORE_MODES else "none",
         author_notify=bool(row.get("author_notify", True)),
+        support=dict(row.get("support") or {}) if isinstance(row.get("support"), dict) else {},
     )
 
 
@@ -141,7 +144,7 @@ async def load_showcases(tenant_id: str, *, fresh: bool = False) -> list[Showcas
                 conn,
                 """
                 select tenant_id, showcase_id, is_default, hosts, owner_actor_id, brand_name, academy_title,
-                       theme, assets, links, telegram_binding_id, max_binding_id, more_mode, author_notify
+                       theme, assets, links, telegram_binding_id, max_binding_id, more_mode, author_notify, support
                 from academy_showcases
                 where tenant_id = %s and status = 'active'
                 order by is_default desc, showcase_id
