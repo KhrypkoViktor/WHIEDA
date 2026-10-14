@@ -136,11 +136,11 @@ def test_showcases_order_courses_open_login_and_route_links(monkeypatch):
             ]
             assert [r["slug"] for r in await list_courses("whieda", stranger, wwc)] == ["zapusk", "online"]
 
-            # 2. Витрина ALMIRA: её курс первым, купленный чужой — ниже, остальные чужие скрыты.
+            # 2. Витрина ALMIRA (more_mode none): только её курсы — купленный чужой тоже скрыт
+            # (владелец 14.10: «мои курсы из Алмиры скрой»); он остаётся на витрине WWC.
             rows = await list_courses("whieda", student, almira)
-            assert [(r["slug"], r["section"], r["locked"]) for r in rows] == [
-                ("kompoziciya", "own", False), ("online", "more", False)
-            ]
+            assert [(r["slug"], r["section"], r["locked"]) for r in rows] == [("kompoziciya", "own", False)]
+            assert "online" in [r["slug"] for r in await list_courses("whieda", student, wwc)]
             [locked] = await list_courses("whieda", stranger, almira)
             assert (locked["slug"], locked["lock_reason"]) == ("kompoziciya", "purchase_required")
             # Контакт автора с витриной — студия, а не личный аккаунт.

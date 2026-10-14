@@ -236,8 +236,14 @@ def is_staff_for(course: dict[str, Any], viewer: AcademyViewer, actor_ids: list[
 def _showcase_keeps(
     showcase: Showcase, course: dict[str, Any], *, own: bool, has_access: bool
 ) -> bool:
-    """Курс на витрине: свой, купленный (виден всегда) или чужой по ``more_mode``."""
-    if own or has_access:
+    """Курс на витрине: свой; купленный чужой — только там, где чужие курсы вообще показывают
+    (``more_mode`` не ``none``): витрина партнёра с ``none`` — только его курсы, даже владельцу
+    платформы (решение владельца 14.10: «мои курсы из Алмиры скрой»)."""
+    if own:
+        return True
+    if showcase.more_mode == "none" and not showcase.is_default:
+        return False
+    if has_access:
         return True
     if showcase.more_mode == "all":
         return True
