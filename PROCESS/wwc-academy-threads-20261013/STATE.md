@@ -77,3 +77,12 @@
   владельца скрыты и в боте, и на сайте) — Core `8fa74a8`. @SunRaySword — это Виктор (actor `viktor`,
   688931415); для Кирилла id ещё нужен. Группа заявок бота (запись → подтверждение оплаты → доступ) —
   ждём группу от Виктора; поток заявок в боте ещё не построен.
+- 14.10, вечер: обращения в боте витрины — `app/telegram/showcase_support.py` (Core `8c8dab6`, V33
+  `academy_showcases.support` применена к общей базе). «Написать художнику» → автору витрины в личку
+  (Reply), «Написать администратору» → администратору; его группа с темами подключается командой
+  `/forum` в группе (бот — администратор с «Управление темами»), «закрыть» закрывает обращение и тему.
+  Для ALMIRA осталось: Telegram-id Кирилла → `update academy_showcases set support =
+  '{"admin_telegram_user_id": <id>}' where showcase_id = 'almira'`; Кирилл шлёт `/forum` в группе.
+  Таблица заявок: Google Sheet «ALMIRA · Заявки»
+  https://docs.google.com/spreadsheets/d/1-HNjlo54nJvCDNwJ6H-6PNGiOF2xdSKVNwIzp_0Lb5g/edit (папка Виктора).
+  Оплата: bePaid (ключи ещё не получены). Описание потока: D:/Projects/ALMIRA/tasks/ТЗ_оплата_заявки_обращения.md.
