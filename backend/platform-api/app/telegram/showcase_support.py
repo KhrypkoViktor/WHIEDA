@@ -26,7 +26,7 @@ import re
 from typing import Any
 
 from app.academy.showcases import Showcase
-from app.db import fetch_one, tenant_connection
+from app.db import fetch_all, fetch_one, tenant_connection
 from app.support.service import (
     FORUM_KIND_SERVICES,
     FORUM_KIND_SITE,
@@ -186,11 +186,23 @@ def _reply_to_message_id(msg: TelegramMessage) -> int | None:
 
 
 async def _open_academy_ticket(tenant_id: str, user_id: int) -> dict[str, Any] | None:
+    """Открыты оба обращения — сообщение уходит в то, что человек открыл (или писал) последним."""
+    found = []
     for kind in (KIND_AUTHOR, KIND_ADMIN):
         ticket = await get_open_ticket_for_user(tenant_id, user_telegram_user_id=user_id, channel_code=CHANNELS[kind])
         if ticket:
-            return ticket
-    return None
+            found.append(ticket)
+    return max(found, key=lambda t: t.get("last_message_at") or t.get("created_at")) if found else None
+
+
+async def _touch(tenant_id: str, ticket: dict[str, Any]) -> None:
+    """Кнопка уже открытого обращения делает его активным: следующие сообщения — туда."""
+    async with tenant_connection(tenant_id) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update support_tickets set last_message_at = now() where tenant_id = %s and ticket_id = %s::uuid",
+                (tenant_id, str(ticket["ticket_id"])),
+            )
 
 
 # ---- открыть обращение ------------------------------------------------------------------------
@@ -225,6 +237,8 @@ async def open_ticket(
             else "Ответьте на это сообщение (Reply) — ответ уйдёт человеку. Кнопка ниже закрывает обращение."
         )
         delivered = await _send_to_admin(ticket, _header(ticket) + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
+        if not delivered.get("ok"):
+            logger.warning("showcase_support_target_unreachable", extra={"ticket": label, "kind": kind})
         await record_relayed_message(
             tenant_id, ticket_id=str(ticket["ticket_id"]), direction="system", text=_header(ticket),
             delivered_chat_id=int(ticket["forum_chat_id"]) if _in_forum(ticket) else admin,
@@ -235,8 +249,9 @@ async def open_ticket(
             f"Обращение {label} открыто. Напишите вопрос {WHO[kind]} — текст, фото или голосовое; ответ придёт сюда.",
         )
     else:
+        await _touch(tenant_id, ticket)
         await _send(source.chat_id, f"Обращение {label} уже открыто — просто напишите сюда, {WHO[kind]} всё уйдёт.")
-    logger.info("showcase_support_opened", extra={"trace_id": trace_id, "ticket": label, "kind": kind, "created": ticket["created"]})
+    logger.info("showcase_support_opened", extra={"trace_id": trace_id, "ticket": label, "kind": kind, "ticket_created": ticket["created"]})
     return {"ok": True, "route": "showcase_support", "status": "ticket_opened" if ticket["created"] else "ticket_reused", "kind": kind, "ticket": label, "trace_id": trace_id}
 
 
@@ -248,11 +263,44 @@ async def _open_forum_topic(tenant_id: str, ticket: dict[str, Any]) -> dict[str,
     thread_id = created.get("message_thread_id") if created.get("ok") else None
     if not thread_id:
         logger.warning("showcase_support_topic_failed", extra={"ticket": _label(ticket)})
+        # Подсказка в группу: чаще всего у бота нет права «Управление темами».
+        await _send(
+            int(forum["chat_id"]),
+            f"Не получилось открыть тему для обращения {_label(ticket)}: дайте боту право «Управление темами» "
+            "в правах администратора группы. Пока обращение пришло адресату в личку с ботом.",
+        )
         return ticket
     attached = await attach_forum_topic(
         tenant_id, ticket_id=str(ticket["ticket_id"]), forum_chat_id=int(forum["chat_id"]), forum_thread_id=int(thread_id)
     )
     return {**ticket, **(attached or {})}
+
+
+async def _move_open_to_forum(tenant_id: str, kind: str) -> int:
+    """Открытые обращения рода ``kind`` без темы — в темы только что подключённой группы."""
+    async with tenant_connection(tenant_id) as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            select ticket_id::text as ticket_id from support_tickets
+            where tenant_id = %s and channel_code = %s and status = 'open' and forum_thread_id is null
+            order by created_at
+            """,
+            (tenant_id, CHANNELS[kind]),
+        )
+    moved = 0
+    for row in rows:
+        ticket = await get_ticket(tenant_id, ticket_id=row["ticket_id"])
+        if not ticket:
+            continue
+        ticket = await _open_forum_topic(tenant_id, ticket)
+        if _in_forum(ticket):
+            await _send_to_admin(
+                ticket, _header(ticket) + "\n\nОбращение перенесено в тему. Пишите здесь — ответ уйдёт человеку.",
+                reply_markup=_close_keyboard(ticket),
+            )
+            moved += 1
+    return moved
 
 
 # ---- переписка --------------------------------------------------------------------------------
@@ -366,7 +414,9 @@ async def try_handle_forum_message(
         title = str(((msg.raw.get("message") or {}).get("chat") or {}).get("title") or "")
         await register_forum(tenant_id, binding_id=current_bot_binding().binding_id, chat_id=msg.chat_id, title=title, registered_by=msg.user_id, kind=kind)
         who = "автору («Написать художнику»)" if kind == FORUM_KIND_SITE else "администратору («Написать администратору»)"
-        await _send(msg.chat_id, f"Группа подключена: каждое обращение {who} будет открываться отдельной темой. Отвечайте прямо в теме; «закрыть» закрывает обращение.", thread_id=msg.thread_id)
+        moved = await _move_open_to_forum(tenant_id, KIND_AUTHOR if kind == FORUM_KIND_SITE else KIND_ADMIN)
+        note = f" Открытые обращения перенесены в темы: {moved}." if moved else ""
+        await _send(msg.chat_id, f"Группа подключена: каждое обращение {who} будет открываться отдельной темой. Отвечайте прямо в теме; «закрыть» закрывает обращение.{note}", thread_id=msg.thread_id)
         logger.info("showcase_support_forum_registered", extra={"trace_id": trace_id, "kind": kind})
         return {"ok": True, "route": "showcase_support_forum", "status": "registered", "kind": kind, "trace_id": trace_id}
     if msg.thread_id is None:
