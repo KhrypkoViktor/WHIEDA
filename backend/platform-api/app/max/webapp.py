@@ -15,6 +15,11 @@
 (max_link_requests, V31). /max в Telegram-боте остаётся запасным путём.
 Сессии сайта по-прежнему на telegram_user_id: Max-пользователь находится через lead_actor_channels(max)
 → lead_actors.telegram_user_id.
+
+15.10.2026 (V34, владелец): Telegram в Max больше не нужен. Незнакомый Max вводит в мини-приложении код,
+который владелец выдал ему в Telegram-боте («код входа volkova»), — привязка в account_identities; дальше
+мини-приложение получает ``browser_login_url`` (одноразовая ссылка входа, 10 минут) и открывает сайт в
+системном браузере (openLink). Привязка через Telegram (/max, кнопка maxlink) остаётся вторым путём.
 """
 
 from __future__ import annotations
@@ -40,6 +45,8 @@ from app.content_access.service import (
 )
 from app.content_access.webapp_login import verify_init_data
 from app.db import fetch_one, tenant_connection
+from app.login_identities.rules import BROWSER_LOGIN_TTL_MINUTES, LoginIdentityError
+from app.login_identities.service import ensure_identity, identity_state, redeem_max_code
 from app.settings import get_settings
 
 logger = logging.getLogger("whieda.max.webapp")
@@ -95,10 +102,22 @@ def _display_name(user: dict[str, Any]) -> str:
 
 
 async def _telegram_id_for_max(conn: Any, tenant_id: str, max_user_id: int) -> int | None:
+    """Человек за этим Max: account_identities (V34), иначе прежняя привязка lead_actor_channels (V30/V31).
+
+    Отозванная в кабинете привязка (revoked_at) прежней таблицей не воскрешается: отвязал — вход через Max
+    закрыт до нового кода. Прежняя привязка без строки в account_identities записывается туда при первом
+    входе (бэкфилл миграции V34 покрывает всё, что было до неё; lead_actor_channels не трогаем — по нему
+    живёт переписка с ботом Max).
+    """
+    state, telegram_user_id = await identity_state(conn, tenant_id, "max", str(max_user_id))
+    if state == "active":
+        return telegram_user_id
+    if state == "revoked":
+        return None
     row = await fetch_one(
         conn,
         """
-        select la.telegram_user_id
+        select la.telegram_user_id, c.display_name
         from lead_actor_channels c join lead_actors la on la.actor_id = c.actor_id
         where c.tenant_id = %s and c.channel = 'max' and c.channel_user_id = %s
         limit 1
@@ -106,7 +125,18 @@ async def _telegram_id_for_max(conn: Any, tenant_id: str, max_user_id: int) -> i
         (tenant_id, str(max_user_id)),
     )
     value = (row or {}).get("telegram_user_id")
-    return int(value) if value else None
+    if not value:
+        return None
+    await ensure_identity(
+        conn,
+        tenant_id,
+        telegram_user_id=int(value),
+        provider="max",
+        external_id=str(max_user_id),
+        display_name=(row or {}).get("display_name") or None,
+        linked_by="telegram:/max",
+    )
+    return int(value)
 
 
 async def create_max_link(tenant_id: str, *, telegram_user_id: int) -> str:
@@ -270,6 +300,16 @@ async def redeem_link_request(
             """,
             (int(telegram_user_id), _hash(code)),
         )
+        # V34: та же привязка и в account_identities — кабинет её показывает и умеет отвязать.
+        await ensure_identity(
+            conn,
+            tenant_id,
+            telegram_user_id=int(telegram_user_id),
+            provider="max",
+            external_id=str(row["max_user_id"]),
+            display_name=str(row.get("display_name") or "") or None,
+            linked_by="telegram:maxlink",
+        )
     logger.info("max_linked_from_telegram", extra={"tenant_id": tenant_id, "actor_id": actor_id})
     login_hash = str(row.get("login_challenge_hash") or "")
     if not login_hash:
@@ -305,12 +345,40 @@ async def _in_app_url(tenant_id: str, telegram_user_id: int, return_to: str) -> 
     return f"https://{parts.netloc}{path}#{BOT_LOGIN_FRAGMENT}={token}"
 
 
-async def max_webapp(tenant_id: str, *, init_data: str, return_to: str) -> dict[str, Any]:
+async def _browser_login_url(tenant_id: str, telegram_user_id: int, return_to: str, fallback: str) -> str:
+    """Одноразовая ссылка входа для системного браузера (V34): страница, где нажали «Войти» (из заявки),
+    иначе страница мини-приложения; путь без хоста (старый клиент) — на хосте мини-приложения."""
+    target = str(return_to or "").strip()
+    try:
+        if target and "://" not in target:
+            base = sanitize_return_to(fallback)
+            host = urlparse(base).netloc if base.startswith("https://") else ""
+            target = f"https://{host}{target}" if host else ""
+        safe = sanitize_return_to(target or fallback)
+    except HTTPException:
+        return ""
+    if not safe.startswith("https://"):
+        return ""
+    parts = urlparse(safe)
+    path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    token = await create_bot_login(
+        tenant_id, telegram_user_id=telegram_user_id, return_to=path, ttl_minutes=BROWSER_LOGIN_TTL_MINUTES
+    )
+    return f"https://{parts.netloc}{path}#{BOT_LOGIN_FRAGMENT}={token}"
+
+
+async def max_webapp(
+    tenant_id: str, *, init_data: str, return_to: str, code: str | None = None
+) -> dict[str, Any]:
     """Ответ странице /max-app/.
 
     status: login_confirmed | linked | signed_in | not_linked | link_expired | link_used | link_not_found |
-            login_expired | login_used | login_not_found
-    url — вход прямо здесь, внутри Max (когда человек известен).
+            login_expired | login_used | login_not_found |
+            code_invalid | code_expired | code_used | code_locked | identity_taken (V34: код не подошёл)
+    url — вход прямо здесь, внутри Max (когда человек известен);
+    browser_login_url — одноразовая ссылка для системного браузера (WebApp.openLink), 10 минут (V34);
+    telegram_url — прежняя кнопка в Telegram-бот для незнакомого Max (сайт её больше не показывает).
+    ``code`` — код от владельца: незнакомый Max привязывается к человеку из кода без Telegram.
     """
     await warm_hosts(tenant_id)
     user, start_param = verify_max_init_data(init_data)
@@ -321,25 +389,39 @@ async def max_webapp(tenant_id: str, *, init_data: str, return_to: str) -> dict[
             linked = await _redeem_link(conn, tenant_id, start_param[len(LINK_PREFIX):], user)
             status = linked if linked == "linked" else f"link_{linked}"
         telegram_user_id = await _telegram_id_for_max(conn, tenant_id, max_user_id)
+    if telegram_user_id is None and str(code or "").strip():
+        try:
+            redeemed = await redeem_max_code(
+                tenant_id, max_user_id=max_user_id, display_name=_display_name(user), code=str(code)
+            )
+        except LoginIdentityError as exc:
+            return {"ok": True, "status": exc.code, "url": "", "browser_login_url": "", "telegram_url": ""}
+        telegram_user_id = int(redeemed["telegram_user_id"])
+        status = "linked"
     if telegram_user_id is None:
-        # Незнакомый Max: одна кнопка в Telegram-бот — он знает человека, привяжет Max и подтвердит этот вход (V31).
+        # Незнакомый Max без кода: прежняя кнопка в Telegram-бот (V31) — сайт её больше не показывает,
+        # но старая страница мини-приложения ещё может.
         login_hash = challenge_hash_of(start_param[len(LOGIN_PREFIX):]) if start_param.startswith(LOGIN_PREFIX) else None
         telegram_url = await _create_link_request(tenant_id, user, login_challenge_hash=login_hash)
         return {
             "ok": True,
             "status": status if status.startswith("link_") else "not_linked",
             "url": "",
+            "browser_login_url": "",
             "telegram_url": telegram_url,
         }
+    confirmed_return_to = ""
     if start_param.startswith(LOGIN_PREFIX):
         try:
-            await confirm_content_from_telegram(
+            confirmed = await confirm_content_from_telegram(
                 tenant_id=tenant_id,
                 challenge_token=start_param[len(LOGIN_PREFIX):],
                 telegram_user_id=telegram_user_id,
             )
             status = "login_confirmed"
+            confirmed_return_to = str((confirmed or {}).get("return_to") or "")
         except HTTPException as exc:
             status = f"login_{_login_status(exc)}"
     url = await _in_app_url(tenant_id, telegram_user_id, return_to)
-    return {"ok": True, "status": status, "url": url}
+    browser_url = await _browser_login_url(tenant_id, telegram_user_id, confirmed_return_to, return_to)
+    return {"ok": True, "status": status, "url": url, "browser_login_url": browser_url}

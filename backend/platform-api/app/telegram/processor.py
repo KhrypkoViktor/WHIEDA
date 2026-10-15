@@ -30,6 +30,7 @@ from app.telegram.academy import (
     try_handle_academy_text,
 )
 from app.crm.bot import try_handle_crm_text
+from app.login_identities.bot import try_handle_login_identity_message
 from app.referral_bonus.service import (
     accept_referral_start,
     inviter_card,
@@ -689,6 +690,11 @@ async def _process_core_telegram_update_scoped(
     )
     if referral_admin_result is not None:
         return referral_admin_result
+
+    # Владелец: «код входа <кто>», «способы входа <кто>», «отвязать google|max <кто>» (V34, 15.10.2026).
+    login_identity_result = await try_handle_login_identity_message(tenant, msg, trace_id=trace_id)
+    if login_identity_result is not None:
+        return login_identity_result
 
     profile_requests_result = await try_handle_profile_requests_command(tenant, msg, trace_id=trace_id)
     if profile_requests_result is not None:

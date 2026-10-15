@@ -102,15 +102,27 @@ def db():
 
     confirm = AsyncMock(return_value={"ok": True})
     by_hash = AsyncMock(return_value={"ok": True, "return_to": "https://wwc.best/me/"})
+    # V34: account_identities — по умолчанию строки нет (прежняя привязка lead_actor_channels решает).
+    identity = AsyncMock(return_value=("none", None))
+    ensure = AsyncMock()
+    redeem = AsyncMock()
+    bot_login = AsyncMock(return_value="cid.nonce")
     with patch.object(webapp, "get_settings", return_value=SETTINGS), \
          patch.object(webapp, "tenant_connection", connection), \
          patch.object(webapp, "fetch_one", fake.fetch_one), \
          patch.object(webapp, "warm_hosts", AsyncMock()), \
          patch.object(webapp, "confirm_content_from_telegram", confirm), \
          patch.object(webapp, "confirm_content_by_hash", by_hash), \
-         patch.object(webapp, "create_bot_login", AsyncMock(return_value="cid.nonce")):
+         patch.object(webapp, "identity_state", identity), \
+         patch.object(webapp, "ensure_identity", ensure), \
+         patch.object(webapp, "redeem_max_code", redeem), \
+         patch.object(webapp, "create_bot_login", bot_login):
         fake.confirm = confirm
         fake.by_hash = by_hash
+        fake.identity = identity
+        fake.ensure = ensure
+        fake.redeem = redeem
+        fake.bot_login = bot_login
         yield fake
 
 
@@ -129,7 +141,7 @@ async def test_linked_person_confirms_the_browser_login(db):
 @pytest.mark.asyncio
 async def test_unknown_max_user_is_asked_to_link_first(db):
     out = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_abc"), return_to=RETURN)
-    assert out["status"] == "not_linked" and out["url"] == ""
+    assert out["status"] == "not_linked" and out["url"] == "" and out["browser_login_url"] == ""
     db.confirm.assert_not_awaited()
     # 12.10.2026: одна кнопка в Telegram-бот вместо «отправьте /max»
     assert out["telegram_url"].startswith("https://t.me/WWC_test_bot?start=maxlink_")
@@ -272,6 +284,85 @@ async def test_unknown_login_channel_is_rejected_before_any_write():
 
 def test_max_command_reaches_the_cabinet_handler():
     assert is_referral_command("/max") and is_referral_command("/max@wwc_bot")
+
+
+# ---- V34 (15.10.2026): код владельца в мини-приложении, browser_login_url, account_identities ----------
+
+
+@pytest.mark.asyncio
+async def test_owner_code_links_an_unknown_max_and_opens_the_browser(db):
+    from app.content_access.service import create_bot_login  # noqa: F401 — патчится в фикстуре
+
+    db.redeem.return_value = {"telegram_user_id": 700, "identity_id": "id-1", "already_linked": False}
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to="https://wwc.best/max-app/", code="483 921")
+    assert out["status"] == "linked" and out["browser_login_url"] == "https://wwc.best/max-app/#wwc-login=cid.nonce"
+    db.redeem.assert_awaited_once_with("whieda", max_user_id=5001, display_name="Айгуль", code="483 921")
+    assert "telegram_url" not in out, "no Telegram button once the person is known"
+    # Одноразовая ссылка для системного браузера — 10 минут, не 30 как у входа внутри Max.
+    ttls = {call.kwargs.get("ttl_minutes") for call in db.bot_login.await_args_list}
+    assert 10 in ttls
+    assert not db.requests, "no maxlink request when the code did the job"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code_error", ["code_invalid", "code_expired", "code_used", "code_locked", "identity_taken"])
+async def test_wrong_owner_code_is_reported_as_a_status(db, code_error):
+    from app.login_identities.rules import error
+
+    db.redeem.side_effect = error(code_error)
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN, code="000000")
+    assert out == {"ok": True, "status": code_error, "url": "", "browser_login_url": "", "telegram_url": ""}
+    assert "5001" not in db.channels and not db.requests
+
+
+@pytest.mark.asyncio
+async def test_blank_code_is_ignored_and_the_old_telegram_button_still_comes(db):
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN, code="   ")
+    assert out["status"] == "not_linked" and out["telegram_url"].startswith("https://t.me/")
+    db.redeem.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_identity_table_wins_and_a_revoked_max_does_not_fall_back_to_the_old_link(db):
+    db.identity.return_value = ("active", 700)
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN)
+    assert out["status"] == "signed_in" and out["browser_login_url"].endswith("#wwc-login=cid.nonce")
+    db.identity.return_value = ("revoked", None)
+    db.channels["5001"] = "telegram:whieda:700"  # прежняя привязка ещё в lead_actor_channels
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN)
+    assert out["status"] == "not_linked" and out["browser_login_url"] == ""
+
+
+@pytest.mark.asyncio
+async def test_legacy_link_is_copied_into_account_identities_on_first_login(db):
+    db.channels["5001"] = "telegram:whieda:700"
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN)
+    assert out["status"] == "signed_in"
+    db.ensure.assert_awaited_once()
+    assert db.ensure.await_args.kwargs["telegram_user_id"] == 700 and db.ensure.await_args.kwargs["external_id"] == "5001"
+    assert db.ensure.await_args.kwargs["linked_by"] == "telegram:/max"
+
+
+@pytest.mark.asyncio
+async def test_one_tap_from_telegram_also_records_the_identity(db):
+    out = await webapp.max_webapp("whieda", init_data=_signed(), return_to=RETURN)
+    code = out["telegram_url"].split("maxlink_", 1)[1]
+    await webapp.redeem_link_request("whieda", code=code, telegram_user_id=700, telegram_chat_id=700, telegram_username=None)
+    assert db.ensure.await_args.kwargs["linked_by"] == "telegram:maxlink" and db.ensure.await_args.kwargs["external_id"] == "5001"
+
+
+@pytest.mark.asyncio
+async def test_browser_login_url_prefers_the_page_where_login_was_pressed(db):
+    db.channels["5001"] = "telegram:whieda:700"
+    db.confirm.return_value = {"ok": True, "return_to": "https://samtsova.wwc.best/price/"}
+    out = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_abc"), return_to="https://wwc.best/max-app/")
+    assert out["status"] == "login_confirmed"
+    assert out["browser_login_url"] == "https://samtsova.wwc.best/price/#wwc-login=cid.nonce"
+    assert out["url"] == "https://wwc.best/max-app/#wwc-login=cid.nonce", "in-app link unchanged"
+    # Путь без хоста (старый клиент) — на хосте мини-приложения.
+    db.confirm.return_value = {"ok": True, "return_to": "/otvety/"}
+    out = await webapp.max_webapp("whieda", init_data=_signed(start_param="login_abc"), return_to="https://samtsova.wwc.best/max-app/")
+    assert out["browser_login_url"] == "https://samtsova.wwc.best/otvety/#wwc-login=cid.nonce"
 
 
 @pytest.mark.asyncio

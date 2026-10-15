@@ -504,6 +504,62 @@ async def poll_content_challenge(
     }, raw_session
 
 
+async def create_session_for_user(
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    visitor_session_id: str | None = None,
+    source: str = "login_identity",
+    scope: str = "telegram_verified",
+) -> tuple[dict[str, Any], str]:
+    """Сессия сайта для уже подтверждённого человека — без заявки и без бота.
+
+    Вход через Google/Max по коду владельца (V34, 15.10.2026): личность проверена Google или подписью
+    initData Max и привязана к telegram_user_id, поэтому заявка-челлендж не нужна. Та же таблица и та же
+    cookie, что у входа через Telegram: сайт не отличает, как человек вошёл. ``visitor_session_id`` —
+    сессия браузера, если сайт её прислал и она есть; иначе создаётся новая.
+    """
+    session_raw = str(visitor_session_id or "").strip()
+    if session_raw:
+        try:
+            uuid.UUID(session_raw)
+        except ValueError:
+            session_raw = ""
+    raw_session = secrets.token_urlsafe(32)
+    settings = get_settings()
+    session_expires = _utcnow() + timedelta(days=settings.platform_content_session_ttl_days)
+    session_id = str(uuid.uuid4())
+    async with tenant_connection(tenant_id) as conn:
+        existing = None
+        if session_raw:
+            existing = await fetch_one(
+                conn,
+                "select session_id from visitor_sessions where tenant_id = %s and session_id = %s::uuid limit 1",
+                (tenant_id, session_raw),
+            )
+        if not existing:
+            session_raw = str(uuid.uuid4())
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    insert into visitor_sessions (tenant_id, session_id, journey_type, context)
+                    values (%s, %s::uuid, 'organic', %s::jsonb)
+                    """,
+                    (tenant_id, session_raw, json.dumps({"source": source})),
+                )
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into content_access_sessions (
+                  session_id, tenant_id, visitor_session_id, session_hash,
+                  telegram_user_id, scope, expires_at
+                ) values (%s::uuid, %s, %s::uuid, %s, %s, %s, %s)
+                """,
+                (session_id, tenant_id, session_raw, _hash_value(raw_session), int(telegram_user_id), scope, session_expires),
+            )
+    return {"ok": True, "status": "authenticated", "expires_at": session_expires.isoformat()}, raw_session
+
+
 async def validate_content_session(tenant_id: str, raw_session: str) -> dict[str, Any] | None:
     session_hash = _hash_value(raw_session.strip())
     async with tenant_connection(tenant_id) as conn:

@@ -22,6 +22,7 @@ from app.errors import http_exception_handler, unhandled_exception_handler
 from app.identity.routes import router as identity_router
 from app.journey.routes import router as journey_router
 from app.leads.routes import router as leads_router
+from app.login_identities.routes import router as login_identities_router
 from app.markets.routes import router as markets_router
 from app.partner_library.routes import router as partner_library_router
 from app.subscriptions.edge_routes import router as subscription_edge_router
@@ -125,6 +126,8 @@ def create_app() -> FastAPI:
     app.include_router(cart_router)
     app.include_router(markets_router)
     app.include_router(content_access_router)
+    # Вход через Google/Max по коду владельца (15.10.2026): /api/v1/content-access/login/….
+    app.include_router(login_identities_router)
     # Личный кабинет партнёра /me/ (02.10.2026): /api/v1/content-access/me/… и фото профиля.
     app.include_router(cabinet_router)
     app.include_router(cabinet_media_router)

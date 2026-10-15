@@ -86,6 +86,20 @@ class Settings(BaseSettings):
     crosspost_telegram_channel_id: int | None = Field(
         default=-1002885760214, validation_alias="PLATFORM_CROSSPOST_TELEGRAM_CHANNEL_ID"
     )
+    # Вход на сайт через Google (V34, 15.10.2026): OAuth client «Web application» из Google Cloud Console.
+    # Все три значения пустые → Google-вход выключен (ручки отвечают 503 google_disabled); секрет — только
+    # из окружения. Redirect должен слово в слово совпадать с тем, что записан у клиента в Google.
+    platform_google_oauth_client_id: str | None = Field(
+        default=None, validation_alias="PLATFORM_GOOGLE_OAUTH_CLIENT_ID"
+    )
+    platform_google_oauth_client_secret: str | None = Field(
+        default=None, validation_alias="PLATFORM_GOOGLE_OAUTH_CLIENT_SECRET"
+    )
+    platform_google_oauth_redirect: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_GOOGLE_OAUTH_REDIRECT",
+        description="Полный адрес callback, например https://wwc.best/api/v1/content-access/login/google/callback.",
+    )
     telegram_bot_username: str | None = Field(
         default=None,
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",

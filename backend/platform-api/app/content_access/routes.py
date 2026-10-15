@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
@@ -21,6 +22,8 @@ from app.content_access.service import (
     validate_content_session,
 )
 from app.content_access.webapp_login import webapp_login_url
+from app.login_identities.rules import login_methods_payload
+from app.login_identities.service import list_login_methods
 from app.max.webapp import max_webapp
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.content_access.account import load_site_account
@@ -28,6 +31,7 @@ from app.subscriptions.service import resolve_partner_subscription_by_telegram_u
 from app.tenancy import get_request_tenant, require_entitlement
 
 router = APIRouter(tags=["content-access"])
+logger = logging.getLogger(__name__)
 
 
 class ChallengeCreateBody(BaseModel):
@@ -140,7 +144,16 @@ async def _me(request: Request, response: Response) -> dict:
             on_ambiguous="best",
         )
         account = await load_site_account(tenant.tenant_id, int(telegram_user_id))
-    return format_me_payload(session, partner_subscription=subscription, account=account)
+    payload = format_me_payload(session, partner_subscription=subscription, account=account)
+    # Способы входа (V34, 15.10.2026): Telegram всегда; Google (e-mail) и Max (имя) — если привязаны.
+    # Кабинет не ломается из-за этого списка: сбой → только Telegram и предупреждение в логе.
+    payload["login_methods"] = login_methods_payload([])
+    if telegram_user_id is not None:
+        try:
+            payload["login_methods"] = await list_login_methods(tenant.tenant_id, int(telegram_user_id))
+        except Exception:
+            logger.warning("login_methods_unavailable", exc_info=True)
+    return payload
 
 
 @router.get("/v1/content-access/me")
@@ -203,6 +216,8 @@ async def logout_site(request: Request, response: Response) -> dict:
 class WebAppLoginBody(BaseModel):
     init_data: str
     return_to: str
+    # Max (V34, 15.10.2026): код от владельца, когда этот Max ещё не привязан к человеку.
+    code: str | None = None
 
 
 async def _telegram_webapp_login(body: WebAppLoginBody, request: Request, response: Response) -> dict:
@@ -231,7 +246,7 @@ async def _max_webapp(body: WebAppLoginBody, request: Request, response: Respons
     response.headers["Cache-Control"] = "private, no-store"
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
-    return await max_webapp(tenant.tenant_id, init_data=body.init_data, return_to=body.return_to)
+    return await max_webapp(tenant.tenant_id, init_data=body.init_data, return_to=body.return_to, code=body.code)
 
 
 @router.post("/v1/content-access/max-webapp")

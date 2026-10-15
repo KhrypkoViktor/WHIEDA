@@ -139,6 +139,10 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "channel_link_codes",
             # Привязка Max одним нажатием из мини-приложения (platform_max_link_requests_v31.sql, 12.10.2026).
             "max_link_requests",
+            # Вход через Google/Max по коду владельца (platform_login_identities_v34.sql, 15.10.2026).
+            "account_identities",
+            "login_link_codes",
+            "login_pending",
             # advisor
             "platform_session_context",
             "advisor_structured_products",
