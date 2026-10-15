@@ -1,16 +1,22 @@
 """Вход через Google/Max по коду владельца (V34, 15.10.2026) на настоящем PostgreSQL.
 
-  * миграция применяется дважды; прежняя привязка Max (lead_actor_channels) переносится бэкфиллом;
+  * миграция применяется дважды (и третий раз — на уже созданных таблицах); прежняя привязка Max
+    (lead_actor_channels) переносится бэкфиллом; коды хранятся HMAC с серверным секретом;
   * код: по ref, по имени (несколько — список), по id; новый код гасит прежний; чужому не выдаётся;
   * Google: start → callback (обмен кода подделан, id_token без подписи) → «нужен код» → неверный код,
     верный код → сессия того же вида, что после Telegram; повторный вход — сразу; state одноразовый;
-  * занятый sub у другого человека — identity_taken; отвязка в кабинете закрывает вход до нового кода;
-  * Max: код из мини-приложения; шестая попытка — code_locked; отозванный Max не входит по старой таблице;
-  * RLS: соседний тенант строк не видит.
+    callback и «ввести код» принимаются только из браузера, который начал вход (cookie/ключ);
+    хост вне семьи cookie — подтверждение ключом через /login/link без кода (awaiting_claim);
+  * занятый sub у другого человека — identity_taken (код не сгорает); отвязка закрывает вход до нового кода;
+  * Max: код из мини-приложения; шестая попытка — code_locked; замок держится всё окно и для Google;
+  * гонки: десять параллельных попыток — только пять проходят; два параллельных redeem одним кодом —
+    один проходит; отозванный Max не входит по старой таблице;
+  * чистка worker удаляет просроченное старше суток; RLS: соседний тенант строк не видит.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import timedelta
 from unittest.mock import AsyncMock, patch
@@ -28,6 +34,7 @@ LOGIN_MIGRATIONS = (*MIGRATIONS, "platform_identity_journey_v1.sql", "platform_c
 
 OWNER, EVGENIA, PETROVA, STRANGER = 2, 700, 701, 702
 MAX_ID = 5001
+CODE_SECRET = "login-code-secret-for-tests"
 
 SEED = """
 insert into tenants (tenant_id, display_name, status) values ('other', 'Other', 'active')
@@ -58,7 +65,32 @@ def _env(monkeypatch) -> None:
     monkeypatch.setenv("PLATFORM_GOOGLE_OAUTH_CLIENT_ID", "client-1")
     monkeypatch.setenv("PLATFORM_GOOGLE_OAUTH_CLIENT_SECRET", "secret-1")
     monkeypatch.setenv("PLATFORM_GOOGLE_OAUTH_REDIRECT", "https://wwc.best/api/v1/content-access/login/google/callback")
-    monkeypatch.setenv("PLATFORM_COOKIE_SHARED_DOMAINS", "wwc.best")
+    # Вторая семья cookie — хост «вне семьи» для callback на wwc.best (путь с ключом сайта).
+    monkeypatch.setenv("PLATFORM_COOKIE_SHARED_DOMAINS", "wwc.best,other.test")
+    monkeypatch.setenv("PLATFORM_LOGIN_CODE_SECRET", CODE_SECRET)
+
+
+def db_path(name: str) -> str:
+    from tests.postgres_testkit import SQL_DIR
+
+    return os.fspath(SQL_DIR / name)
+
+
+async def _google_pending(
+    service, google_oauth, *, host: str, sub: str, browser_key: str | None = None, return_to: str = "/me/", cookie: bool = True
+):
+    """start → callback с подделанным обменом; возвращает (результат callback, ключ браузера).
+
+    ``cookie=False`` — хост вне семьи cookie: callback на wwc.best приходит без cookie wwc_oauth."""
+    auth_url, key = await service.google_start("whieda", host=host, return_to=return_to, visitor_session_id=None, browser_key=browser_key)
+    query = parse_qs(urlparse(auth_url).query)
+    tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub=sub))}
+    with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
+        result = await service.google_callback(
+            "whieda", state=query["state"][0], code="auth-code", oauth_error=None,
+            browser_key=key if cookie else None, callback_host="wwc.best",
+        )
+    return result, key
 
 
 @pytest.mark.integration
@@ -80,8 +112,8 @@ def test_login_identities_end_to_end(monkeypatch):
             from app.content_access.service import validate_content_session
             from app.db import tenant_connection
             from app.login_identities import google as google_oauth
-            from app.login_identities import service
-            from app.login_identities.rules import LoginIdentityError, sha256_hex
+            from app.login_identities import rules, service
+            from app.login_identities.rules import LoginIdentityError
             from app.max import webapp
 
             # --- коды владельца -----------------------------------------------------------------
@@ -105,34 +137,60 @@ def test_login_identities_end_to_end(monkeypatch):
                 until = await service.active_code_info(conn, "whieda", EVGENIA)
                 assert until is not None and until > second["expires_at"] - timedelta(seconds=5)
                 assert (await service.find_people(conn, "whieda", "Посторонний"))[0]["telegram_user_id"] == STRANGER, "person without a site by lead_actors name"
+                cur = await conn.execute("select code_hash from login_link_codes where telegram_user_id = %s and used_at is null and revoked_at is null", (EVGENIA,))
+                stored = (await cur.fetchone())["code_hash"]
+            assert stored == rules.code_hash("whieda", second["code"], CODE_SECRET), "HMAC with the server secret"
+            assert stored != rules.code_hash("whieda", second["code"]), "not a bare sha256 of six digits"
 
-            # --- Google: start → callback → код -----------------------------------------------------
-            auth_url = await service.google_start(
-                "whieda", host="samtsova.wwc.best", return_to="/price/", visitor_session_id=None
-            )
+            # --- Google: start → callback → код; браузер проверяется --------------------------------------
+            auth_url, key = await service.google_start("whieda", host="samtsova.wwc.best", return_to="/price/", visitor_session_id=None)
             query = parse_qs(urlparse(auth_url).query)
             state, nonce = query["state"][0], query["nonce"][0]
             tokens = {"id_token": _jwt(_claims(nonce=nonce, sub="g-700"))}
-            with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)) as exchange:
-                result = await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None)
-            assert exchange.await_args.kwargs["code"] == "auth-code" and exchange.await_args.kwargs["code_verifier"]
-            assert result["outcome"] == "link_required" and result["host"] == "samtsova.wwc.best"
+            # Чужой браузер (нет cookie семьи) — отказ, и state сгорает.
+            with pytest.raises(LoginIdentityError) as info:
+                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, browser_key=None, callback_host="wwc.best")
+            assert info.value.code == "oauth_browser_mismatch"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, browser_key=key, callback_host="wwc.best")
+            assert info.value.code == "google_state_invalid", "state is single-use even after a refused callback"
+            # Другая cookie — тоже отказ.
+            auth_url, key = await service.google_start("whieda", host="samtsova.wwc.best", return_to="/price/", visitor_session_id=None)
+            query = parse_qs(urlparse(auth_url).query)
+            with pytest.raises(LoginIdentityError) as info:
+                await service.google_callback("whieda", state=query["state"][0], code="c", oauth_error=None, browser_key=rules.new_browser_key(), callback_host="wwc.best")
+            assert info.value.code == "oauth_browser_mismatch"
+
+            result, key = await _google_pending(service, google_oauth, host="samtsova.wwc.best", sub="g-700", return_to="/price/")
+            assert result["outcome"] == "link_required" and result["claim"] is False and result["host"] == "samtsova.wwc.best"
             assert result["return_to"] == "https://samtsova.wwc.best/price/"
             link_token = result["link_token"]
-            with pytest.raises(LoginIdentityError) as info:
-                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None)
-            assert info.value.code == "google_state_invalid", "state is single-use"
+            info_screen = await service.pending_info("whieda", link_token=link_token)
+            assert info_screen == {"provider": "google", "email_masked": "e***a@example.com", "display_name": "Евгения Волкова", "status": "awaiting_code"}
 
+            # Код из другого браузера — отказ, pending закрывается.
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=first["code"])
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=rules.new_browser_key())
+            assert info.value.code == "oauth_browser_mismatch"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
+            assert info.value.code == "pending_invalid", "a pending opened by a foreign browser is closed for good"
+
+            result, key = await _google_pending(service, google_oauth, host="samtsova.wwc.best", sub="g-700", return_to="/price/")
+            link_token = result["link_token"]
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=link_token, code=None, browser_key=key)
+            assert info.value.code == "code_required"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=link_token, code=first["code"], browser_key=key)
             assert info.value.code == "code_invalid", "the first code was cancelled by the second"
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token="nope", code=second["code"])
+                await service.link_pending("whieda", link_token="nope", code=second["code"], browser_key=key)
             assert info.value.code == "pending_invalid"
-            linked = await service.link_pending("whieda", link_token=link_token, code=second["code"])
+            linked = await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
             assert linked["telegram_user_id"] == EVGENIA and not linked["already_linked"]
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=second["code"])
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
             assert info.value.code == "pending_invalid", "pending is single-use too"
             with pytest.raises(LoginIdentityError) as info:
                 await service.redeem_code("whieda", code=second["code"], provider="google", external_id="g-700")
@@ -148,68 +206,75 @@ def test_login_identities_end_to_end(monkeypatch):
             methods = await service.list_login_methods("whieda", EVGENIA)
             assert [m["provider"] for m in methods] == ["telegram", "google"] and methods[1]["label"] == "evgenia@example.com"
 
-            # Повторный вход через Google — сразу человек, без кода.
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
+            # Повторный вход через Google (семья cookie) — сразу человек, без кода.
+            again, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-700")
+            assert again["outcome"] == "signed_in" and again["telegram_user_id"] == EVGENIA
+
+            # Хост вне семьи cookie: callback без cookie — не отказ, а подтверждение ключом сайта через link.
+            site_key = rules.new_browser_key()
+            auth_url, key = await service.google_start("whieda", host="site.other.test", return_to="/me/", visitor_session_id=None, browser_key=site_key)
+            assert key == site_key
             query = parse_qs(urlparse(auth_url).query)
             tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub="g-700"))}
             with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                again = await service.google_callback("whieda", state=query["state"][0], code="c2", oauth_error=None)
-            assert again["outcome"] == "signed_in" and again["telegram_user_id"] == EVGENIA
+                claim = await service.google_callback("whieda", state=query["state"][0], code="c", oauth_error=None, browser_key=None, callback_host="wwc.best")
+            assert claim["outcome"] == "link_required" and claim["claim"] is True and claim["host"] == "site.other.test"
+            assert (await service.pending_info("whieda", link_token=claim["link_token"]))["status"] == "awaiting_claim"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=rules.new_browser_key())
+            assert info.value.code == "oauth_browser_mismatch", "a victim's browser has no such key"
+            claim, _ = await _google_pending(service, google_oauth, host="site.other.test", sub="g-700", browser_key=site_key, cookie=False)
+            assert claim["outcome"] == "link_required" and claim["claim"] is True
+            claimed = await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=site_key)
+            assert claimed["telegram_user_id"] == EVGENIA and claimed["already_linked"]
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=site_key)
+            assert info.value.code == "pending_invalid", "claim is single-use"
 
             # Чужой nonce / отказ Google — ошибка с возвратом на страницу, не исключение.
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
+            auth_url, key = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
             query = parse_qs(urlparse(auth_url).query)
             tokens = {"id_token": _jwt(_claims(nonce="forged", sub="g-700"))}
             with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                bad = await service.google_callback("whieda", state=query["state"][0], code="c3", oauth_error=None)
+                bad = await service.google_callback("whieda", state=query["state"][0], code="c3", oauth_error=None, browser_key=key, callback_host="wwc.best")
             assert bad == {"outcome": "error", "error": "google_token_invalid", "host": "wwc.best", "return_to": "https://wwc.best/me/"}
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
+            auth_url, key = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
             query = parse_qs(urlparse(auth_url).query)
-            denied = await service.google_callback("whieda", state=query["state"][0], code=None, oauth_error="access_denied")
+            denied = await service.google_callback("whieda", state=query["state"][0], code=None, oauth_error="access_denied", browser_key=key, callback_host="wwc.best")
             assert denied["outcome"] == "error" and denied["error"] == "google_denied"
 
-            # Тот же Google у другого человека — занято; код Петровой остаётся действующим.
+            # Тот же Google у другого человека — занято; код Петровой остаётся действующим (захват откатился).
             with pytest.raises(LoginIdentityError) as info:
                 await service.redeem_code("whieda", code=by_id["code"], provider="google", external_id="g-700", email="x@y.z")
             assert info.value.code == "identity_taken"
+            async with tenant_connection("whieda") as conn:
+                assert await service.active_code_info(conn, "whieda", PETROVA) is not None, "identity_taken rolled the claim back"
 
             # Отвязка в кабинете: следующий Google-вход снова просит код.
             assert await service.revoke_identity("whieda", telegram_user_id=EVGENIA, provider="google", revoked_by="self:700") == 1
             assert await service.revoke_identity("whieda", telegram_user_id=EVGENIA, provider="google", revoked_by="self:700") == 0
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
-            query = parse_qs(urlparse(auth_url).query)
-            tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub="g-700"))}
-            with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                after_revoke = await service.google_callback("whieda", state=query["state"][0], code="c4", oauth_error=None)
-            assert after_revoke["outcome"] == "link_required"
+            after_revoke, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-700")
+            assert after_revoke["outcome"] == "link_required" and after_revoke["claim"] is False
 
-            # --- Max ------------------------------------------------------------------------------------
+            # --- Max: замок пяти попыток, параллельно и для Google ----------------------------------------
             code_for_petrova = by_id["code"]
-            for wrong in range(5):
-                with pytest.raises(LoginIdentityError) as info:
-                    await service.redeem_max_code("whieda", max_user_id=MAX_ID, display_name="Айгуль", code="000000")
-                assert info.value.code == "code_invalid", wrong
+            outcomes = await asyncio.gather(
+                *[service.redeem_max_code("whieda", max_user_id=MAX_ID, display_name="Айгуль", code="000000") for _ in range(10)],
+                return_exceptions=True,
+            )
+            codes = sorted(getattr(o, "code", "ok") for o in outcomes)
+            assert codes == ["code_invalid"] * 5 + ["code_locked"] * 5, codes
             with pytest.raises(LoginIdentityError) as info:
                 await service.redeem_max_code("whieda", max_user_id=MAX_ID, display_name="Айгуль", code=code_for_petrova)
-            assert info.value.code == "code_locked", "sixth try in the window is locked even with the right code"
-            with pytest.raises(LoginIdentityError) as info:
-                await service.redeem_max_code("whieda", max_user_id=MAX_ID, display_name="Айгуль", code=code_for_petrova)
-            assert info.value.code == "code_locked", "and the lock holds for the whole window, no fresh five tries"
+            assert info.value.code == "code_locked", "the lock holds for the whole window even with the right code"
             # Google: та же личность после пяти неверных кодов — новый вход через Google тоже заперт.
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
-            query = parse_qs(urlparse(auth_url).query)
-            tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub="g-locked"))}
-            with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                pending_g = await service.google_callback("whieda", state=query["state"][0], code="c5", oauth_error=None)
+            pending_g, key_g = await _google_pending(service, google_oauth, host="wwc.best", sub="g-locked")
             for _ in range(5):
                 with pytest.raises(LoginIdentityError):
-                    await service.link_pending("whieda", link_token=pending_g["link_token"], code="000000")
-            auth_url = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
-            query = parse_qs(urlparse(auth_url).query)
-            tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub="g-locked"))}
-            with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                locked_g = await service.google_callback("whieda", state=query["state"][0], code="c6", oauth_error=None)
+                    await service.link_pending("whieda", link_token=pending_g["link_token"], code="000000", browser_key=key_g)
+            locked_g, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-locked")
             assert locked_g["outcome"] == "error" and locked_g["error"] == "code_locked"
+
             fresh = await service.issue_code("whieda", issued_by=OWNER, target="volkova")
             max_linked = await service.redeem_max_code("whieda", max_user_id=MAX_ID + 1, display_name="Евгения В.", code=fresh["code"])
             assert max_linked["telegram_user_id"] == EVGENIA
@@ -223,21 +288,40 @@ def test_login_identities_end_to_end(monkeypatch):
                 lingering = await conn.execute("select count(*) as n from lead_actor_channels where channel_user_id = '6001'")
                 assert (await lingering.fetchone())["n"] == 1, "the Max chat identity of the bot is untouched"
 
+            # --- гонка redeem: один код, два параллельных запроса — проходит один ----------------------------
+            race = await service.issue_code("whieda", issued_by=OWNER, target="stranger") if False else await service.issue_code("whieda", issued_by=OWNER, target=str(STRANGER))
+            outcomes = await asyncio.gather(
+                service.redeem_code("whieda", code=race["code"], provider="max", external_id="7001", display_name="A"),
+                service.redeem_code("whieda", code=race["code"], provider="max", external_id="7002", display_name="B"),
+                return_exceptions=True,
+            )
+            codes = sorted(getattr(o, "code", "ok") for o in outcomes)
+            assert codes == ["code_used", "ok"], codes
+            async with tenant_connection("whieda") as conn:
+                cur = await conn.execute("select count(*) as n from account_identities where telegram_user_id = %s and revoked_at is null", (STRANGER,))
+                assert (await cur.fetchone())["n"] == 1
+
+            # --- чистка worker --------------------------------------------------------------------------------
+            async with tenant_connection("whieda") as conn:
+                cur = await conn.execute("select count(*) as n from login_pending")
+                pending_before = (await cur.fetchone())["n"]
+                await conn.execute("update login_pending set expires_at = now() - interval '2 days' where status in ('failed', 'linked')")
+                await conn.execute("update login_link_codes set expires_at = now() - interval '2 days' where used_at is not null")
+            purged = await service.purge_expired_login_rows(["whieda", "other", "missing-tenant"])
+            assert purged > 0
+            async with tenant_connection("whieda") as conn:
+                cur = await conn.execute("select count(*) as n from login_pending")
+                assert (await cur.fetchone())["n"] < pending_before
+                cur = await conn.execute("select count(*) as n from login_pending where expires_at < now() - interval '1 day'")
+                assert (await cur.fetchone())["n"] == 0
+                cur = await conn.execute("select count(*) as n from login_link_codes where used_at is null and revoked_at is null")
+                assert (await cur.fetchone())["n"] >= 1, "live codes stay"
+            assert await service.login_cleanup_step() == 0, "nothing left for the worker step"
+
             # --- RLS -------------------------------------------------------------------------------------
             async with tenant_connection("other") as conn:
                 for table in ("account_identities", "login_link_codes", "login_pending"):
                     cur = await conn.execute(f"select count(*) as n from {table}")
                     assert (await cur.fetchone())["n"] == 0, table
-            async with tenant_connection("whieda") as conn:
-                cur = await conn.execute("select count(*) as n from login_link_codes")
-                assert (await cur.fetchone())["n"] >= 4
-                cur = await conn.execute("select code_hash from login_link_codes limit 1")
-                assert len((await cur.fetchone())["code_hash"]) == 64 and sha256_hex("x") != ""
 
         db.run_with_app(proof)
-
-
-def db_path(name: str) -> str:
-    from tests.postgres_testkit import SQL_DIR
-
-    return os.fspath(SQL_DIR / name)

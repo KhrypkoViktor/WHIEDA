@@ -2,6 +2,14 @@
 
 Все запросы — внутри ``tenant_connection`` (RLS по tenant_id). В логах нет e-mail и кодов: только
 provider, identity_id, telegram_user_id и причина отказа.
+
+Защита (ревью 15.10.2026):
+  * код берётся атомарно (``update … where used_at is null returning``) — два одновременных redeem одним
+    кодом не проходят оба; привязка — в той же транзакции, identity_taken откатывает захват;
+  * попытки ввода кода считаются под advisory-блокировкой на личность (provider, external_id) и
+    фиксируются отдельной транзакцией до проверки кода — параллельные запросы лимит не обходят;
+  * Google: state и pending привязаны к браузеру, который начал вход (хеш cookie wwc_oauth или ключа
+    сайта): чужую ссылку callback подсунуть нельзя (login-CSRF / привязка чужого Google к жертве).
 """
 
 from __future__ import annotations
@@ -13,6 +21,9 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
+import psycopg
+from fastapi import HTTPException
+
 from app.academy.showcases import warm_hosts
 from app.content_access.service import (
     BOT_LOGIN_FRAGMENT,
@@ -21,7 +32,7 @@ from app.content_access.service import (
     sanitize_return_to,
 )
 from app.cookie_domain import shared_cookie_domains
-from app.db import fetch_all, fetch_one, tenant_connection
+from app.db import fetch_all, fetch_one, get_pool, tenant_connection
 from app.login_identities import google as google_oauth
 from app.login_identities.rules import (
     BROWSER_LOGIN_TTL_MINUTES,
@@ -30,6 +41,7 @@ from app.login_identities.rules import (
     MAX_CODE_ATTEMPTS,
     REVOCABLE_PROVIDERS,
     LoginIdentityError,
+    browser_key_matches,
     check_id_token_claims,
     code_expires_at,
     code_hash,
@@ -38,6 +50,9 @@ from app.login_identities.rules import (
     format_code,
     generate_code,
     login_methods_payload,
+    mask_email,
+    new_browser_key,
+    normalize_browser_key,
     normalize_code,
     normalize_provider,
     pending_expires_at,
@@ -48,6 +63,10 @@ from app.login_identities.rules import (
 from app.settings import get_settings
 
 logger = logging.getLogger("whieda.login_identities")
+
+# Просроченные строки pending/кодов старше суток удаляет worker (login_cleanup_step).
+PURGE_AFTER = "1 day"
+_CODE_GENERATION_TRIES = 5
 
 
 # ---- кто может выдавать коды ----------------------------------------------------------------------
@@ -60,6 +79,13 @@ def owner_allowed(telegram_user_id: int) -> bool:
     if owner is not None and int(telegram_user_id) == int(owner):
         return True
     return int(telegram_user_id) in settings.parsed_super_admin_telegram_ids()
+
+
+def _code_hash(tenant_id: str, code: str) -> str:
+    """HMAC с PLATFORM_LOGIN_CODE_SECRET, иначе с PLATFORM_MEDIA_SIGNING_SECRET, иначе sha256 (разработка)."""
+    settings = get_settings()
+    secret = str(settings.platform_login_code_secret or settings.platform_media_signing_secret or "").strip()
+    return code_hash(tenant_id, code, secret or None)
 
 
 # ---- поиск человека по ref / имени / id -----------------------------------------------------------
@@ -147,7 +173,8 @@ async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str
     """Код входа партнёру: 6 цифр, 24 часа, один раз; прежний активный код гасится.
 
     Возвращает {code, code_display, person, expires_at}; код показывается владельцу один раз
-    и в логе не появляется.
+    и в логе не появляется. Совпадение с чужим активным кодом — новая генерация (до 5 раз), иначе
+    ``code_unavailable``.
     """
     if not owner_allowed(issued_by):
         raise error("forbidden")
@@ -162,8 +189,9 @@ async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str
                 """,
                 (tenant_id, telegram_user_id),
             )
-        code = generate_code()
-        for _ in range(5):
+        code = ""
+        for _ in range(_CODE_GENERATION_TRIES):
+            candidate = generate_code()
             clash = await fetch_one(
                 conn,
                 """
@@ -171,20 +199,26 @@ async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str
                 where tenant_id = %s and code_hash = %s and used_at is null and revoked_at is null
                 limit 1
                 """,
-                (tenant_id, code_hash(tenant_id, code)),
+                (tenant_id, _code_hash(tenant_id, candidate)),
             )
             if not clash:
+                code = candidate
                 break
-            code = generate_code()
+        if not code:
+            raise error("code_unavailable")
         expires_at = code_expires_at()
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                insert into login_link_codes (tenant_id, code_hash, telegram_user_id, issued_by, expires_at)
-                values (%s, %s, %s, %s, %s)
-                """,
-                (tenant_id, code_hash(tenant_id, code), telegram_user_id, int(issued_by), expires_at),
-            )
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    insert into login_link_codes (tenant_id, code_hash, telegram_user_id, issued_by, expires_at)
+                    values (%s, %s, %s, %s, %s)
+                    """,
+                    (tenant_id, _code_hash(tenant_id, code), telegram_user_id, int(issued_by), expires_at),
+                )
+        except psycopg.errors.UniqueViolation as exc:
+            # Одновременная выдача тому же человеку или тот же код у соседа — транзакция откатится.
+            raise error("code_unavailable") from exc
     logger.info(
         "login_code_issued",
         extra={"tenant_id": tenant_id, "telegram_user_id": telegram_user_id, "issued_by": int(issued_by)},
@@ -192,26 +226,39 @@ async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str
     return {"code": code, "code_display": format_code(code), "person": person, "expires_at": expires_at}
 
 
-async def _active_code_row(conn: Any, tenant_id: str, code: str) -> dict[str, Any]:
-    """Строка кода или LoginIdentityError(code_invalid | code_used | code_expired)."""
+async def _claim_code(conn: Any, tenant_id: str, code: str, provider: str) -> dict[str, Any]:
+    """Атомарно забрать код: только активный (частичный индекс), иначе причина отказа.
+
+    LoginIdentityError: code_invalid | code_used | code_expired.
+    """
+    hashed = _code_hash(tenant_id, code)
     row = await fetch_one(
         conn,
         """
-        select code_id, telegram_user_id, issued_by, expires_at, used_at
-        from login_link_codes
+        update login_link_codes set used_at = now(), used_provider = %s
+        where tenant_id = %s and code_hash = %s and used_at is null and revoked_at is null
+          and expires_at > now()
+        returning code_id, telegram_user_id, issued_by
+        """,
+        (provider, tenant_id, hashed),
+    )
+    if row:
+        return row
+    state = await fetch_one(
+        conn,
+        """
+        select used_at, expires_at from login_link_codes
         where tenant_id = %s and code_hash = %s and revoked_at is null
         order by created_at desc
         limit 1
         """,
-        (tenant_id, code_hash(tenant_id, code)),
+        (tenant_id, hashed),
     )
-    if not row:
+    if not state:
         raise error("code_invalid")
-    if row.get("used_at"):
+    if state.get("used_at"):
         raise error("code_used")
-    if row["expires_at"] < utcnow():
-        raise error("code_expired")
-    return row
+    raise error("code_expired")
 
 
 async def _active_identity(conn: Any, tenant_id: str, provider: str, external_id: str) -> dict[str, Any] | None:
@@ -247,16 +294,20 @@ async def _insert_identity(
     display_name: str | None,
     linked_by: str,
 ) -> str:
-    row = await fetch_one(
-        conn,
-        """
-        insert into account_identities
-          (tenant_id, telegram_user_id, provider, external_id, email, display_name, linked_by)
-        values (%s, %s, %s, %s, %s, %s, %s)
-        returning identity_id
-        """,
-        (tenant_id, int(telegram_user_id), provider, str(external_id), email, display_name, linked_by),
-    )
+    try:
+        row = await fetch_one(
+            conn,
+            """
+            insert into account_identities
+              (tenant_id, telegram_user_id, provider, external_id, email, display_name, linked_by)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            returning identity_id
+            """,
+            (tenant_id, int(telegram_user_id), provider, str(external_id), email, display_name, linked_by),
+        )
+    except psycopg.errors.UniqueViolation as exc:
+        # Параллельная привязка той же личности другим кодом: частичный уникальный индекс не пустил.
+        raise error("identity_taken") from exc
     identity_id = str(row["identity_id"])
     logger.info(
         "login_identity_linked",
@@ -281,9 +332,10 @@ async def redeem_code_on(
     email: str | None,
     display_name: str | None,
 ) -> dict[str, Any]:
-    """Проверить код и привязать личность — на открытом соединении (одна транзакция с вызывающим).
+    """Забрать код и привязать личность — на открытом соединении (одна транзакция с вызывающим).
 
-    Ошибки: code_invalid, code_expired, code_used, identity_taken (external_id уже у другого человека).
+    Ошибки: code_invalid, code_expired, code_used, identity_taken (external_id уже у другого человека —
+    транзакция откатывается, код остаётся действующим для своего владельца).
     Та же личность у того же человека — не ошибка: код гасится, возвращается прежняя привязка.
     """
     provider = normalize_provider(provider)
@@ -292,7 +344,7 @@ async def redeem_code_on(
         _log_code_failed(tenant_id, provider, "code_invalid")
         raise error("code_invalid")
     try:
-        row = await _active_code_row(conn, tenant_id, normalized)
+        row = await _claim_code(conn, tenant_id, normalized, provider)
     except LoginIdentityError as exc:
         _log_code_failed(tenant_id, provider, exc.code)
         raise
@@ -301,28 +353,19 @@ async def redeem_code_on(
     if existing and int(existing["telegram_user_id"]) != telegram_user_id:
         _log_code_failed(tenant_id, provider, "identity_taken")
         raise error("identity_taken")
-    issuer = f"code:{row.get('issued_by') or ''}".rstrip(":")
     if existing:
-        identity_id = str(existing["identity_id"])
-        already = True
-    else:
-        identity_id = await _insert_identity(
-            conn,
-            tenant_id,
-            telegram_user_id=telegram_user_id,
-            provider=provider,
-            external_id=external_id,
-            email=email,
-            display_name=display_name,
-            linked_by=issuer,
-        )
-        already = False
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update login_link_codes set used_at = now(), used_provider = %s where code_id = %s",
-            (provider, row["code_id"]),
-        )
-    return {"telegram_user_id": telegram_user_id, "identity_id": identity_id, "already_linked": already}
+        return {"telegram_user_id": telegram_user_id, "identity_id": str(existing["identity_id"]), "already_linked": True}
+    identity_id = await _insert_identity(
+        conn,
+        tenant_id,
+        telegram_user_id=telegram_user_id,
+        provider=provider,
+        external_id=external_id,
+        email=email,
+        display_name=display_name,
+        linked_by=f"code:{row.get('issued_by') or ''}".rstrip(":"),
+    )
+    return {"telegram_user_id": telegram_user_id, "identity_id": identity_id, "already_linked": False}
 
 
 def _log_code_failed(tenant_id: str, provider: str, reason: str) -> None:
@@ -457,38 +500,82 @@ async def active_code_info(conn: Any, tenant_id: str, telegram_user_id: int) -> 
 # ---- попытки ввода кода (login_pending) -----------------------------------------------------------
 
 
-async def _count_attempt(conn: Any, tenant_id: str, pending_id: str, attempts: int) -> None:
-    """Попытка на ожидающую личность; MAX_CODE_ATTEMPTS-я неудачная закрывает строку — code_locked.
-
-    Закрытая строка держит замок до конца своего окна (``_locked``): новая строка на ту же личность
-    в этом окне не открывает ещё пять попыток."""
-    if attempts >= MAX_CODE_ATTEMPTS:
-        raise error("code_locked")
+async def _lock_subject(conn: Any, tenant_id: str, provider: str, external_id: str) -> None:
+    """Advisory-блокировка на личность до конца транзакции: параллельные попытки идут по одной."""
     async with conn.cursor() as cur:
         await cur.execute(
-            """
-            update login_pending
-            set attempts = attempts + 1,
-                status = case when attempts + 1 >= %s then 'failed' else status end
-            where pending_id = %s::uuid
-            """,
-            (MAX_CODE_ATTEMPTS, pending_id),
+            "select pg_advisory_xact_lock(hashtext(%s))",
+            (f"login_attempt:{tenant_id}:{provider}:{external_id}",),
         )
 
 
-async def _locked(conn: Any, tenant_id: str, provider: str, external_id: str) -> bool:
-    """Есть ли на эту личность закрытая (failed) строка, окно которой ещё не истекло."""
+async def _take_attempt(conn: Any, tenant_id: str, *, provider: str, external_id: str, pending_id: str) -> None:
+    """Одна попытка на личность (provider, external_id) в окне PENDING_TTL; всего MAX_CODE_ATTEMPTS.
+
+    Считается по всем строкам личности в окне (несколько входов через Google — один счётчик), под
+    блокировкой ``_lock_subject``; само увеличение — условный update с ``returning``, чтобы и без
+    блокировки нельзя было проскочить. Закрытая строка (failed) держит замок до конца окна.
+    """
+    used = await _attempts_used(conn, tenant_id, provider, external_id)
+    if used >= MAX_CODE_ATTEMPTS:
+        raise error("code_locked")
+    updated = await fetch_one(
+        conn,
+        """
+        update login_pending
+        set attempts = attempts + 1,
+            status = case when %s + 1 >= %s then 'failed' else status end
+        where pending_id = %s::uuid and attempts < %s
+        returning attempts
+        """,
+        (used, MAX_CODE_ATTEMPTS, pending_id, MAX_CODE_ATTEMPTS),
+    )
+    if not updated:
+        raise error("code_locked")
+
+
+async def _attempts_used(conn: Any, tenant_id: str, provider: str, external_id: str) -> int:
+    """Сколько попыток кода на эту личность по всем её строкам, окно которых ещё не истекло.
+
+    Только по счётчику: статус failed ставится и сгоревшему state, и строке после чужого браузера —
+    это не замок (иначе одна чужая ссылка запирала бы человеку его же Google)."""
     row = await fetch_one(
         conn,
         """
-        select 1 as locked from login_pending
-        where tenant_id = %s and provider = %s and external_id = %s and status = 'failed'
-          and expires_at > now()
-        limit 1
+        select coalesce(sum(attempts), 0)::int as used
+        from login_pending
+        where tenant_id = %s and provider = %s and external_id = %s and expires_at > now()
         """,
         (tenant_id, provider, str(external_id)),
     )
-    return bool(row)
+    return int((row or {}).get("used") or 0)
+
+
+async def _locked(conn: Any, tenant_id: str, provider: str, external_id: str) -> bool:
+    """Исчерпаны ли MAX_CODE_ATTEMPTS на эту личность в текущем окне."""
+    return await _attempts_used(conn, tenant_id, provider, external_id) >= MAX_CODE_ATTEMPTS
+
+
+async def _fail_pending(conn: Any, pending_id: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update login_pending set status = 'failed' where pending_id = %s::uuid and status <> 'linked'",
+            (pending_id,),
+        )
+
+
+async def _fail_pending_committed(tenant_id: str, pending_id: str) -> None:
+    """Закрыть pending своей транзакцией — до того, как вызывающий поднимет ошибку (иначе откат)."""
+    async with tenant_connection(tenant_id) as conn:
+        await _fail_pending(conn, pending_id)
+
+
+async def _mark_pending_linked(conn: Any, pending_id: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update login_pending set status = 'linked', used_at = now() where pending_id = %s::uuid",
+            (pending_id,),
+        )
 
 
 # ---- Max: код из мини-приложения -----------------------------------------------------------------
@@ -504,13 +591,14 @@ async def redeem_max_code(
     external_id = str(int(max_user_id))
     # Попытка — отдельной транзакцией: неверный код откатывает транзакцию проверки, а счётчик должен остаться.
     async with tenant_connection(tenant_id) as conn:
+        await _lock_subject(conn, tenant_id, "max", external_id)
         if await _locked(conn, tenant_id, "max", external_id):
             _log_code_failed(tenant_id, "max", "code_locked")
             raise error("code_locked")
         pending = await fetch_one(
             conn,
             """
-            select pending_id, attempts from login_pending
+            select pending_id from login_pending
             where tenant_id = %s and provider = 'max' and external_id = %s
               and status = 'awaiting_code' and expires_at > now()
             order by created_at desc limit 1
@@ -523,12 +611,16 @@ async def redeem_max_code(
                 """
                 insert into login_pending (tenant_id, provider, status, external_id, display_name, expires_at)
                 values (%s, 'max', 'awaiting_code', %s, %s, %s)
-                returning pending_id, attempts
+                returning pending_id
                 """,
                 (tenant_id, external_id, display_name, pending_expires_at()),
             )
         pending_id = str(pending["pending_id"])
-        await _count_attempt(conn, tenant_id, pending_id, int(pending["attempts"] or 0))
+        try:
+            await _take_attempt(conn, tenant_id, provider="max", external_id=external_id, pending_id=pending_id)
+        except LoginIdentityError as exc:
+            _log_code_failed(tenant_id, "max", exc.code)
+            raise
     async with tenant_connection(tenant_id) as conn:
         result = await redeem_code_on(
             conn,
@@ -543,14 +635,6 @@ async def redeem_max_code(
     return result
 
 
-async def _mark_pending_linked(conn: Any, pending_id: str) -> None:
-    async with conn.cursor() as cur:
-        await cur.execute(
-            "update login_pending set status = 'linked', used_at = now() where pending_id = %s::uuid",
-            (pending_id,),
-        )
-
-
 # ---- Google: start → callback → код ---------------------------------------------------------------
 
 
@@ -559,10 +643,25 @@ def _absolute_return_to(host: str, return_to: str) -> str:
     value = str(return_to or "").strip() or "/"
     if "://" not in value:
         value = f"https://{str(host or '').strip().lower()}{value if value.startswith('/') else '/' + value}"
-    safe = sanitize_return_to(value)
+    try:
+        safe = sanitize_return_to(value)
+    except HTTPException as exc:
+        raise error("invalid_return_to") from exc
     if not safe.startswith("https://"):
         raise error("invalid_return_to")
     return safe
+
+
+async def return_target(tenant_id: str, *, host: str, return_to: str) -> str:
+    """Куда вернуть браузер с ошибкой: страница из return_to, при негодном пути — корень того же хоста.
+
+    Негодный хост (не семья и не витрина) — LoginIdentityError(invalid_return_to): редиректить некуда.
+    """
+    await warm_hosts(tenant_id)
+    try:
+        return _absolute_return_to(host, return_to)
+    except LoginIdentityError:
+        return _absolute_return_to(host, "/")
 
 
 def request_host(headers: Any) -> str:
@@ -572,12 +671,22 @@ def request_host(headers: Any) -> str:
 
 
 async def google_start(
-    tenant_id: str, *, host: str, return_to: str, visitor_session_id: str | None
-) -> str:
-    """Адрес Google для редиректа. Состояние — строка login_pending (state/nonce хешами, PKCE)."""
+    tenant_id: str,
+    *,
+    host: str,
+    return_to: str,
+    visitor_session_id: str | None,
+    browser_key: str | None = None,
+) -> tuple[str, str]:
+    """(адрес Google, ключ браузера). Состояние — строка login_pending (state/nonce/ключ хешами, PKCE).
+
+    ``browser_key`` — ключ, который сайт держит в sessionStorage (хосты вне семьи cookie); иначе
+    генерируется здесь и уходит в cookie wwc_oauth. Негодный ключ — как отсутствующий.
+    """
     config = google_oauth.require_google_config()
     await warm_hosts(tenant_id)
     target = _absolute_return_to(host, return_to)
+    key = normalize_browser_key(browser_key) or new_browser_key()
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     verifier, challenge = pkce_pair()
@@ -588,15 +697,16 @@ async def google_start(
                 """
                 insert into login_pending
                   (tenant_id, provider, status, state_hash, nonce_hash, code_verifier, host, return_to,
-                   visitor_session_id, expires_at)
-                values (%s, 'google', 'started', %s, %s, %s, %s, %s, %s::uuid, %s)
+                   visitor_session_id, browser_key_hash, expires_at)
+                values (%s, 'google', 'started', %s, %s, %s, %s, %s, %s::uuid, %s, %s)
                 """,
                 (
                     tenant_id, sha256_hex(state), sha256_hex(nonce), verifier,
-                    urlparse(target).netloc, target, _uuid_or_none(session_raw), pending_expires_at(),
+                    urlparse(target).netloc, target, _uuid_or_none(session_raw), sha256_hex(key),
+                    pending_expires_at(),
                 ),
             )
-    return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=challenge)
+    return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=challenge), key
 
 
 def _uuid_or_none(value: str | None) -> str | None:
@@ -608,16 +718,51 @@ def _uuid_or_none(value: str | None) -> str | None:
         return None
 
 
+async def _new_awaiting(
+    conn: Any,
+    tenant_id: str,
+    *,
+    status: str,
+    pending: dict[str, Any],
+    claims: dict[str, Any],
+) -> str:
+    """Строка «ждёт код» / «ждёт подтверждения браузера» с тем же ключом браузера; возвращает link token."""
+    link_token = secrets.token_urlsafe(24)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into login_pending
+              (tenant_id, provider, status, host, return_to, visitor_session_id, browser_key_hash,
+               external_id, email, display_name, link_token_hash, expires_at)
+            values (%s, 'google', %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                tenant_id, status, str(pending["host"]), str(pending["return_to"]),
+                _uuid_or_none(str(pending.get("visitor_session_id") or "")), pending.get("browser_key_hash"),
+                claims["sub"], claims["email"], claims["name"], sha256_hex(link_token), pending_expires_at(),
+            ),
+        )
+    return link_token
+
+
 async def google_callback(
-    tenant_id: str, *, state: str, code: str | None, oauth_error: str | None
+    tenant_id: str,
+    *,
+    state: str,
+    code: str | None,
+    oauth_error: str | None,
+    browser_key: str | None,
+    callback_host: str,
 ) -> dict[str, Any]:
     """Результат callback для ручки.
 
     {"outcome": "signed_in", telegram_user_id, host, return_to, visitor_session_id}
-    {"outcome": "link_required", link_token, host, return_to}
+    {"outcome": "link_required", link_token, claim: bool, host, return_to}
+        claim=True — Google уже привязан, но хост вне семьи cookie: сайт подтверждает браузер ключом
+        через POST /login/link без кода.
     {"outcome": "error", error, host, return_to}
-    google_state_invalid (неизвестный/просроченный state) поднимается как LoginIdentityError —
-    хоста для возврата в этом случае нет.
+    LoginIdentityError: google_state_invalid (неизвестный/просроченный/повторный state),
+    oauth_browser_mismatch (callback открыт не в том браузере, где начали вход) — хоста для возврата нет.
     """
     config = google_oauth.require_google_config()
     state_hash = sha256_hex(str(state or "").strip())
@@ -625,7 +770,8 @@ async def google_callback(
         pending = await fetch_one(
             conn,
             """
-            select pending_id, status, nonce_hash, code_verifier, host, return_to, visitor_session_id, expires_at
+            select pending_id, status, nonce_hash, code_verifier, host, return_to, visitor_session_id,
+                   browser_key_hash, expires_at
             from login_pending
             where tenant_id = %s and provider = 'google' and state_hash = %s
             limit 1
@@ -637,13 +783,21 @@ async def google_callback(
         if pending["expires_at"] < utcnow():
             raise error("google_state_invalid", reason="expired")
         # state одноразовый: повторный callback с тем же state — ошибка, а не второй вход.
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "update login_pending set status = 'failed' where pending_id = %s::uuid",
-                (str(pending["pending_id"]),),
-            )
+        await _fail_pending(conn, str(pending["pending_id"]))
     host, return_to = str(pending["host"]), str(pending["return_to"])
     base = {"host": host, "return_to": return_to}
+    # Браузер: cookie семьи обязана быть, если хост входа в семье cookie callback-хоста; иначе сайт
+    # подтверждает ключом на шаге /login/link (deferred).
+    deferred = False
+    if browser_key:
+        if not browser_key_matches(browser_key, pending.get("browser_key_hash")):
+            logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "cookie"})
+            raise error("oauth_browser_mismatch")
+    elif same_cookie_family(callback_host, host):
+        logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "no_cookie"})
+        raise error("oauth_browser_mismatch")
+    else:
+        deferred = True
     if oauth_error or not code:
         logger.info("login_google_denied", extra={"tenant_id": tenant_id, "reason": str(oauth_error or "no_code")[:40]})
         return {"outcome": "error", "error": "google_denied", **base}
@@ -660,72 +814,139 @@ async def google_callback(
     async with tenant_connection(tenant_id) as conn:
         state_name, telegram_user_id = await identity_state(conn, tenant_id, "google", claims["sub"])
         if state_name == "active" and telegram_user_id is not None:
-            return {
-                "outcome": "signed_in",
-                "telegram_user_id": telegram_user_id,
-                "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
-                **base,
-            }
+            if not deferred:
+                return {
+                    "outcome": "signed_in",
+                    "telegram_user_id": telegram_user_id,
+                    "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
+                    **base,
+                }
+            link_token = await _new_awaiting(conn, tenant_id, status="awaiting_claim", pending=pending, claims=claims)
+            return {"outcome": "link_required", "link_token": link_token, "claim": True, **base}
         if await _locked(conn, tenant_id, "google", claims["sub"]):
             # Пять неверных кодов подряд: новый вход через Google в том же окне попыток не добавляет.
             _log_code_failed(tenant_id, "google", "code_locked")
             return {"outcome": "error", "error": "code_locked", **base}
-        link_token = secrets.token_urlsafe(24)
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                insert into login_pending
-                  (tenant_id, provider, status, host, return_to, visitor_session_id,
-                   external_id, email, display_name, link_token_hash, expires_at)
-                values (%s, 'google', 'awaiting_code', %s, %s, %s::uuid, %s, %s, %s, %s, %s)
-                """,
-                (
-                    tenant_id, host, return_to, _uuid_or_none(str(pending.get("visitor_session_id") or "")),
-                    claims["sub"], claims["email"], claims["name"], sha256_hex(link_token), pending_expires_at(),
-                ),
-            )
-    return {"outcome": "link_required", "link_token": link_token, **base}
+        link_token = await _new_awaiting(conn, tenant_id, status="awaiting_code", pending=pending, claims=claims)
+    return {"outcome": "link_required", "link_token": link_token, "claim": False, **base}
 
 
-async def link_pending(tenant_id: str, *, link_token: str, code: str) -> dict[str, Any]:
-    """«Введите код от Виктора» после Google: привязать и вернуть, кому делать сессию.
+async def _awaiting_row(conn: Any, tenant_id: str, link_token: str) -> dict[str, Any]:
+    pending = await fetch_one(
+        conn,
+        """
+        select pending_id, status, provider, external_id, email, display_name, visitor_session_id,
+               browser_key_hash, expires_at, attempts
+        from login_pending
+        where tenant_id = %s and link_token_hash = %s
+        limit 1
+        """,
+        (tenant_id, sha256_hex(str(link_token or "").strip())),
+    )
+    if not pending or pending.get("status") not in {"awaiting_code", "awaiting_claim"}:
+        raise error("pending_invalid")
+    if pending["expires_at"] < utcnow():
+        raise error("pending_expired")
+    return pending
 
-    Ошибки: pending_invalid, pending_expired, code_locked, code_invalid, code_expired, code_used, identity_taken.
-    """
-    token_hash = sha256_hex(str(link_token or "").strip())
+
+async def pending_info(tenant_id: str, *, link_token: str) -> dict[str, Any]:
+    """Экран кода: {provider, email_masked, display_name, status} — без самого e-mail и без ключа."""
     async with tenant_connection(tenant_id) as conn:
-        pending = await fetch_one(
-            conn,
-            """
-            select pending_id, status, provider, external_id, email, display_name, visitor_session_id,
-                   expires_at, attempts
-            from login_pending
-            where tenant_id = %s and link_token_hash = %s
-            limit 1
-            """,
-            (tenant_id, token_hash),
-        )
-        if not pending or pending.get("status") != "awaiting_code":
+        pending = await _awaiting_row(conn, tenant_id, link_token)
+    return {
+        "provider": str(pending["provider"]),
+        "email_masked": mask_email(pending.get("email")),
+        "display_name": str(pending.get("display_name") or ""),
+        "status": str(pending["status"]),
+    }
+
+
+async def link_pending(
+    tenant_id: str, *, link_token: str, code: str | None, browser_key: str | None
+) -> dict[str, Any]:
+    """«Введите код от Виктора» после Google (или подтверждение браузера, когда Google уже привязан).
+
+    Ошибки: pending_invalid, pending_expired, oauth_browser_mismatch (ключ не того браузера — pending
+    закрывается), code_required, code_locked, code_invalid, code_expired, code_used, identity_taken.
+    """
+    async with tenant_connection(tenant_id) as conn:
+        pending = await _awaiting_row(conn, tenant_id, link_token)
+    pending_id = str(pending["pending_id"])
+    if not browser_key_matches(browser_key, pending.get("browser_key_hash")):
+        # Закрыть — отдельной транзакцией, потом ошибка (внутри блока откат стёр бы закрытие).
+        await _fail_pending_committed(tenant_id, pending_id)
+        logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "link"})
+        raise error("oauth_browser_mismatch")
+    provider, external_id = str(pending["provider"]), str(pending["external_id"])
+    if pending["status"] == "awaiting_claim":
+        async with tenant_connection(tenant_id) as conn:
+            state_name, telegram_user_id = await identity_state(conn, tenant_id, provider, external_id)
+            if state_name == "active" and telegram_user_id is not None:
+                await _mark_pending_linked(conn, pending_id)
+        if state_name != "active" or telegram_user_id is None:
+            await _fail_pending_committed(tenant_id, pending_id)
             raise error("pending_invalid")
-        if pending["expires_at"] < utcnow():
-            raise error("pending_expired")
-        # Попытка фиксируется до проверки кода и своей транзакцией (см. redeem_max_code).
-        await _count_attempt(conn, tenant_id, str(pending["pending_id"]), int(pending["attempts"] or 0))
+        return {
+            "telegram_user_id": telegram_user_id,
+            "identity_id": None,
+            "already_linked": True,
+            "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
+        }
+    if not str(code or "").strip():
+        raise error("code_required")
+    # Попытка фиксируется до проверки кода и своей транзакцией (см. redeem_max_code).
+    async with tenant_connection(tenant_id) as conn:
+        await _lock_subject(conn, tenant_id, provider, external_id)
+        try:
+            await _take_attempt(conn, tenant_id, provider=provider, external_id=external_id, pending_id=pending_id)
+        except LoginIdentityError as exc:
+            _log_code_failed(tenant_id, provider, exc.code)
+            raise
     async with tenant_connection(tenant_id) as conn:
         result = await redeem_code_on(
             conn,
             tenant_id,
-            code=code,
-            provider=str(pending["provider"]),
-            external_id=str(pending["external_id"]),
+            code=str(code),
+            provider=provider,
+            external_id=external_id,
             email=pending.get("email"),
             display_name=pending.get("display_name"),
         )
-        await _mark_pending_linked(conn, str(pending["pending_id"]))
+        await _mark_pending_linked(conn, pending_id)
     return {
         **result,
         "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
     }
+
+
+# ---- чистка (worker) ------------------------------------------------------------------------------
+
+
+async def purge_expired_login_rows(tenant_ids: list[str]) -> int:
+    """Удалить pending и коды, просроченные больше суток назад; один тенант не ломает остальные."""
+    deleted = 0
+    for tenant_id in tenant_ids:
+        try:
+            async with tenant_connection(tenant_id) as conn:
+                for table in ("login_pending", "login_link_codes"):
+                    rows = await fetch_all(
+                        conn,
+                        f"delete from {table} where tenant_id = %s and expires_at < now() - interval '{PURGE_AFTER}' returning 1 as n",
+                        (tenant_id,),
+                    )
+                    deleted += len(rows)
+        except Exception:
+            logger.warning("login_cleanup_failed", extra={"tenant_id": tenant_id}, exc_info=True)
+    return deleted
+
+
+async def login_cleanup_step() -> int:
+    """Шаг worker: чистка у всех активных тенантов."""
+    settings = get_settings()
+    async with get_pool().connection(timeout=settings.database_timeout_sec) as conn:
+        rows = await fetch_all(conn, "select tenant_id from tenants where status = 'active' order by tenant_id")
+    return await purge_expired_login_rows([str(r["tenant_id"]) for r in rows])
 
 
 # ---- сессии и ссылки возврата ---------------------------------------------------------------------

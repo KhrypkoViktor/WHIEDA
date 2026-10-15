@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import re
 import secrets
@@ -30,6 +31,12 @@ GOOGLE_SCOPE = "openid email profile"
 
 LINK_FRAGMENT = "wwc-link"
 LINK_ERROR_FRAGMENT = "wwc-link-error"
+
+# Браузер, начавший Google-вход: cookie на семью .wwc.best (или ключ, который сайт держит в sessionStorage
+# для хостов вне семьи). Callback и «ввести код» принимаются только из этого браузера.
+OAUTH_COOKIE_NAME = "wwc_oauth"
+OAUTH_COOKIE_TTL_SEC = int(PENDING_TTL.total_seconds())
+BROWSER_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
 class LoginIdentityError(Exception):
@@ -61,6 +68,9 @@ ERROR_STATUS = {
     "forbidden": 403,
     "partner_not_found": 404,
     "partner_ambiguous": 409,
+    "oauth_browser_mismatch": 400,
+    "code_required": 400,
+    "code_unavailable": 503,
 }
 
 
@@ -98,9 +108,41 @@ def format_code(code: str) -> str:
     return f"{code[:3]} {code[3:]}"
 
 
-def code_hash(tenant_id: str, code: str) -> str:
-    """Хеш кода с тенантом: в базе кода нет, а одинаковые коды разных тенантов не совпадают."""
-    return sha256_hex(f"{tenant_id}:{code}")
+def code_hash(tenant_id: str, code: str, secret: str | None = None) -> str:
+    """Хеш кода с тенантом; с серверным секретом — HMAC-SHA256 (6 цифр иначе перебираются по дампу базы).
+
+    Без секрета (локальная разработка) — обычный sha256; какой секрет брать, решает service._code_hash."""
+    message = f"{tenant_id}:{code}"
+    if secret:
+        return hmac.new(secret.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
+    return sha256_hex(message)
+
+
+def new_browser_key() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def normalize_browser_key(raw: Any) -> str | None:
+    value = str(raw or "").strip()
+    return value if BROWSER_KEY_RE.fullmatch(value) else None
+
+
+def browser_key_matches(provided: Any, stored_hash: Any) -> bool:
+    key = normalize_browser_key(provided)
+    if not key or not stored_hash:
+        return False
+    return secrets.compare_digest(sha256_hex(key), str(stored_hash))
+
+
+def mask_email(email: Any) -> str:
+    """evgenia@example.com → e***a@example.com (экран «привязываем Google …»)."""
+    value = str(email or "").strip()
+    if "@" not in value:
+        return ""
+    local, domain = value.rsplit("@", 1)
+    if len(local) <= 2:
+        return f"{local[:1]}***@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
 
 
 def code_expires_at(now: datetime | None = None) -> datetime:

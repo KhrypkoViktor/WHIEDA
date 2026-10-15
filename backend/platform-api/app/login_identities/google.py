@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlencode
 
@@ -24,8 +24,8 @@ EXCHANGE_TIMEOUT_SEC = 10.0
 @dataclass(frozen=True)
 class GoogleOAuthConfig:
     client_id: str
-    client_secret: str
-    redirect_uri: str
+    client_secret: str = field(repr=False)
+    redirect_uri: str = ""
 
 
 def google_config() -> GoogleOAuthConfig | None:

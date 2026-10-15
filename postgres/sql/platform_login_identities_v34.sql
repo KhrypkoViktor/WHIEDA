@@ -68,8 +68,7 @@ create table if not exists login_pending (
   tenant_id text not null references tenants (tenant_id),
   pending_id uuid not null default gen_random_uuid(),
   provider text not null check (provider in ('google', 'max')),
-  status text not null default 'started'
-    check (status in ('started', 'awaiting_code', 'linked', 'failed')),
+  status text not null default 'started',
   -- Google OAuth до callback: state и nonce хешами, PKCE verifier открытым (одноразовый, 15 минут).
   state_hash text,
   nonce_hash text,
@@ -77,6 +76,9 @@ create table if not exists login_pending (
   host text not null default '',
   return_to text not null default '/',
   visitor_session_id uuid,
+  -- Браузер, который начал вход (cookie wwc_oauth или ключ сайта), хешем: callback и «ввести код»
+  -- принимаются только из него — чужую ссылку callback подсунуть нельзя (ревью 15.10.2026, P0).
+  browser_key_hash text,
   -- Кто пришёл (после callback Google / из initData Max) и токен для «Введите код от Виктора».
   external_id text,
   email text,
@@ -88,6 +90,13 @@ create table if not exists login_pending (
   used_at timestamptz,
   primary key (pending_id)
 );
+
+-- Повторный прогон на уже созданной таблице: колонка браузера и статус awaiting_claim
+-- (Google уже привязан, но хост вне семьи cookie — сайт подтверждает браузер ключом).
+alter table login_pending add column if not exists browser_key_hash text;
+alter table login_pending drop constraint if exists login_pending_status_check;
+alter table login_pending add constraint login_pending_status_check
+  check (status in ('started', 'awaiting_code', 'awaiting_claim', 'linked', 'failed'));
 
 create unique index if not exists login_pending_state_uq
   on login_pending (tenant_id, state_hash)

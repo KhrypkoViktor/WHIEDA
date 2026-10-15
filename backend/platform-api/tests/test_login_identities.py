@@ -1,6 +1,6 @@
 """Вход через Google/Max по коду владельца (V34, 15.10.2026) — правила, ручки, бот; база — подделки.
 
-Настоящий SQL (миграция, RLS, попытки, бэкфилл) — tests/test_login_identities_postgres.py.
+Настоящий SQL (миграция, RLS, гонки, бэкфилл, чистка) — tests/test_login_identities_postgres.py.
 """
 
 from __future__ import annotations
@@ -17,12 +17,14 @@ import pytest
 from fastapi import HTTPException
 
 from app.login_identities import bot, rules, service
-from app.login_identities.rules import LoginIdentityError
+from app.login_identities.rules import OAUTH_COOKIE_NAME, LoginIdentityError
 from app.settings import get_settings
+from app.telegram.processor import process_core_telegram_update
 from app.telegram.update_parser import TelegramMessage
 
 HOST = {"host": "wwc.best"}
 OWNER = 2
+KEY = "browser-key-0123456789abcdefghij"
 
 
 def _jwt(claims: dict) -> str:
@@ -47,6 +49,8 @@ def google_env(monkeypatch):
     monkeypatch.setenv("PLATFORM_GOOGLE_OAUTH_CLIENT_SECRET", "secret-1")
     monkeypatch.setenv("PLATFORM_GOOGLE_OAUTH_REDIRECT", "https://wwc.best/api/v1/content-access/login/google/callback")
     monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", str(OWNER))
+    monkeypatch.delenv("PLATFORM_LOGIN_CODE_SECRET", raising=False)
+    monkeypatch.delenv("PLATFORM_MEDIA_SIGNING_SECRET", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -64,6 +68,37 @@ def test_code_is_six_digits_and_tolerates_how_people_type_it():
     for bad in ("48392", "4839210", "48392a", "", None):
         assert rules.normalize_code(bad) is None, bad
     assert rules.code_hash("whieda", "483921") != rules.code_hash("other", "483921"), "hash carries the tenant"
+
+
+def test_code_hash_is_hmac_with_a_server_secret_and_sha256_without(monkeypatch):
+    import hashlib
+    import hmac
+
+    plain = rules.code_hash("whieda", "483921")
+    assert plain == hashlib.sha256(b"whieda:483921").hexdigest()
+    keyed = rules.code_hash("whieda", "483921", "pepper")
+    assert keyed == hmac.new(b"pepper", b"whieda:483921", hashlib.sha256).hexdigest() and keyed != plain
+    monkeypatch.setenv("PLATFORM_LOGIN_CODE_SECRET", "login-secret")
+    monkeypatch.setenv("PLATFORM_MEDIA_SIGNING_SECRET", "media-secret")
+    get_settings.cache_clear()
+    try:
+        assert service._code_hash("whieda", "483921") == rules.code_hash("whieda", "483921", "login-secret")
+        monkeypatch.delenv("PLATFORM_LOGIN_CODE_SECRET")
+        get_settings.cache_clear()
+        assert service._code_hash("whieda", "483921") == rules.code_hash("whieda", "483921", "media-secret"), "falls back to the media secret"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_browser_key_rules_and_email_masking():
+    key = rules.new_browser_key()
+    assert rules.normalize_browser_key(key) == key and len(key) >= 32
+    assert rules.normalize_browser_key("short") is None and rules.normalize_browser_key("bad key with spaces!!") is None
+    assert rules.browser_key_matches(key, rules.sha256_hex(key))
+    assert not rules.browser_key_matches(key + "x", rules.sha256_hex(key))
+    assert not rules.browser_key_matches(None, rules.sha256_hex(key)) and not rules.browser_key_matches(key, None)
+    assert rules.mask_email("evgenia@example.com") == "e***a@example.com"
+    assert rules.mask_email("ab@x.ru") == "a***@x.ru" and rules.mask_email("") == "" and rules.mask_email("nope") == ""
 
 
 @pytest.mark.parametrize(("text", "expected"), [
@@ -140,21 +175,29 @@ def test_same_cookie_family(monkeypatch):
         get_settings.cache_clear()
 
 
+def test_google_config_never_prints_the_secret(google_env):
+    from app.login_identities.google import google_config
+
+    config = google_config()
+    assert config is not None and "secret-1" not in repr(config) and "secret-1" not in str(config)
+
+
 # ---- redeem (подделка соединения) ------------------------------------------------------------------
 
 
 class FakeConn:
-    """login_link_codes + account_identities по префиксу запроса."""
+    """login_link_codes + account_identities по префиксу запроса; захват кода — update … returning."""
 
     def __init__(self) -> None:
         now = datetime.now(timezone.utc)
         self.codes = {
-            rules.code_hash("whieda", "111111"): {"code_id": "c1", "telegram_user_id": 700, "issued_by": OWNER, "expires_at": now + timedelta(hours=1), "used_at": None},
-            rules.code_hash("whieda", "222222"): {"code_id": "c2", "telegram_user_id": 701, "issued_by": OWNER, "expires_at": now - timedelta(hours=1), "used_at": None},
-            rules.code_hash("whieda", "333333"): {"code_id": "c3", "telegram_user_id": 702, "issued_by": OWNER, "expires_at": now + timedelta(hours=1), "used_at": now},
+            service._code_hash("whieda", "111111"): {"code_id": "c1", "telegram_user_id": 700, "issued_by": OWNER, "expires_at": now + timedelta(hours=1), "used_at": None},
+            service._code_hash("whieda", "222222"): {"code_id": "c2", "telegram_user_id": 701, "issued_by": OWNER, "expires_at": now - timedelta(hours=1), "used_at": None},
+            service._code_hash("whieda", "333333"): {"code_id": "c3", "telegram_user_id": 702, "issued_by": OWNER, "expires_at": now + timedelta(hours=1), "used_at": now},
         }
         self.identities: list[dict] = []
         self.executed: list[tuple[str, tuple]] = []
+        self.always_clash = False
 
     def cursor(self):
         conn = self
@@ -173,8 +216,17 @@ class FakeConn:
 
     async def fetch_one(self, conn, query, params=()):  # noqa: ARG002
         q = " ".join(query.split())
-        if q.startswith("select code_id, telegram_user_id, issued_by, expires_at, used_at"):
+        if q.startswith("update login_link_codes set used_at = now(), used_provider"):
+            row = self.codes.get(params[2])
+            if not row or row["used_at"] or row["expires_at"] <= datetime.now(timezone.utc):
+                return None
+            row["used_at"] = datetime.now(timezone.utc)
+            row["used_provider"] = params[0]
+            return {"code_id": row["code_id"], "telegram_user_id": row["telegram_user_id"], "issued_by": row["issued_by"]}
+        if q.startswith("select used_at, expires_at from login_link_codes"):
             return self.codes.get(params[1])
+        if q.startswith("select code_id from login_link_codes"):
+            return {"code_id": "clash"} if self.always_clash else None
         if q.startswith("select identity_id, telegram_user_id, email, display_name, linked_at"):
             return next((i for i in self.identities if (i["provider"], i["external_id"]) == (params[1], params[2]) and not i.get("revoked_at")), None)
         if q.startswith("select 1 as present"):
@@ -187,21 +239,22 @@ class FakeConn:
 
 
 @pytest.fixture
-def conn():
+def conn(google_env):
     fake = FakeConn()
     with patch.object(service, "fetch_one", fake.fetch_one):
         yield fake
 
 
 @pytest.mark.asyncio
-async def test_redeem_links_marks_the_code_used_and_logs_without_secrets(conn, caplog):
+async def test_redeem_claims_the_code_atomically_and_logs_without_secrets(conn, caplog):
     import logging
 
     with caplog.at_level(logging.INFO, logger="whieda.login_identities"):
         out = await service.redeem_code_on(conn, "whieda", code="111 111", provider="google", external_id="g-1", email="e@x.com", display_name="Е")
     assert out["telegram_user_id"] == 700 and not out["already_linked"]
     assert conn.identities[0]["linked_by"] == f"code:{OWNER}"
-    assert any("update login_link_codes set used_at" in q and p == ("google", "c1") for q, p in conn.executed)
+    claimed = conn.codes[service._code_hash("whieda", "111111")]
+    assert claimed["used_at"] and claimed["used_provider"] == "google", "claimed by the update itself, not a later set"
     record = next(r for r in caplog.records if r.getMessage() == "login_identity_linked")
     assert record.provider == "google" and record.linked_by == "code"
     assert "e@x.com" not in caplog.text and "111111" not in caplog.text
@@ -218,12 +271,20 @@ async def test_bad_codes_are_refused_with_a_reason(conn, code, expected):
 
 
 @pytest.mark.asyncio
+async def test_second_redeem_of_the_same_code_sees_it_used(conn):
+    await service.redeem_code_on(conn, "whieda", code="111111", provider="google", external_id="g-1", email=None, display_name=None)
+    with pytest.raises(LoginIdentityError) as info:
+        await service.redeem_code_on(conn, "whieda", code="111111", provider="max", external_id="5001", email=None, display_name=None)
+    assert info.value.code == "code_used"
+
+
+@pytest.mark.asyncio
 async def test_external_id_already_bound_to_another_person_is_refused(conn):
     conn.identities.append({"identity_id": "old", "provider": "google", "external_id": "g-1", "telegram_user_id": 999})
     with pytest.raises(LoginIdentityError) as info:
         await service.redeem_code_on(conn, "whieda", code="111111", provider="google", external_id="g-1", email=None, display_name=None)
-    assert info.value.code == "identity_taken"
-    assert not any("update login_link_codes" in q for q, _ in conn.executed), "the code stays valid for its owner"
+    assert info.value.code == "identity_taken" and len(conn.identities) == 1
+    # Захват кода уже в транзакции — её откат (при исключении) возвращает код владельцу; проверено на PostgreSQL.
 
 
 @pytest.mark.asyncio
@@ -231,6 +292,22 @@ async def test_same_person_linking_twice_is_idempotent(conn):
     conn.identities.append({"identity_id": "old", "provider": "google", "external_id": "g-1", "telegram_user_id": 700})
     out = await service.redeem_code_on(conn, "whieda", code="111111", provider="google", external_id="g-1", email=None, display_name=None)
     assert out == {"telegram_user_id": 700, "identity_id": "old", "already_linked": True}
+
+
+@pytest.mark.asyncio
+async def test_issue_code_gives_up_after_five_clashes(conn):
+    conn.always_clash = True
+
+    @asynccontextmanager
+    async def connection(_tenant):
+        yield conn
+
+    with patch.object(service, "tenant_connection", connection), \
+         patch.object(service, "resolve_person", AsyncMock(return_value={"ref_code": "volkova", "telegram_user_id": 700, "display_name": "Е"})):
+        with pytest.raises(LoginIdentityError) as info:
+            await service.issue_code("whieda", issued_by=OWNER, target="volkova")
+    assert info.value.code == "code_unavailable"
+    assert not any("insert into login_link_codes" in q for q, _ in conn.executed)
 
 
 def test_telegram_cannot_be_revoked_and_unknown_providers_are_rejected():
@@ -243,42 +320,60 @@ def test_telegram_cannot_be_revoked_and_unknown_providers_are_rejected():
 # ---- Google: start / callback / link (ручки) --------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_google_start_is_off_without_settings(client, monkeypatch):
-    for name in ("PLATFORM_GOOGLE_OAUTH_CLIENT_ID", "PLATFORM_GOOGLE_OAUTH_CLIENT_SECRET", "PLATFORM_GOOGLE_OAUTH_REDIRECT"):
-        monkeypatch.delenv(name, raising=False)
-    get_settings.cache_clear()
-    try:
-        response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "/me/"}, headers=HOST)
-    finally:
-        get_settings.cache_clear()
-    assert response.status_code == 503 and response.json()["error"] == "google_disabled"
+@asynccontextmanager
+async def _recording_connection(inserted: list, _tenant=None):
+    class Cursor:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return False
+
+        async def execute(self, query, params=None):
+            inserted.append((" ".join(query.split()), params))
+
+    yield SimpleNamespace(cursor=lambda: Cursor())
 
 
-@pytest.mark.asyncio
-async def test_google_start_redirects_to_google_with_pkce_and_state(client, google_env):
+@pytest.fixture
+def start_db():
     inserted: list[tuple] = []
 
     @asynccontextmanager
     async def connection(_tenant):
-        class Cursor:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, *_):
-                return False
-
-            async def execute(self, query, params=None):
-                inserted.append((" ".join(query.split()), params))
-
-        yield SimpleNamespace(cursor=lambda: Cursor())
+        async with _recording_connection(inserted) as conn:
+            yield conn
 
     with patch.object(service, "tenant_connection", connection), patch.object(service, "warm_hosts", AsyncMock()):
-        response = await client.get(
-            "/api/v1/content-access/login/google/start",
-            params={"return_to": "/price/", "visitor_session_id": "11111111-1111-1111-1111-111111111111"},
-            headers={"host": "samtsova.wwc.best"},
-        )
+        yield inserted
+
+
+@pytest.mark.asyncio
+async def test_google_start_sends_the_browser_back_with_an_error_when_google_is_off(client, monkeypatch):
+    for name in ("PLATFORM_GOOGLE_OAUTH_CLIENT_ID", "PLATFORM_GOOGLE_OAUTH_CLIENT_SECRET", "PLATFORM_GOOGLE_OAUTH_REDIRECT"):
+        monkeypatch.delenv(name, raising=False)
+    get_settings.cache_clear()
+    try:
+        with patch.object(service, "warm_hosts", AsyncMock()):
+            response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "/me/"}, headers={"host": "samtsova.wwc.best"})
+            assert response.status_code == 302
+            assert response.headers["location"] == "https://samtsova.wwc.best/me/#wwc-link-error=google_disabled"
+            # Негодный путь или чужой хост в return_to — корень хоста запроса.
+            response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "/admin/x"}, headers=HOST)
+            assert response.headers["location"] == "https://wwc.best/#wwc-link-error=google_disabled"
+            response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "https://evil.example/"}, headers=HOST)
+            assert response.status_code == 302 and response.headers["location"] == "https://wwc.best/#wwc-link-error=google_disabled"
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_google_start_redirects_to_google_with_pkce_state_and_a_browser_cookie(client, google_env, start_db):
+    response = await client.get(
+        "/api/v1/content-access/login/google/start",
+        params={"return_to": "/price/", "visitor_session_id": "11111111-1111-1111-1111-111111111111"},
+        headers={"host": "samtsova.wwc.best"},
+    )
     assert response.status_code == 302
     location = urlparse(response.headers["location"])
     assert location.netloc == "accounts.google.com"
@@ -287,56 +382,83 @@ async def test_google_start_redirects_to_google_with_pkce_and_state(client, goog
     assert query["redirect_uri"] == ["https://wwc.best/api/v1/content-access/login/google/callback"]
     assert query["scope"] == ["openid email profile"] and query["prompt"] == ["select_account"]
     assert response.headers["cache-control"] == "private, no-store"
-    (sql, params) = inserted[0]
+    cookie = response.headers["set-cookie"]
+    assert cookie.startswith(f"{OAUTH_COOKIE_NAME}=") and "Domain=.wwc.best" in cookie and "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie and "Max-Age=900" in cookie and "Secure" in cookie
+    key = cookie.split(";", 1)[0].split("=", 1)[1]
+    (sql, params) = start_db[0]
     assert sql.startswith("insert into login_pending")
     assert params[1] == rules.sha256_hex(query["state"][0]) and params[2] == rules.sha256_hex(query["nonce"][0])
     assert params[4] == "samtsova.wwc.best" and params[5] == "https://samtsova.wwc.best/price/"
     assert params[6] == "11111111-1111-1111-1111-111111111111"
+    assert params[7] == rules.sha256_hex(key), "the pending row remembers the browser that started"
     assert "secret-1" not in response.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_google_start_refuses_a_foreign_return_host(client, google_env):
-    with patch.object(service, "warm_hosts", AsyncMock()):
-        response = await client.get(
-            "/api/v1/content-access/login/google/start", params={"return_to": "https://evil.example/"}, headers=HOST
-        )
-    assert response.status_code == 400 and response.json()["error"] == "invalid_return_to"
+async def test_google_start_takes_the_site_key_for_hosts_outside_the_cookie_family(client, google_env, start_db):
+    response = await client.get(
+        "/api/v1/content-access/login/google/start", params={"return_to": "/me/", "browser_key": KEY}, headers=HOST
+    )
+    assert response.status_code == 302
+    assert response.headers["set-cookie"].startswith(f"{OAUTH_COOKIE_NAME}={KEY};")
+    assert start_db[0][1][7] == rules.sha256_hex(KEY)
 
 
 @pytest.mark.asyncio
-async def test_callback_with_known_identity_sets_the_cookie_on_the_redirect(client, google_env):
-    result = {"outcome": "signed_in", "telegram_user_id": 700, "host": "samtsova.wwc.best", "return_to": "https://samtsova.wwc.best/price/", "visitor_session_id": None}
-    with patch.object(service, "google_callback", AsyncMock(return_value=result)), \
+async def test_google_start_with_a_bad_path_goes_back_to_the_host_root(client, google_env):
+    with patch.object(service, "warm_hosts", AsyncMock()):
+        response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "/api/zzz"}, headers=HOST)
+        assert response.status_code == 302 and response.headers["location"] == "https://wwc.best/#wwc-link-error=invalid_return_to"
+        response = await client.get("/api/v1/content-access/login/google/start", params={"return_to": "https://evil.example/"}, headers=HOST)
+    # Чужой хост в return_to — тоже на корень хоста запроса (он проверен семьёй), без JSON в браузере.
+    assert response.status_code == 302 and response.headers["location"] == "https://wwc.best/#wwc-link-error=invalid_return_to"
+    assert "set-cookie" not in response.headers, "no oauth cookie without a Google redirect"
+
+
+SIGNED_IN = {"outcome": "signed_in", "telegram_user_id": 700, "host": "samtsova.wwc.best", "return_to": "https://samtsova.wwc.best/price/", "visitor_session_id": None}
+
+
+@pytest.mark.asyncio
+async def test_callback_passes_the_browser_cookie_and_always_returns_a_one_time_login(client, google_env):
+    with patch.object(service, "google_callback", AsyncMock(return_value=SIGNED_IN)) as callback, \
+         patch.object(service, "browser_login_url", AsyncMock(return_value="https://samtsova.wwc.best/price/#wwc-login=cid.nonce")) as browser, \
          patch.object(service, "session_for", AsyncMock(return_value=({"ok": True}, "raw-session"))) as session_for:
-        response = await client.get("/api/v1/content-access/login/google/callback", params={"state": "s", "code": "c"}, headers=HOST)
-    assert response.status_code == 302 and response.headers["location"] == "https://samtsova.wwc.best/price/"
-    cookie = response.headers["set-cookie"]
-    assert "wwc_content_session=raw-session" in cookie and "Domain=.wwc.best" in cookie and "HttpOnly" in cookie
+        response = await client.get(
+            "/api/v1/content-access/login/google/callback", params={"state": "s", "code": "c"},
+            headers=HOST, cookies={OAUTH_COOKIE_NAME: KEY},
+        )
+    assert response.status_code == 302 and response.headers["location"] == "https://samtsova.wwc.best/price/#wwc-login=cid.nonce"
+    assert callback.await_args.kwargs["browser_key"] == KEY and callback.await_args.kwargs["callback_host"] == "wwc.best"
+    browser.assert_awaited_once_with("whieda", telegram_user_id=700, return_to="https://samtsova.wwc.best/price/")
+    cookies = response.headers.get_list("set-cookie")
+    assert any("wwc_content_session=raw-session" in c and "Domain=.wwc.best" in c and "HttpOnly" in c for c in cookies), "family cookie in addition"
+    assert any(c.startswith(f"{OAUTH_COOKIE_NAME}=") and ("Max-Age=0" in c or "expires=" in c.lower()) for c in cookies), "oauth cookie cleared"
     session_for.assert_awaited_once_with("whieda", telegram_user_id=700, visitor_session_id=None, source="google_login")
 
 
 @pytest.mark.asyncio
-async def test_callback_for_a_showcase_host_hands_over_a_one_time_login(client, google_env):
-    result = {"outcome": "signed_in", "telegram_user_id": 700, "host": "academy.almira.by", "return_to": "https://academy.almira.by/academy/", "visitor_session_id": None}
+async def test_callback_for_a_showcase_host_hands_over_only_the_one_time_login(client, google_env):
+    result = {**SIGNED_IN, "host": "academy.almira.by", "return_to": "https://academy.almira.by/academy/"}
     with patch.object(service, "google_callback", AsyncMock(return_value=result)), \
-         patch.object(service, "browser_login_url", AsyncMock(return_value="https://academy.almira.by/academy/#wwc-login=cid.nonce")) as browser:
+         patch.object(service, "browser_login_url", AsyncMock(return_value="https://academy.almira.by/academy/#wwc-login=cid.nonce")), \
+         patch.object(service, "session_for", AsyncMock()) as session_for:
         response = await client.get("/api/v1/content-access/login/google/callback", params={"state": "s", "code": "c"}, headers=HOST)
     assert response.status_code == 302 and response.headers["location"].endswith("#wwc-login=cid.nonce")
-    assert "set-cookie" not in response.headers
-    browser.assert_awaited_once_with("whieda", telegram_user_id=700, return_to="https://academy.almira.by/academy/")
+    assert not any("wwc_content_session=" in c for c in response.headers.get_list("set-cookie"))
+    session_for.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_callback_without_identity_sends_the_site_to_the_code_screen(client, google_env):
-    result = {"outcome": "link_required", "link_token": "tok-1", "host": "wwc.best", "return_to": "https://wwc.best/me/"}
+    result = {"outcome": "link_required", "link_token": "tok-1", "claim": False, "host": "wwc.best", "return_to": "https://wwc.best/me/"}
     with patch.object(service, "google_callback", AsyncMock(return_value=result)):
         response = await client.get("/api/v1/content-access/login/google/callback", params={"state": "s", "code": "c"}, headers=HOST)
     assert response.status_code == 302 and response.headers["location"] == "https://wwc.best/me/#wwc-link=tok-1"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error", ["google_denied", "google_token_invalid", "email_unverified"])
+@pytest.mark.parametrize("error", ["google_denied", "google_token_invalid", "email_unverified", "code_locked"])
 async def test_callback_errors_go_back_to_the_page_with_a_code(client, google_env, error):
     result = {"outcome": "error", "error": error, "host": "wwc.best", "return_to": "https://wwc.best/me/"}
     with patch.object(service, "google_callback", AsyncMock(return_value=result)):
@@ -345,28 +467,61 @@ async def test_callback_errors_go_back_to_the_page_with_a_code(client, google_en
 
 
 @pytest.mark.asyncio
-async def test_unknown_state_is_a_plain_400(client, google_env):
-    with patch.object(service, "google_callback", AsyncMock(side_effect=rules.error("google_state_invalid"))):
+@pytest.mark.parametrize("code", ["google_state_invalid", "oauth_browser_mismatch"])
+async def test_unknown_state_or_foreign_browser_is_a_plain_400(client, google_env, code):
+    with patch.object(service, "google_callback", AsyncMock(side_effect=rules.error(code))):
         response = await client.get("/api/v1/content-access/login/google/callback", params={"state": "zzz", "code": "c"}, headers=HOST)
-    assert response.status_code == 400 and response.json()["error"] == "google_state_invalid"
+    assert response.status_code == 400 and response.json()["error"] == code
+    assert not any("wwc_content_session=" in c for c in response.headers.get_list("set-cookie"))
 
 
 @pytest.mark.asyncio
-async def test_link_with_the_owner_code_signs_in(client, google_env):
+async def test_pending_screen_shows_a_masked_email(client, google_env):
+    info = {"provider": "google", "email_masked": "e***a@example.com", "display_name": "Евгения", "status": "awaiting_code"}
+    with patch.object(service, "pending_info", AsyncMock(return_value=info)) as pending:
+        response = await client.get("/api/v1/content-access/login/pending/tok-1", headers=HOST)
+    assert response.status_code == 200 and response.json() == {"ok": True, **info}
+    assert response.headers["cache-control"] == "private, no-store"
+    pending.assert_awaited_once_with("whieda", link_token="tok-1")
+    with patch.object(service, "pending_info", AsyncMock(side_effect=rules.error("pending_invalid"))):
+        response = await client.get("/api/v1/content-access/login/pending/zzz", headers=HOST)
+    assert response.status_code == 404 and response.json()["error"] == "pending_invalid"
+
+
+@pytest.mark.asyncio
+async def test_link_with_the_owner_code_signs_in_and_prefers_the_body_key(client, google_env):
     linked = {"telegram_user_id": 700, "identity_id": "id-1", "already_linked": False, "visitor_session_id": None}
     with patch.object(service, "link_pending", AsyncMock(return_value=linked)) as link_pending, \
          patch.object(service, "session_for", AsyncMock(return_value=({"ok": True, "status": "authenticated", "expires_at": "2026-11-14T00:00:00+00:00"}, "raw-session"))):
-        response = await client.post("/api/v1/content-access/login/link", json={"pending_id": "tok-1", "code": "483 921"}, headers=HOST)
+        response = await client.post(
+            "/api/v1/content-access/login/link", json={"pending_id": "tok-1", "code": "483 921", "browser_key": KEY},
+            headers=HOST, cookies={OAUTH_COOKIE_NAME: "cookie-key-0123456789abcdefghij"},
+        )
     assert response.status_code == 200 and response.json()["status"] == "authenticated"
-    assert "wwc_content_session=raw-session" in response.headers["set-cookie"]
+    cookies = response.headers.get_list("set-cookie")
+    assert any("wwc_content_session=raw-session" in c for c in cookies)
+    assert any(c.startswith(f"{OAUTH_COOKIE_NAME}=") and ("Max-Age=0" in c or "expires=" in c.lower()) for c in cookies)
     assert response.headers["cache-control"] == "private, no-store"
-    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code="483 921")
+    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code="483 921", browser_key=KEY)
+
+
+@pytest.mark.asyncio
+async def test_link_falls_back_to_the_cookie_key_and_code_is_optional_for_a_claim(client, google_env):
+    linked = {"telegram_user_id": 700, "identity_id": None, "already_linked": True, "visitor_session_id": None}
+    with patch.object(service, "link_pending", AsyncMock(return_value=linked)) as link_pending, \
+         patch.object(service, "session_for", AsyncMock(return_value=({"ok": True, "status": "authenticated"}, "raw"))):
+        response = await client.post(
+            "/api/v1/content-access/login/link", json={"pending_id": "tok-1"}, headers=HOST, cookies={OAUTH_COOKIE_NAME: KEY},
+        )
+    assert response.status_code == 200
+    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code=None, browser_key=KEY)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("code", "status"), [
     ("code_invalid", 400), ("code_expired", 410), ("code_used", 409), ("code_locked", 429),
     ("identity_taken", 409), ("pending_invalid", 404), ("pending_expired", 410),
+    ("oauth_browser_mismatch", 400), ("code_required", 400),
 ])
 async def test_link_errors_carry_their_codes(client, google_env, code, status):
     with patch.object(service, "link_pending", AsyncMock(side_effect=rules.error(code))):
@@ -439,13 +594,37 @@ def sent(google_env):
 
 
 @pytest.mark.asyncio
-async def test_non_owner_cannot_issue_codes(sent):
+async def test_non_owner_words_are_not_a_command_and_get_no_reply(sent):
     with patch.object(service, "issue_code", AsyncMock()) as issue:
-        out = await bot.try_handle_login_identity_message(TENANT, _msg("код входа volkova", user_id=700), trace_id="t")
-    assert out["status"] == "forbidden" and sent == ["Команда недоступна."]
-    issue.assert_not_awaited()
+        assert await bot.try_handle_login_identity_message(TENANT, _msg("код входа не приходит", user_id=700), trace_id="t") is None
+        assert await bot.try_handle_login_identity_message(TENANT, _msg("код входа volkova", user_id=700), trace_id="t") is None
+    assert sent == [] and issue.assert_not_awaited() is None
     assert await bot.try_handle_login_identity_message(TENANT, _msg("привет"), trace_id="t") is None
     assert (await bot.try_handle_login_identity_message(TENANT, _msg("код входа x", chat_type="supergroup"), trace_id="t"))["status"] == "private_chat_required"
+
+
+@pytest.mark.asyncio
+async def test_partner_text_about_login_codes_reaches_the_next_handler_through_the_processor(
+    whieda_tenant, whieda_bot_binding, google_env, sent
+):
+    update = {"message": {"message_id": 5, "text": "код входа не приходит", "chat": {"id": 700, "type": "private"}, "from": {"id": 700}}}
+    with patch("app.telegram.processor._link_partner_chat", AsyncMock()), \
+         patch("app.telegram.processor.try_handle_wish_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_profile_reject_reason", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_shop_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_support_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_renewal_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_site_request_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_start_renewal_by_text", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_billing_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_referral_admin_message", AsyncMock(return_value=None)), \
+         patch("app.telegram.processor.try_handle_profile_requests_command", AsyncMock(return_value={"ok": True, "route": "next_handler"})) as next_handler, \
+         patch.object(service, "issue_code", AsyncMock()) as issue:
+        result = await process_core_telegram_update(whieda_tenant, update, "t1", binding=whieda_bot_binding)
+    assert result["route"] == "next_handler", "a partner's words fall through to the handlers after ours"
+    next_handler.assert_awaited_once()
+    issue.assert_not_awaited()
+    assert sent == [], "and the partner gets no «Команда недоступна.»"
 
 
 @pytest.mark.asyncio
@@ -501,6 +680,15 @@ def test_processor_routes_owner_commands_to_the_login_handler():
     from app.telegram import processor
 
     assert processor.try_handle_login_identity_message is bot.try_handle_login_identity_message
+
+
+def test_worker_runs_the_login_cleanup_hourly():
+    from app.jobs import worker
+
+    assert worker.login_cleanup_step is service.login_cleanup_step
+    assert worker.LOGIN_CLEANUP_INTERVAL_SEC == 3600.0
+    source = open(worker.__file__, encoding="utf-8").read()
+    assert "await login_cleanup_step()" in source and "LOGIN_CLEANUP_INTERVAL_SEC" in source.split("async def worker_loop", 1)[1]
 
 
 # ---- Max: код в мини-приложении (ручка) -----------------------------------------------------------------

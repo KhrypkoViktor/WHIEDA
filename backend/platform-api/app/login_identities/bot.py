@@ -1,7 +1,8 @@
 """Команды владельца в Telegram-боте: «код входа <кто>», «способы входа <кто>», «отвязать google|max <кто>».
 
-Только владелец (PLATFORM_BILLING_OWNER_TELEGRAM_ID) и super-admins; остальным — «Команда недоступна.»
-(как у referral_admin). Партнёру бот ничего не шлёт: код владелец передаёт сам. ``<кто>`` — ref,
+Только владелец (PLATFORM_BILLING_OWNER_TELEGRAM_ID) и super-admins. Для всех остальных это не команда:
+обработчик молча возвращает None, и «код входа не приходит» партнёра идёт дальше по цепочке — в поддержку
+(ревью 15.10.2026, P1). Партнёру бот ничего не шлёт: код владелец передаёт сам. ``<кто>`` — ref,
 id Telegram или имя (при нескольких совпадениях — список с ref).
 """
 
@@ -116,6 +117,9 @@ async def _unlink(tenant_id: str, *, provider: str, target: str, revoked_by: int
 async def try_handle_login_identity_message(
     tenant: TenantContext, msg: TelegramMessage, *, trace_id: str | None = None
 ) -> dict[str, Any] | None:
+    # Сначала — кто пишет: у не-владельца такого слова нет, текст уходит следующим обработчикам без ответа.
+    if not service.owner_allowed(msg.user_id):
+        return None
     parsed = parse_owner_command(msg.text)
     if parsed is None:
         return None
@@ -123,9 +127,6 @@ async def try_handle_login_identity_message(
     base = {"ok": True, "route": "login_identity_admin", "action": action, "trace_id": trace_id}
     if msg.chat_type != "private":
         return {**base, "status": "private_chat_required"}
-    if not service.owner_allowed(msg.user_id):
-        await _deliver(msg.chat_id, "Команда недоступна.")
-        return {**base, "ok": False, "status": "forbidden"}
     try:
         if action == "issue":
             issued = await service.issue_code(tenant.tenant_id, issued_by=msg.user_id, target=target)

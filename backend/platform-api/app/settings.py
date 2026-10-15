@@ -100,6 +100,11 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_GOOGLE_OAUTH_REDIRECT",
         description="Полный адрес callback, например https://wwc.best/api/v1/content-access/login/google/callback.",
     )
+    # Коды входа (6 цифр) хранятся HMAC-SHA256 с этим секретом; пусто → PLATFORM_MEDIA_SIGNING_SECRET;
+    # оба пустые → обычный sha256 (только локальная разработка). Смена секрета гасит выданные коды.
+    platform_login_code_secret: str | None = Field(
+        default=None, validation_alias="PLATFORM_LOGIN_CODE_SECRET"
+    )
     telegram_bot_username: str | None = Field(
         default=None,
         validation_alias="PLATFORM_TELEGRAM_BOT_USERNAME",
