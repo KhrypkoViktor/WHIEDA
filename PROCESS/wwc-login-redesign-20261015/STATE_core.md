@@ -53,14 +53,19 @@
 
 ### После ревью f988861 (15.10.2026)
 
-8. **P0, привязка к браузеру.** `/google/start` ставит cookie `wwc_oauth` (32 байта, семья `.wwc.best`,
-   HttpOnly, Secure, SameSite=Lax, 15 мин) — или берёт ключ сайта из query `browser_key` (хосты вне семьи,
-   ключ в sessionStorage); хеш — в `login_pending.browser_key_hash` и наследуется строкой «ждёт код».
-   Callback сверяет cookie (`compare_digest`): не тот браузер → 400 `oauth_browser_mismatch`, pending →
-   failed; cookie нет, а хост входа в семье callback-хоста → тоже отказ. Хост вне семьи: callback не может
-   проверить cookie → **всегда** `#wwc-link=<pending>`, а `/login/link` сверяет `browser_key` из body
-   (без кода, если Google уже привязан — статус `awaiting_claim`). Чужая ссылка callback у жертвы не
-   даёт ни привязки, ни чужой сессии.
+8. **P0, привязка к браузеру (после повторного ревью — строгие режимы).** Режим решается один раз на
+   `/google/start` по хосту входа относительно хоста callback из `PLATFORM_GOOGLE_OAUTH_REDIRECT`:
+   - **хост в семье cookie** (`.wwc.best`): ключ генерирует **только сервер** (`new_browser_key()`), он
+     уходит в cookie `wwc_oauth` (HttpOnly, Secure, Lax, 15 мин), хеш — `login_pending.browser_key_hash`.
+     `browser_key` из query **игнорируется** (не попадает ни в cookie, ни в базу). Callback и
+     `/login/link` сверяют **только cookie** — ключ в body не помогает;
+   - **хост вне семьи** (витрины на своём домене): `browser_key` из query обязателен (иначе
+     `browser_key_required`), хеш — отдельная колонка `site_key_hash`, cookie не ставится. Callback cookie
+     **не смотрит** (нет ложного `oauth_browser_mismatch`) и всегда отдаёт `#wwc-link=`; `/login/link`
+     сверяет **только `browser_key` из body** — cookie не помогает.
+   Между cookie и body подмены нет ни в одну сторону (`service.presented_key`). Закрытая атака: чужая
+   страница открывает жертве `start?browser_key=K`, атакующий делает свой start с K и ведёт жертву на свой
+   callback — у жертвы cookie = серверный ключ ≠ K, строка атакующего помнит свой серверный ключ → отказ.
 9. **P1, бот.** Не-владелец — это не команда: `owner_allowed` проверяется до разбора, возвращается None,
    «код входа не приходит» партнёра идёт дальше по цепочке (в поддержку), без «Команда недоступна».
 10. **P2, лимит попыток.** Под `pg_advisory_xact_lock` на личность (provider, external_id); считается по всем
@@ -80,8 +85,11 @@
     **Хеш кода — HMAC-SHA256 с `PLATFORM_LOGIN_CODE_SECRET`**, пусто → `PLATFORM_MEDIA_SIGNING_SECRET`
     (уже есть на бою), оба пустые → sha256 (только разработка). Выбрал новый ключ с запасным: смена
     медиа-секрета не должна гасить коды входа, и наоборот. Смена секрета = все выданные коды недействительны.
-14. **Site:** после успешного Google браузер всегда возвращается через `#wwc-login=<одноразовый>`
-    (`create_bot_login`, 10 мин) — сайту нужен явный сигнал; cookie семьи `.wwc.best` ставится дополнительно.
+14. **Site + P3 повторного ревью:** после успешного Google браузер возвращается **только** через
+    `#wwc-login=<одноразовый>` (`create_bot_login`, 10 мин); cookie сессии на callback **не ставится** —
+    одна сессия на вход, её создаёт сайт, погасив ссылку (выбран вариант «только `#wwc-login`», как
+    предложил ревьюер: сайту нужен явный сигнал). `POST /login/link` по-прежнему ставит cookie сессии в
+    ответе на XHR — там сигнал и так явный (200 `authenticated`).
 
 ## Контракт ручек (для Site-сессии)
 
@@ -93,34 +101,37 @@
 - `GET /api/v1/content-access/login/google/start?return_to=<путь|https://host/путь>[&visitor_session_id=<uuid>][&browser_key=<ключ>]`
   Браузерный переход (не XHR). Хост берётся из `return_to`, если он абсолютный, иначе из запроса
   (`X-Forwarded-Host`/`Host`); проверка как у Telegram-входа (`wwc.best`, `*.wwc.best`, витрины).
+  **Хост входа в семье `.wwc.best`** (wwc.best и все партнёрские поддомены):
   → `302` на `accounts.google.com` (PKCE S256, scope `openid email profile`, `prompt=select_account`)
-    **+ `Set-Cookie: wwc_oauth=<ключ>`** (Domain семьи `.wwc.best`, HttpOnly, Secure, SameSite=Lax, 15 мин).
-  `browser_key` — для хостов вне семьи cookie (витрины Академии): сайт генерирует ключ (16–128 символов
-  `[A-Za-z0-9_-]`, лучше 32+ байта), держит в sessionStorage, передаёт сюда и потом в `/login/link`.
-  На семье `.wwc.best` ключ не нужен — cookie делает то же сама.
-  → Google выключен: `302 https://<host><return_to>#wwc-link-error=google_disabled`; негодный путь
+    **+ `Set-Cookie: wwc_oauth=<серверный ключ>`** (Domain `.wwc.best`, HttpOnly, Secure, SameSite=Lax, 15 мин).
+    `browser_key` в query **не передавать** — он игнорируется.
+  **Хост вне семьи** (витрины Академии на своём домене):
+  → сайт генерирует ключ (16–128 символов `[A-Za-z0-9_-]`, лучше 32+ случайных байт), кладёт в
+    sessionStorage и передаёт как `browser_key` в query; → `302` на Google, cookie **не ставится**;
+    без ключа → `302 https://<host><return_to>#wwc-link-error=browser_key_required`.
+  Общее: Google выключен → `302 https://<host><return_to>#wwc-link-error=google_disabled`; негодный путь
     (`/admin`, `/api`, чужой хост в return_to): `302 https://<host>/#wwc-link-error=invalid_return_to`
     (host — хост запроса). JSON `400 invalid_return_to` — только если сам хост запроса не наш.
-- `GET /api/v1/content-access/login/google/callback?state=&code=` (или `&error=`) — ходит только Google,
-  с cookie `wwc_oauth`.
-  → `302 https://<host><return_to>#wwc-login=<одноразовый>` — личность привязана: **всегда** так, сайт
-    гасит `#wwc-login=` как после бота (`BotLogin.astro`); если хост в семье `.wwc.best`, cookie
-    `wwc_content_session` ставится дополнительно (вход держится и без скрипта);
+- `GET /api/v1/content-access/login/google/callback?state=&code=` (или `&error=`) — ходит только Google.
+  → `302 https://<host><return_to>#wwc-login=<одноразовый>` — личность привязана, хост в семье: **только**
+    ссылка, cookie сессии не ставится; сайт гасит `#wwc-login=` как после бота (`BotLogin.astro`);
   → `302 https://<host><return_to>#wwc-link=<pending>` — нужен шаг на сайте: `GET …/login/pending/<pending>`
     скажет, что это — `awaiting_code` (экран «Код от Виктора») или `awaiting_claim` (Google уже привязан,
-    хост вне семьи cookie: сайт шлёт `POST …/login/link` с `browser_key` **без кода** — и входит);
+    витрина: сайт шлёт `POST …/login/link` с `browser_key` **без кода** — и входит). Для витрины callback
+    **всегда** ведёт сюда (cookie до него не доходит, браузер подтверждает ключ из sessionStorage);
   → `302 https://<host><return_to>#wwc-link-error=<код>` — `google_denied` (человек отказал / без code),
     `google_token_invalid`, `email_unverified`, `code_locked` (5 неверных кодов за 15 минут);
   → `400 google_state_invalid` (JSON) — неизвестный, просроченный или повторный state;
-  → `400 oauth_browser_mismatch` (JSON) — callback открыт не в том браузере, где начали вход (чужая
-    ссылка; pending закрыт). Хоста для возврата в этих двух случаях нет.
+  → `400 oauth_browser_mismatch` (JSON) — хост в семье, а cookie `wwc_oauth` нет или чужая (чужая
+    ссылка; pending закрыт). Для витрины cookie не смотрится. Хоста для возврата в этих случаях нет.
 - `GET /api/v1/content-access/login/pending/<pending>` → `200 {"ok": true, "provider": "google",
   "email_masked": "e***a@gmail.com", "display_name": "…", "status": "awaiting_code"|"awaiting_claim"}`;
   `404 pending_invalid`, `410 pending_expired`. Для подписи «привязываем Google e***a@gmail.com».
 - `POST /api/v1/content-access/login/link` body `{"pending_id": "<из #wwc-link>", "code": "483 921",
   "browser_key": "<ключ sessionStorage>"}` — `code` обязателен для `awaiting_code`, не нужен для
-  `awaiting_claim`; `browser_key` обязателен вне семьи cookie (в семье достаточно cookie `wwc_oauth`;
-  body имеет приоритет). Пробел/дефис в коде допустимы.
+  `awaiting_claim`. Браузер проверяется **строго по хосту входа, без подмены**: хост в семье — только
+  cookie `wwc_oauth` (запрос с того же сайта, `credentials: 'include'`; `browser_key` в body не помогает);
+  витрина — только `browser_key` в body (cookie не помогает). Пробел/дефис в коде допустимы.
   → `200 {"ok": true, "status": "authenticated", "expires_at": "<iso>"}` + `Set-Cookie` сессии (та же,
   что после Telegram; `/me` дальше работает как обычно), cookie `wwc_oauth` гасится.
   Ошибки: `400 oauth_browser_mismatch` (не тот браузер — pending закрыт, начать вход заново),
@@ -174,11 +185,24 @@
 
 `postgres/sql/platform_login_identities_v34.sql`: `account_identities`, `login_link_codes`, `login_pending`
 (RLS `platform_current_tenant_id()`, `lock_timeout 5s`), бэкфилл Max из `lead_actor_channels`. Идемпотентна
-(в тесте применяется трижды). После ревью в тот же файл добавлены `login_pending.browser_key_hash`
-(`add column if not exists`) и статус `awaiting_claim` (именованный constraint drop/add) — файл
-самообновляющийся, если V34 уже применяли на staging до правки, повторный прогон доведёт таблицу. Зарегистрирована: testkit, `apply_staging_platform_all.ps1`, `staging_proof_lib`,
+(в тесте применяется трижды). После ревью в тот же файл добавлены `login_pending.browser_key_hash`,
+`login_pending.site_key_hash` (в `create table` и `add column if not exists`) и статус `awaiting_claim`
+(именованный constraint drop/add) — файл самообновляющийся, повторный прогон доведёт таблицу. Зарегистрирована: testkit, `apply_staging_platform_all.ps1`, `staging_proof_lib`,
 `EXPECTED_APPLY_COUNT=57`, `schema_requirements` (core). Без неё новый код при старте пишет
 `schema_compatibility_missing_tables`; релизный гейт не пустит.
+
+## Что проверено на 8bdce22 (повторное ревью P0)
+
+- `test_login_identities.py` — 68 passed; новые: ключ из query не становится cookie на хосте семьи;
+  витрина — ключ отдельно, cookie нет, без ключа `browser_key_required`; `presented_key`: хост семьи —
+  body без cookie → отказ, витрина — cookie без body → отказ; callback после `signed_in` — только
+  `#wwc-login`, без `wwc_content_session`. Задетые файлы вместе — 177 passed.
+- PostgreSQL: `test_login_identities_postgres.py` passed — атака из ревью end-to-end (жертве навязан K →
+  cookie жертвы серверная ≠ K; callback атакующего ни с K, ни с cookie жертвы не проходит; K нигде не
+  сохранён), хост семьи: body-ключ без cookie → отказ; витрина: «совпадающая» cookie без body → отказ,
+  посторонняя cookie в callback витрины — без ложного mismatch, claim с body-ключом проходит.
+- Полные прогоны на 8bdce22: unit `pytest` — **26 failed / 4 errors / 2230 passed / 50 skipped** (тот же
+  известный набор, новых падений нет); все 33 файла `*_postgres` на одноразовом кластере — **49 passed, 0 failed**.
 
 ## Что проверено (на 0598976)
 
@@ -232,6 +256,10 @@
   в callback и чужой ключ в link → отказ, штатный путь и claim-путь проходят; 10 параллельных попыток →
   5 code_invalid + 5 code_locked; 2 параллельных redeem одним кодом → 1 ok + 1 code_used; чистка; HMAC).
   Полные прогоны — см. «Проверено».
+- 7160f53 — STATE после первого ревью.
+- **8bdce22** — P0 повторного ревью: ключ браузера строго по режиму хоста (серверный ключ в cookie для
+  семьи, `site_key_hash` для витрин, без подмены cookie↔body), после `signed_in` только `#wwc-login`
+  (6 файлов: V34, rules/service/routes, оба теста). Отправлено в origin.
 
 ## Следующий шаг
 
