@@ -77,20 +77,24 @@ def db_path(name: str) -> str:
 
 
 async def _google_pending(
-    service, google_oauth, *, host: str, sub: str, browser_key: str | None = None, return_to: str = "/me/", cookie: bool = True
+    service, google_oauth, *, host: str, sub: str, site_key: str | None = None, return_to: str = "/me/",
+    cookie_key: str | None | object = "auto",
 ):
-    """start → callback с подделанным обменом; возвращает (результат callback, ключ браузера).
+    """start → callback с подделанным обменом; (результат callback, ключ cookie от start или None).
 
-    ``cookie=False`` — хост вне семьи cookie: callback на wwc.best приходит без cookie wwc_oauth."""
-    auth_url, key = await service.google_start("whieda", host=host, return_to=return_to, visitor_session_id=None, browser_key=browser_key)
+    ``cookie_key="auto"`` — браузер предъявляет ту cookie, что выдал start (у витрины её нет);
+    иначе — переданное значение (чужая или посторонняя cookie)."""
+    auth_url, issued = await service.google_start(
+        "whieda", host=host, return_to=return_to, visitor_session_id=None, site_key=site_key
+    )
     query = parse_qs(urlparse(auth_url).query)
     tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub=sub))}
     with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
         result = await service.google_callback(
             "whieda", state=query["state"][0], code="auth-code", oauth_error=None,
-            browser_key=key if cookie else None, callback_host="wwc.best",
+            cookie_key=issued if cookie_key == "auto" else cookie_key,
         )
-    return result, key
+    return result, issued
 
 
 @pytest.mark.integration
@@ -144,22 +148,47 @@ def test_login_identities_end_to_end(monkeypatch):
 
             # --- Google: start → callback → код; браузер проверяется --------------------------------------
             auth_url, key = await service.google_start("whieda", host="samtsova.wwc.best", return_to="/price/", visitor_session_id=None)
+            assert key, "family host: the server issues the cookie key"
             query = parse_qs(urlparse(auth_url).query)
-            state, nonce = query["state"][0], query["nonce"][0]
-            tokens = {"id_token": _jwt(_claims(nonce=nonce, sub="g-700"))}
+            state = query["state"][0]
             # Чужой браузер (нет cookie семьи) — отказ, и state сгорает.
             with pytest.raises(LoginIdentityError) as info:
-                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, browser_key=None, callback_host="wwc.best")
+                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, cookie_key=None)
             assert info.value.code == "oauth_browser_mismatch"
             with pytest.raises(LoginIdentityError) as info:
-                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, browser_key=key, callback_host="wwc.best")
+                await service.google_callback("whieda", state=state, code="auth-code", oauth_error=None, cookie_key=key)
             assert info.value.code == "google_state_invalid", "state is single-use even after a refused callback"
             # Другая cookie — тоже отказ.
             auth_url, key = await service.google_start("whieda", host="samtsova.wwc.best", return_to="/price/", visitor_session_id=None)
             query = parse_qs(urlparse(auth_url).query)
             with pytest.raises(LoginIdentityError) as info:
-                await service.google_callback("whieda", state=query["state"][0], code="c", oauth_error=None, browser_key=rules.new_browser_key(), callback_host="wwc.best")
+                await service.google_callback("whieda", state=query["state"][0], code="c", oauth_error=None, cookie_key=rules.new_browser_key())
             assert info.value.code == "oauth_browser_mismatch"
+
+            # Атака из повторного ревью: чужая страница открывает жертве start?browser_key=K, атакующий делает
+            # свой start с тем же K. На хосте семьи K не становится ни cookie, ни ключом строки — callback
+            # атакующего в браузере жертвы (cookie = то, что выдал сервер, или K) не проходит.
+            attacker_k = rules.new_browser_key()
+            _, victim_cookie = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None, site_key=attacker_k)
+            assert victim_cookie and victim_cookie != attacker_k, "query key never becomes the cookie"
+            auth_url, _ = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None, site_key=attacker_k)
+            attacker_state = parse_qs(urlparse(auth_url).query)["state"][0]
+            for presented in (attacker_k, victim_cookie):
+                auth_url, _ = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None, site_key=attacker_k)
+                with pytest.raises(LoginIdentityError) as info:
+                    await service.google_callback(
+                        "whieda", state=parse_qs(urlparse(auth_url).query)["state"][0], code="c", oauth_error=None, cookie_key=presented,
+                    )
+                assert info.value.code == "oauth_browser_mismatch"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.google_callback("whieda", state=attacker_state, code="c", oauth_error=None, cookie_key=attacker_k)
+            assert info.value.code == "oauth_browser_mismatch"
+            async with tenant_connection("whieda") as conn:
+                cur = await conn.execute(
+                    "select count(*) as n from login_pending where browser_key_hash = %s or site_key_hash = %s",
+                    (rules.sha256_hex(attacker_k), rules.sha256_hex(attacker_k)),
+                )
+                assert (await cur.fetchone())["n"] == 0, "a client key is never stored for a family host"
 
             result, key = await _google_pending(service, google_oauth, host="samtsova.wwc.best", sub="g-700", return_to="/price/")
             assert result["outcome"] == "link_required" and result["claim"] is False and result["host"] == "samtsova.wwc.best"
@@ -168,29 +197,35 @@ def test_login_identities_end_to_end(monkeypatch):
             info_screen = await service.pending_info("whieda", link_token=link_token)
             assert info_screen == {"provider": "google", "email_masked": "e***a@example.com", "display_name": "Евгения Волкова", "status": "awaiting_code"}
 
-            # Код из другого браузера — отказ, pending закрывается.
+            # Хост семьи: тот же ключ в body без cookie — отказ (body не заменяет cookie), pending закрывается.
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=rules.new_browser_key())
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], cookie_key=None, body_key=key)
             assert info.value.code == "oauth_browser_mismatch"
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
-            assert info.value.code == "pending_invalid", "a pending opened by a foreign browser is closed for good"
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], cookie_key=key, body_key=None)
+            assert info.value.code == "pending_invalid", "a pending refused once is closed for good"
 
             result, key = await _google_pending(service, google_oauth, host="samtsova.wwc.best", sub="g-700", return_to="/price/")
             link_token = result["link_token"]
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=None, browser_key=key)
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], cookie_key=rules.new_browser_key(), body_key=None)
+            assert info.value.code == "oauth_browser_mismatch", "code from another browser"
+
+            result, key = await _google_pending(service, google_oauth, host="samtsova.wwc.best", sub="g-700", return_to="/price/")
+            link_token = result["link_token"]
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=link_token, code=None, cookie_key=key, body_key=None)
             assert info.value.code == "code_required"
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=first["code"], browser_key=key)
+                await service.link_pending("whieda", link_token=link_token, code=first["code"], cookie_key=key, body_key=None)
             assert info.value.code == "code_invalid", "the first code was cancelled by the second"
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token="nope", code=second["code"], browser_key=key)
+                await service.link_pending("whieda", link_token="nope", code=second["code"], cookie_key=key, body_key=None)
             assert info.value.code == "pending_invalid"
-            linked = await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
+            linked = await service.link_pending("whieda", link_token=link_token, code=second["code"], cookie_key=key, body_key=None)
             assert linked["telegram_user_id"] == EVGENIA and not linked["already_linked"]
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=link_token, code=second["code"], browser_key=key)
+                await service.link_pending("whieda", link_token=link_token, code=second["code"], cookie_key=key, body_key=None)
             assert info.value.code == "pending_invalid", "pending is single-use too"
             with pytest.raises(LoginIdentityError) as info:
                 await service.redeem_code("whieda", code=second["code"], provider="google", external_id="g-700")
@@ -210,25 +245,32 @@ def test_login_identities_end_to_end(monkeypatch):
             again, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-700")
             assert again["outcome"] == "signed_in" and again["telegram_user_id"] == EVGENIA
 
-            # Хост вне семьи cookie: callback без cookie — не отказ, а подтверждение ключом сайта через link.
+            # --- Витрина (хост вне семьи cookie): только ключ сайта, cookie не смотрится ----------------------
+            with pytest.raises(LoginIdentityError) as info:
+                await service.google_start("whieda", host="site.other.test", return_to="/me/", visitor_session_id=None)
+            assert info.value.code == "browser_key_required"
             site_key = rules.new_browser_key()
-            auth_url, key = await service.google_start("whieda", host="site.other.test", return_to="/me/", visitor_session_id=None, browser_key=site_key)
-            assert key == site_key
-            query = parse_qs(urlparse(auth_url).query)
-            tokens = {"id_token": _jwt(_claims(nonce=query["nonce"][0], sub="g-700"))}
-            with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                claim = await service.google_callback("whieda", state=query["state"][0], code="c", oauth_error=None, browser_key=None, callback_host="wwc.best")
+            claim, issued = await _google_pending(service, google_oauth, host="site.other.test", sub="g-700", site_key=site_key)
+            assert issued is None, "no cookie for a host outside the family"
             assert claim["outcome"] == "link_required" and claim["claim"] is True and claim["host"] == "site.other.test"
             assert (await service.pending_info("whieda", link_token=claim["link_token"]))["status"] == "awaiting_claim"
+            # Витрина: cookie не помогает — даже со значением ключа сайта, без body — отказ.
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=rules.new_browser_key())
-            assert info.value.code == "oauth_browser_mismatch", "a victim's browser has no such key"
-            claim, _ = await _google_pending(service, google_oauth, host="site.other.test", sub="g-700", browser_key=site_key, cookie=False)
+                await service.link_pending("whieda", link_token=claim["link_token"], code=None, cookie_key=site_key, body_key=None)
+            assert info.value.code == "oauth_browser_mismatch"
+            # Посторонняя cookie в callback витрины — не ложный mismatch: cookie игнорируется.
+            claim, _ = await _google_pending(
+                service, google_oauth, host="site.other.test", sub="g-700", site_key=site_key, cookie_key=rules.new_browser_key()
+            )
             assert claim["outcome"] == "link_required" and claim["claim"] is True
-            claimed = await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=site_key)
+            with pytest.raises(LoginIdentityError) as info:
+                await service.link_pending("whieda", link_token=claim["link_token"], code=None, cookie_key=None, body_key=rules.new_browser_key())
+            assert info.value.code == "oauth_browser_mismatch", "a victim's browser has no such site key"
+            claim, _ = await _google_pending(service, google_oauth, host="site.other.test", sub="g-700", site_key=site_key)
+            claimed = await service.link_pending("whieda", link_token=claim["link_token"], code=None, cookie_key=None, body_key=site_key)
             assert claimed["telegram_user_id"] == EVGENIA and claimed["already_linked"]
             with pytest.raises(LoginIdentityError) as info:
-                await service.link_pending("whieda", link_token=claim["link_token"], code=None, browser_key=site_key)
+                await service.link_pending("whieda", link_token=claim["link_token"], code=None, cookie_key=None, body_key=site_key)
             assert info.value.code == "pending_invalid", "claim is single-use"
 
             # Чужой nonce / отказ Google — ошибка с возвратом на страницу, не исключение.
@@ -236,11 +278,11 @@ def test_login_identities_end_to_end(monkeypatch):
             query = parse_qs(urlparse(auth_url).query)
             tokens = {"id_token": _jwt(_claims(nonce="forged", sub="g-700"))}
             with patch.object(google_oauth, "exchange_code", AsyncMock(return_value=tokens)):
-                bad = await service.google_callback("whieda", state=query["state"][0], code="c3", oauth_error=None, browser_key=key, callback_host="wwc.best")
+                bad = await service.google_callback("whieda", state=query["state"][0], code="c3", oauth_error=None, cookie_key=key)
             assert bad == {"outcome": "error", "error": "google_token_invalid", "host": "wwc.best", "return_to": "https://wwc.best/me/"}
             auth_url, key = await service.google_start("whieda", host="wwc.best", return_to="/me/", visitor_session_id=None)
             query = parse_qs(urlparse(auth_url).query)
-            denied = await service.google_callback("whieda", state=query["state"][0], code=None, oauth_error="access_denied", browser_key=key, callback_host="wwc.best")
+            denied = await service.google_callback("whieda", state=query["state"][0], code=None, oauth_error="access_denied", cookie_key=key)
             assert denied["outcome"] == "error" and denied["error"] == "google_denied"
 
             # Тот же Google у другого человека — занято; код Петровой остаётся действующим (захват откатился).
@@ -271,7 +313,7 @@ def test_login_identities_end_to_end(monkeypatch):
             pending_g, key_g = await _google_pending(service, google_oauth, host="wwc.best", sub="g-locked")
             for _ in range(5):
                 with pytest.raises(LoginIdentityError):
-                    await service.link_pending("whieda", link_token=pending_g["link_token"], code="000000", browser_key=key_g)
+                    await service.link_pending("whieda", link_token=pending_g["link_token"], code="000000", cookie_key=key_g, body_key=None)
             locked_g, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-locked")
             assert locked_g["outcome"] == "error" and locked_g["error"] == "code_locked"
 

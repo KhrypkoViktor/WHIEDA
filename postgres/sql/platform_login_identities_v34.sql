@@ -76,9 +76,14 @@ create table if not exists login_pending (
   host text not null default '',
   return_to text not null default '/',
   visitor_session_id uuid,
-  -- Браузер, который начал вход (cookie wwc_oauth или ключ сайта), хешем: callback и «ввести код»
-  -- принимаются только из него — чужую ссылку callback подсунуть нельзя (ревью 15.10.2026, P0).
+  -- Браузер, который начал вход, хешем: callback и «ввести код» принимаются только из него — чужую
+  -- ссылку callback подсунуть нельзя (ревью 15.10.2026, P0). Ровно одно из двух, по хосту входа:
+  --   browser_key_hash — хост в семье cookie callback (.wwc.best): ключ генерирует сервер, он в cookie
+  --                      wwc_oauth; значение от клиента сюда не попадает никогда;
+  --   site_key_hash    — хост вне семьи (витрины): ключ сайта из sessionStorage, приходит в query start
+  --                      и в body /login/link; cookie для такой строки не смотрится.
   browser_key_hash text,
+  site_key_hash text,
   -- Кто пришёл (после callback Google / из initData Max) и токен для «Введите код от Виктора».
   external_id text,
   email text,
@@ -94,6 +99,7 @@ create table if not exists login_pending (
 -- Повторный прогон на уже созданной таблице: колонка браузера и статус awaiting_claim
 -- (Google уже привязан, но хост вне семьи cookie — сайт подтверждает браузер ключом).
 alter table login_pending add column if not exists browser_key_hash text;
+alter table login_pending add column if not exists site_key_hash text;
 alter table login_pending drop constraint if exists login_pending_status_check;
 alter table login_pending add constraint login_pending_status_check
   check (status in ('started', 'awaiting_code', 'awaiting_claim', 'linked', 'failed'));

@@ -670,23 +670,42 @@ def request_host(headers: Any) -> str:
     return host.split(":", 1)[0]
 
 
+def cookie_mode(config: google_oauth.GoogleOAuthConfig, target_host: str) -> bool:
+    """Хост входа в семье cookie callback-хоста (redirect из настроек): браузер подтверждает cookie
+    wwc_oauth. Иначе (витрина на своём домене) cookie до callback не дойдёт — подтверждает ключ сайта."""
+    callback_host = (urlparse(config.redirect_uri).hostname or "").lower()
+    return same_cookie_family(callback_host, target_host)
+
+
 async def google_start(
     tenant_id: str,
     *,
     host: str,
     return_to: str,
     visitor_session_id: str | None,
-    browser_key: str | None = None,
-) -> tuple[str, str]:
-    """(адрес Google, ключ браузера). Состояние — строка login_pending (state/nonce/ключ хешами, PKCE).
+    site_key: str | None = None,
+) -> tuple[str, str | None]:
+    """(адрес Google, ключ для cookie wwc_oauth или None). Состояние — строка login_pending.
 
-    ``browser_key`` — ключ, который сайт держит в sessionStorage (хосты вне семьи cookie); иначе
-    генерируется здесь и уходит в cookie wwc_oauth. Негодный ключ — как отсутствующий.
+    Хост входа в семье cookie: ключ генерирует сервер, он уходит в cookie; ``site_key`` от клиента
+    игнорируется (иначе чужая страница навязала бы браузеру жертвы известный ей ключ).
+    Хост вне семьи: нужен ``site_key`` (сайт держит его в sessionStorage), хранится отдельно
+    (site_key_hash), cookie не ставится. Нет или негодный — ``browser_key_required``.
     """
     config = google_oauth.require_google_config()
     await warm_hosts(tenant_id)
     target = _absolute_return_to(host, return_to)
-    key = normalize_browser_key(browser_key) or new_browser_key()
+    target_host = urlparse(target).hostname or ""
+    cookie_key: str | None = None
+    browser_key_hash = site_key_hash = None
+    if cookie_mode(config, target_host):
+        cookie_key = new_browser_key()
+        browser_key_hash = sha256_hex(cookie_key)
+    else:
+        key = normalize_browser_key(site_key)
+        if not key:
+            raise error("browser_key_required")
+        site_key_hash = sha256_hex(key)
     state = secrets.token_urlsafe(24)
     nonce = secrets.token_urlsafe(24)
     verifier, challenge = pkce_pair()
@@ -697,16 +716,28 @@ async def google_start(
                 """
                 insert into login_pending
                   (tenant_id, provider, status, state_hash, nonce_hash, code_verifier, host, return_to,
-                   visitor_session_id, browser_key_hash, expires_at)
-                values (%s, 'google', 'started', %s, %s, %s, %s, %s, %s::uuid, %s, %s)
+                   visitor_session_id, browser_key_hash, site_key_hash, expires_at)
+                values (%s, 'google', 'started', %s, %s, %s, %s, %s, %s::uuid, %s, %s, %s)
                 """,
                 (
                     tenant_id, sha256_hex(state), sha256_hex(nonce), verifier,
-                    urlparse(target).netloc, target, _uuid_or_none(session_raw), sha256_hex(key),
-                    pending_expires_at(),
+                    urlparse(target).netloc, target, _uuid_or_none(session_raw), browser_key_hash,
+                    site_key_hash, pending_expires_at(),
                 ),
             )
-    return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=challenge), key
+    return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=challenge), cookie_key
+
+
+def presented_key(pending: dict[str, Any], *, cookie_key: str | None, body_key: str | None) -> tuple[str | None, str | None]:
+    """(что предъявлено, с каким хешем сверять) — строго по режиму строки, без подмены одного другим.
+
+    Строка с browser_key_hash (хост в семье) — только cookie; с site_key_hash (витрина) — только body.
+    Ни того ни другого — (None, None): сверка не пройдёт."""
+    if pending.get("browser_key_hash"):
+        return cookie_key, str(pending["browser_key_hash"])
+    if pending.get("site_key_hash"):
+        return body_key, str(pending["site_key_hash"])
+    return None, None
 
 
 def _uuid_or_none(value: str | None) -> str | None:
@@ -733,13 +764,14 @@ async def _new_awaiting(
             """
             insert into login_pending
               (tenant_id, provider, status, host, return_to, visitor_session_id, browser_key_hash,
-               external_id, email, display_name, link_token_hash, expires_at)
-            values (%s, 'google', %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s)
+               site_key_hash, external_id, email, display_name, link_token_hash, expires_at)
+            values (%s, 'google', %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 tenant_id, status, str(pending["host"]), str(pending["return_to"]),
                 _uuid_or_none(str(pending.get("visitor_session_id") or "")), pending.get("browser_key_hash"),
-                claims["sub"], claims["email"], claims["name"], sha256_hex(link_token), pending_expires_at(),
+                pending.get("site_key_hash"), claims["sub"], claims["email"], claims["name"],
+                sha256_hex(link_token), pending_expires_at(),
             ),
         )
     return link_token
@@ -751,8 +783,7 @@ async def google_callback(
     state: str,
     code: str | None,
     oauth_error: str | None,
-    browser_key: str | None,
-    callback_host: str,
+    cookie_key: str | None,
 ) -> dict[str, Any]:
     """Результат callback для ручки.
 
@@ -763,6 +794,9 @@ async def google_callback(
     {"outcome": "error", error, host, return_to}
     LoginIdentityError: google_state_invalid (неизвестный/просроченный/повторный state),
     oauth_browser_mismatch (callback открыт не в том браузере, где начали вход) — хоста для возврата нет.
+
+    Хост в семье cookie: ``cookie_key`` (cookie wwc_oauth) обязан совпасть. Хост вне семьи: cookie не
+    смотрится вовсе — браузер подтверждается ключом сайта на шаге /login/link.
     """
     config = google_oauth.require_google_config()
     state_hash = sha256_hex(str(state or "").strip())
@@ -771,7 +805,7 @@ async def google_callback(
             conn,
             """
             select pending_id, status, nonce_hash, code_verifier, host, return_to, visitor_session_id,
-                   browser_key_hash, expires_at
+                   browser_key_hash, site_key_hash, expires_at
             from login_pending
             where tenant_id = %s and provider = 'google' and state_hash = %s
             limit 1
@@ -786,18 +820,18 @@ async def google_callback(
         await _fail_pending(conn, str(pending["pending_id"]))
     host, return_to = str(pending["host"]), str(pending["return_to"])
     base = {"host": host, "return_to": return_to}
-    # Браузер: cookie семьи обязана быть, если хост входа в семье cookie callback-хоста; иначе сайт
-    # подтверждает ключом на шаге /login/link (deferred).
-    deferred = False
-    if browser_key:
-        if not browser_key_matches(browser_key, pending.get("browser_key_hash")):
-            logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "cookie"})
+    # Браузер — по режиму, выбранному на start: cookie (хост в семье) сверяется здесь; ключ сайта (витрина)
+    # — на шаге /login/link, поэтому такой вход всегда идёт через #wwc-link (deferred).
+    if pending.get("browser_key_hash"):
+        if not browser_key_matches(cookie_key, pending["browser_key_hash"]):
+            reason = "cookie" if cookie_key else "no_cookie"
+            logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": reason})
             raise error("oauth_browser_mismatch")
-    elif same_cookie_family(callback_host, host):
-        logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "no_cookie"})
-        raise error("oauth_browser_mismatch")
-    else:
+        deferred = False
+    elif pending.get("site_key_hash"):
         deferred = True
+    else:
+        raise error("oauth_browser_mismatch")
     if oauth_error or not code:
         logger.info("login_google_denied", extra={"tenant_id": tenant_id, "reason": str(oauth_error or "no_code")[:40]})
         return {"outcome": "error", "error": "google_denied", **base}
@@ -836,7 +870,7 @@ async def _awaiting_row(conn: Any, tenant_id: str, link_token: str) -> dict[str,
         conn,
         """
         select pending_id, status, provider, external_id, email, display_name, visitor_session_id,
-               browser_key_hash, expires_at, attempts
+               browser_key_hash, site_key_hash, expires_at, attempts
         from login_pending
         where tenant_id = %s and link_token_hash = %s
         limit 1
@@ -863,17 +897,25 @@ async def pending_info(tenant_id: str, *, link_token: str) -> dict[str, Any]:
 
 
 async def link_pending(
-    tenant_id: str, *, link_token: str, code: str | None, browser_key: str | None
+    tenant_id: str,
+    *,
+    link_token: str,
+    code: str | None,
+    cookie_key: str | None,
+    body_key: str | None,
 ) -> dict[str, Any]:
     """«Введите код от Виктора» после Google (или подтверждение браузера, когда Google уже привязан).
 
+    Браузер — строго по режиму строки (``presented_key``): хост в семье — только cookie wwc_oauth,
+    витрина — только ключ сайта из body; одно другим не заменяется.
     Ошибки: pending_invalid, pending_expired, oauth_browser_mismatch (ключ не того браузера — pending
     закрывается), code_required, code_locked, code_invalid, code_expired, code_used, identity_taken.
     """
     async with tenant_connection(tenant_id) as conn:
         pending = await _awaiting_row(conn, tenant_id, link_token)
     pending_id = str(pending["pending_id"])
-    if not browser_key_matches(browser_key, pending.get("browser_key_hash")):
+    provided, stored = presented_key(pending, cookie_key=cookie_key, body_key=body_key)
+    if not browser_key_matches(provided, stored):
         # Закрыть — отдельной транзакцией, потом ошибка (внутри блока откат стёр бы закрытие).
         await _fail_pending_committed(tenant_id, pending_id)
         logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "link"})

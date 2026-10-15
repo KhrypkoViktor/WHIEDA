@@ -5,22 +5,26 @@
 
 Контракт (для Site-сессии; подробно — PROCESS/wwc-login-redesign-20261015/STATE_core.md):
   GET  …/login/google/start?return_to=<путь|https://host/путь>[&visitor_session_id=<uuid>][&browser_key=<ключ>]
-       → 302 на Google + cookie wwc_oauth (семья .wwc.best, 15 минут, HttpOnly, Lax);
-         Google выключен → 302 https://<host><return_to>#wwc-link-error=google_disabled;
-         негодный путь → 302 https://<host>/#wwc-link-error=invalid_return_to; негодный хост → 400 JSON.
-       browser_key — ключ сайта из sessionStorage для хостов вне семьи cookie (витрины); он же в /login/link.
-  GET  …/login/google/callback?state=&code=|error=  (ходит только Google; проверяется cookie wwc_oauth)
-       → 302 https://<host><return_to>#wwc-login=<одноразовый>  — личность привязана (cookie семьи ставится
-                                                                 дополнительно, когда хост в семье);
-         302 https://<host><return_to>#wwc-link=<pending>       — нужен код от Виктора, или (хост вне семьи)
-                                                                 подтверждение браузера ключом;
+       Хост входа в семье cookie (.wwc.best): → 302 на Google + cookie wwc_oauth с СЕРВЕРНЫМ ключом
+         (HttpOnly, Lax, 15 мин); browser_key из query игнорируется.
+       Хост вне семьи (витрины): browser_key обязателен (ключ сайта из sessionStorage) → 302 на Google, cookie нет;
+         без ключа → 302 …#wwc-link-error=browser_key_required.
+       Google выключен → 302 https://<host><return_to>#wwc-link-error=google_disabled;
+       негодный путь → 302 https://<host>/#wwc-link-error=invalid_return_to; негодный хост → 400 JSON.
+  GET  …/login/google/callback?state=&code=|error=  (ходит только Google)
+       → 302 https://<host><return_to>#wwc-login=<одноразовый>  — личность привязана, хост в семье
+                                                                 (только ссылка, cookie сессии не ставится);
+         302 https://<host><return_to>#wwc-link=<pending>       — нужен код от Виктора; для витрины — всегда
+                                                                 (браузер подтверждается ключом сайта в /login/link);
          302 https://<host><return_to>#wwc-link-error=<код>     — google_denied | google_token_invalid |
                                                                  email_unverified | code_locked;
-       400 {error: google_state_invalid} — неизвестный/повторный state; 400 {error: oauth_browser_mismatch} —
-       callback открыт не в том браузере, где начали вход (чужая ссылка).
+       400 {error: google_state_invalid}; 400 {error: oauth_browser_mismatch} — хост в семье, а cookie wwc_oauth
+       нет или чужая (чужая ссылка). Для витрины cookie не смотрится.
   GET  …/login/pending/{pending} → {ok, provider, email_masked, display_name, status: awaiting_code|awaiting_claim};
        404 pending_invalid | 410 pending_expired.
-  POST …/login/link {pending_id, code?, browser_key?}  (ключ — из body или cookie wwc_oauth)
+  POST …/login/link {pending_id, code?, browser_key?}
+       Хост в семье — проверяется ТОЛЬКО cookie wwc_oauth (browser_key из body не помогает);
+       витрина — ТОЛЬКО browser_key из body (cookie не помогает).
        → 200 {ok, status: "authenticated", expires_at} + cookie сессии;
          400 oauth_browser_mismatch | 400 code_required | 400 code_invalid | 410 code_expired | 409 code_used |
          429 code_locked | 409 identity_taken | 404 pending_invalid | 410 pending_expired.
@@ -107,15 +111,15 @@ async def _google_start(
     require_entitlement(tenant, "structure_basic")
     host = service.request_host(request.headers)
     try:
-        url, key = await service.google_start(
+        url, cookie_key = await service.google_start(
             tenant.tenant_id,
             host=host,
             return_to=return_to or "/",
             visitor_session_id=visitor_session_id,
-            browser_key=browser_key,
+            site_key=browser_key,
         )
     except LoginIdentityError as exc:
-        if exc.code not in {"google_disabled", "invalid_return_to"}:
+        if exc.code not in {"google_disabled", "invalid_return_to", "browser_key_required"}:
             raise _http(exc) from exc
         # Сюда приходит браузер, не XHR: JSON человек увидел бы текстом — возвращаем на страницу с кодом ошибки.
         try:
@@ -124,7 +128,9 @@ async def _google_start(
             raise _http(inner) from inner
         return _redirect(service.link_error_url(target, exc.code))
     response = _redirect(url)
-    _set_oauth_cookie(response, request, key)
+    if cookie_key:
+        # Ключ cookie — только серверный; ключ сайта из query (витрины) в cookie не попадает никогда.
+        _set_oauth_cookie(response, request, cookie_key)
     return response
 
 
@@ -142,15 +148,13 @@ async def google_start(
 async def _google_callback(request: Request, state: str | None, code: str | None, error: str | None) -> Response:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
-    callback_host = service.request_host(request.headers)
     try:
         result = await service.google_callback(
             tenant.tenant_id,
             state=state or "",
             code=code,
             oauth_error=error,
-            browser_key=_oauth_cookie(request),
-            callback_host=callback_host,
+            cookie_key=_oauth_cookie(request),
         )
     except LoginIdentityError as exc:
         raise _http(exc) from exc
@@ -160,19 +164,10 @@ async def _google_callback(request: Request, state: str | None, code: str | None
     if result["outcome"] == "link_required":
         return _redirect(service.link_url(return_to, str(result["link_token"])))
     telegram_user_id = int(result["telegram_user_id"])
-    # Всегда через #wwc-login=: сайту нужен явный сигнал входа (по cookie он узнаёт только после перезагрузки).
+    # Только #wwc-login=<одноразовый>: сайту нужен явный сигнал входа, сессию создаёт он сам, погасив
+    # ссылку (BotLogin.astro). Cookie сессии здесь не ставится — одна сессия на вход, не две.
     url = await service.browser_login_url(tenant.tenant_id, telegram_user_id=telegram_user_id, return_to=return_to)
     response = _redirect(url or return_to)
-    if service.same_cookie_family(callback_host, str(result["host"])):
-        # Та же семья cookie (.wwc.best): cookie сессии дополнительно — вход держится, даже если скрипт
-        # страницы не успел погасить одноразовую ссылку.
-        _, raw_session = await service.session_for(
-            tenant.tenant_id,
-            telegram_user_id=telegram_user_id,
-            visitor_session_id=result.get("visitor_session_id"),
-            source="google_login",
-        )
-        set_session_cookie(response, raw_session, request)
     _clear_oauth_cookie(response, request)
     return response
 
@@ -210,11 +205,13 @@ async def _link(body: LinkBody, request: Request, response: Response) -> dict[st
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     try:
+        # Cookie и ключ из body — раздельно: какой из них считается, решает строка pending (без подмены).
         linked = await service.link_pending(
             tenant.tenant_id,
             link_token=body.pending_id,
             code=body.code,
-            browser_key=(body.browser_key or "").strip() or _oauth_cookie(request),
+            cookie_key=_oauth_cookie(request),
+            body_key=(body.browser_key or "").strip() or None,
         )
     except LoginIdentityError as exc:
         raise _http(exc) from exc

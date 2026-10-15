@@ -69,6 +69,7 @@ ERROR_STATUS = {
     "partner_not_found": 404,
     "partner_ambiguous": 409,
     "oauth_browser_mismatch": 400,
+    "browser_key_required": 400,
     "code_required": 400,
     "code_unavailable": 503,
 }

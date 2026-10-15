@@ -392,17 +392,69 @@ async def test_google_start_redirects_to_google_with_pkce_state_and_a_browser_co
     assert params[4] == "samtsova.wwc.best" and params[5] == "https://samtsova.wwc.best/price/"
     assert params[6] == "11111111-1111-1111-1111-111111111111"
     assert params[7] == rules.sha256_hex(key), "the pending row remembers the browser that started"
+    assert params[8] is None, "no site key on a family host"
     assert "secret-1" not in response.headers["location"]
 
 
 @pytest.mark.asyncio
-async def test_google_start_takes_the_site_key_for_hosts_outside_the_cookie_family(client, google_env, start_db):
+async def test_query_key_never_becomes_the_cookie_on_a_family_host(client, google_env, start_db):
+    """Атака 15.10: чужая страница открывает жертве start?browser_key=K — cookie жертвы не должна стать K."""
     response = await client.get(
         "/api/v1/content-access/login/google/start", params={"return_to": "/me/", "browser_key": KEY}, headers=HOST
     )
     assert response.status_code == 302
-    assert response.headers["set-cookie"].startswith(f"{OAUTH_COOKIE_NAME}={KEY};")
-    assert start_db[0][1][7] == rules.sha256_hex(KEY)
+    cookie_value = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert cookie_value != KEY and rules.normalize_browser_key(cookie_value) == cookie_value
+    params = start_db[0][1]
+    assert params[7] == rules.sha256_hex(cookie_value) and params[7] != rules.sha256_hex(KEY)
+    assert params[8] is None, "a client key is not stored at all on a family host"
+
+
+@pytest.fixture
+def showcase_env(google_env, monkeypatch):
+    # Вторая «семья» — хост вне семьи callback-хоста wwc.best (как витрина на своём домене).
+    monkeypatch.setenv("PLATFORM_COOKIE_SHARED_DOMAINS", "wwc.best,other.test")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_showcase_start_keeps_the_site_key_apart_and_sets_no_cookie(client, showcase_env, start_db):
+    response = await client.get(
+        "/api/v1/content-access/login/google/start",
+        params={"return_to": "https://site.other.test/me/", "browser_key": KEY}, headers=HOST,
+    )
+    assert response.status_code == 302 and urlparse(response.headers["location"]).netloc == "accounts.google.com"
+    assert not any(c.startswith(f"{OAUTH_COOKIE_NAME}=") for c in response.headers.get_list("set-cookie"))
+    params = start_db[0][1]
+    assert params[4] == "site.other.test" and params[7] is None and params[8] == rules.sha256_hex(KEY)
+
+
+@pytest.mark.asyncio
+async def test_showcase_start_without_a_site_key_goes_back_with_an_error(client, showcase_env, start_db):
+    response = await client.get(
+        "/api/v1/content-access/login/google/start", params={"return_to": "https://site.other.test/me/"}, headers=HOST
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://site.other.test/me/#wwc-link-error=browser_key_required"
+    assert not start_db and "set-cookie" not in response.headers
+
+
+def test_presented_key_follows_the_row_mode_without_fallback():
+    family = {"browser_key_hash": rules.sha256_hex(KEY), "site_key_hash": None}
+    showcase = {"browser_key_hash": None, "site_key_hash": rules.sha256_hex(KEY)}
+    other = "other-key-0123456789abcdefghijkl"
+    # Хост семьи: считается только cookie; body-ключ без cookie — отказ.
+    assert rules.browser_key_matches(*service.presented_key(family, cookie_key=KEY, body_key=None))
+    assert not rules.browser_key_matches(*service.presented_key(family, cookie_key=None, body_key=KEY))
+    assert not rules.browser_key_matches(*service.presented_key(family, cookie_key=other, body_key=KEY))
+    # Витрина: считается только body; cookie (даже «правильная») не помогает.
+    assert rules.browser_key_matches(*service.presented_key(showcase, cookie_key=None, body_key=KEY))
+    assert not rules.browser_key_matches(*service.presented_key(showcase, cookie_key=KEY, body_key=None))
+    assert not rules.browser_key_matches(*service.presented_key(showcase, cookie_key=KEY, body_key=other))
+    # Строка без режима — ничего не подходит.
+    assert not rules.browser_key_matches(*service.presented_key({}, cookie_key=KEY, body_key=KEY))
 
 
 @pytest.mark.asyncio
@@ -420,7 +472,7 @@ SIGNED_IN = {"outcome": "signed_in", "telegram_user_id": 700, "host": "samtsova.
 
 
 @pytest.mark.asyncio
-async def test_callback_passes_the_browser_cookie_and_always_returns_a_one_time_login(client, google_env):
+async def test_callback_passes_the_cookie_and_returns_only_a_one_time_login(client, google_env):
     with patch.object(service, "google_callback", AsyncMock(return_value=SIGNED_IN)) as callback, \
          patch.object(service, "browser_login_url", AsyncMock(return_value="https://samtsova.wwc.best/price/#wwc-login=cid.nonce")) as browser, \
          patch.object(service, "session_for", AsyncMock(return_value=({"ok": True}, "raw-session"))) as session_for:
@@ -429,12 +481,12 @@ async def test_callback_passes_the_browser_cookie_and_always_returns_a_one_time_
             headers=HOST, cookies={OAUTH_COOKIE_NAME: KEY},
         )
     assert response.status_code == 302 and response.headers["location"] == "https://samtsova.wwc.best/price/#wwc-login=cid.nonce"
-    assert callback.await_args.kwargs["browser_key"] == KEY and callback.await_args.kwargs["callback_host"] == "wwc.best"
+    assert callback.await_args.kwargs == {"state": "s", "code": "c", "oauth_error": None, "cookie_key": KEY}
     browser.assert_awaited_once_with("whieda", telegram_user_id=700, return_to="https://samtsova.wwc.best/price/")
     cookies = response.headers.get_list("set-cookie")
-    assert any("wwc_content_session=raw-session" in c and "Domain=.wwc.best" in c and "HttpOnly" in c for c in cookies), "family cookie in addition"
+    assert not any("wwc_content_session=" in c for c in cookies), "one session per login: the site redeems #wwc-login"
+    session_for.assert_not_awaited()
     assert any(c.startswith(f"{OAUTH_COOKIE_NAME}=") and ("Max-Age=0" in c or "expires=" in c.lower()) for c in cookies), "oauth cookie cleared"
-    session_for.assert_awaited_once_with("whieda", telegram_user_id=700, visitor_session_id=None, source="google_login")
 
 
 @pytest.mark.asyncio
@@ -489,7 +541,7 @@ async def test_pending_screen_shows_a_masked_email(client, google_env):
 
 
 @pytest.mark.asyncio
-async def test_link_with_the_owner_code_signs_in_and_prefers_the_body_key(client, google_env):
+async def test_link_with_the_owner_code_signs_in_and_passes_both_keys_apart(client, google_env):
     linked = {"telegram_user_id": 700, "identity_id": "id-1", "already_linked": False, "visitor_session_id": None}
     with patch.object(service, "link_pending", AsyncMock(return_value=linked)) as link_pending, \
          patch.object(service, "session_for", AsyncMock(return_value=({"ok": True, "status": "authenticated", "expires_at": "2026-11-14T00:00:00+00:00"}, "raw-session"))):
@@ -502,11 +554,13 @@ async def test_link_with_the_owner_code_signs_in_and_prefers_the_body_key(client
     assert any("wwc_content_session=raw-session" in c for c in cookies)
     assert any(c.startswith(f"{OAUTH_COOKIE_NAME}=") and ("Max-Age=0" in c or "expires=" in c.lower()) for c in cookies)
     assert response.headers["cache-control"] == "private, no-store"
-    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code="483 921", browser_key=KEY)
+    link_pending.assert_awaited_once_with(
+        "whieda", link_token="tok-1", code="483 921", cookie_key="cookie-key-0123456789abcdefghij", body_key=KEY
+    )
 
 
 @pytest.mark.asyncio
-async def test_link_falls_back_to_the_cookie_key_and_code_is_optional_for_a_claim(client, google_env):
+async def test_link_without_body_key_passes_none_and_code_is_optional_for_a_claim(client, google_env):
     linked = {"telegram_user_id": 700, "identity_id": None, "already_linked": True, "visitor_session_id": None}
     with patch.object(service, "link_pending", AsyncMock(return_value=linked)) as link_pending, \
          patch.object(service, "session_for", AsyncMock(return_value=({"ok": True, "status": "authenticated"}, "raw"))):
@@ -514,7 +568,7 @@ async def test_link_falls_back_to_the_cookie_key_and_code_is_optional_for_a_clai
             "/api/v1/content-access/login/link", json={"pending_id": "tok-1"}, headers=HOST, cookies={OAUTH_COOKIE_NAME: KEY},
         )
     assert response.status_code == 200
-    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code=None, browser_key=KEY)
+    link_pending.assert_awaited_once_with("whieda", link_token="tok-1", code=None, cookie_key=KEY, body_key=None)
 
 
 @pytest.mark.asyncio
