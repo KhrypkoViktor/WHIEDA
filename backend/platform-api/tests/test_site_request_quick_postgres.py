@@ -116,6 +116,10 @@ def test_site_request_needs_only_name_and_address(monkeypatch: pytest.MonkeyPatc
                 assert (await request("nata"))["partner_name"] == "Наталья Шаби"
                 assert "адрес сайта" in to_user[-1]["text"] and "Имя: Наталья Шаби" in to_owner[0]["text"]
 
+                # Мат и оскорбления в адресе — отказ, адрес не записан (15.10.2026).
+                _, to_user, _ = await step(_private(NATA, 120, text="pi3da"))
+                assert "не подойдёт" in to_user[-1]["text"] and (await request("nata"))["requested_subdomain"] is None
+
                 await step(_private(NATA, 12, text="sabimama"))
                 req = await request("nata")
                 assert req["status"] == "awaiting_lang" and req["site_lang"] == "ru"

@@ -180,6 +180,36 @@ def subdomain_reserved(subdomain: str) -> bool:
     return value in RESERVED_SUBDOMAINS or any(part in value for part in RESERVED_PARTS)
 
 
+# Мат и оскорбления в адресе сайта (владелец, 15.10.2026: «а если бы её завели под
+# именем ПИЗДА?»). Корни — вхождением (в именах не встречаются), короткие слова —
+# только целым адресом или его частью через дефис: «hui» сидит в «Chuikov», «eban» —
+# в «Lebanova». Цифры-подмены (3→e, 0→o, 1→i, 4→ch) снимаются перед проверкой.
+OFFENSIVE_ROOTS = (
+    "pizd", "pisd", "xuy", "xuj", "huyl", "huil", "blyad", "blyat", "blya-", "mudak", "mudil", "pidor", "pidar",
+    "pidr", "gandon", "gondon", "zalup", "govno", "shlyuh", "shluh", "yeban", "yebat", "zaeb", "eblan", "dolboeb",
+    "fuck", "cunt", "bitch", "whore", "porn", "hitler", "nigger",
+)
+OFFENSIVE_WORDS = frozenset({
+    "hui", "huy", "huj", "xui", "suka", "nazi", "shit", "blya", "ebat", "eban", "ebal", "ebla", "jopa", "zhopa", "zopa",
+    "sraka", "sex", "xxx", "dick", "ass", "anal", "pisya", "siski", "drochit", "dura", "durak", "loh", "lox",
+    "tvar", "urod", "debil", "idiot", "kretin",
+})
+_LEET = {"0": "o", "1": "i", "4": "ch", "@": "a", "$": "s"}
+# «3» — и «e», и «z» (pi3da): проверяем оба прочтения.
+_READINGS = (str.maketrans({**_LEET, "3": "e"}), str.maketrans({**_LEET, "3": "z"}))
+
+
+def subdomain_offensive(subdomain: str) -> bool:
+    raw = str(subdomain or "").lower()
+    for reading in _READINGS:
+        value = raw.translate(reading)
+        if any(root in value for root in OFFENSIVE_ROOTS):
+            return True
+        if value in OFFENSIVE_WORDS or any(p in OFFENSIVE_WORDS for p in value.split("-") if p):
+            return True
+    return False
+
+
 def clean_partner_name(value: str) -> str:
     """Имя и фамилия для сайта (V23): два слова и больше, без ссылок и цифр."""
     name = " ".join(str(value or "").split())
@@ -303,6 +333,10 @@ async def set_site_request_subdomain(
         raise SiteRequestError(
             "Напишите другое имя: латинские буквы, цифры и дефис, без пробелов."
         ) from exc
+    if subdomain_offensive(normalized):
+        raise SiteRequestError(
+            "Такой адрес не подойдёт. Напишите имя или имя и фамилию латиницей, например: olga-ivanova."
+        )
     if subdomain_reserved(normalized):
         raise SiteRequestError(
             f"Адрес {normalized}.wwc.best занят. Для сайтов партнёров используем личные имена — "

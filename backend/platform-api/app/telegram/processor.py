@@ -286,10 +286,15 @@ async def handle_bind_start_token(
         telegram_chat_id=msg.chat_id,
     )
     if actor_id:
+        # Адрес — тот, что выбрал партнёр (public_profile.subdomain), не внутренний код
+        # (Наталья Лебедевич видела в боте lebedevich, а выбрала nash; 15.10.2026).
+        from app.subscriptions.service import partner_site_hostname
+
+        host = await partner_site_hostname(tenant.tenant_id, ref_code)
         await deliver_text(
             msg.chat_id,
             chr(10).join([
-                f"Готово: заявки с сайта {ref_code}.wwc.best теперь приходят сюда.",
+                f"Готово: заявки с сайта {host} теперь приходят сюда.",
                 "",
                 "Личный кабинет: /cabinet",
             ]),

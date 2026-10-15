@@ -833,6 +833,20 @@ def resolve_partner_hostname(ref_code: str, public_profile: Any = None) -> str:
     return f"{normalize_partner_subdomain(candidate)}.{PARTNER_DOMAIN}"
 
 
+async def partner_site_hostname(tenant_id: str, ref_code: str) -> str:
+    """Адрес сайта партнёра для показа человеку: выбранный им поддомен, не код."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            "select public_profile from referral_profiles where tenant_id = %s and ref_code = %s",
+            (tenant_id, str(ref_code or "").strip().lower()),
+        )
+    try:
+        return resolve_partner_hostname(ref_code, (row or {}).get("public_profile"))
+    except Exception:  # noqa: BLE001 — кривой код: показываем как есть, бот не падает
+        return f"{str(ref_code or '').strip().lower()}.{PARTNER_DOMAIN}"
+
+
 def resolve_billing_partner_hostname(ref_code: str, public_profile: Any = None) -> str:
     """Allow the staging-only dev profile in billing without exporting it to edge maps."""
     normalized_ref = str(ref_code or "").strip().lower()
