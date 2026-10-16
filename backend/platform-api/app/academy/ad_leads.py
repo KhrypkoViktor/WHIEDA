@@ -11,7 +11,8 @@ Meta пишет каждую заявку моментальной формы в
 * Алерт — по строке на поле (имя, кликабельный телефон, ник, скидка, интерес, источник,
   время по Минску), пустые поля пропускаются. Кнопка — открыть таблицу.
 * ``opened_text`` — короткая строка, когда человек с формы открыл бота (``/start ig_…``):
-  имя и ник из строки таблицы (по нику, иначе по имени), иначе из Telegram.
+  имя и ник из строки таблицы (по нику, иначе по имени), иначе из Telegram; имя — ссылка
+  в личный чат, чтобы администратор открыл человека без публичного ника.
 
 Таблица читается CSV-выгрузкой по ссылке (``export?format=csv&gid=…``): пока она открыта
 «всем, у кого есть ссылка». Закрыть доступ можно после перехода на сервисный аккаунт.
@@ -147,6 +148,11 @@ def parse_leads(csv_text: str) -> list[Lead]:
 # ---- тексты -------------------------------------------------------------------------------------
 
 
+def _plain(value: str) -> str:
+    """Имя в разметке: без угловых скобок, чтобы имя из формы или Telegram не подменяло ссылку."""
+    return re.sub(r"[<>]", "", str(value or "")).strip()
+
+
 def _what(lead: Lead) -> str:
     """«вебинар 24 октября» из «Бесплатный вебинар 24 октября»; иначе интерес или имя формы."""
     interest = lead.interest
@@ -163,7 +169,7 @@ def alert_text(lead: Lead) -> str:
     what = _what(lead)
     lines = ["🔔 Новая заявка" + (f" · {what}" if what else "")]
     if lead.name:
-        lines.append(f"<b>{lead.name}</b>")
+        lines.append(f"<b>{_plain(lead.name)}</b>")
     if lead.phone:
         lines.append(f"📞 {lead.phone}")
     if lead.username:
@@ -205,9 +211,14 @@ def match_lead(leads: list[Lead], *, username: str | None, name: str) -> Lead | 
     return None
 
 
-def opened_text(*, name: str, username: str | None, webinar: bool) -> str:
-    who = f"<b>{name or 'Без имени'}</b> ({'@' + username if username else 'ник не указан'})"
-    return f"✅ {who} — в боте" + (", ссылку на эфир получит здесь." if webinar else ".")
+def opened_text(*, name: str, username: str | None, user_id: int | None, webinar: bool) -> str:
+    """Имя — ссылка в личный чат (``tg://user?id=…``, ``format_telegram_html`` её сохраняет):
+    у человека без публичного ника администратор открывает чат нажатием на имя (16.10.2026)."""
+    who = _plain(name) or "Без имени"
+    if user_id:
+        who = f'<a href="tg://user?id={int(user_id)}">{who}</a>'
+    nick = f" (@{username})" if username else " (без @ — чат по имени)"
+    return f"✅ <b>{who}</b>{nick} — в боте" + (", ссылку на эфир получит здесь." if webinar else ".")
 
 
 # ---- таблица ------------------------------------------------------------------------------------

@@ -98,7 +98,7 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
 
 async def _opened_line(msg: Any, showcase: Showcase, *, webinar: bool) -> str:
     """«✅ Имя (@ник) — в боте»: имя и ник из строки таблицы заявок (по нику, иначе по имени),
-    не нашлась или таблица не читается — из Telegram."""
+    не нашлась или таблица не читается — из Telegram. Имя — ссылка в чат с человеком."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
     tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     tg_username = str(user.get("username") or "").strip() or None
@@ -111,7 +111,8 @@ async def _opened_line(msg: Any, showcase: Showcase, *, webinar: bool) -> str:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
     name = (lead.name if lead and lead.name else tg_name) or "Без имени"
     username = tg_username or (lead.username if lead else None)
-    return opened_text(name=name, username=username, webinar=webinar)
+    user_id = int(msg.user_id) if str(msg.user_id or "").isdigit() else None
+    return opened_text(name=name, username=username, user_id=user_id, webinar=webinar)
 
 
 async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, tag: str, *, trace_id: str) -> dict[str, Any]:

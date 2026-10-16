@@ -73,10 +73,27 @@ def test_bot_open_matches_by_username_then_name():
     assert match_lead(leads, username="KVETKA_space", name="x").lead_id == "111"
     assert match_lead(leads, username=None, name="Иванова Мария").lead_id == "222"
     assert match_lead(leads, username="nobody", name="Кто-то") is None
-    assert opened_text(name="Анна Петрова", username="kvetka_space", webinar=True) == (
-        "✅ <b>Анна Петрова</b> (@kvetka_space) — в боте, ссылку на эфир получит здесь."
+    assert opened_text(name="Анна Петрова", username="kvetka_space", user_id=301, webinar=True) == (
+        '✅ <b><a href="tg://user?id=301">Анна Петрова</a></b> (@kvetka_space)'
+        " — в боте, ссылку на эфир получит здесь."
     )
-    assert opened_text(name="Мария", username=None, webinar=False) == "✅ <b>Мария</b> (ник не указан) — в боте."
+    # Оксана (16.10.2026): публичного ника нет ни в Telegram, ни в форме — чат по имени.
+    assert opened_text(name="Мария", username=None, user_id=777, webinar=False) == (
+        '✅ <b><a href="tg://user?id=777">Мария</a></b> (без @ — чат по имени) — в боте.'
+    )
+    assert opened_text(name="", username=None, user_id=None, webinar=False) == (
+        "✅ <b>Без имени</b> (без @ — чат по имени) — в боте."
+    )
+
+
+def test_opened_link_survives_formatting_and_name_cannot_forge_it():
+    from app.telegram.delivery import format_telegram_html
+
+    rendered = format_telegram_html(
+        opened_text(name='Оксана <a href="https://evil.example">', username=None, user_id=777, webinar=True)
+    )
+    assert rendered.startswith('✅ <b><a href="tg://user?id=777">Оксана')
+    assert "evil.example" in rendered and '<a href="https://evil.example">' not in rendered
 
 
 def test_sheet_config_validates_ids():
