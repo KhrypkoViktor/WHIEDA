@@ -85,7 +85,9 @@ def _split_checklist(text: str) -> tuple[str, list[str]]:
     if not match:
         return text, []
     rest = text[match.end():]
-    nxt = re.search(r"^#{2,3}\s+", rest, re.M)
+    # Раздел кончается на следующем заголовке или на строке раскрывающегося блока
+    # («:::раскрыть …» после чек-листа, «:::» блока, в котором чек-лист): блок не съедается.
+    nxt = re.search(r"^(?:#{2,3}\s+| {0,3}:::)", rest, re.M)
     section = rest[: nxt.start()] if nxt else rest
     items = [m.group(1).strip() for m in re.finditer(r"^\s*-\s*\[[ xX]\]\s*(.+)$", section, re.M)]
     body = text[: match.start()] + (rest[nxt.start():] if nxt else "")

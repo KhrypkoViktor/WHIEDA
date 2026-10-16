@@ -175,6 +175,36 @@ def test_fold_in_a_lesson_is_the_same_html_as_in_the_cabinet(tmp_path):
     assert body.endswith("<p>После блока.</p>")
 
 
+@pytest.mark.parametrize("inside", ["текст после чек-листа", "### Подробнее\n\nтекст после чек-листа"])
+def test_fold_right_after_the_checklist_is_not_swallowed(tmp_path, inside):
+    # Чек-лист срезается до следующего заголовка — и до строки блока: блок после него цел.
+    folder = _folder(tmp_path)
+    (folder / "01.md").write_text(
+        "# Урок 1. Вход\n\n## Разбор\n\nТекст.\n\n## Чек-лист\n\n- [ ] Сделал раз\n- [ ] Сделал два\n\n"
+        f":::раскрыть Если не получилось\n{inside}\n:::\n\n## Дальше\n\nКонец.\n",
+        encoding="utf-8",
+    )
+    lesson = _builder().build(folder)["lessons"][0]
+    assert lesson["checklist"] == ["Сделал раз", "Сделал два"]
+    body = lesson["body_html"]
+    assert '<details class="ac-fold"><summary>Если не получилось</summary>' in body
+    assert "<p>текст после чек-листа</p></div></details>" in body
+    assert "Чек-лист" not in body and "Сделал раз" not in body and ":::" not in body
+    assert body.endswith("<h2>Дальше</h2>\n<p>Конец.</p>")
+
+
+def test_checklist_inside_a_fold_keeps_the_fold_closed(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / "01.md").write_text(
+        "# Урок 1. Вход\n\n:::раскрыть Проверьте себя\n### Чек-лист\n\n- [ ] Сделал\n:::\n\nПосле.\n",
+        encoding="utf-8",
+    )
+    lesson = _builder().build(folder)["lessons"][0]
+    assert lesson["checklist"] == ["Сделал"]
+    assert '<details class="ac-fold"><summary>Проверьте себя</summary>' in lesson["body_html"]
+    assert ":::" not in lesson["body_html"] and lesson["body_html"].endswith("<p>После.</p>")
+
+
 def test_broken_fold_stops_the_build_with_the_file_name(tmp_path):
     folder = _folder(tmp_path)
     (folder / "01.md").write_text("# Урок 1. Вход\n\n:::раскрыть Без конца\nтекст\n", encoding="utf-8")
