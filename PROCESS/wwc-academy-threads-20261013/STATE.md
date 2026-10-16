@@ -95,3 +95,8 @@
 - Обложка курса 16:9 (`_source/course-composition/img_src/cover.html` → Chrome headless) и работы
   учеников интенсива с almira.by — картинки к 6 вебинарам и ДЗ 4–5 (`build_course.py` + `upload_images.py`,
   `out_img/images.json`). Видеообращение — «Вступление» (Саша подтвердила 14.10).
+- 16.10: бой Core `9dbb44f` = `1c398b7` (мини-курсы V35, локальная ветка core/academy-mini-quiz-20261016) +
+  «бот витрины — заявки с рекламы /start ig_<метка>»: ig_web24 / ig_web31 — приветствие с датой вебинара,
+  прочие ig_* — «оставили заявку»; кнопки обращений; Кириллу (support.admin_telegram_user_id) — push с
+  именем, ником, id и меткой. Проверено сухим прогоном на staging и бою (отправка подменена).
+  origin/core/login-identities-20261015 (V34) стоит на 17ce3e6 — перед его выпуском смёржить 9dbb44f.
