@@ -128,3 +128,14 @@ def test_broken_test_stops_the_build_with_the_file_name(tmp_path):
     with pytest.raises(SystemExit) as stopped:
         _builder().build(_mini_course(tmp_path, json.dumps(broken, ensure_ascii=False)))
     assert "01.md" in str(stopped.value) and "ровно один" in str(stopped.value)
+
+
+def test_bare_address_in_a_lesson_becomes_a_link_in_a_new_tab(tmp_path):
+    """Владелец 16.10.2026: ссылки в уроке активны — и в уроках из Obsidian, как у автора на сайте."""
+    folder = _mini_course(tmp_path, json.dumps(QUIZ, ensure_ascii=False))
+    (folder / "00.md").write_text("# Как проходить\n\nПамятка: https://wwc.best/academy/.\n", encoding="utf-8")
+    first = _builder().build(folder)["lessons"][0]
+    assert '<a href="https://wwc.best/academy/" target="_blank" rel="noopener">https://wwc.best/academy/</a>.' in first["body_html"]
+    from app.academy.content import sanitize_html
+
+    assert 'target="_blank"' in sanitize_html(first["body_html"]) and 'rel="noopener noreferrer"' in sanitize_html(first["body_html"])
