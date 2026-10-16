@@ -193,10 +193,7 @@ async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whied
     rows = lead.kwargs["reply_markup"]["inline_keyboard"]
     assert [row[0]["callback_data"] for row in rows] == ["shs:open:author", "shs:open:admin"]
     assert admin.kwargs["chat_id"] == "5035800725"
-    assert admin.kwargs["text"] == (
-        f"Заявка с рекламы открыла бота: Анна Петрова (@anna_p), id 301. Метка: {tag} — вебинар {date}. "
-        "Телефон и ответы формы — в таблице «ALMIRA · Заявки»."
-    )
+    assert admin.kwargs["text"] == "✅ <b>Анна Петрова</b> (@anna_p) — в боте, ссылку на эфир получит здесь."
 
 
 @pytest.mark.asyncio

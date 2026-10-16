@@ -18,6 +18,7 @@ import logging
 import re
 from typing import Any
 
+from app.academy.ad_leads import fetch_leads, match_lead, opened_text, sheet_config
 from app.academy.keys import parse_course_start_token
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
@@ -38,7 +39,6 @@ POLICY_VERSION = "2026-10-11"
 # Заявки с рекламы (16.10.2026): форма Meta → кнопка «Открыть Telegram» → /start ig_<метка>.
 _AD_TAG_RE = re.compile(r"^ig_[A-Za-z0-9_-]{1,60}$")
 AD_WEBINARS = {"ig_web24": "24 октября", "ig_web31": "31 октября"}
-LEADS_SHEET = "«ALMIRA · Заявки»"
 OPEN_ACADEMY_BUTTON = "🎓 Открыть Академию"
 
 
@@ -96,11 +96,22 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
     )
 
 
-def _who(msg: Any) -> str:
+async def _opened_line(msg: Any, showcase: Showcase, *, webinar: bool) -> str:
+    """«✅ Имя (@ник) — в боте»: имя и ник из строки таблицы заявок (по нику, иначе по имени),
+    не нашлась или таблица не читается — из Telegram."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
-    name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip() or "без имени"
-    username = str(user.get("username") or "").strip()
-    return f"{name} (@{username})" if username else f"{name} (без ника)"
+    tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
+    tg_username = str(user.get("username") or "").strip() or None
+    lead = None
+    config = sheet_config(showcase.support)
+    if config:
+        try:
+            lead = match_lead(await fetch_leads(config), username=tg_username, name=tg_name)
+        except Exception as exc:
+            logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
+    name = (lead.name if lead and lead.name else tg_name) or "Без имени"
+    username = tg_username or (lead.username if lead else None)
+    return opened_text(name=name, username=username, webinar=webinar)
 
 
 async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, tag: str, *, trace_id: str) -> dict[str, Any]:
@@ -121,14 +132,10 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     if admin is None:
         logger.info("showcase_ad_lead_no_admin", extra={"trace_id": trace_id, "tag": tag})
     else:
-        what = f"{tag} — вебинар {AD_WEBINARS[tag]}" if tag in AD_WEBINARS else tag
         try:
             sent = await send_telegram_text(
                 chat_id=str(admin),
-                text=(
-                    f"Заявка с рекламы открыла бота: {_who(msg)}, id {int(msg.user_id)}. Метка: {what}. "
-                    f"Телефон и ответы формы — в таблице {LEADS_SHEET}."
-                ),
+                text=await _opened_line(msg, showcase, webinar=tag in AD_WEBINARS),
                 bot_token=current_bot_binding().bot_token,
             )
             notified = bool(sent.get("ok"))
