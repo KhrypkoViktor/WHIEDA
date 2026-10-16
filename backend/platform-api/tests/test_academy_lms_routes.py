@@ -251,3 +251,41 @@ async def test_course_list_and_page_name_the_viewer(content_app, signed_in):  # 
         page = await call(content_app, "GET", f"{P}/courses/akvarel")
     assert listing.json()["viewer"] == profile
     assert page.json()["viewer"] == profile
+
+
+# ---- mini-courses (V35): the lesson's test, rubric and free access --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_quiz_route_passes_answers_and_done_on_a_quiz_lesson_is_409(content_app, signed_in):  # noqa: F811
+    result = {"ok": True, "score": 1, "pass": 1, "passed": True, "results": [{"id": "q1", "correct": True, "hint": "Верно."}],
+              "done": True}
+    with patch("app.academy.routes.submit_quiz", AsyncMock(return_value=result)) as service:
+        response = await call(content_app, "POST", f"{P}/courses/mini-dhando/lessons/orel-reshka/quiz",
+                              json={"answers": {"q1": "b"}})
+        typo = await call(content_app, "POST", f"{P}/courses/mini-dhando/lessons/orel-reshka/quiz",
+                          json={"answer": {"q1": "b"}})
+        not_text = await call(content_app, "POST", f"{P}/courses/mini-dhando/lessons/orel-reshka/quiz",
+                              json={"answers": {"q1": 2}})
+    assert response.status_code == 200 and response.json()["passed"] is True
+    assert service.await_args.args[1:3] == ("mini-dhando", "orel-reshka")
+    assert service.await_args.kwargs == {"answers": {"q1": "b"}}
+    assert (typo.status_code, not_text.status_code) == (422, 422)
+    assert response.headers["cache-control"] == "private, no-store"
+    with patch("app.academy.routes.set_lesson_done", AsyncMock(side_effect=AcademyError(409, "quiz_required"))):
+        refused = await call(content_app, "POST", f"{P}/courses/mini-dhando/lessons/orel-reshka/done", json={"done": True})
+    assert refused.status_code == 409 and refused.json()["error"] == "quiz_required"
+
+
+@pytest.mark.asyncio
+async def test_course_patch_takes_kind_and_free_for_lesson_patch_takes_quiz(content_app, signed_in):  # noqa: F811
+    with patch("app.academy.routes.update_course", AsyncMock(return_value={"ok": True})) as course, patch(
+        "app.academy.routes.update_lesson", AsyncMock(return_value={"ok": True})
+    ) as lesson:
+        patched = await call(content_app, "PATCH", f"{P}/author/courses/mini-dhando",
+                             json={"kind": "mini", "free_for": {"club": True, "courses": ["online-start-4w"]}})
+        cleared = await call(content_app, "PATCH", f"{P}/author/courses/mini-dhando/modules/m1/lessons/l1",
+                             json={"quiz": None})
+    assert (patched.status_code, cleared.status_code) == (200, 200)
+    assert course.await_args.args[3] == {"kind": "mini", "free_for": {"club": True, "courses": ["online-start-4w"]}}
+    assert lesson.await_args.args[3:] == ("l1", {"quiz": None})

@@ -9,15 +9,23 @@ way out too.
 An uploaded image or file is referenced as ``media:<uuid>`` (``![alt](media:…)``):
 the stored HTML never holds a link that expires. ``resolve_media`` swaps the
 reference for a signed link of the viewer when the lesson is read.
+
+A lesson's test (V35) is a fenced block with the language ``quiz`` holding JSON:
+``split_quiz`` cuts it out of the raw Markdown before rendering — answers and
+hints never reach the lesson HTML (``app.academy.quiz`` checks the JSON).
 """
 
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
+from typing import Any
 
 import markdown
 import nh3
+
+from app.academy.quiz import QuizError, validate_quiz
 
 ALLOWED_TAGS = {
     "h1", "h2", "h3", "h4", "h5", "h6", "p", "br", "hr",
@@ -44,6 +52,36 @@ _MEDIA_MENTION_RE = re.compile(rf"media:({_MEDIA_ID})", re.I)
 # Подставляются только настоящие ссылки внутри тегов (после nh3 значения атрибутов — в двойных кавычках).
 _TAG_RE = re.compile(r"<[^<>]+>")
 _ATTR_RE = re.compile(rf'\s(src|href)="media:({_MEDIA_ID})"', re.I)
+# Тест урока: ```quiz … ``` (или ~~~quiz), закрывающий забор — тот же, что открывающий.
+_QUIZ_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*quiz[ \t]*\r?$", re.M)
+_QUIZ_BLOCK_RE = re.compile(
+    r"^ {0,3}(?P<fence>`{3,}|~{3,})[ \t]*quiz[ \t]*\r?\n(?P<body>.*?)^ {0,3}(?P=fence)[ \t]*\r?$\n?",
+    re.M | re.S,
+)
+
+
+def split_quiz(body_md: str | None) -> tuple[str, dict[str, Any] | None]:
+    """Markdown → (Markdown without the ``quiz`` block, the checked test or None).
+
+    The first ```quiz block is the test; a second one, an unclosed one, broken JSON
+    or a test that breaks the rules — QuizError with the reason (the author fixes it).
+    A second block is refused rather than left in the text: it would show the answers."""
+    text = str(body_md or "")
+    match = _QUIZ_BLOCK_RE.search(text)
+    if not match:
+        if _QUIZ_OPEN_RE.search(text):
+            raise QuizError("тест: блок ```quiz не закрыт")
+        return text, None
+    try:
+        raw = json.loads(match.group("body"))
+    except json.JSONDecodeError as exc:
+        line = text[: match.start("body")].count("\n") + exc.lineno
+        raise QuizError(f"тест: не JSON — {exc.msg} (строка {line}, позиция {exc.colno})") from exc
+    quiz = validate_quiz(raw)
+    rest = text[: match.start()] + text[match.end():]
+    if _QUIZ_OPEN_RE.search(rest):
+        raise QuizError("тест: в уроке второй блок ```quiz — оставьте один")
+    return rest, quiz
 
 
 def sanitize_html(raw: str | None) -> str:

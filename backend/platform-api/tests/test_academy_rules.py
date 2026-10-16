@@ -55,6 +55,28 @@ def test_optional_homework_does_not_block_completeness():
     assert is_complete(lesson("a", done=True, required=False, status="returned"))
 
 
+def test_lesson_with_a_test_is_complete_only_when_the_test_passed():
+    """V35: тест — как обязательная домашка: «Сделал» без сданного теста урок не завершает."""
+    from dataclasses import replace
+
+    from app.academy.rules import is_finished_by_student
+
+    marked = replace(lesson("a", done=True), quiz_required=True)
+    assert not is_complete(marked) and not is_finished_by_student(marked)
+    passed = replace(marked, quiz_passed=True)
+    assert is_complete(passed) and is_finished_by_student(passed)
+    # Тест сдан, но урок снят с отметки — не завершён.
+    assert not is_complete(replace(passed, done=False))
+    # И тест, и домашка: нужно оба.
+    both = replace(lesson("a", done=True, required=True, status="submitted"), quiz_required=True, quiz_passed=True)
+    assert not is_complete(both) and is_finished_by_student(both)
+    assert is_complete(replace(both, submission_status="accepted"))
+    # Следующий урок «после предыдущего» ждёт сданного теста.
+    rows = [marked, lesson("b")]
+    assert locks([ModuleIn("m1", OPEN)], [marked, lesson("b", unlock=AFTER_PREV)])["b"] == (True, "after_prev")
+    assert next_lesson_key(rows, evaluate_locks([ModuleIn("m1", OPEN)], rows, now=NOW, started_at=NOW)) == "a"
+
+
 # ---- open / after_prev ------------------------------------------------------------
 
 

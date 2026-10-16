@@ -18,6 +18,10 @@ cabinet. The owner and preview admins publish at once. Any edit by the author wh
 the course waits for review takes it back to ``draft`` — the owner checks what will go out.
 
 Text is Markdown, rendered and cleaned on the server (``app.academy.content``).
+A ```quiz block in a lesson's Markdown (V35) is the lesson's test: it is cut out of
+``body_md``/``body_html`` and kept in ``quiz_json``; a lesson saved without the block
+keeps its test, ``quiz: null`` removes it. The course rubric (``kind``: course | mini)
+and ``free_for`` (open to the club / to students of other courses) — owner only.
 Media the author attaches must be their own uploads (or already in this lesson /
 course). Lesson ``position`` is the course order (modules, then lessons) and is
 renumbered after every structural change — the bot addresses lessons by it.
@@ -32,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.academy.content import media_refs, render_markdown, sanitize_html
+from app.academy.content import media_refs, render_markdown, sanitize_html, split_quiz
 from app.academy.notify import (
     COURSE_REVIEW_EVENT,
     COURSE_REVIEWED_EVENT,
@@ -51,6 +55,7 @@ from app.academy.notify import (
 )
 from app.academy.keys import shelf_active
 from app.academy.media_service import _valid_ids, load_media, media_summary
+from app.academy.quiz import QuizError, validate_quiz
 from app.academy.rules import _parse_at, parse_unlock
 from app.academy.service import AcademyError, AcademyViewer, price_out, viewer_actor_ids
 from app.academy.showcases import partner_owner, showcase_for_author
@@ -65,6 +70,9 @@ REVIEW_DECISIONS = ("published", "returned")
 MAX_REVIEW_NOTE_CHARS = 1000
 LESSON_STATUSES = ("draft", "published")
 LESSON_KINDS = ("lesson", "live")
+# Рубрика курса в каталоге (V35): «Курсы» и «Мини-курсы».
+COURSE_KINDS = ("course", "mini")
+MAX_FREE_FOR_COURSES = 20
 MAX_PRICE = 10_000_000
 MAX_FILES = 20
 MAX_PROMPT_CHARS = 20_000
@@ -161,7 +169,7 @@ _COURSE_COLUMNS = """
     course_id::text as course_id, slug, title, subtitle, kind, status, access_rule, author_actor_id,
     description_md, description_html, cover_media_id::text as cover_media_id, price_wusd_minor, price_currency,
     review_note, review_requested_at, created_at, updated_at,
-    works_public, review_days, teaser, landing_url
+    works_public, review_days, teaser, landing_url, free_for
 """
 MAX_REVIEW_DAYS = 60
 _LANDING_RE = re.compile(r"^https://[^\s\"'<>]{1,300}$")
@@ -225,7 +233,36 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "review_days": int(course.get("review_days") or 0),
         "teaser": _teaser_out(course.get("teaser"), media),
         "landing_url": course.get("landing_url") or None,
+        # Бесплатно клубу / участникам курсов (V35): {"club": true, "courses": [slug]} или null.
+        "free_for": course.get("free_for") or None,
     }
+
+
+def parse_free_for(raw: Any) -> dict[str, Any] | None:
+    """``{"club": bool, "courses": [slug, …]}`` → the stored form (only what opens the course);
+    nothing that opens it → None. ValueError for anything else."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"club", "courses"}:
+        raise ValueError("free_for: только ключи club и courses")
+    club = raw.get("club", False)
+    if not isinstance(club, bool):
+        raise ValueError("free_for.club: true или false")
+    courses = raw.get("courses") or []
+    if not isinstance(courses, list) or len(courses) > MAX_FREE_FOR_COURSES:
+        raise ValueError(f"free_for.courses: список до {MAX_FREE_FOR_COURSES} адресов курсов")
+    slugs: list[str] = []
+    for slug in courses:
+        if not isinstance(slug, str) or not _SLUG_RE.match(slug) or len(slug) > 60:
+            raise ValueError(f"free_for.courses: плохой адрес курса {slug!r}")
+        if slug not in slugs:
+            slugs.append(slug)
+    out: dict[str, Any] = {}
+    if club:
+        out["club"] = True
+    if slugs:
+        out["courses"] = slugs
+    return out or None
 
 
 def _text(value: Any, *, code: str, max_len: int, required: bool = True) -> str | None:
@@ -244,6 +281,13 @@ def _markdown(value: Any) -> str:
         return render_markdown(str(value or ""))
     except ValueError as exc:
         raise AcademyError(400, "text_too_long") from exc
+
+
+def _split_quiz(value: Any) -> tuple[str, dict[str, Any] | None]:
+    try:
+        return split_quiz(str(value or ""))
+    except QuizError as exc:
+        raise AcademyError(400, "bad_quiz", {"detail": str(exc)}) from exc
 
 
 async def _check_media(
@@ -414,6 +458,13 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
         if landing and not _LANDING_RE.match(landing):
             raise AcademyError(400, "bad_landing_url")
         changes["landing_url"] = landing or None
+    if "kind" in patch and patch["kind"] not in COURSE_KINDS:
+        raise AcademyError(400, "bad_kind", {"allowed": list(COURSE_KINDS)})
+    if "free_for" in patch:
+        try:
+            free_for = parse_free_for(patch["free_for"])
+        except ValueError as exc:
+            raise AcademyError(400, "bad_free_for", {"detail": str(exc)}) from exc
     async with tenant_connection(tenant_id) as conn:
         author = await _author(conn, tenant_id, viewer)
         course = await _course_for(conn, tenant_id, author, slug, lock=True)
@@ -461,6 +512,13 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
             if patch["access_rule"] not in allowed:
                 raise AcademyError(400, "bad_access_rule", {"allowed": list(allowed)})
             changes["access_rule"] = patch["access_rule"]
+        # Рубрика и бесплатный доступ (V35) — решения владельца, как access_rule 'pro'.
+        if ("kind" in patch or "free_for" in patch) and not author.is_admin:
+            raise AcademyError(403, "not_owner")
+        if "kind" in patch:
+            changes["kind"] = patch["kind"]
+        if "free_for" in patch:
+            changes["free_for"] = json.dumps(free_for) if free_for else None
         submitted = False
         if "status" in patch:
             wanted, current = patch["status"], course["status"]
@@ -481,7 +539,8 @@ async def update_course(tenant_id: str, viewer: AcademyViewer, slug: str, patch:
             changes["status"] = "draft"  # правка на проверке — снова черновик
         if changes:
             columns = ", ".join(
-                f"{name} = %s::uuid" if name == "cover_media_id" else f"{name} = %s::jsonb" if name == "teaser"
+                f"{name} = %s::uuid" if name == "cover_media_id"
+                else f"{name} = %s::jsonb" if name in ("teaser", "free_for")
                 else f"{name} = %s" for name in changes
             )
             course = await fetch_one(
@@ -669,7 +728,7 @@ def _video_out(video: dict[str, Any] | None, media: dict[str, dict[str, Any]], t
 
 _LESSON_COLUMNS = """
     l.lesson_id::text as lesson_id, l.slug, l.module_id::text as module_id, l.position, l.title, l.short_title,
-    l.kind, l.status, l.body_md, l.body_html, l.video, l.files, l.live_at, l.live_url, l.unlock,
+    l.kind, l.status, l.body_md, l.body_html, l.video, l.files, l.live_at, l.live_url, l.unlock, l.quiz_json,
     a.prompt_md, a.prompt_html, a.required
 """
 
@@ -720,6 +779,8 @@ def _lesson_out(row: dict[str, Any], media: dict[str, dict[str, Any]], telegram_
             if row.get("required") is not None
             else None
         ),
+        # Тест урока целиком (V35): автору — с верными ответами и подсказками.
+        "quiz": row.get("quiz_json") or None,
     }
 
 
@@ -761,7 +822,7 @@ async def author_course(tenant_id: str, viewer: AcademyViewer, slug: str) -> dic
             """
             select l.lesson_id::text as lesson_id, l.slug, l.module_id::text as module_id, l.module_title, l.position,
                    l.title, l.kind, l.status, l.live_at, l.unlock, l.video,
-                   (a.lesson_id is not null) as has_assignment,
+                   (a.lesson_id is not null) as has_assignment, (l.quiz_json is not null) as has_quiz,
                    (select count(*) from academy_submissions s
                     where s.tenant_id = l.tenant_id and s.lesson_id = l.lesson_id and s.status = 'submitted') as pending
             from academy_lessons l
@@ -788,6 +849,7 @@ async def author_course(tenant_id: str, viewer: AcademyViewer, slug: str) -> dic
             "live_at": _iso(row.get("live_at")),
             "unlock": row.get("unlock"),
             "has_assignment": bool(row["has_assignment"]),
+            "has_quiz": bool(row["has_quiz"]),
             "submissions_pending": int(row["pending"]),
             "video": _video_out(row.get("video"), media, viewer.telegram_user_id),
         }
@@ -997,11 +1059,25 @@ async def _lesson_changes(
     if "short_title" in data:
         changes["short_title"] = _text(data["short_title"], code="bad_title", max_len=120, required=False)
     if "body_md" in data:
-        source = str(data["body_md"] or "")
+        # Блок ```quiz — тест урока: в quiz_json, в тексте урока его нет (V35). Нет блока —
+        # тест не трогаем; убрать тест — явное поле quiz: null.
+        source, quiz = _split_quiz(data["body_md"])
         html = _markdown(source)
         await _check_media(conn, tenant_id, author, media_refs(html), ("image", "file", "video"), known=known)
         changes["body_md"] = source
         changes["body_html"] = html
+        if quiz is not None:
+            if "quiz" in data:
+                raise AcademyError(400, "bad_quiz", {"detail": "тест и в тексте урока, и в поле quiz — оставьте один"})
+            changes["quiz_json"] = json.dumps(quiz)
+    if "quiz" in data:
+        if data["quiz"] is None:
+            changes["quiz_json"] = None
+        else:
+            try:
+                changes["quiz_json"] = json.dumps(validate_quiz(data["quiz"]))
+            except QuizError as exc:
+                raise AcademyError(400, "bad_quiz", {"detail": str(exc)}) from exc
     if "video" in data:
         video = data["video"]
         if video in (None, {}):
@@ -1066,7 +1142,7 @@ async def _lesson_changes(
     return changes, assignment
 
 
-_JSONB_COLUMNS = ("video", "files", "unlock")
+_JSONB_COLUMNS = ("video", "files", "unlock", "quiz_json")
 
 
 async def _save_assignment(conn: Any, tenant_id: str, lesson_id: str, assignment: Any) -> None:
@@ -1202,7 +1278,7 @@ async def course_students(tenant_id: str, viewer: AcademyViewer, slug: str) -> l
             conn,
             """
             with lessons as (
-              select l.lesson_id, coalesce(a.required, false) as required
+              select l.lesson_id, coalesce(a.required, false) as required, (l.quiz_json is not null) as quiz
               from academy_lessons l
               left join academy_assignments a on a.tenant_id = l.tenant_id and a.lesson_id = l.lesson_id
               where l.tenant_id = %(t)s and l.course_id = %(c)s::uuid and l.status = 'published'
@@ -1224,10 +1300,14 @@ async def course_students(tenant_id: str, viewer: AcademyViewer, slug: str) -> l
                     join academy_progress p
                       on p.tenant_id = %(t)s and p.lesson_id = lessons.lesson_id
                      and p.telegram_user_id = people.telegram_user_id
-                    where not lessons.required or exists (
+                    where (not lessons.required or exists (
                       select 1 from academy_submissions s
                       where s.tenant_id = %(t)s and s.lesson_id = lessons.lesson_id
-                        and s.telegram_user_id = people.telegram_user_id and s.status = 'accepted')
+                        and s.telegram_user_id = people.telegram_user_id and s.status = 'accepted'))
+                      and (not lessons.quiz or exists (
+                      select 1 from academy_quiz_attempts q
+                      where q.tenant_id = %(t)s and q.lesson_id = lessons.lesson_id
+                        and q.telegram_user_id = people.telegram_user_id and q.passed))
                    ) as lessons_complete,
                    greatest(
                      (select max(p.done_at) from academy_progress p join lessons on lessons.lesson_id = p.lesson_id
@@ -1275,7 +1355,9 @@ async def course_students(tenant_id: str, viewer: AcademyViewer, slug: str) -> l
 async def preview_markdown(tenant_id: str, viewer: AcademyViewer, source: Any) -> str:
     async with tenant_connection(tenant_id) as conn:
         await _author(conn, tenant_id, viewer)
-    return _markdown(source)
+    # Тест урока в предпросмотре не показываем, но проверяем: ошибка видна до сохранения.
+    text, _quiz = _split_quiz(source)
+    return _markdown(text)
 
 
 async def require_author(tenant_id: str, viewer: AcademyViewer) -> Author:
