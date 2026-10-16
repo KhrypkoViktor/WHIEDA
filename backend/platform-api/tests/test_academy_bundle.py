@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -139,3 +140,53 @@ def test_bare_address_in_a_lesson_becomes_a_link_in_a_new_tab(tmp_path):
     from app.academy.content import sanitize_html
 
     assert 'target="_blank"' in sanitize_html(first["body_html"]) and 'rel="noopener noreferrer"' in sanitize_html(first["body_html"])
+
+
+# ---- раскрывающиеся блоки (16.10.2026) ------------------------------------------------------------
+
+FOLD_LESSON = (
+    "# Урок 1. Вход\n\n**Результат урока:** понятен вход\n\n## Разбор\n\nТекст.\n\n"
+    ":::раскрыть Подробный расчёт\n"
+    "Абзац: https://wwc.best/academy/\n\n"
+    "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+    "```\nпромпт\n```\n\n"
+    "![Схема](img/shema.png)\n"
+    ":::\n\n"
+    "После блока.\n"
+)
+
+
+def test_fold_in_a_lesson_is_the_same_html_as_in_the_cabinet(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / "01.md").write_text(FOLD_LESSON, encoding="utf-8")
+    bundle = _builder().build(folder)
+    body = bundle["lessons"][0]["body_html"]
+    from app.academy.content import render_markdown, sanitize_html
+
+    fold = re.search(r'<details class="ac-fold">.*?</details>', body, re.S).group(0)
+    assert fold.startswith('<details class="ac-fold"><summary>Подробный расчёт</summary><div class="ac-fold__body">')
+    assert "<table>" in fold and "<pre><code>промпт" in fold and 'src="img/shema.png"' in fold
+    # Тот же блок, что в кабинете автора, и чтение урока (вторая очистка) его не меняет.
+    assert fold in render_markdown(FOLD_LESSON, folds=True)
+    assert fold in sanitize_html(body)
+    # Картинка из блока едет в бандле, ссылка в нём — одна новая вкладка.
+    assert "img/shema.png" in bundle["media"]
+    assert fold.count('target="_blank"') == 1
+    assert body.endswith("<p>После блока.</p>")
+
+
+def test_broken_fold_stops_the_build_with_the_file_name(tmp_path):
+    folder = _folder(tmp_path)
+    (folder / "01.md").write_text("# Урок 1. Вход\n\n:::раскрыть Без конца\nтекст\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as stopped:
+        _builder().build(folder)
+    assert "01.md" in str(stopped.value) and "не закрыт" in str(stopped.value)
+
+
+def test_test_inside_a_fold_stops_the_build(tmp_path):
+    folder = _mini_course(tmp_path, json.dumps(QUIZ, ensure_ascii=False))
+    source = (folder / "01.md").read_text(encoding="utf-8")
+    (folder / "01.md").write_text(source.replace("## Тест\n\n", ":::раскрыть Тест\n") + ":::\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as stopped:
+        _builder().build(folder)
+    assert "01.md" in str(stopped.value) and "тест не может быть внутри раскрывающегося блока" in str(stopped.value)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
 
-from app.academy.content import media_refs, render_markdown, resolve_media, sanitize_html
+from app.academy.content import FoldError, media_refs, render_markdown, resolve_media, sanitize_html, split_quiz
+from app.academy.quiz import QuizError
 
 MEDIA_ID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
@@ -258,3 +260,165 @@ def test_author_views_clean_stored_html_too():
         "prompt_md": "", "prompt_html": '<p onclick="x()">Фото</p><iframe src="https://x"></iframe>', "required": True,
     }
     assert _lesson_out(lesson, {}, 1)["assignment"]["prompt_html"] == "<p>Фото</p>"
+
+
+# ---- раскрывающиеся блоки «:::раскрыть …» (владелец, 16.10.2026) ---------------------------------
+
+QUIZ_OK = {
+    "pass": 1,
+    "questions": [{"q": "Вопрос?", "ref": "Разбор", "options": [
+        {"text": "Да", "correct": True, "hint": "Верно."},
+        {"text": "Нет", "correct": False, "hint": "Перечитайте: Разбор."},
+    ]}],
+}
+
+
+FOLD_RE = re.compile(r'<details class="ac-fold"><summary>(.*?)</summary><div class="ac-fold__body">(.*?)</div></details>', re.S)
+
+
+def _folds(html):
+    return FOLD_RE.findall(html)
+
+
+def test_fold_becomes_details_with_summary_and_body():
+    html = render_markdown("## Разбор\n\nВступление.\n\n:::раскрыть Подробный расчёт\nАбзац внутри.\n:::\n\nПосле.", folds=True)
+    assert _folds(html) == [("Подробный расчёт", "<p>Абзац внутри.</p>")]
+    assert html.startswith("<h2>Разбор</h2>\n<p>Вступление.</p>\n<details")
+    assert html.endswith("</details>\n<p>После.</p>")
+    assert "<p><details" not in html and ":::" not in html
+
+
+def test_fold_holds_any_markdown_list_table_code_image_link():
+    md = (
+        ":::раскрыть Всё внутри\n"
+        "Абзац со ссылкой https://wwc.best/academy/ и **жирным**.\n\n"
+        "- раз\n- два\n\n"
+        "1. первый\n2. второй\n\n"
+        "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+        "```\nпромпт: <идея>\n:::\n## не заголовок\n```\n\n"
+        f"![Схема](media:{MEDIA_ID})\n"
+        ":::\n"
+    )
+    [(title, body)] = _folds(render_markdown(md, folds=True))
+    assert title == "Всё внутри"
+    for fragment in ("<strong>жирным</strong>", "<ul>\n<li>раз</li>", "<ol>\n<li>первый</li>", "<table>", "<td>2</td>",
+                     "<pre><code>промпт: &lt;идея&gt;\n:::\n## не заголовок\n</code></pre>",
+                     f'<img alt="Схема" src="media:{MEDIA_ID}" loading="lazy">',
+                     '<a target="_blank" href="https://wwc.best/academy/" rel="noopener noreferrer">'):
+        assert fragment in body, fragment
+    assert "<h2" not in body
+    assert media_refs(render_markdown(md, folds=True)) == [MEDIA_ID]
+
+
+def test_two_folds_space_after_colons_and_a_fold_right_after_a_heading():
+    html = render_markdown(
+        "## Раздел\n:::раскрыть Первый\nодин\n:::\nмежду\n::: раскрыть   Второй  \nдва\n:::", folds=True
+    )
+    assert _folds(html) == [("Первый", "<p>один</p>"), ("Второй", "<p>два</p>")]
+    assert html.startswith("<h2>Раздел</h2>\n<details")
+    assert "<p>между</p>" in html
+
+
+def test_fold_title_is_text_escaped_and_limited():
+    [(title, _)] = _folds(render_markdown(':::раскрыть Код <b>x</b> & "кавычки"\nтекст\n:::', folds=True))
+    assert title == 'Код &lt;b&gt;x&lt;/b&gt; &amp; "кавычки"'
+    assert _folds(render_markdown(":::раскрыть " + "я" * 120 + "\nтекст\n:::", folds=True))
+    with pytest.raises(FoldError, match="длиннее 120"):
+        render_markdown(":::раскрыть " + "я" * 121 + "\nтекст\n:::", folds=True)
+    with pytest.raises(FoldError, match="нужен заголовок"):
+        render_markdown(":::раскрыть\nтекст\n:::", folds=True)
+    with pytest.raises(FoldError, match="нужен заголовок"):
+        render_markdown("::: раскрыть   \nтекст\n:::", folds=True)
+
+
+@pytest.mark.parametrize(
+    "source, reason",
+    [
+        (":::раскрыть Без конца\nтекст\n", "(строка 1) не закрыт"),
+        ("текст\n\n:::раскрыть Код без конца\n```\nкод\n:::\n", "не закрыт"),
+        (":::раскрыть Первый\n:::раскрыть Второй\nтекст\n:::\n:::\n", "не вкладываются"),
+        ("текст\n:::\n", "строка 2: «:::» без начала"),
+        (":::раскрытьСлитно\nтекст\n:::\n", "без начала"),
+        (":::раскрыть Раздел\nтекст\n## Новый раздел\n:::\n", "заголовок раздела «## …» (строка 3)"),
+        (":::раскрыть Раздел\nЗаголовок\n---\n:::\n", "заголовок раздела"),
+        (":::раскрыть Раздел\n<h2>сырой</h2>\n:::\n", "заголовок раздела"),
+    ],
+)
+def test_broken_fold_is_an_error_for_the_author(source, reason):
+    with pytest.raises(FoldError) as broken:
+        render_markdown(source, folds=True)
+    assert reason in str(broken.value)
+    assert isinstance(broken.value, ValueError)
+
+
+def test_h3_inside_a_fold_is_fine():
+    [(_, body)] = _folds(render_markdown(":::раскрыть Шаги\n### Шаг 1\nтекст\n:::", folds=True))
+    assert body.startswith("<h3>Шаг 1</h3>")
+
+
+def test_folds_are_off_outside_the_academy_cabinet():
+    # Магазин рендерит тем же render_markdown без блоков: «:::» остаётся текстом, ошибок нет.
+    assert render_markdown(":::раскрыть Заголовок\nтекст\n:::") == "<p>:::раскрыть Заголовок\nтекст\n:::</p>"
+    assert render_markdown("текст\n:::") == "<p>текст\n:::</p>"
+
+
+def test_sanitizer_keeps_the_fold_and_only_its_own_classes():
+    html = render_markdown(":::раскрыть Заголовок\nтекст\n:::", folds=True)
+    assert sanitize_html(html) == html  # вторая очистка при чтении урока (service.lesson_detail) ничего не снимает
+    hostile = sanitize_html(
+        '<details class="ac-fold evil" open ontoggle="alert(1)"><summary class="x" onclick="y()">T</summary>'
+        '<div class="ac-fold__body" style="color:red" id="z">b</div><div class="evil">c</div></details>'
+        '<p class="ac-fold">p</p>'
+    )
+    assert hostile == "<details><summary>T</summary><div class=\"ac-fold__body\">b</div><div>c</div></details><p>p</p>"
+    assert sanitize_html('<details class="ac-fold"><summary>T</summary></details>') == (
+        '<details class="ac-fold"><summary>T</summary></details>'
+    )
+
+
+def test_author_tags_inside_a_fold_cannot_close_it():
+    html = render_markdown(":::раскрыть Блок\nТекст </div></details> <b>жирный</b>\n:::\n\nПосле.", folds=True)
+    assert _folds(html) == [("Блок", "<p>Текст  <b>жирный</b></p>")]
+    assert html.endswith("</details>\n<p>После.</p>")
+
+
+def test_quiz_outside_a_fold_still_splits_and_inside_is_refused():
+    quiz = json.dumps(QUIZ_OK, ensure_ascii=False)
+    text, found = split_quiz(f":::раскрыть Блок\nтекст\n:::\n\n```quiz\n{quiz}\n```\n")
+    assert found["pass"] == 1 and "quiz" not in text
+    assert _folds(render_markdown(text, folds=True)) == [("Блок", "<p>текст</p>")]
+    with pytest.raises(QuizError, match="тест не может быть внутри раскрывающегося блока «Блок»"):
+        split_quiz(f"Вступление.\n\n:::раскрыть Блок\n```quiz\n{quiz}\n```\n:::\n")
+    with pytest.raises(FoldError, match="не закрыт"):
+        split_quiz(f":::раскрыть Блок\nтекст\n\n```quiz\n{quiz}\n```\n")
+
+
+def test_author_path_answers_bad_fold_with_the_reason():
+    from app.academy.author import _markdown, _split_quiz
+    from app.academy.service import AcademyError
+
+    assert _folds(_markdown(":::раскрыть Блок\nтекст\n:::"))
+    with pytest.raises(AcademyError) as broken:
+        _markdown(":::раскрыть Блок\nтекст")
+    assert (broken.value.status, broken.value.code) == (400, "bad_fold")
+    assert "не закрыт" in broken.value.extra["detail"]
+    with pytest.raises(AcademyError) as in_split:
+        _split_quiz("текст\n:::")
+    assert in_split.value.code == "bad_fold" and "без начала" in in_split.value.extra["detail"]
+    quiz = json.dumps(QUIZ_OK, ensure_ascii=False)
+    with pytest.raises(AcademyError) as quiz_inside:
+        _split_quiz(f":::раскрыть Блок\n```quiz\n{quiz}\n```\n:::")
+    assert quiz_inside.value.code == "bad_quiz" and "внутри раскрывающегося блока" in quiz_inside.value.extra["detail"]
+    with pytest.raises(AcademyError) as too_long:
+        _markdown("x" * 200_001)
+    assert too_long.value.code == "text_too_long"
+
+
+def test_markdown_without_folds_renders_as_before():
+    # Уроки без блоков (весь Basic_course) — тот же HTML, что до блоков: сборщик байт в байт.
+    import markdown as markdown_lib
+
+    from app.academy.content import MARKDOWN_EXTENSIONS, markdown_html
+
+    md = "## A\n\nтекст https://wwc.best\n\n```\nкод\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+    assert markdown_html(md) == markdown_lib.markdown(md, extensions=MARKDOWN_EXTENSIONS, output_format="html")
