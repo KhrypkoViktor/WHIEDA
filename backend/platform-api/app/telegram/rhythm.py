@@ -25,7 +25,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from app.academy import rhythm
-from app.academy.service import AcademyError, AcademyViewer, course_outline, preview_admin_ids
+from app.academy.service import preview_admin_ids
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.jobs.outbox import enqueue_outbox_event
 from app.settings import get_settings
@@ -58,7 +58,7 @@ _BOARD_TEXT_RE = re.compile(r"^/?табло\s*$", re.I)
 
 
 def course_slug() -> str:
-    return str(get_settings().platform_rhythm_course or "").strip()
+    return rhythm.course_slug()
 
 
 def card_key(course: str, telegram_user_id: int, day: date) -> str:
@@ -71,23 +71,12 @@ def in_window(local: datetime, at: time, width: timedelta) -> bool:
 
 
 async def lesson_of_day(tenant_id: str, course: str, telegram_user_id: int) -> dict[str, Any] | None:
-    """Следующий непройденный открытый урок курса; курс закрыт или пройден — None."""
-    uid = int(telegram_user_id)
-    viewer = AcademyViewer(telegram_user_id=uid, is_preview_admin=uid in preview_admin_ids(), partner_paid=False)
-    try:
-        outline = await course_outline(tenant_id, course, viewer)
-    except AcademyError:
-        return None
-    upcoming = outline["course"].get("next_lesson")
-    lesson = next((row for row in outline["lessons"] if row["slug"] == upcoming), None)
-    if lesson is None or lesson.get("locked"):
-        return None
-    return {
-        "slug": lesson["slug"],
-        "title": lesson["title"],
-        "minutes": lesson.get("minutes"),
-        "url": await course_lesson_url(tenant_id, course, lesson["slug"]),
-    }
+    """Следующий непройденный открытый урок курса для бота: ссылка — на витрину курса.
+
+    Общий выбор урока — ``rhythm.lesson_of_day``; сайт строит путь ``/academy/?course=&lesson=``."""
+    return await rhythm.lesson_of_day(
+        tenant_id, course, telegram_user_id, lambda lesson_slug: course_lesson_url(tenant_id, course, lesson_slug)
+    )
 
 
 async def build_card(

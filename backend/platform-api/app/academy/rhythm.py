@@ -8,22 +8,28 @@
 
 Кто в ритме: активная ``academy_access`` на курс (``PLATFORM_RHYTHM_COURSE``) и preview-админы
 (владелец). Даты — по ``PLATFORM_RHYTHM_TIMEZONE`` (Минск). Здесь данные и тексты; бот,
-кнопки и расписание — ``app.telegram.rhythm``.
+кнопки и расписание — ``app.telegram.rhythm``. Экран «Сегодня» приложения WWC (/app/) берёт
+то же самое через ``today_payload`` / ``toggle_today`` (роуты ``/academy/rhythm/today``, 17.10.2026).
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
-from app.academy.service import _ACCESS_ACTIVE, preview_admin_ids
+from app.academy.service import _ACCESS_ACTIVE, AcademyError, AcademyViewer, course_outline, preview_admin_ids
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Строит ссылку урока по его slug: бот — со входом на витрину курса, сайт — путь /academy/.
+LessonUrl = Callable[[str], "str | Awaitable[str]"]
 
 FIELDS = ("post", "person", "five")
 LINES = {
@@ -42,6 +48,10 @@ MONTHS = (
     "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря",
 )
+
+
+def course_slug() -> str:
+    return str(get_settings().platform_rhythm_course or "").strip()
 
 
 def zone() -> ZoneInfo:
@@ -331,3 +341,83 @@ async def board_people(tenant_id: str, course_slug: str, sunday: date) -> tuple[
     ]
     start = week1_start() or (first["day"] if first and first["day"] else None)
     return week_number(sunday, start), people
+
+
+# ---------------------------------------------------------------- урок дня и экран «Сегодня»
+
+
+def site_lesson_path(course: str, lesson_slug: str) -> str:
+    """Урок на сайте без входа в бот: ``/academy/?course=<slug>&lesson=<slug>``."""
+    return f"/academy/?{urlencode({'course': course, 'lesson': lesson_slug})}"
+
+
+async def lesson_of_day(
+    tenant_id: str, course: str, telegram_user_id: int, url_for: LessonUrl
+) -> dict[str, Any] | None:
+    """Следующий непройденный открытый урок курса; курс закрыт или пройден — None.
+
+    ``url_for(lesson_slug)`` строит ссылку (может быть корутиной): бот — адрес витрины курса,
+    сайт — ``site_lesson_path``.
+    """
+    uid = int(telegram_user_id)
+    viewer = AcademyViewer(telegram_user_id=uid, is_preview_admin=uid in preview_admin_ids(), partner_paid=False)
+    try:
+        outline = await course_outline(tenant_id, course, viewer)
+    except AcademyError:
+        return None
+    upcoming = outline["course"].get("next_lesson")
+    lesson = next((row for row in outline["lessons"] if row["slug"] == upcoming), None)
+    if lesson is None or lesson.get("locked"):
+        return None
+    url = url_for(lesson["slug"])
+    if inspect.isawaitable(url):
+        url = await url
+    return {"slug": lesson["slug"], "title": lesson["title"], "minutes": lesson.get("minutes"), "url": url}
+
+
+def today_view(
+    course: str, day: date, *, member: bool, state: dict[str, Any] | None = None, lesson: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Ответ ``/academy/rhythm/today``: не участнику — нули и ``lesson: null``."""
+    state = state or {}
+    marks = state.get("marks") or {}
+    return {
+        "ok": True,
+        "member": member,
+        "course_slug": course,
+        "day": day.isoformat(),
+        "marks": {field: bool(marks.get(field)) for field in FIELDS},
+        "streak": int(state.get("streak") or 0),
+        "broken": bool(state.get("broken")),
+        "lesson": lesson if member else None,
+    }
+
+
+async def today_payload(tenant_id: str, telegram_user_id: int, *, today: date | None = None) -> dict[str, Any]:
+    """Карточка «Сегодня» для сайта; не участник курса — ``member: false`` (200, не 403)."""
+    day = today or local_today()
+    course = course_slug()
+    if not course or not await is_member(tenant_id, course, telegram_user_id):
+        return today_view(course, day, member=False)
+    return await _member_payload(tenant_id, telegram_user_id, course, day)
+
+
+async def _member_payload(tenant_id: str, telegram_user_id: int, course: str, day: date) -> dict[str, Any]:
+    state = await card_state(tenant_id, telegram_user_id, day, day)
+    lesson = await lesson_of_day(tenant_id, course, telegram_user_id, lambda slug: site_lesson_path(course, slug))
+    return today_view(course, day, member=True, state=state, lesson=lesson)
+
+
+async def toggle_today(tenant_id: str, telegram_user_id: int, field: Any) -> dict[str, Any]:
+    """Переключить галочку сегодняшнего дня (день — ``local_today()``) и вернуть карточку.
+
+    400 ``bad_field`` — такой галочки нет; 403 ``rhythm_not_member`` — курс не открыт ученику.
+    """
+    if not isinstance(field, str) or field not in FIELDS:
+        raise AcademyError(400, "bad_field")
+    course = course_slug()
+    if not course or not await is_member(tenant_id, course, telegram_user_id):
+        raise AcademyError(403, "rhythm_not_member")
+    day = local_today()
+    await toggle_mark(tenant_id, telegram_user_id, day, field)
+    return await _member_payload(tenant_id, telegram_user_id, course, day)

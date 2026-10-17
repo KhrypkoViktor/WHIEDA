@@ -5,7 +5,8 @@ Identity is the content-access session (Telegram sign-in on the site): the
 same person as in the bot, so progress is shared. Every response is private.
 
 Student: courses, a course (modules, lessons with locks), a lesson, «Сделал»,
-the lesson's test (V35), homework, media links, photo uploads for homework.
+the lesson's test (V35), homework, media links, photo uploads for homework, and the
+rhythm card «Сегодня» (``/rhythm/today``, 17.10.2026: marks, streak, lesson of the day).
 Author (``/author/…``): courses, modules, lessons, order, students, homework
 review, Markdown preview, uploads (video, files, images). 403 ``not_author`` —
 the person has no author cabinet.
@@ -52,6 +53,7 @@ from app.academy.media_service import (
     put_chunk,
     upload_status,
 )
+from app.academy.rhythm import today_payload, toggle_today
 from app.academy.service import (
     AcademyError,
     academy_visible,
@@ -195,6 +197,12 @@ class ProfileBody(BaseModel):
     instagram: str = ""
 
 
+class RhythmMarkBody(BaseModel):
+    """Галочка дня ритма: ``post`` | ``person`` | ``five``; другое значение — 400 ``bad_field``."""
+
+    field: Any = None
+
+
 class PreviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     markdown: str = ""
@@ -328,6 +336,24 @@ async def profile_site(request: Request, response: Response) -> dict[str, Any]:
 async def profile_save_site(body: ProfileBody, request: Request, response: Response) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
     return await _guard(save_profile(tenant_id, viewer, body.model_dump()))
+
+
+@router.get(f"{P}/rhythm/today")
+async def rhythm_today_site(request: Request, response: Response) -> dict[str, Any]:
+    """Карточка «Сегодня» (ритм курса, экран /app/): галочки дня, серия, урок дня.
+    Не участник курса — ``member: false`` и нули (200), чтобы экран просто скрыл карточку."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await today_payload(tenant_id, viewer.telegram_user_id)
+
+
+@router.post(f"{P}/rhythm/today")
+async def rhythm_today_toggle_site(
+    request: Request, response: Response, body: RhythmMarkBody | None = None
+) -> dict[str, Any]:
+    """Переключить галочку сегодняшнего дня; тот же объект, что в GET. 400 ``bad_field``,
+    403 ``rhythm_not_member``."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(toggle_today(tenant_id, viewer.telegram_user_id, body.field if body else None))
 
 
 # ---- media: signed files (declared before /media/{id}) ----------------------------------------
