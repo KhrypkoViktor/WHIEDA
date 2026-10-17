@@ -73,6 +73,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "academy_profiles",
             # Попытки теста урока (platform_academy_mini_quiz_v35.sql, 16.10.2026).
             "academy_quiz_attempts",
+            # Ритм курса: отметки «Сегодня» (platform_academy_rhythm_v36.sql, 17.10.2026).
+            "academy_daily_checkins",
             # Согласие на рекламную рассылку в боте (platform_marketing_consent_v17.sql, 26.09.2026).
             "telegram_marketing_consents",
             "referral_profiles",
