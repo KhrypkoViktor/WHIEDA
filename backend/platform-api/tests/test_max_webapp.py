@@ -286,6 +286,19 @@ def test_max_command_reaches_the_cabinet_handler():
     assert is_referral_command("/max") and is_referral_command("/max@wwc_bot")
 
 
+def test_max_command_text_matches_the_new_login_screen():
+    """17.10.2026: текст /max повторяет путь на сайте «Войти» → «Не получается через Telegram?» → «Войти через Max»."""
+    from app.telegram.referral_bonus import MAX_LINK_TEXT
+
+    assert MAX_LINK_TEXT == (
+        "Вход на сайт через Max\n\n"
+        "Нажмите кнопку — откроется Max и запомнит, что это вы. Это нужно один раз.\n"
+        "Дальше на сайте: «Войти» → «Не получается через Telegram?» → «Войти через Max» — "
+        "сайт откроется в вашем браузере.\n\n"
+        "Ссылка действует сутки и только для вас — не пересылайте её."
+    )
+
+
 # ---- V34 (15.10.2026): код владельца в мини-приложении, browser_login_url, account_identities ----------
 
 

@@ -121,6 +121,7 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("business", "Бизнес"),
     ("events", "Встречи"),
     ("company", "О компании"),
+    ("max", "Вход на сайт через Max"),
     ("support", "Поддержка"),
     ("wish", "Пожелание"),
 )
@@ -131,6 +132,7 @@ MINIMAL_TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("cabinet", "Личный кабинет"),
     ("invite", "Пригласить партнёра"),
     ("calculator", "Калькулятор"),
+    ("max", "Вход на сайт через Max"),
     ("support", "Поддержка"),
     ("wish", "Пожелание"),
 )
@@ -344,13 +346,18 @@ def telegram_menu_commands(
     include_calculator: bool = True,
     minimal: bool = False,
     include_wish: bool = False,
+    include_max: bool = False,
 ) -> list[dict[str, str]]:
-    """``include_wish`` — «Пожелание» только у бота WWC (V25): у чужих ботов его некому читать."""
+    """``include_wish`` — «Пожелание» только у бота WWC (V25): у чужих ботов его некому читать.
+
+    ``include_max`` — «Вход на сайт через Max» (/max, 17.10.2026) только у бота WWC: у чужих ботов нет сайта WWC."""
     commands = MINIMAL_TELEGRAM_MENU_COMMANDS if minimal else TELEGRAM_MENU_COMMANDS
     return [
         {"command": command, "description": description}
         for command, description in commands
-        if (include_calculator or command != "calculator") and (include_wish or command != "wish")
+        if (include_calculator or command != "calculator")
+        and (include_wish or command != "wish")
+        and (include_max or command != "max")
     ]
 
 

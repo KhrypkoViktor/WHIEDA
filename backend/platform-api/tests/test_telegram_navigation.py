@@ -185,6 +185,16 @@ def test_legacy_reply_keyboard_is_removed_and_commands_are_tenant_aware():
     assert [c["command"] for c in telegram_menu_commands(minimal=True, include_wish=True)][-1] == "wish"
 
 
+def test_max_login_command_is_in_the_menu_only_for_the_wwc_bot():
+    """/max (17.10.2026): у чужих ботов нет сайта WWC, поэтому без include_max его в меню нет."""
+    assert "max" not in {c["command"] for c in telegram_menu_commands()}
+    assert "max" not in {c["command"] for c in telegram_menu_commands(minimal=True)}
+    for minimal in (False, True):
+        commands = telegram_menu_commands(minimal=minimal, include_wish=True, include_max=True)
+        assert {"command": "max", "description": "Вход на сайт через Max"} in commands
+        assert [c["command"] for c in commands][-1] == "wish"
+
+
 def test_standard_menu_commands_resolve_without_entering_advisor():
     assert resolve_menu_text_intent("/products") == "nav_products"
     assert resolve_menu_text_intent("/calculator@WHIEDA_bot") == "nav_calculator"
