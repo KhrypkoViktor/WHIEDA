@@ -101,8 +101,17 @@ async def ensure_channel_actor(
 async def _fold_or_create(
     conn: Any, tenant_id: str, *, channel: str, channel_user_id: int | str, username: str | None, display_name: str
 ) -> str:
-    """Партнёр, заведённый владельцем с тем же @username, — это тот же человек (как fix 55cf71d для Telegram)."""
-    if username:
+    """Человек из канала → actor. Слияние с партнёром по @username — ТОЛЬКО для telegram.
+
+    Партнёр, заведённый владельцем с тем же @username в Telegram, — тот же человек (fix 55cf71d): username
+    в Telegram уникален, а lead_actors.telegram_username — тоже из Telegram. У Max (и vk, whatsapp) своё
+    пространство имён: чужой человек ставит в Max ник партнёра, пишет боту — и его id «прилипал» к actor
+    партнёра (17.10.2026: через lead_actor_channels это давало вход на сайт за партнёра). Поэтому для
+    остальных каналов username-совпадение не используется: человек получает свой actor
+    ``<channel>:<tenant>:<id>``, а к партнёру он привязывается только подтверждёнными путями — кодом
+    владельца, ссылкой /max (link_<код>), кнопкой maxlink (account_identities, app/max/webapp.py).
+    """
+    if username and channel == "telegram":
         partner = await fetch_one(
             conn,
             """
