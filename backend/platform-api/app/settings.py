@@ -249,6 +249,31 @@ class Settings(BaseSettings):
             "PLATFORM_SCHEDULED_NOTIFY_BINDINGS; both empty: no notification."
         ),
     )
+    # Ритм курса (17.10.2026): карточка «Сегодня» и воскресное табло (app/telegram/rhythm.py).
+    platform_rhythm_enabled: bool = Field(
+        default=False,
+        validation_alias="PLATFORM_RHYTHM_ENABLED",
+        description=(
+            "Daily «Сегодня» card to the students of PLATFORM_RHYTHM_COURSE and the Sunday "
+            "board in the course group, by the scheduled-notification worker (production "
+            "only: PLATFORM_SCHEDULED_NOTIFY_BINDINGS). The owner's «ритм» / «табло» work "
+            "without it."
+        ),
+    )
+    platform_rhythm_course: str = Field(default="online-start-4w", validation_alias="PLATFORM_RHYTHM_COURSE")
+    platform_rhythm_timezone: str = Field(default="Europe/Minsk", validation_alias="PLATFORM_RHYTHM_TIMEZONE")
+    platform_rhythm_card_time: str = Field(
+        default="09:00", validation_alias="PLATFORM_RHYTHM_CARD_TIME",
+        description="Local time of the daily card; it is queued within the next hour.",
+    )
+    platform_rhythm_board_time: str = Field(
+        default="20:00", validation_alias="PLATFORM_RHYTHM_BOARD_TIME",
+        description="Sunday, local time of the weekly board; posted within the next 45 minutes.",
+    )
+    platform_rhythm_week1_start: str = Field(
+        default="", validation_alias="PLATFORM_RHYTHM_WEEK1_START",
+        description="ISO date inside week 1 of the board. Empty: the week of the first check-in.",
+    )
     # Ежедневник партнёра (CRM v1, 25.09.2026).
     platform_crm_pilot_telegram_ids: str = Field(
         default="",
