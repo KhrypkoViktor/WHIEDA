@@ -20,6 +20,13 @@ on the way out — stored lessons need no re-render for it.
 A lesson's test (V35) is a fenced block with the language ``quiz`` holding JSON:
 ``split_quiz`` cuts it out of the raw Markdown before rendering — answers and
 hints never reach the lesson HTML (``app.academy.quiz`` checks the JSON).
+
+A long part of a lesson folds (owner, 16.10.2026: no «полотно текста»): the author writes
+``:::раскрыть Заголовок`` on its own line, any Markdown, and ``:::`` on its own line. The
+block becomes ``<details class="ac-fold"><summary>…</summary><div class="ac-fold__body">…``
+(``Folds``, before python-markdown). Blocks do not nest and hold no ``##`` sections (the site
+splits a lesson into sections by ``<h2>``); a broken block is a ``FoldError`` for the author.
+``markdown_html`` is the one pipeline of the cabinet (``render_markdown``) and the bundle builder.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ import markdown
 import nh3
 from markdown.extensions import Extension
 from markdown.inlinepatterns import InlineProcessor
+from markdown.preprocessors import Preprocessor
 from markdown.util import HTML_PLACEHOLDER_RE, INLINE_PLACEHOLDER_RE, AtomicString
 
 from app.academy.quiz import QuizError, validate_quiz
@@ -45,6 +53,7 @@ ALLOWED_TAGS = {
     "a", "img",
     "table", "thead", "tbody", "tfoot", "tr", "th", "td",
     "code", "pre",
+    "details", "summary", "div",  # раскрывающийся блок; class — только свой (FOLD_CLASSES)
 }
 ALLOWED_ATTRIBUTES = {
     "a": {"href", "title"},  # target — только _blank (tag_attribute_values)
@@ -53,6 +62,8 @@ ALLOWED_ATTRIBUTES = {
     "td": {"align", "colspan", "rowspan"},
     "ol": {"start"},
 }
+# class у тегов блока — только эти значения, другие nh3 снимает (атрибут open — тоже).
+FOLD_CLASSES = {"details": {"class": {"ac-fold"}}, "div": {"class": {"ac-fold__body"}}}
 URL_SCHEMES = {"http", "https", "mailto", "tel", "media"}
 MAX_MARKDOWN_CHARS = 200_000
 
@@ -114,6 +125,109 @@ class BareLinks(Extension):
 
 MARKDOWN_EXTENSIONS = ["tables", "sane_lists", "fenced_code", BareLinks()]
 
+# Раскрывающийся блок: «:::раскрыть Заголовок» (или «::: раскрыть …») … «:::», каждая строка отдельно.
+FOLD_TITLE_MAX = 120
+_FOLD_OPEN_RE = re.compile(r"^ {0,3}:::[ \t]*раскрыть(?:[ \t]+(?P<title>.*?))?[ \t]*\r?$", re.I)
+_FOLD_CLOSE_RE = re.compile(r"^ {0,3}:::[ \t]*\r?$")
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})")
+_H2_LINE_RE = re.compile(r"^ {0,3}##(?:[ \t]|\r?$)")
+_H2_TAG_RE = re.compile(r"<h2[\s>]", re.I)
+
+
+class FoldError(ValueError):
+    """A broken «:::раскрыть» block; the text says what to fix (the author reads it)."""
+
+
+def _fold_spans(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(opening line, closing line, title) of every block, 0-based; FoldError for a broken one.
+    Lines of a ``` / ~~~ code block are text: «:::» or «##» there is not a marker."""
+    spans: list[tuple[int, int, str]] = []
+    fence: str | None = None
+    start: int | None = None
+    title = ""
+    for number, line in enumerate(lines, start=1):
+        if fence:
+            if re.match(rf"^ {{0,3}}{re.escape(fence)}[ \t]*\r?$", line):
+                fence = None
+            continue
+        opened = _FENCE_OPEN_RE.match(line)
+        if opened:
+            fence = opened.group("fence")
+            continue
+        head = _FOLD_OPEN_RE.match(line)
+        if head:
+            if start is not None:
+                raise FoldError(
+                    f"раскрывающийся блок «{title}» (строка {start}): в нём второй «:::раскрыть» "
+                    f"(строка {number}) — блоки не вкладываются, закройте первый строкой «:::»"
+                )
+            name = (head.group("title") or "").strip()
+            if not name:
+                raise FoldError(f"раскрывающийся блок (строка {number}): нужен заголовок — «:::раскрыть Заголовок»")
+            if len(name) > FOLD_TITLE_MAX:
+                raise FoldError(f"раскрывающийся блок (строка {number}): заголовок длиннее {FOLD_TITLE_MAX} символов")
+            start, title = number, name
+            continue
+        if _FOLD_CLOSE_RE.match(line):
+            if start is None:
+                raise FoldError(f"строка {number}: «:::» без начала — выше нужна строка «:::раскрыть Заголовок»")
+            spans.append((start - 1, number - 1, title))
+            start = None
+            continue
+        if start is not None and _H2_LINE_RE.match(line):
+            raise FoldError(
+                f"раскрывающийся блок «{title}» (строка {start}): в нём заголовок раздела «## …» "
+                f"(строка {number}) — поставьте раздел до «:::раскрыть» или после «:::»"
+            )
+    if start is not None:
+        raise FoldError(
+            f"раскрывающийся блок «{title}» (строка {start}) не закрыт — нужна строка «:::» "
+            "(не внутри блока кода ```)"
+        )
+    return spans
+
+
+def _fold_html(title: str, source: str) -> str:
+    """One block → clean HTML, the same in the cabinet and in a bundle. The inside is cleaned
+    on its own first: a stray ``</div></details>`` of the author cannot close the block."""
+    inner = markdown.markdown(source, extensions=MARKDOWN_EXTENSIONS, output_format="html")
+    if _H2_TAG_RE.search(inner):
+        raise FoldError(f"раскрывающийся блок «{title}»: в нём заголовок раздела — вынесите его из блока")
+    return sanitize_html(
+        f'<details class="ac-fold"><summary>{html_lib.escape(title, quote=False)}</summary>'
+        f'<div class="ac-fold__body">{sanitize_html(inner)}</div></details>'
+    )
+
+
+class _FoldPreprocessor(Preprocessor):
+    """Runs after whitespace is normalised and before ``` code is taken out: a block becomes
+    raw HTML of its own paragraph (python-markdown keeps it as is)."""
+
+    def run(self, lines: list[str]) -> list[str]:
+        spans = _fold_spans(lines)
+        if not spans:
+            return lines
+        out: list[str] = []
+        position = 0
+        for start, end, title in spans:
+            out.extend(lines[position:start])
+            out.extend(["", self.md.htmlStash.store(_fold_html(title, "\n".join(lines[start + 1:end]))), ""])
+            position = end + 1
+        out.extend(lines[position:])
+        return out
+
+
+class Folds(Extension):
+    def extendMarkdown(self, md: markdown.Markdown) -> None:  # noqa: N802
+        # normalize_whitespace — 30, fenced_code_block — 25.
+        md.preprocessors.register(_FoldPreprocessor(md), "academy_fold", 28)
+
+
+def markdown_html(text: str) -> str:
+    """Author Markdown → HTML with folds, before the final clean. The cabinet cleans it
+    (``render_markdown``); the bundle builder ships it — Core cleans lesson HTML on every read."""
+    return markdown.markdown(text, extensions=[*MARKDOWN_EXTENSIONS, Folds()], output_format="html")
+
 _MEDIA_ID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # Любое упоминание, и текстом тоже, в любом регистре: проверка владельца видит всё.
 _MEDIA_MENTION_RE = re.compile(rf"media:({_MEDIA_ID})", re.I)
@@ -136,8 +250,19 @@ def split_quiz(body_md: str | None) -> tuple[str, dict[str, Any] | None]:
 
     The first ```quiz block is the test; a second one, an unclosed one, broken JSON
     or a test that breaks the rules — QuizError with the reason (the author fixes it).
-    A second block is refused rather than left in the text: it would show the answers."""
+    A second block is refused rather than left in the text: it would show the answers.
+    A test inside a fold is a QuizError too; a broken fold — FoldError."""
     text = str(body_md or "")
+    # Тест внутри раскрывающегося блока — нельзя: он показывается после текста урока.
+    # Сломанный блок — FoldError (номера строк — по тексту автора).
+    spans = _fold_spans(text.split("\n"))
+    for opened in _QUIZ_OPEN_RE.finditer(text):
+        line = text.count("\n", 0, opened.start())
+        for start, end, title in spans:
+            if start < line < end:
+                raise QuizError(
+                    f"тест не может быть внутри раскрывающегося блока «{title}» — перенесите ```quiz за строку «:::»"
+                )
     match = _QUIZ_BLOCK_RE.search(text)
     if not match:
         if _QUIZ_OPEN_RE.search(text):
@@ -162,17 +287,21 @@ def sanitize_html(raw: str | None) -> str:
         attributes=ALLOWED_ATTRIBUTES,
         url_schemes=URL_SCHEMES,
         link_rel="noopener noreferrer",
-        tag_attribute_values={"a": {"target": {"_blank"}}},
+        tag_attribute_values={"a": {"target": {"_blank"}}, **FOLD_CLASSES},
         set_tag_attribute_values={"img": {"loading": "lazy"}},
         strip_comments=True,
     )
     return _LINK_OUT_RE.sub('<a target="_blank"', clean)
 
 
-def render_markdown(source: str | None) -> str:
+def render_markdown(source: str | None, *, folds: bool = False) -> str:
+    """Markdown → clean HTML. ``folds`` — the Academy author's text (``:::раскрыть``,
+    FoldError when a block is broken); the shop renders without them."""
     text = str(source or "")
     if len(text) > MAX_MARKDOWN_CHARS:
         raise ValueError("markdown_too_long")
+    if folds:
+        return sanitize_html(markdown_html(text))
     return sanitize_html(markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS, output_format="html"))
 
 

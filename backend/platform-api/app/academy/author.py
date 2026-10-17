@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from app.academy.content import media_refs, render_markdown, sanitize_html, split_quiz
+from app.academy.content import FoldError, media_refs, render_markdown, sanitize_html, split_quiz
 from app.academy.notify import (
     COURSE_REVIEW_EVENT,
     COURSE_REVIEWED_EVENT,
@@ -277,8 +277,11 @@ def _text(value: Any, *, code: str, max_len: int, required: bool = True) -> str 
 
 
 def _markdown(value: Any) -> str:
+    # Текст автора Академии — с раскрывающимися блоками «:::раскрыть …» (16.10.2026).
     try:
-        return render_markdown(str(value or ""))
+        return render_markdown(str(value or ""), folds=True)
+    except FoldError as exc:
+        raise AcademyError(400, "bad_fold", {"detail": str(exc)}) from exc
     except ValueError as exc:
         raise AcademyError(400, "text_too_long") from exc
 
@@ -288,6 +291,8 @@ def _split_quiz(value: Any) -> tuple[str, dict[str, Any] | None]:
         return split_quiz(str(value or ""))
     except QuizError as exc:
         raise AcademyError(400, "bad_quiz", {"detail": str(exc)}) from exc
+    except FoldError as exc:
+        raise AcademyError(400, "bad_fold", {"detail": str(exc)}) from exc
 
 
 async def _check_media(

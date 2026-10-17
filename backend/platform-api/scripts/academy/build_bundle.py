@@ -19,9 +19,11 @@ slugs). Per lesson:
 - the test (V35, mini-courses): the first ```quiz block (JSON) is cut out before
   anything else and checked (`app.academy.content.split_quiz`) — it goes to the
   lesson's `quiz`, never into `body_html`; a broken test stops the build;
-- Markdown is rendered with the site's extensions (`content.MARKDOWN_EXTENSIONS`): ``` code
+- Markdown is rendered by the cabinet's own pipeline (`content.markdown_html`): ``` code
   blocks (prompts) become `<pre><code>`, a bare https://… becomes a link — as in the
-  author's cabinet (owner, 16.10.2026: links in every lesson are active).
+  author's cabinet (owner, 16.10.2026: links in every lesson are active); a
+  «:::раскрыть Заголовок» … «:::» block becomes `<details class="ac-fold">` (16.10.2026),
+  a broken block or a test inside one stops the build.
 
 Needs the platform-api requirements (`markdown`, `nh3`) on the machine that builds;
 Core only loads JSON.
@@ -35,11 +37,9 @@ import re
 import sys
 from pathlib import Path
 
-import markdown
-
 # The checker of the test lives in Core (app.academy): this checkout's copy, not an installed one.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from app.academy.content import MARKDOWN_EXTENSIONS, split_quiz  # noqa: E402
+from app.academy.content import FoldError, markdown_html, split_quiz  # noqa: E402
 from app.academy.quiz import QuizError  # noqa: E402
 
 OLD_NUMBER_RE = re.compile(r"^#\s*Урок\s+(\d+)\.", re.M)
@@ -85,7 +85,9 @@ def _split_checklist(text: str) -> tuple[str, list[str]]:
     if not match:
         return text, []
     rest = text[match.end():]
-    nxt = re.search(r"^#{2,3}\s+", rest, re.M)
+    # Раздел кончается на следующем заголовке или на строке раскрывающегося блока
+    # («:::раскрыть …» после чек-листа, «:::» блока, в котором чек-лист): блок не съедается.
+    nxt = re.search(r"^(?:#{2,3}\s+| {0,3}:::)", rest, re.M)
     section = rest[: nxt.start()] if nxt else rest
     items = [m.group(1).strip() for m in re.finditer(r"^\s*-\s*\[[ xX]\]\s*(.+)$", section, re.M)]
     body = text[: match.start()] + (rest[nxt.start():] if nxt else "")
@@ -127,7 +129,7 @@ def build(folder: Path) -> dict:
         # Тест — первым: дальше чек-лист срезает свой раздел до следующего заголовка.
         try:
             text, quiz = split_quiz(source)
-        except QuizError as exc:
+        except (QuizError, FoldError) as exc:
             raise SystemExit(f"{item['file']}: {exc}") from exc
         if item.get("from_heading"):
             start = re.search(rf"^##\s+{re.escape(item['from_heading'])}.*$", text, re.M)
@@ -153,7 +155,10 @@ def build(folder: Path) -> dict:
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         # Разделители «---» в начале/конце урока на сайте лишние.
         text = re.sub(r"^(?:---\s*\n)+|(?:\n---\s*)+$", "", text).strip()
-        body_html = markdown.markdown(text, extensions=MARKDOWN_EXTENSIONS, output_format="html")
+        try:
+            body_html = markdown_html(text)
+        except FoldError as exc:
+            raise SystemExit(f"{item['file']}: {exc}") from exc
         # Скриншоты урока лежат в Obsidian рядом (img/…) и едут в бандле → academy_media;
         # внешние ссылки — в новой вкладке.
         _embed_pictures(folder, item["file"], body_html, media)
