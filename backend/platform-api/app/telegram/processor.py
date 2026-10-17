@@ -23,6 +23,8 @@ from app.leads.actor_link import (
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
+# Ритм «Онлайн-старта» (17.10.2026): галочки карточки «Сегодня», «ритм» / «табло» владельца.
+from app.telegram.rhythm import try_handle_rhythm_callback, try_handle_rhythm_text
 from app.telegram.academy import (
     handle_course_start_token,
     parse_course_start_token,
@@ -561,6 +563,9 @@ async def _process_core_telegram_update_scoped(
         )
         if site_request_callback_result is not None:
             return site_request_callback_result
+        rhythm_callback_result = await try_handle_rhythm_callback(tenant, callback, trace_id=trace_id)
+        if rhythm_callback_result is not None:
+            return rhythm_callback_result
         academy_callback_result = await try_handle_academy_callback(
             tenant, callback, trace_id=trace_id
         )
@@ -743,6 +748,9 @@ async def _process_core_telegram_update_scoped(
         return await handle_start_token(tenant, msg, start_token, trace_id)
 
     if msg.chat_type == "private":
+        rhythm_result = await try_handle_rhythm_text(tenant, msg, trace_id=trace_id)
+        if rhythm_result:
+            return rhythm_result
         academy_result = await try_handle_academy_text(tenant, msg, trace_id=trace_id)
         if academy_result:
             return academy_result
