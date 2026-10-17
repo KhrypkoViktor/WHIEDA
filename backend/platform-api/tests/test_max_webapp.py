@@ -314,6 +314,17 @@ def test_max_command_text_matches_the_new_login_screen():
     )
 
 
+def test_after_the_maxlink_button_the_bot_names_the_new_site_path():
+    """17.10.2026: ответ бота после кнопки maxlink называет тот же путь входа, что экран сайта и /max."""
+    from app.telegram.content_access import _MAX_LINK_TEXTS
+
+    path = "«Войти» → «Не получается через Telegram?» → «Войти через Max»"
+    for login in ("expired", "used", "not_found", None):
+        assert path in _MAX_LINK_TEXTS[login], login
+    assert all("«Войти» → «Max»" not in text for text in _MAX_LINK_TEXTS.values()), "the old path is gone"
+    assert "Вход на сайт подтверждён" in _MAX_LINK_TEXTS["confirmed"], "the confirmed case has no path to follow"
+
+
 # ---- V34 (15.10.2026): код владельца в мини-приложении, browser_login_url, account_identities ----------
 
 

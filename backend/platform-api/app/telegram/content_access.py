@@ -108,13 +108,15 @@ def _update_id(update: dict[str, Any]) -> int | None:
 
 
 _MAX_LINKED = "✅ Max привязан к вашему аккаунту WWC."
+# 17.10.2026: путь на экране входа сайта — тот же, что в тексте /max (app/telegram/referral_bonus.py).
+_MAX_SITE_PATH = "«Войти» → «Не получается через Telegram?» → «Войти через Max»"
 _MAX_LINK_TEXTS: dict[str | None, str] = {
     "confirmed": _MAX_LINKED + " Вход на сайт подтверждён — вернитесь в браузер, сайт уже открыт.\n\n"
     "Дальше входите через Max — Telegram не понадобится.",
-    "expired": _MAX_LINKED + " Ссылка входа устарела — на сайте нажмите «Войти» → «Max» ещё раз.",
-    "used": _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
-    "not_found": _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
-    None: _MAX_LINKED + " Теперь на сайте: «Войти» → «Max».",
+    "expired": _MAX_LINKED + f" Ссылка входа устарела — на сайте нажмите {_MAX_SITE_PATH} ещё раз.",
+    "used": _MAX_LINKED + f" Теперь на сайте: {_MAX_SITE_PATH}.",
+    "not_found": _MAX_LINKED + f" Теперь на сайте: {_MAX_SITE_PATH}.",
+    None: _MAX_LINKED + f" Теперь на сайте: {_MAX_SITE_PATH}.",
 }
 _MAX_LINK_ERRORS = {
     "expired": "Ссылка устарела. Откройте вход через Max на сайте ещё раз.",
