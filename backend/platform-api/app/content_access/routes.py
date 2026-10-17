@@ -22,6 +22,7 @@ from app.content_access.service import (
     validate_content_session,
 )
 from app.content_access.webapp_login import webapp_login_url
+from app.lead_email.service import lead_email_of
 from app.login_identities.rules import login_methods_payload
 from app.login_identities.service import list_login_methods
 from app.max.webapp import max_webapp
@@ -153,6 +154,14 @@ async def _me(request: Request, response: Response) -> dict:
             payload["login_methods"] = await list_login_methods(tenant.tenant_id, int(telegram_user_id))
         except Exception:
             logger.warning("login_methods_unavailable", exc_info=True)
+    # Почта для заявок (17.10.2026): адрес, куда сайт шлёт заявки вместе с Telegram; null — не задан или сайта нет.
+    # Только чтение — задаётся командой в боте. Сбой поиска кабинет не ломает.
+    payload["lead_email"] = None
+    if telegram_user_id is not None:
+        try:
+            payload["lead_email"] = await lead_email_of(tenant.tenant_id, int(telegram_user_id))
+        except Exception:
+            logger.warning("lead_email_unavailable", exc_info=True)
     return payload
 
 
