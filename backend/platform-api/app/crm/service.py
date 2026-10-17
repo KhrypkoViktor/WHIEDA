@@ -1278,3 +1278,71 @@ async def add_lead_card_for_public_id(tenant_id: str, public_id: str) -> dict[st
             comment=lead.get("comment"),
         )
     return {"ok": True, "card_id": card_id, "reason": None if card_id else "skipped"}
+
+
+# ---- site leads for the bot (Max «Мои заявки») ---------------------------------------
+
+
+async def recent_site_leads(tenant_id: str, telegram_user_id: int, *, limit: int = 10) -> dict[str, Any] | None:
+    """The newest site-request cards of one partner, for a chat answer.
+
+    Reads only what the partner sees in his own «Люди» tab: cards of his account
+    (taken strictly by his telegram_user_id) that came from the site (``lead_id``),
+    not deleted. Read-only: unlike ``get_or_create_account`` it never creates the
+    account — a first read in the bot must not switch on lead cards for someone who
+    has not opened the diary yet (``add_lead_card`` skips owners without an account).
+
+    The date of a card is its last site request: the creation or a repeated
+    request («lead» in the history), in the account's own time zone.
+    ``None`` — no account yet. Otherwise ``{"items": [...], "more": bool}``, newest
+    first; ``more`` — there are older requests than ``limit``. An item carries the
+    name, the phone (or the «Контакт:» line of the request note when the contact
+    is not a phone), the status title and the date."""
+    size = max(1, int(limit))
+    async with tenant_connection(tenant_id) as conn:
+        account = await _select_account(conn, tenant_id, telegram_user_id)
+        if account is None:
+            return None
+        rows = await fetch_all(
+            conn,
+            """
+            select c.contact_id::text as contact_id, c.name, c.phone_e164, c.phone_raw, c.status,
+                   (r.requested_at at time zone %(tz)s)::date as requested_on,
+                   case when c.phone_e164 is null and c.phone_raw is null then (
+                     select left(n.body, 1000) from crm_notes n
+                     where n.tenant_id = c.tenant_id and n.contact_id = c.contact_id
+                       and starts_with(n.body, 'Заявка с сайта.')
+                     order by n.created_at desc limit 1
+                   ) end as lead_note
+            from crm_contacts c
+            cross join lateral (
+              select coalesce(max(a.created_at), c.created_at) as requested_at
+              from crm_activities a
+              where a.tenant_id = c.tenant_id and a.contact_id = c.contact_id and a.kind in ('created', 'lead')
+            ) r
+            where c.tenant_id = %(tenant_id)s and c.account_id = %(account_id)s::uuid
+              and c.lead_id is not null and c.deleted_at is null
+            order by r.requested_at desc, c.contact_id desc
+            limit %(limit)s
+            """,
+            {"tenant_id": tenant_id, "account_id": account["account_id"], "tz": account["timezone"], "limit": size + 1},
+        )
+    items = []
+    for row in rows[:size]:
+        status = str(row["status"])
+        items.append({
+            "name": row["name"],
+            "phone": row.get("phone_e164") or row.get("phone_raw") or "",
+            "note_contact": _lead_note_contact(row.get("lead_note")),
+            "status_title": STATUS_TITLES.get(status, status),
+            "requested_on": row["requested_on"],
+        })
+    return {"items": items, "more": len(rows) > size}
+
+
+def _lead_note_contact(note: Any) -> str:
+    """«Контакт: @handle» from the first note of a site request (a contact that is not a phone)."""
+    for line in str(note or "").splitlines():
+        if line.startswith("Контакт:"):
+            return " ".join(line[len("Контакт:"):].split())
+    return ""
