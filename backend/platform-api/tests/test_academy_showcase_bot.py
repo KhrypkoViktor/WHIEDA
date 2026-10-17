@@ -178,7 +178,7 @@ def _ad_patches(sent, *, admin: int | None = 5035800725):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября"), ("ig_web31", "31 октября")])
+@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября, начало в 17:30"), ("ig_web31", "31 октября")])
 async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whieda_tenant, almira_binding, tag, date):
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     p = _ad_patches(sent)
