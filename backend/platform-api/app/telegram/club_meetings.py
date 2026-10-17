@@ -112,15 +112,16 @@ async def _claim(meeting: ClubMeeting, day: dt.date) -> bool:
     return row is not None
 
 
-async def post_to_club(text_html: str, *, bot_token: str) -> dict[str, Any]:
-    """Одно сообщение в оба чата клуба: Telegram и Max (если Max настроен)."""
+async def post_to_club(text_html: str, *, bot_token: str, bridge: Any = None) -> dict[str, Any]:
+    """Одно сообщение в оба чата клуба: Telegram и Max (если Max настроен).
+    ``bridge`` — другая пара мостов (табло ритма в группе курса, app/telegram/rhythm.py)."""
     from app.max.bridge import _link
     from app.max.bridges import BRIDGES
     from app.max.client import send_max_message
     from app.settings import get_settings
     from app.telegram.delivery import _call_telegram
 
-    club = next(b for b in BRIDGES if b.access == "club")
+    club = bridge or next(b for b in BRIDGES if b.access == "club")
     sent = await _call_telegram(
         "sendMessage",
         {"chat_id": club.tg_chat_id, "text": text_html, "parse_mode": "HTML", "disable_web_page_preview": True},

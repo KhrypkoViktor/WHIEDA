@@ -382,6 +382,13 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
             # WWC CRM v2: «Через час встреча» and erasing cards past «Вернуть».
             result["crm_meetings"] = await enqueue_meeting_reminders(crm_tenants)
             result["crm_purged"] = await purge_deleted_everywhere(list(crm_tenants))
+        # Ритм «Онлайн-старта» (17.10.2026): карточка «Сегодня» утром, табло в воскресенье.
+        try:
+            from app.telegram.rhythm import rhythm_step
+
+            result.update(await rhythm_step(bindings))
+        except Exception:
+            logger.exception("rhythm_step_failed")
     result["due_sent"] = await process_due_notifications(bindings)
     return result
 
