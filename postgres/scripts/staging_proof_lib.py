@@ -77,6 +77,7 @@ APPLY_ORDER = [
     "platform_academy_threads_v32.sql",
     "platform_academy_showcase_support_v33.sql",
     "platform_login_identities_v34.sql",
+    "platform_academy_mini_quiz_v35.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",
