@@ -22,6 +22,9 @@ WHIEDA_ACCESS_MAP_PRIVATE_*.md
 reports/
 !backend/platform-api/app/reports/
 !backend/platform-api/app/reports/**
+# ...но не кэш Python внутри пакета: негация выше пересиливает **/__pycache__/,
+# и .pyc попадали в индекс при каждом `git add -A` (17.10.2026).
+backend/platform-api/app/reports/**/__pycache__/
 n8n/current/backups/
 **/.env
 **/.env.*
