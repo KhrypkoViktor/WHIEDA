@@ -42,7 +42,7 @@ OPEN_GRACE = timedelta(minutes=3)
 # Бота открывают с экрана «спасибо» формы: строка Meta создана за секунды–минуты до /start.
 # Имя в Telegram часто другое («Svetik» — «Светлана Самохвал»), поэтому ещё и по времени (17.10.2026).
 OPEN_AFTER_FORM = timedelta(minutes=5)
-OPEN_CLOCK_SKEW = timedelta(minutes=1)
+OPEN_CLOCK_SKEW = timedelta(seconds=15)
 FETCH_TIMEOUT_SEC = 15.0
 MINSK = timezone(timedelta(hours=3))
 _EXPORT_URL = "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}"
@@ -232,12 +232,14 @@ def _norm_name(value: str) -> str:
     return " ".join(str(value or "").casefold().replace("ё", "е").split())
 
 
-def _near(created: datetime | None, opened_at: datetime | None) -> timedelta | None:
-    """Сколько прошло от заявки до открытия бота, если это похоже на одного человека; иначе None."""
+def _near(created: datetime | None, opened_at: datetime | None) -> tuple[bool, timedelta] | None:
+    """Ключ близости заявки и открытия бота (меньше — ближе), None — не похоже на одного человека.
+    Заявка до открытия всегда раньше заявки «чуть после» (запас на часы): «TheOldMan999» открыл бота
+    через 108 с после своей формы и за 46 с до чужой (17.10.2026)."""
     if created is None or opened_at is None:
         return None
     gap = opened_at - created
-    return abs(gap) if -OPEN_CLOCK_SKEW <= gap <= OPEN_AFTER_FORM else None
+    return (gap < timedelta(0), abs(gap)) if -OPEN_CLOCK_SKEW <= gap <= OPEN_AFTER_FORM else None
 
 
 def match_lead(

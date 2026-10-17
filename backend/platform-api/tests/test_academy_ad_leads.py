@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from app.academy.ad_leads import (
     Opened,
@@ -96,6 +97,11 @@ def test_time_matches_when_telegram_name_differs():
     # Больше OPEN_AFTER_FORM после заявки или раньше неё (с запасом на часы) — не она.
     late = datetime(2026, 10, 16, 14, 5, tzinfo=timezone.utc)
     assert match_lead(parse_leads(CSV), username=None, name="Svetik", opened_at=late) is None
+    # Заявка до открытия важнее чужой заявки через секунды после него (TheOldMan999, 17.10.2026).
+    opened_at = datetime(2026, 10, 17, 6, 8, 40, tzinfo=timezone.utc)
+    mine = replace(second, lead_id="mine", created=opened_at - timedelta(seconds=108))
+    other = replace(organic, lead_id="other", created=opened_at + timedelta(seconds=10))
+    assert match_lead([mine, other], username=None, name="x", opened_at=opened_at).lead_id == "mine"
     # Ник и имя важнее времени.
     assert match_lead(parse_leads(CSV), username="kvetka_space", name="x", opened_at=at).lead_id == "111"
     # Алерт: открытие без своей строки в пределах окна — её; со своей строкой — нет.
