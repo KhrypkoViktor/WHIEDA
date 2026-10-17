@@ -88,6 +88,23 @@ def test_direct_contact_links_survive_formatting():
     assert '<b><a href="tg://user?id=301">Анна Петрова</a></b>' in format_telegram_html(alert_text(first, opened))
 
 
+def test_time_matches_when_telegram_name_differs():
+    """«Svetik» открыла бота через 16 с после формы «Светлана Самохвал» — это она (17.10.2026)."""
+    first, second, organic = parse_leads(CSV)  # 13:40:11, 13:54:16, 14:10:00 UTC
+    at = datetime(2026, 10, 16, 13, 54, 40, tzinfo=timezone.utc)
+    assert match_lead(parse_leads(CSV), username=None, name="Svetik", opened_at=at).lead_id == "222"
+    # Больше OPEN_AFTER_FORM после заявки или раньше неё (с запасом на часы) — не она.
+    late = datetime(2026, 10, 16, 14, 5, tzinfo=timezone.utc)
+    assert match_lead(parse_leads(CSV), username=None, name="Svetik", opened_at=late) is None
+    # Ник и имя важнее времени.
+    assert match_lead(parse_leads(CSV), username="kvetka_space", name="x", opened_at=at).lead_id == "111"
+    # Алерт: открытие без своей строки в пределах окна — её; со своей строкой — нет.
+    free = Opened(9, None, "Svetik", None, at)
+    claimed = Opened(8, None, "Svetik", "111", at)
+    assert opened_for(second, [claimed, free]) is free
+    assert opened_for(organic, [free]) is None
+
+
 def test_opened_for_matches_row_then_nick_then_name():
     first, second, organic = parse_leads(CSV)
     by_row = Opened(1, None, "Кто-то", "222")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from app.academy.ad_leads import Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
@@ -106,7 +107,9 @@ async def _sheet_match(msg: Any, showcase: Showcase) -> tuple[Lead | None, str, 
     config = sheet_config(showcase.support)
     if config:
         try:
-            lead = match_lead(await fetch_leads(config), username=tg_username, name=tg_name)
+            lead = match_lead(
+                await fetch_leads(config), username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc),
+            )
         except Exception as exc:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
     return lead, tg_name, tg_username

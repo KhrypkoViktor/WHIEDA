@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 EVENT = "showcase_ad_lead_row"
 POLL_INTERVAL_SEC = 90.0
 OPEN_GRACE = timedelta(minutes=3)
+# Бота открывают с экрана «спасибо» формы: строка Meta создана за секунды–минуты до /start.
+# Имя в Telegram часто другое («Svetik» — «Светлана Самохвал»), поэтому ещё и по времени (17.10.2026).
+OPEN_AFTER_FORM = timedelta(minutes=5)
+OPEN_CLOCK_SKEW = timedelta(minutes=1)
 FETCH_TIMEOUT_SEC = 15.0
 MINSK = timezone(timedelta(hours=3))
 _EXPORT_URL = "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}"
@@ -74,6 +78,7 @@ class Opened:
     username: str | None
     name: str
     lead_id: str | None
+    opened_at: datetime | None = None
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -227,8 +232,19 @@ def _norm_name(value: str) -> str:
     return " ".join(str(value or "").casefold().replace("ё", "е").split())
 
 
-def match_lead(leads: list[Lead], *, username: str | None, name: str) -> Lead | None:
-    """Строка таблицы человека, открывшего бота: по нику, иначе по имени (в любом порядке слов)."""
+def _near(created: datetime | None, opened_at: datetime | None) -> timedelta | None:
+    """Сколько прошло от заявки до открытия бота, если это похоже на одного человека; иначе None."""
+    if created is None or opened_at is None:
+        return None
+    gap = opened_at - created
+    return abs(gap) if -OPEN_CLOCK_SKEW <= gap <= OPEN_AFTER_FORM else None
+
+
+def match_lead(
+    leads: list[Lead], *, username: str | None, name: str, opened_at: datetime | None = None,
+) -> Lead | None:
+    """Строка таблицы человека, открывшего бота: по нику, по имени (в любом порядке слов), иначе
+    ближайшая по времени заявка за ``OPEN_AFTER_FORM`` до открытия."""
     if username:
         wanted = username.lstrip("@").casefold()
         for lead in reversed(leads):
@@ -240,7 +256,8 @@ def match_lead(leads: list[Lead], *, username: str | None, name: str) -> Lead | 
         for lead in reversed(leads):
             if _norm_name(lead.name) in (target, reverse):
                 return lead
-    return None
+    timed = [(gap, lead) for lead in leads if (gap := _near(lead.created, opened_at)) is not None]
+    return min(timed, key=lambda item: item[0])[1] if timed else None
 
 
 def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
@@ -259,7 +276,12 @@ def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
             name = _norm_name(opened.name)
             if name and target in (name, " ".join(reversed(name.split()))):
                 return opened
-    return None
+    # Строка при открытии ещё не дошла до таблицы — ближайшее по времени открытие без своей строки.
+    timed = [
+        (gap, opened) for opened in opens
+        if not opened.lead_id and (gap := _near(lead.created, opened.opened_at)) is not None
+    ]
+    return min(timed, key=lambda item: item[0])[1] if timed else None
 
 
 def opened_text(*, name: str, username: str | None, user_id: int | None, webinar: bool) -> str:
@@ -332,13 +354,13 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     rows = await fetch_all(
         conn,
         """
-        select telegram_user_id, telegram_username, name, lead_id from academy_ad_opens
+        select telegram_user_id, telegram_username, name, lead_id, opened_at from academy_ad_opens
         where tenant_id = %s and showcase_id = %s order by opened_at desc
         """,
         (tenant_id, showcase_id),
     )
     return [
-        Opened(int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"])
+        Opened(int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"])
         for r in rows
     ]
 
