@@ -9,7 +9,8 @@ Rules (``academy_modules.unlock``, a lesson's own ``unlock`` overrides its modul
   days_after_start {"days": n} — open n days after ``academy_access.started_at``.
 
 A lesson is complete when it is done («Сделал») and, if it has a required homework,
-the latest submission is accepted. Course access comes first: without it every
+the latest submission is accepted; a lesson with a test (V35) — when an attempt of
+the test passed, like a required homework. Course access comes first: without it every
 lesson is locked with the course reason (``purchase``). Staff (the course
 author, the owner and preview admins) see everything open.
 
@@ -46,6 +47,8 @@ class LessonIn:
     done: bool
     assignment_required: bool | None = None  # None — no homework
     submission_status: str | None = None  # latest: submitted | accepted | returned
+    quiz_required: bool = False  # the lesson has a test
+    quiz_passed: bool = False  # an attempt of the test passed
 
 
 @dataclass(frozen=True)
@@ -62,15 +65,19 @@ OPEN_LOCK = LessonLock(False)
 def is_complete(lesson: LessonIn) -> bool:
     if not lesson.done:
         return False
+    if lesson.quiz_required and not lesson.quiz_passed:
+        return False
     if lesson.assignment_required:
         return lesson.submission_status == "accepted"
     return True
 
 
 def is_finished_by_student(lesson: LessonIn) -> bool:
-    """Nothing left for the student to do: done, and the homework (if required) is
-    handed in and not returned. Waiting for the author's review counts as finished."""
+    """Nothing left for the student to do: done, the test (if any) passed and the homework
+    (if required) handed in and not returned. Waiting for the author's review counts as finished."""
     if not lesson.done:
+        return False
+    if lesson.quiz_required and not lesson.quiz_passed:
         return False
     if lesson.assignment_required:
         return lesson.submission_status in ("submitted", "accepted")

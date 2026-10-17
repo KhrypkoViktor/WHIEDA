@@ -31,6 +31,16 @@ Someone else's course is checked before students see it (owner, 25.09.2026):
              (telegram_user_id — the bot commands and the payment use it)
              and owning an enabled referral profile (the Academy term is paid on it).
              Not given: an existing course keeps its author, a new one has none.
+
+Mini-courses (V35, 16.10.2026):
+  --kind mini            the catalog rubric «Мини-курсы» (course | mini). Not given: a new
+                         course is ``course``, an existing one keeps its rubric.
+  --free-for-club        a ``purchase`` course is open without buying to the club (active
+                         or in grace); --free-for-course <slug> (repeatable) — to those with
+                         access to that course. Either given: ``free_for`` is replaced by
+                         exactly these; none given: an existing course keeps its ``free_for``.
+  The lesson's ``quiz`` (from build_bundle.py) is checked again and goes to ``quiz_json``;
+  a lesson without one in the bundle has no test after the load.
 """
 
 from __future__ import annotations
@@ -48,8 +58,14 @@ from pathlib import Path
 import psycopg
 from psycopg.types.json import Jsonb
 
+# The test checker lives in Core (app.academy.quiz): this checkout's copy (in the image — /app).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from app.academy.quiz import QuizError, validate_quiz  # noqa: E402
+
 STATUSES = ("draft", "published")
 ACCESS_RULES = ("free", "purchase", "pro")
+COURSE_KINDS = ("course", "mini")
+SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")
 DEFAULT_MEDIA_DIR = "/opt/whieda-platform-core/media/academy"
 IMAGE_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 IMAGE_SIGNATURES = {"image/png": (b"\x89PNG\r\n\x1a\n",), "image/jpeg": (b"\xff\xd8\xff",), "image/gif": (b"GIF87a", b"GIF89a")}
@@ -170,14 +186,31 @@ def load(
     author: str | None = None,
     status: str | None = None,
     access: str | None = None,
+    kind: str | None = None,
+    free_for_club: bool = False,
+    free_for_courses: list[str] | None = None,
     dsn: str | None = None,
 ) -> dict:
     if status is not None and status not in STATUSES:
         raise SystemExit(f"--status must be one of {STATUSES}")
     if access is not None and access not in ACCESS_RULES:
         raise SystemExit(f"--access must be one of {ACCESS_RULES}")
+    if kind is not None and kind not in COURSE_KINDS:
+        raise SystemExit(f"--kind must be one of {COURSE_KINDS}")
+    free_slugs = list(dict.fromkeys(free_for_courses or []))
+    bad = [slug for slug in free_slugs if not SLUG_RE.match(slug) or len(slug) > 60]
+    if bad:
+        raise SystemExit(f"--free-for-course: not a course slug {bad}")
+    free_for = {**({"club": True} if free_for_club else {}), **({"courses": free_slugs} if free_slugs else {})}
     course = bundle["course"]
     lessons = bundle["lessons"]
+    quizzes = {}
+    for lesson in lessons:
+        if lesson.get("quiz"):
+            try:
+                quizzes[lesson["slug"]] = validate_quiz(lesson["quiz"])
+            except QuizError as exc:
+                raise SystemExit(f"lesson {lesson['slug']!r}: {exc}") from exc
     new_access = access or ("purchase" if author else course.get("access_rule", "pro"))
     with psycopg.connect(_dsn(dsn)) as conn:
         conn.execute("select set_config('app.tenant_id', %s, true)", (tenant_id,))
@@ -198,10 +231,12 @@ def load(
                     f"author {author!r}: no active lead_actors row with Telegram and an enabled"
                     f" referral profile in {tenant_id!r}"
                 )
-        course_id, course_status, access_rule, course_author = conn.execute(
+        course_id, course_status, access_rule, course_author, course_kind, course_free_for = conn.execute(
             """
-            insert into academy_courses (tenant_id, slug, title, subtitle, access_rule, author_actor_id, status)
-            values (%s, %s, %s, %s, %s, %s, coalesce(%s, 'draft'))
+            insert into academy_courses (
+              tenant_id, slug, title, subtitle, access_rule, author_actor_id, status, kind, free_for
+            )
+            values (%s, %s, %s, %s, %s, %s, coalesce(%s, 'draft'), coalesce(%s, 'course'), %s::jsonb)
             on conflict (tenant_id, slug) do update set
               title = excluded.title, subtitle = excluded.subtitle,
               access_rule = case
@@ -211,12 +246,15 @@ def load(
               end,
               author_actor_id = coalesce(%s, academy_courses.author_actor_id),
               status = coalesce(%s, academy_courses.status),
+              kind = coalesce(%s, academy_courses.kind),
+              free_for = coalesce(%s::jsonb, academy_courses.free_for),
               updated_at = now()
-            returning course_id, status, access_rule, author_actor_id
+            returning course_id, status, access_rule, author_actor_id, kind, free_for
             """,
             (
                 tenant_id, course["slug"], course["title"], course.get("subtitle"), new_access, author, status,
-                access, access, author, status,
+                kind, Jsonb(free_for) if free_for else None,
+                access, access, author, status, kind, Jsonb(free_for) if free_for else None,
             ),
         ).fetchone()
         pictures = _store_pictures(conn, tenant_id, course["slug"], course_author, bundle.get("media") or {})
@@ -229,14 +267,14 @@ def load(
                 """
                 insert into academy_lessons (
                   tenant_id, course_id, slug, module_title, module_id, position, title, short_title,
-                  result_text, est_minutes, body_html, checklist, video, status
-                ) values (%s, %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, 'published')
+                  result_text, est_minutes, body_html, checklist, video, quiz_json, status
+                ) values (%s, %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'published')
                 on conflict (tenant_id, course_id, slug) do update set
                   module_title = excluded.module_title, module_id = excluded.module_id, position = excluded.position,
                   title = excluded.title, short_title = excluded.short_title,
                   result_text = excluded.result_text, est_minutes = excluded.est_minutes,
                   body_html = excluded.body_html, checklist = excluded.checklist,
-                  video = excluded.video, status = 'published', updated_at = now()
+                  video = excluded.video, quiz_json = excluded.quiz_json, status = 'published', updated_at = now()
                 """,
                 (
                     tenant_id, course_id, lesson["slug"], module_title, modules.get(module_title),
@@ -244,6 +282,7 @@ def load(
                     lesson.get("result_text"), lesson.get("est_minutes"), _with_media(lesson["body_html"], pictures),
                     Jsonb(lesson.get("checklist") or []),
                     Jsonb(lesson["video"]) if lesson.get("video") else None,
+                    Jsonb(quizzes[lesson["slug"]]) if lesson["slug"] in quizzes else None,
                 ),
             )
         archived = conn.execute(
@@ -261,9 +300,12 @@ def load(
         "status": course_status,
         "access_rule": access_rule,
         "author": author,
+        "kind": course_kind,
+        "free_for": course_free_for,
         "lessons": len(slugs),
         "modules": len(modules),
         "media": len(pictures),
+        "quizzes": len(quizzes),
         "archived": [row[0] for row in archived],
     }
 
@@ -297,9 +339,16 @@ def main(argv: list[str] | None = None) -> dict:
     parser.add_argument("--author", default=None, help="lead_actors.actor_id of the course author")
     parser.add_argument("--status", choices=STATUSES, default=None, help="new course: draft by default")
     parser.add_argument("--access", choices=ACCESS_RULES, default=None, help="author's course: purchase by default")
+    parser.add_argument("--kind", choices=COURSE_KINDS, default=None, help="catalog rubric: mini — «Мини-курсы»")
+    parser.add_argument("--free-for-club", action="store_true", help="open without buying to the club")
+    parser.add_argument(
+        "--free-for-course", action="append", default=[], metavar="SLUG",
+        help="open without buying to those with access to this course (repeatable)",
+    )
     parsed = parser.parse_args(args)
     return load(
-        parsed.tenant_id, json.load(sys.stdin), author=parsed.author, status=parsed.status, access=parsed.access
+        parsed.tenant_id, json.load(sys.stdin), author=parsed.author, status=parsed.status, access=parsed.access,
+        kind=parsed.kind, free_for_club=parsed.free_for_club, free_for_courses=parsed.free_for_course,
     )
 
 

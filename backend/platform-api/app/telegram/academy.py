@@ -49,6 +49,7 @@ from app.academy.keys import (
 )
 from app.academy.showcases import Showcase, showcase_default, showcase_for_binding, showcase_for_course
 from app.academy.service import (
+    QUIZ_REQUIRED,
     SHELF_PRODUCT_CODE,
     AcademyError,
     AcademyViewer,
@@ -94,6 +95,7 @@ _RETURN_COMMAND_RE = re.compile(r"^/?вернуть\s+([a-z0-9]+(?:-[a-z0-9]+)*)
 NOT_IN_REVIEW_TEXT = "Курс «{title}» уже не на проверке."
 ALREADY_DRAFT_TEXT = "Курс «{title}» и так в черновике."
 KEYS_INLINE_LIMIT = 20  # больше — одним текстовым файлом (сообщение Telegram ≤ 4096 символов)
+QUIZ_ON_SITE_TEXT = "Тест в конце урока проходится на сайте."
 
 LOCK_TEXT = {
     "pro_required": "Академия входит в PRO — платформу вашего сайта. Продлите PRO, и курс откроется сразу.",
@@ -535,7 +537,21 @@ async def try_handle_academy_callback(
             if lesson is None:
                 await _send(callback.chat_id, "Такого урока нет.")
                 return {"ok": False, "route": "academy_done", "status": "lesson_not_found", "trace_id": trace_id}
-            await set_lesson_done(tenant_id, done_slug, lesson["slug"], viewer, done=True, source="bot")
+            try:
+                await set_lesson_done(tenant_id, done_slug, lesson["slug"], viewer, done=True, source="bot")
+            except AcademyError as exc:
+                if exc.code != QUIZ_REQUIRED:
+                    raise
+                # Урок с тестом (V35) засчитывает тест на сайте: ссылка сразу со входом.
+                url = await with_site_login(
+                    await course_lesson_url(tenant_id, done_slug, lesson["slug"]),
+                    tenant_id=tenant_id,
+                    telegram_user_id=viewer.telegram_user_id,
+                )
+                await _send(
+                    callback.chat_id, QUIZ_ON_SITE_TEXT, {"inline_keyboard": [[{"text": "📖 Открыть урок", "url": url}]]}
+                )
+                return {"ok": False, "route": "academy_done", "status": QUIZ_REQUIRED, "trace_id": trace_id}
             result = await _show_course(tenant_id, callback.chat_id, viewer, done_slug, None)
         else:
             outline = await course_outline(tenant_id, all_slug, viewer)

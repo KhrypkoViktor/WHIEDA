@@ -5,7 +5,7 @@ Identity is the content-access session (Telegram sign-in on the site): the
 same person as in the bot, so progress is shared. Every response is private.
 
 Student: courses, a course (modules, lessons with locks), a lesson, «Сделал»,
-homework, media links, photo uploads for homework.
+the lesson's test (V35), homework, media links, photo uploads for homework.
 Author (``/author/…``): courses, modules, lessons, order, students, homework
 review, Markdown preview, uploads (video, files, images). 403 ``not_author`` —
 the person has no author cabinet.
@@ -60,6 +60,7 @@ from app.academy.service import (
     list_courses,
     load_viewer,
     set_lesson_done,
+    submit_quiz,
     viewer_profile,
 )
 from app.academy.showcases import public_payload, showcase_for_request
@@ -81,6 +82,13 @@ P = "/api/v1/content-access/academy"
 
 class LessonDoneBody(BaseModel):
     done: bool = True
+
+
+class QuizAnswersBody(BaseModel):
+    """Ответы на тест урока (V35): {"q1": "b", …} — id вопроса → id варианта."""
+
+    model_config = ConfigDict(extra="forbid")
+    answers: dict[str, str] = {}
 
 
 class SubmissionBody(BaseModel):
@@ -119,6 +127,10 @@ class CoursePatchBody(BaseModel):
     review_days: int | None = None
     landing_url: str | None = None
     teaser: dict[str, Any] | None = None
+    # Только владелец / preview-админ (V35): рубрика course | mini и бесплатный доступ
+    # {"club": true, "courses": ["online-start-4w"]}; null — снять.
+    kind: str | None = None
+    free_for: dict[str, Any] | None = None
 
 
 class ModuleBody(BaseModel):
@@ -146,6 +158,8 @@ class LessonBody(BaseModel):
     assignment: dict[str, Any] | None = None
     status: str | None = None
     module_id: str | None = None
+    # Тест урока (V35): объект — заменить, null — убрать. Блок ```quiz в body_md — то же.
+    quiz: dict[str, Any] | None = None
 
 
 class ReviewBody(BaseModel):
@@ -263,6 +277,15 @@ async def lesson_done_site(
 ) -> dict[str, Any]:
     tenant_id, viewer = await _viewer(request, response)
     return await _guard(set_lesson_done(tenant_id, slug, lesson_slug, viewer, done=body.done, source="site"))
+
+
+@router.post(f"{P}/courses/{{slug}}/lessons/{{lesson_slug}}/quiz")
+async def lesson_quiz_site(
+    slug: str, lesson_slug: str, body: QuizAnswersBody, request: Request, response: Response
+) -> dict[str, Any]:
+    """Попытка теста урока (V35): баллы и подсказки; сдан — урок отмечен."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await _guard(submit_quiz(tenant_id, slug, lesson_slug, viewer, answers=body.answers))
 
 
 @router.post(f"{P}/courses/{{slug}}/lessons/{{lesson_slug}}/submission")

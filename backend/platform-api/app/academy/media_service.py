@@ -99,6 +99,8 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
         _access_rows,
         academy_visible,
         course_lock_reason,
+        free_facts,
+        free_reason_for,
         is_staff_for,
         viewer_actor_ids,
     )
@@ -114,7 +116,7 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
     courses = await fetch_all(
         conn,
         """
-        select c.course_id::text as course_id, c.access_rule, c.author_actor_id,
+        select c.course_id::text as course_id, c.access_rule, c.author_actor_id, c.free_for,
                (c.cover_media_id = %(m)s::uuid or c.teaser ->> 'media_id' = %(m)s::text) as is_cover,
                c.description_html,
                exists (
@@ -146,6 +148,8 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
     )
     if courses:
         access = await _access_rows(conn, tenant_id, viewer.telegram_user_id)
+        # Курс, открытый клубу / участникам курса (V35), открывает и свои файлы.
+        facts = await free_facts(conn, tenant_id, viewer.telegram_user_id, courses)
         for course in courses:
             showcase = course["is_cover"] or media_id in linked_media(course.get("description_html"))
             in_lessons = course["attached"] or any(media_id in linked_media(body) for body in course["bodies"] or [])
@@ -155,14 +159,17 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
                 continue
             if is_staff_for(course, viewer, actor_ids):
                 return True
-            if course_lock_reason(course, viewer, has_access_row=course["course_id"] in access) is None:
+            if course_lock_reason(
+                course, viewer, has_access_row=course["course_id"] in access, free_reason=free_reason_for(course, facts)
+            ) is None:
                 return True
     # Домашка: фото сдачи и вложения нити (V32) — ученику, преподавателю и, когда у курса
     # открыты работы группы, любому ученику с доступом к курсу.
     homework = await fetch_all(
         conn,
         """
-        select s.telegram_user_id, c.author_actor_id, c.course_id::text as course_id, c.access_rule, c.works_public
+        select s.telegram_user_id, c.author_actor_id, c.course_id::text as course_id, c.access_rule, c.works_public,
+               c.free_for
         from academy_submissions s
         join academy_lessons l on l.tenant_id = s.tenant_id and l.lesson_id = s.lesson_id
         join academy_courses c on c.tenant_id = l.tenant_id and c.course_id = l.course_id
@@ -180,11 +187,12 @@ async def media_access(conn: Any, tenant_id: str, row: dict[str, Any], viewer: A
     )
     if homework:
         access = await _access_rows(conn, tenant_id, viewer.telegram_user_id)
+        facts = await free_facts(conn, tenant_id, viewer.telegram_user_id, [i for i in homework if i.get("works_public")])
         for item in homework:
             if int(item["telegram_user_id"]) == viewer.telegram_user_id or is_staff_for(item, viewer, actor_ids):
                 return True
             if item.get("works_public") and course_lock_reason(
-                item, viewer, has_access_row=item["course_id"] in access
+                item, viewer, has_access_row=item["course_id"] in access, free_reason=free_reason_for(item, facts)
             ) is None:
                 return True
     return False

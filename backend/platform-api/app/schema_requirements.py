@@ -71,6 +71,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # Домашка как переписка и анкета ученика (platform_academy_threads_v32.sql, 13.10.2026).
             "academy_submission_messages",
             "academy_profiles",
+            # Попытки теста урока (platform_academy_mini_quiz_v35.sql, 16.10.2026).
+            "academy_quiz_attempts",
             # Согласие на рекламную рассылку в боте (platform_marketing_consent_v17.sql, 26.09.2026).
             "telegram_marketing_consents",
             "referral_profiles",

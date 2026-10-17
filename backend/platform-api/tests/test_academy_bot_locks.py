@@ -144,3 +144,19 @@ async def test_finished_course(whieda_tenant, bot):
     result = await press(whieda_tenant, "acad:c:akvarel", plan)
     assert result["status"] == "completed"
     assert "пройден" in bot.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_done_on_a_lesson_with_a_test_sends_to_the_site(whieda_tenant, bot):
+    """V35: урок с тестом в боте не проходится — тест на сайте, ссылка сразу со входом."""
+    plan = outline([lesson("orel", 1)], "orel")
+    error = AcademyError(409, "quiz_required")
+    with patch("app.telegram.academy.set_lesson_done", AsyncMock(side_effect=error)) as done, patch(
+        "app.telegram.academy.course_lesson_url", AsyncMock(return_value="https://wwc.best/academy/?course=akvarel&lesson=orel")
+    ):
+        result = await press(whieda_tenant, "acad:d:akvarel:1", plan)
+    assert done.await_args.kwargs == {"done": True, "source": "bot"}
+    assert result["status"] == "quiz_required" and result["ok"] is False
+    assert bot.await_args.kwargs["text"] == "Тест в конце урока проходится на сайте."
+    [[button]] = bot.await_args.kwargs["reply_markup"]["inline_keyboard"]
+    assert button == {"text": "📖 Открыть урок", "url": "https://wwc.best/academy/?course=akvarel&lesson=orel"}

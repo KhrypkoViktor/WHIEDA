@@ -10,14 +10,19 @@ Access to a course:
 - access_rule 'pro'      — partner with paid PRO (partner_paid) or a row in
   academy_access (a key or a purchase opens a PRO course for a non-PRO person);
 - access_rule 'free'     — anyone signed in;
-- access_rule 'purchase' — a row in academy_access (purchase / gift / admin / key);
+- access_rule 'purchase' — a row in academy_access (purchase / gift / admin / key), or
+  ``free_for`` (V35, mini-courses): ``{"club": true}`` — the club is active or in grace,
+  ``{"courses": [slug, …]}`` — an active access row to one of those courses; the reason
+  goes out as ``free_reason`` (``club`` | ``course``) and no «Купить» button is shown;
 - an access row with ``expires_at`` in the past counts as none;
 - staff — the course author (any actor row of the person) and preview admins —
   see their course whole: no access lock, no schedule.
 
 Inside a course (Academy v2, 02.10.2026): modules with unlock rules, a lesson may
 override its module's rule, a lesson with a required homework is complete only
-when the homework is accepted — ``app.academy.rules``. Lessons loaded before
+when the homework is accepted, a lesson with a test (V35) only when a test attempt
+passed — ``app.academy.rules``. A passed attempt marks the lesson done itself;
+«Сделал» by hand on such a lesson is 409 ``quiz_required``. Lessons loaded before
 modules existed (``module_id`` null) are grouped by ``module_title`` and open.
 
 Writers of academy_access: ``grant_course_access`` (the payment path, line
@@ -29,6 +34,7 @@ Academy is extended from the payment path too (``extend_shelf_in_connection``).
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -39,6 +45,7 @@ import psycopg
 from app.academy.content import media_refs, resolve_media, sanitize_html
 from app.academy.keys import actor_ids_for_telegram
 from app.academy.media_service import load_media, media_links, media_summary
+from app.academy.quiz import grade_quiz, public_quiz
 from app.academy.showcases import (
     Showcase,
     default_showcase,
@@ -58,6 +65,7 @@ from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
 from app.subscriptions.service import (
     add_calendar_months,
+    paid_access_allowed,
     resolve_partner_hostname,
     resolve_partner_subscription_by_telegram_user_id,
 )
@@ -69,6 +77,9 @@ SHELF_PRODUCT_CODE = "academy_shelf"
 # days:<n> | purchase): PRO-курс без доступа на уроке тоже «purchase», различает course.lock_reason.
 COURSE_LOCK_LESSON_REASON = {"purchase_required": "purchase", "pro_required": "purchase"}
 LEGACY_MODULE_PREFIX = "legacy:"
+CLUB_PRODUCT_CODE = "club_subscription"
+QUIZ_REQUIRED = "quiz_required"
+MAX_QUIZ_ANSWERS = 100
 
 
 @dataclass(frozen=True)
@@ -106,8 +117,11 @@ def academy_visible(viewer: AcademyViewer) -> bool:
     return viewer.is_preview_admin or academy_open()
 
 
-def course_lock_reason(course: dict[str, Any], viewer: AcademyViewer, *, has_access_row: bool) -> str | None:
-    """None — course is open for the viewer; otherwise a machine reason."""
+def course_lock_reason(
+    course: dict[str, Any], viewer: AcademyViewer, *, has_access_row: bool, free_reason: str | None = None
+) -> str | None:
+    """None — course is open for the viewer; otherwise a machine reason.
+    ``free_reason`` (``free_reason_for``) opens a ``purchase`` course without a purchase."""
     if not academy_visible(viewer):
         return "academy_not_open"
     if viewer.is_preview_admin:
@@ -117,7 +131,79 @@ def course_lock_reason(course: dict[str, Any], viewer: AcademyViewer, *, has_acc
         return None
     if rule == "pro":
         return None if viewer.partner_paid or has_access_row else "pro_required"
-    return None if has_access_row else "purchase_required"
+    return None if has_access_row or free_reason else "purchase_required"
+
+
+@dataclass(frozen=True)
+class FreeFacts:
+    """What ``free_for`` looks at: the club and the courses the person has access to."""
+
+    club: bool
+    course_slugs: frozenset[str]
+
+
+def _free_rule(course: dict[str, Any]) -> dict[str, Any] | None:
+    rule = course.get("free_for")
+    if str(course.get("access_rule") or "") != "purchase" or not isinstance(rule, dict):
+        return None
+    return rule
+
+
+def free_reason_for(course: dict[str, Any], facts: FreeFacts | None) -> str | None:
+    """Почему платный курс открыт без покупки (V35): ``club`` | ``course`` | None."""
+    rule = _free_rule(course)
+    if rule is None or facts is None:
+        return None
+    if rule.get("club") is True and facts.club:
+        return "club"
+    wanted = {str(slug) for slug in (rule.get("courses") or []) if isinstance(slug, str)}
+    if wanted & facts.course_slugs:
+        return "course"
+    return None
+
+
+async def club_open(conn: Any, tenant_id: str, telegram_user_id: int) -> bool:
+    """Клуб открыт: ``club_subscription`` одного из профилей человека действует или в грейсе —
+    как «клуб» в кабинете /me/ (account.club: active | grace), не ``is_club_member`` Мастерской
+    (там без грейса: клубная цена)."""
+    actors = await actor_ids_for_telegram(conn, tenant_id, int(telegram_user_id))
+    if not actors:
+        return False
+    row = await fetch_one(
+        conn,
+        """
+        select max(pa.paid_until) as paid_until from referral_profiles rp
+        join partner_product_access pa
+          on pa.tenant_id = rp.tenant_id and pa.ref_code = rp.ref_code and pa.product_code = %s
+        where rp.tenant_id = %s and rp.enabled = true and rp.owner_id = any(%s)
+        """,
+        (CLUB_PRODUCT_CODE, tenant_id, actors),
+    )
+    return paid_access_allowed((row or {}).get("paid_until"))
+
+
+async def free_facts(
+    conn: Any, tenant_id: str, telegram_user_id: int, courses: list[dict[str, Any]]
+) -> FreeFacts | None:
+    """Facts for the ``free_for`` of these courses; None (no query) when none of them has one."""
+    rules = [rule for rule in (_free_rule(course) for course in courses) if rule is not None]
+    if not rules:
+        return None
+    club = any(rule.get("club") is True for rule in rules) and await club_open(conn, tenant_id, telegram_user_id)
+    wanted = sorted({str(slug) for rule in rules for slug in (rule.get("courses") or []) if isinstance(slug, str)})
+    slugs: set[str] = set()
+    if wanted:
+        rows = await fetch_all(
+            conn,
+            f"""
+            select c.slug from academy_access a
+            join academy_courses c on c.tenant_id = a.tenant_id and c.course_id = a.course_id
+            where a.tenant_id = %s and a.telegram_user_id = %s and c.slug = any(%s) and {_ACCESS_ACTIVE}
+            """,
+            (tenant_id, int(telegram_user_id), wanted),
+        )
+        slugs = {str(row["slug"]) for row in rows}
+    return FreeFacts(club=bool(club), course_slugs=frozenset(slugs))
 
 
 def price_out(minor: Any, currency: Any) -> dict[str, Any] | None:
@@ -269,10 +355,12 @@ async def list_courses(
             """
             select c.course_id::text as course_id, c.slug, c.title, c.subtitle, c.access_rule, c.kind,
                    c.price_wusd_minor, c.price_currency, c.author_actor_id, c.cover_media_id::text as cover_media_id,
+                   c.free_for,
                    count(l.lesson_id) as lessons_total,
                    count(l.lesson_id) filter (
                      where p.lesson_id is not null
                        and (a.lesson_id is null or not a.required or acc.ok)
+                       and (l.quiz_json is null or qz.ok)
                    ) as lessons_done
             from academy_courses c
             left join academy_lessons l
@@ -287,9 +375,15 @@ async def list_courses(
                 and s.telegram_user_id = %(user)s and s.status = 'accepted'
               limit 1
             ) acc on true
+            left join lateral (
+              select true as ok from academy_quiz_attempts q
+              where q.tenant_id = l.tenant_id and q.lesson_id = l.lesson_id
+                and q.telegram_user_id = %(user)s and q.passed
+              limit 1
+            ) qz on true
             where c.tenant_id = %(tenant)s and c.status = 'published'
             group by c.course_id, c.slug, c.title, c.subtitle, c.access_rule, c.kind, c.price_wusd_minor,
-                     c.price_currency, c.author_actor_id, c.cover_media_id, c.sort_order
+                     c.price_currency, c.author_actor_id, c.cover_media_id, c.free_for, c.sort_order
             order by c.sort_order, c.title
             """,
             {"user": viewer.telegram_user_id, "tenant": tenant_id},
@@ -305,10 +399,17 @@ async def list_courses(
                 kept.append(course)
         # Свои курсы витрины — первыми; внутри групп прежний порядок (sort_order, title).
         courses = sorted(kept, key=lambda course: sections[course["course_id"]] != "own")
+        staff = {course["course_id"] for course in courses if is_staff_for(course, viewer, actor_ids)}
+        # Бесплатно клубу / участникам курса (V35) — только тем, кому курс не открыт иначе.
+        candidates = [course for course in courses if course["course_id"] not in staff | access]
+        facts = await free_facts(conn, tenant_id, viewer.telegram_user_id, candidates)
+        free = {course["course_id"]: free_reason_for(course, facts) for course in candidates}
         locks = {
             course["course_id"]: None
-            if is_staff_for(course, viewer, actor_ids)
-            else course_lock_reason(course, viewer, has_access_row=course["course_id"] in access)
+            if course["course_id"] in staff
+            else course_lock_reason(
+                course, viewer, has_access_row=course["course_id"] in access, free_reason=free.get(course["course_id"])
+            )
             for course in courses
         }
         authors = {str(course["author_actor_id"]) for course in courses if course.get("author_actor_id")}
@@ -344,6 +445,8 @@ async def list_courses(
             "price": price_out(course.get("price_wusd_minor"), course.get("price_currency")),
             "author_name": names.get(str(course.get("author_actor_id") or "")),
             "section": sections[course["course_id"]],
+            # Открыт без покупки (V35): «club» — клуб, «course» — участник курса; кнопки «Купить» нет.
+            "free_reason": free.get(course["course_id"]) if lock is None else None,
         }
         if lock == "purchase_required":
             # Доступ выдаёт автор курса: ученик берёт у него ключ.
@@ -358,7 +461,7 @@ async def list_courses(
 _COURSE_COLUMNS = """
     course_id::text as course_id, slug, title, subtitle, access_rule, kind, price_wusd_minor, price_currency,
     author_actor_id, description_html, cover_media_id::text as cover_media_id, status,
-    works_public, review_days, teaser, landing_url
+    works_public, review_days, teaser, landing_url, free_for
 """
 
 
@@ -387,6 +490,7 @@ class CourseView:
     staff: bool
     started_at: datetime | None
     lock_extra: dict[str, Any] = field(default_factory=dict)
+    free_reason: str | None = None  # V35: открыт без покупки — club | course
 
 
 async def _first_progress_at(conn: Any, tenant_id: str, course_id: str, telegram_user_id: int) -> datetime | None:
@@ -408,7 +512,10 @@ async def _course_view(conn: Any, tenant_id: str, slug: str, viewer: AcademyView
         raise AcademyError(404, "course_not_found")
     access = await _access_row(conn, tenant_id, course["course_id"], viewer.telegram_user_id)
     staff = is_staff_for(course, viewer, await viewer_actor_ids(conn, tenant_id, viewer.telegram_user_id))
-    lock = None if staff else course_lock_reason(course, viewer, has_access_row=access is not None)
+    free = None
+    if not staff and access is None:
+        free = free_reason_for(course, await free_facts(conn, tenant_id, viewer.telegram_user_id, [course]))
+    lock = None if staff else course_lock_reason(course, viewer, has_access_row=access is not None, free_reason=free)
     extra: dict[str, Any] = {}
     if lock == "purchase_required" and course.get("author_actor_id"):
         author = str(course["author_actor_id"])
@@ -420,7 +527,10 @@ async def _course_view(conn: Any, tenant_id: str, slug: str, viewer: AcademyView
     else:
         # PRO/бесплатный курс без строки доступа: старт — первый пройденный урок.
         started = await _first_progress_at(conn, tenant_id, course["course_id"], viewer.telegram_user_id)
-    return CourseView(course=course, lock=lock, staff=staff, started_at=started, lock_extra=extra)
+    return CourseView(
+        course=course, lock=lock, staff=staff, started_at=started, lock_extra=extra,
+        free_reason=free if lock is None else None,
+    )
 
 
 async def _open_course(conn: Any, tenant_id: str, slug: str, viewer: AcademyViewer) -> CourseView:
@@ -452,7 +562,13 @@ async def _load_lessons(conn: Any, tenant_id: str, course_id: str, telegram_user
                (p.lesson_id is not null) as done,
                a.required as assignment_required,
                s.status as submission_status,
-               s.unread as submission_unread
+               s.unread as submission_unread,
+               (l.quiz_json is not null) as has_quiz,
+               exists (
+                 select 1 from academy_quiz_attempts q
+                 where q.tenant_id = l.tenant_id and q.lesson_id = l.lesson_id
+                   and q.telegram_user_id = %(user)s and q.passed
+               ) as quiz_passed
         from academy_lessons l
         left join academy_progress p
           on p.tenant_id = l.tenant_id and p.lesson_id = l.lesson_id and p.telegram_user_id = %(user)s
@@ -514,6 +630,8 @@ def _lesson_in(row: dict[str, Any]) -> LessonIn:
         done=bool(row.get("done")),
         assignment_required=row.get("assignment_required"),
         submission_status=row.get("submission_status"),
+        quiz_required=bool(row.get("has_quiz")),
+        quiz_passed=bool(row.get("quiz_passed")),
     )
 
 
@@ -558,6 +676,8 @@ def _lesson_summary(row: dict[str, Any], number: int, lock: LessonLock, slugs: d
         "assignment_status": assignment_status(row),
         # Непрочитанные ответы преподавателя (V32) — метка «Новый ответ» в содержании.
         "unread": int(row.get("submission_unread") or 0),
+        # Тест в конце урока (V35): урок зачтён, когда тест сдан (``complete``).
+        "has_quiz": bool(row.get("has_quiz")),
     }
 
 
@@ -677,6 +797,7 @@ async def course_outline(
         "author_name": names.get(author),
         "locked": view.lock is not None,
         "lock_reason": view.lock,
+        "free_reason": view.free_reason,
         **_progress(summaries),
         "next_lesson": _next_slug(view, lessons, locks),
         "started_at": _iso(view.started_at),
@@ -786,10 +907,13 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
         row = await fetch_one(
             conn,
             """
-            select body_html, checklist, video, files, live_url
+            select body_html, checklist, video, files, live_url, quiz_json
             from academy_lessons where tenant_id = %s and lesson_id = %s::uuid
             """,
             (tenant_id, lesson_id),
+        )
+        quiz_state = (
+            await _quiz_state(conn, tenant_id, lesson_id, viewer.telegram_user_id) if row.get("quiz_json") else None
         )
         assignment = await fetch_one(
             conn,
@@ -852,6 +976,9 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
             ),
             "my_submission": my_submission,
             "works_public": bool(course.get("works_public")),
+            # Тест (V35): без верных ответов и подсказок — они приходят в ответ на попытку.
+            "quiz": public_quiz(row.get("quiz_json")),
+            "quiz_state": quiz_state,
         },
         "prev": summaries[index - 1] if index > 0 else None,
         "next": summaries[index + 1] if index + 1 < len(summaries) else None,
@@ -888,6 +1015,18 @@ async def course_progress(conn: Any, tenant_id: str, view: CourseView, telegram_
     }
 
 
+async def _mark_done(conn: Any, tenant_id: str, telegram_user_id: int, lesson_id: str, source: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            insert into academy_progress (tenant_id, telegram_user_id, lesson_id, source)
+            values (%s, %s, %s::uuid, %s)
+            on conflict (tenant_id, telegram_user_id, lesson_id) do nothing
+            """,
+            (tenant_id, telegram_user_id, lesson_id, source),
+        )
+
+
 async def set_lesson_done(
     tenant_id: str,
     slug: str,
@@ -899,17 +1038,13 @@ async def set_lesson_done(
 ) -> dict[str, Any]:
     async with tenant_connection(tenant_id) as conn:
         view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
-        async with conn.cursor() as cur:
-            if done:
-                await cur.execute(
-                    """
-                    insert into academy_progress (tenant_id, telegram_user_id, lesson_id, source)
-                    values (%s, %s, %s::uuid, %s)
-                    on conflict (tenant_id, telegram_user_id, lesson_id) do nothing
-                    """,
-                    (tenant_id, viewer.telegram_user_id, lesson["lesson_id"], source),
-                )
-            else:
+        if done and lesson.get("has_quiz") and not lesson.get("quiz_passed"):
+            # Урок с тестом засчитывает сданный тест (POST …/quiz), а не кнопка.
+            raise AcademyError(409, QUIZ_REQUIRED)
+        if done:
+            await _mark_done(conn, tenant_id, viewer.telegram_user_id, lesson["lesson_id"], source)
+        else:
+            async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     delete from academy_progress
@@ -919,6 +1054,66 @@ async def set_lesson_done(
                 )
         progress = await course_progress(conn, tenant_id, view, viewer.telegram_user_id)
     return {"ok": True, "done": done, **progress}
+
+
+async def _quiz_state(conn: Any, tenant_id: str, lesson_id: str, telegram_user_id: int) -> dict[str, Any]:
+    row = await fetch_one(
+        conn,
+        """
+        select count(*) as attempts, coalesce(max(score), 0) as best, coalesce(bool_or(passed), false) as passed
+        from academy_quiz_attempts
+        where tenant_id = %s and lesson_id = %s::uuid and telegram_user_id = %s
+        """,
+        (tenant_id, lesson_id, telegram_user_id),
+    )
+    row = row or {}
+    return {"passed": bool(row.get("passed")), "best": int(row.get("best") or 0), "attempts": int(row.get("attempts") or 0)}
+
+
+async def submit_quiz(
+    tenant_id: str, slug: str, lesson_slug: str, viewer: AcademyViewer, *, answers: dict[str, Any]
+) -> dict[str, Any]:
+    """Попытка теста (V35): баллы, по каждому вопросу — верно ли и подсказка выбранного варианта.
+    Попытка пишется всегда, число не ограничено; сдан — урок отмечен (как «Сделал» на сайте)."""
+    if not isinstance(answers, dict) or len(answers) > MAX_QUIZ_ANSWERS:
+        raise AcademyError(400, "bad_answers")
+    async with tenant_connection(tenant_id) as conn:
+        view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
+        row = await fetch_one(
+            conn,
+            "select quiz_json from academy_lessons where tenant_id = %s and lesson_id = %s::uuid",
+            (tenant_id, lesson["lesson_id"]),
+        )
+        quiz = (row or {}).get("quiz_json")
+        if not quiz:
+            raise AcademyError(404, "quiz_not_found")
+        result = grade_quiz(quiz, answers)
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into academy_quiz_attempts (tenant_id, lesson_id, telegram_user_id, answers, score, passed)
+                values (%s, %s::uuid, %s, %s::jsonb, %s, %s)
+                """,
+                (
+                    tenant_id, lesson["lesson_id"], viewer.telegram_user_id, json.dumps(result.answers),
+                    result.score, result.passed,
+                ),
+            )
+        if result.passed:
+            await _mark_done(conn, tenant_id, viewer.telegram_user_id, lesson["lesson_id"], "site")
+        progress = await course_progress(conn, tenant_id, view, viewer.telegram_user_id)
+        state = await _quiz_state(conn, tenant_id, lesson["lesson_id"], viewer.telegram_user_id)
+    return {
+        "ok": True,
+        "score": result.score,
+        "pass": int(quiz["pass"]),
+        "passed": result.passed,
+        "results": result.results,
+        # Урок отмечен: этой попыткой или раньше (ручная отметка до появления теста).
+        "done": result.passed or bool(lesson.get("done")),
+        "quiz_state": state,
+        **progress,
+    }
 
 
 async def course_slug_for_product(conn: Any, tenant_id: str, product_code: str) -> str | None:

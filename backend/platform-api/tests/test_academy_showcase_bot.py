@@ -58,7 +58,7 @@ async def test_start_in_showcase_bot_greets_with_policy_and_courses(whieda_tenan
     assert "Онлайн-академия ALMIRA" in text and "https://almira.by/privacy-policy/" in text
     rows = sent.await_args.kwargs["reply_markup"]["inline_keyboard"]
     assert rows[0][0]["url"] == "https://academy.almira.by/academy/#wwc-login=x"
-    assert rows[1][0] == {"text": "Написать студии", "url": "https://t.me/alm_school"}
+    assert [row[0].get("callback_data") for row in rows[1:]] == ["shs:open:author", "shs:open:admin"]
     assert consent.await_args.kwargs["policy_version"].startswith("showcase:almira:")
     actor.assert_awaited_once()
     assert home.await_args.args[3] is ALMIRA
@@ -75,7 +75,7 @@ async def test_policy_is_shown_once(whieda_tenant, almira_binding):
         "app.telegram.showcase_bot.record_telegram_consent", AsyncMock(return_value=False)
     ), patch("app.telegram.showcase_bot.with_site_login", AsyncMock(side_effect=lambda url, **_: url)), patch(
         "app.telegram.showcase_bot.show_academy_home", AsyncMock(return_value={})
-    ):
+    ), patch("app.telegram.showcase_bot.try_handle_private_message", AsyncMock(return_value=None)):
         await process_core_telegram_update(whieda_tenant, _private("привет"), "t", binding=almira_binding)
     assert "privacy-policy" not in sent.await_args.kwargs["text"]
 
@@ -159,3 +159,66 @@ async def test_public_showcase_config_needs_no_session(client):
     assert body["id"] == "almira" and body["bot_url"] == "https://t.me/ALMIRA_I_bot"
     assert body["academy_title"] == "Онлайн-академия ALMIRA"
     assert body["links"]["privacy_url"] == "https://almira.by/privacy-policy/"
+
+
+def _start(text: str, *, username: str | None = "anna_p") -> dict:
+    user = {"id": 301, "first_name": "Анна", "last_name": "Петрова", **({"username": username} if username else {})}
+    return {"message": {"message_id": 7, "text": text, "chat": {"id": 301, "type": "private"}, "from": user}}
+
+
+def _ad_patches(sent, *, admin: int | None = 5035800725):
+    return (
+        patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)),
+        patch("app.telegram.showcase_bot.send_telegram_text", sent),
+        patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()),
+        patch("app.telegram.showcase_bot.record_telegram_consent", AsyncMock(return_value=True)),
+        patch("app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"author": 739736805, "admin": admin})),
+        patch("app.telegram.showcase_bot.show_academy_home", AsyncMock(return_value={})),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября"), ("ig_web31", "31 октября")])
+async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whieda_tenant, almira_binding, tag, date):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent)
+    with p[0], p[1], p[2], p[3], p[4], p[5] as home:
+        result = await process_core_telegram_update(whieda_tenant, _start(f"/start {tag}"), "t", binding=almira_binding)
+    assert (result["route"], result["tag"], result["admin_notified"]) == ("showcase_ad_lead", tag, True)
+    home.assert_not_called()
+    lead, admin = sent.await_args_list
+    assert lead.kwargs["chat_id"] == "301"
+    assert f"бесплатный вебинар Александры Пармон по композиции — {date}" in lead.kwargs["text"]
+    assert "https://almira.by/privacy-policy/" in lead.kwargs["text"]
+    rows = lead.kwargs["reply_markup"]["inline_keyboard"]
+    assert [row[0]["callback_data"] for row in rows] == ["shs:open:author", "shs:open:admin"]
+    assert admin.kwargs["chat_id"] == "5035800725"
+    assert admin.kwargs["text"] == (
+        '✅ <b><a href="tg://user?id=301">Анна Петрова</a></b> (@anna_p) — в боте, ссылку на эфир получит здесь.'
+    )
+
+
+@pytest.mark.asyncio
+async def test_ad_lead_other_tag_without_date_and_without_admin(whieda_tenant, almira_binding):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent, admin=None)
+    with p[0], p[1], p[2], p[3], p[4], p[5]:
+        result = await process_core_telegram_update(
+            whieda_tenant, _start("/start ig_kurs", username=None), "t", binding=almira_binding
+        )
+    assert (result["route"], result["admin_notified"]) == ("showcase_ad_lead", False)
+    [lead] = sent.await_args_list
+    assert "оставили заявку. Мы скоро свяжемся с вами здесь" in lead.kwargs["text"]
+    assert "вебинар" not in lead.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_bad_ad_tag_falls_back_to_welcome(whieda_tenant, almira_binding):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent)
+    with p[0], p[1], p[2], p[3], p[4], p[5] as home, patch(
+        "app.telegram.showcase_bot.with_site_login", AsyncMock(side_effect=lambda url, **_: url)
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _start("/start ig_<b>"), "t", binding=almira_binding)
+    assert result["route"] == "showcase_welcome"
+    home.assert_awaited_once()

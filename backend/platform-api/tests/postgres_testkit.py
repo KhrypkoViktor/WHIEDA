@@ -67,6 +67,7 @@ MIGRATIONS = (
     "platform_academy_threads_v32.sql",  # домашка как переписка, работы группы, анкета (13.10.2026)
     "platform_academy_showcase_support_v33.sql",  # адресаты обращений бота витрины (14.10.2026)
     "platform_login_identities_v34.sql",  # вход через Google/Max по коду владельца (15.10.2026)
+    "platform_academy_mini_quiz_v35.sql",  # мини-курсы: free_for, тест урока (16.10.2026); v34 — ветка логина
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

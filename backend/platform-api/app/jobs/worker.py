@@ -452,8 +452,17 @@ async def academy_notifications_step() -> int:
         tenant_ids.add(binding.tenant.tenant_id)
         if candidate == binding_id and binding_id not in scheduled:
             by_id[binding.binding_id] = binding
-    for showcase_binding_id, binding in (await showcase_notify_bindings(tenant_ids)).items():
+    showcase_bindings = await showcase_notify_bindings(tenant_ids)
+    for showcase_binding_id, binding in showcase_bindings.items():
         by_id.setdefault(showcase_binding_id, binding)
+    # Заявки с рекламы (16.10.2026): новые строки таблицы витрины → алерты администратору.
+    # Только где бот витрины разрешился (бой), опрос не чаще раза в 90 с.
+    try:
+        from app.academy.ad_leads import ad_leads_step
+
+        await ad_leads_step(tenant_ids, showcase_bindings)
+    except Exception:
+        logger.exception("ad_leads_step_failed")
     if not by_id:
         return 0
     return await process_due_notifications(by_id)

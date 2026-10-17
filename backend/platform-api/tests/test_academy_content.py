@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from app.academy.content import media_refs, render_markdown, resolve_media, sanitize_html
@@ -97,6 +99,147 @@ def test_media_mentions_in_text_are_refs_but_only_tags_are_rewritten():
     assert f'src="media:{other}"' in resolved and f"media:{MEDIA_ID.upper()}" in resolved
     assert '<img src="/academy-media/k?u=1&amp;e=2&amp;s=x" alt="a">' in resolved
     assert "<img" not in resolve_media(html, {})
+
+
+def _links(html: str) -> list[tuple[str, str]]:
+    """(href, text) of every link, in order."""
+    return re.findall(r'<a [^<>]*?href="([^"]*)"[^<>]*>(.*?)</a>', html, flags=re.S)
+
+
+@pytest.mark.parametrize(
+    ("source", "href", "tail"),
+    [
+        ("Сервис: https://gptunnel.ru/?ref=wwc", "https://gptunnel.ru/?ref=wwc", ""),
+        ("Смотрите https://example.com/a.", "https://example.com/a", "."),
+        ("Смотрите (https://example.com/a), потом урок", "https://example.com/a", "), потом урок"),
+        ("«https://example.com/a»", "https://example.com/a", "»"),
+        ("Вики: https://ru.wikipedia.org/wiki/Тон_(живопись)", "https://ru.wikipedia.org/wiki/Тон_(живопись)", ""),
+        ("Файл https://example.com/__init__.py и *всё*", "https://example.com/__init__.py", " и <em>всё</em>"),
+        ("http://example.com/a_b_c?x=1&y=2, дальше", "http://example.com/a_b_c?x=1&amp;y=2", ", дальше"),
+        ("Сайт https://пример.рф/путь!", "https://пример.рф/путь", "!"),
+        # Редактор экранировал подчёркивание — адрес тот же, а не обрезанный.
+        (r"Канал https://t.me/wwc\_best\_club", "https://t.me/wwc_best_club", ""),
+    ],
+)
+def test_bare_address_becomes_a_link(source, href, tail):
+    html = render_markdown(source)
+    assert _links(html) == [(href, href)], html
+    assert html.endswith(f"</a>{tail}</p>"), html
+
+
+def test_bare_addresses_work_in_lists_tables_headings_and_emphasis():
+    md = (
+        "## Инструменты: https://one.example\n\n"
+        "- VPN — https://two.example/vpn\n\n"
+        "| Сервис | Адрес |\n|---|---|\n| GPT | https://three.example |\n\n"
+        "**https://four.example** и https://five.example\n"
+    )
+    html = render_markdown(md)
+    assert [href for href, _ in _links(html)] == [
+        "https://one.example", "https://two.example/vpn", "https://three.example",
+        "https://four.example", "https://five.example",
+    ]
+    assert re.search(r'<strong><a [^<>]*href="https://four\.example"', html), html
+
+
+@pytest.mark.parametrize(
+    ("source", "links"),
+    [
+        # Готовая ссылка остаётся одной ссылкой со своим текстом.
+        ("[Сайт](https://example.com/a)", [("https://example.com/a", "Сайт")]),
+        ("[https://example.com/a](https://example.com/b)", [("https://example.com/b", "https://example.com/a")]),
+        ("<https://example.com/a>", [("https://example.com/a", "https://example.com/a")]),
+        ("[Сайт][1]\n\n[1]: https://example.com/a", [("https://example.com/a", "Сайт")]),
+        # Сырой HTML автора: адрес внутри его ссылки второй ссылкой не становится.
+        (
+            '<a href="https://example.com/a" target="_blank">https://example.com/a</a> и https://example.com/b',
+            [("https://example.com/a", "https://example.com/a"), ("https://example.com/b", "https://example.com/b")],
+        ),
+        ('<a href="https://example.com/a">см. https://example.com/a</a>', [("https://example.com/a", "см. https://example.com/a")]),
+        # Код и картинки — не ссылки.
+        ("Команда `curl https://example.com/a`", []),
+        ("```\ncurl https://example.com/a\n```", []),
+        ("    curl https://example.com/a", []),
+        ("![Схема https://example.com/a](https://example.com/a.png)", []),
+        # Не адрес: другая схема, обрывок, середина слова.
+        ("ftp://example.com/a и www.example.com", []),
+        ("https:// и http://.", []),
+        ("xhttps://example.com/a", []),
+    ],
+)
+def test_ready_links_code_and_non_addresses_are_left_alone(source, links):
+    html = render_markdown(source)
+    assert _links(html) == links, html
+    assert html.count("<a ") == len(links), html
+
+
+def test_bare_address_next_to_media_reference_leaves_media_alone():
+    html = render_markdown(f"![a](media:{MEDIA_ID})\n\nmedia:{MEDIA_ID} и https://example.com/a\n\n[файл](media:{MEDIA_ID})")
+    assert f'<img alt="a" src="media:{MEDIA_ID}"' in html
+    assert f"<p>media:{MEDIA_ID} и <a " in html
+    assert _links(html) == [("https://example.com/a", "https://example.com/a"), (f"media:{MEDIA_ID}", "файл")]
+    assert media_refs(html) == [MEDIA_ID]
+
+
+def test_bare_address_cannot_smuggle_markup():
+    for source in (
+        'https://example.com/"onmouseover="alert(1)',
+        "https://example.com/<script>alert(1)</script>",
+        "https://example.com/'onclick='alert(1)",
+        "javascript://example.com/%0aalert(1)",
+    ):
+        html = render_markdown(source)
+        for tag in re.findall(r"<[^<>]+>", html):
+            assert not re.search(r"\son\w+=|<script|javascript:", tag, flags=re.I), (source, html)
+
+
+def test_link_out_opens_in_a_new_tab():
+    # Ученик не теряет страницу урока: ссылка наружу — в новой вкладке, с rel от nh3.
+    for html in (
+        render_markdown("[Сайт](https://example.com/a)"),
+        render_markdown("https://example.com/a"),
+        sanitize_html('<a href="http://example.com/a">x</a>'),
+        sanitize_html('<a href="//example.com/a">x</a>'),
+        sanitize_html('<a href="https://example.com/a" target="_top" title="t">x</a>'),
+        sanitize_html('<a target="_blank" href="https://example.com/a">x</a>'),
+    ):
+        assert html.count('target="_blank"') == 1, html
+        assert 'rel="noopener noreferrer"' in html
+    stored = sanitize_html('<p><a href="https://example.com/a">x</a></p>')
+    assert sanitize_html(stored) == stored  # очистка на выходе не меняет уже очищенное
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        '<a href="/academy/?course=kurs">x</a>',
+        '<a href="#shag-2">x</a>',
+        '<a href="mailto:a@example.com">x</a>',
+        '<a href="tel:+375291234567">x</a>',
+        f'<a href="media:{MEDIA_ID}">x</a>',
+        '<a title="href=&quot;https://example.com/a&quot;" href="/academy/">x</a>',
+    ],
+)
+def test_links_inside_the_site_keep_the_tab(link):
+    assert "target=" not in sanitize_html(link)
+    assert "target=" not in sanitize_html('<img alt=\'<a href="https://example.com/a">\' src="/a.png">')
+
+
+def test_cleaned_tags_never_hold_raw_angle_brackets_or_quotes():
+    # На этом стоят правки тегов после nh3 (resolve_media, новая вкладка): «<», «>» и «"» внутри
+    # значений атрибутов экранированы, значит «<…>» в очищенном HTML — всегда настоящий тег.
+    hostile = (
+        f'<p><img alt="<img" src="media:{MEDIA_ID}"> &quot; src=x onerror=alert(1) x=&quot;</p>'
+        '<a title="<a onmouseover=alert(1) &quot; x" href="https://example.com/a">t</a>'
+        '<img alt="a > b < c" src="/a.png">'
+    )
+    clean = sanitize_html(hostile)
+    for tag in re.findall(r'<(?:[^<>"]|"[^"]*")+>', clean):
+        for value in re.findall(r'="([^"]*)"', tag):
+            assert "<" not in value and ">" not in value, tag
+    for html in (clean, resolve_media(clean, {}), resolve_media(clean, {MEDIA_ID: "/academy-media/k?u=1&e=2&s=x"})):
+        for tag in re.findall(r"<[^<>]+>", html):
+            assert not re.search(r"\son\w+=", re.sub(r'"[^"]*"', '""', tag)), html
 
 
 def test_author_views_clean_stored_html_too():
