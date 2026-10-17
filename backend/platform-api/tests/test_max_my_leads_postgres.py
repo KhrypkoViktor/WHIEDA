@@ -1,7 +1,7 @@
 """«Мои заявки» в боте Max на настоящем PostgreSQL (V11 каналы + V14/V20 CRM, роль без bypassrls).
 
 Список — только свои карточки с сайта партнёра, найденного по Max user_id через
-lead_actor_channels → lead_actors.telegram_user_id; даты — по часовому поясу его аккаунта;
+account_identities (17.10.2026: строка lead_actor_channels без подтверждения личностью не считается); даты — по часовому поясу его аккаунта;
 повторная заявка поднимает карточку; чужие, удалённые и ручные карточки не попадают;
 чтение не создаёт CRM-аккаунт. Max (send_max_text) подделан — реальные сообщения не уходят.
 """
@@ -38,10 +38,14 @@ def test_max_my_leads_lists_only_own_site_cards_newest_first(monkeypatch):
                          "values ('vera', 'whieda', 'vera-actor', 'named', '{\"subdomain\": \"vera\"}', true)")
             conn.execute("insert into partner_subscriptions (tenant_id, ref_code, paid_until) "
                          "values ('whieda', 'vera', now() + interval '30 days')")
-            # Max привязан к Игорю, Петру и Вере; 9099 — просто человек из Max.
+            # Max привязан (подтверждённо — account_identities) к Игорю, Петру и Вере; 9099 — просто человек из Max;
+            # 9004 «прилип» к actor Игоря в lead_actor_channels по нику, подтверждения нет.
             conn.execute("insert into lead_actor_channels (tenant_id, actor_id, channel, channel_user_id) values "
                          "('whieda', 'igor-actor', 'max', '9001'), ('whieda', 'petr-actor', 'max', '9002'), "
-                         "('whieda', 'vera-actor', 'max', '9003')")
+                         "('whieda', 'vera-actor', 'max', '9003'), ('whieda', 'igor-actor', 'max', '9004')")
+            conn.execute("insert into account_identities (tenant_id, telegram_user_id, provider, external_id, linked_by) values "
+                         "('whieda', 7001, 'max', '9001', 'telegram:maxlink'), ('whieda', 7002, 'max', '9002', 'telegram:maxlink'), "
+                         "('whieda', 7003, 'max', '9003', 'telegram:maxlink')")
             db.grant_api_role(conn)
 
         def admin(statement: str, params: tuple = ()) -> None:
@@ -143,6 +147,7 @@ def test_max_my_leads_lists_only_own_site_cards_newest_first(monkeypatch):
             assert "Чужая заявка" in petr_text and "Ольга" not in petr_text and "Марат" not in petr_text
             assert await ask(9003) == my_leads.NO_DIARY_TEXT
             assert await ask(9099) == my_leads.NOT_LINKED_TEXT
+            assert await ask(9004) == my_leads.NOT_LINKED_TEXT, "a channel row on the partner's actor is not a login"
             assert await accounts() == before
 
         db.run_with_app(proof)

@@ -5,7 +5,8 @@
 
 Что показываем — то, что партнёр и так видит в своей WWC CRM (вкладка «Люди», карточки с
 сайта). Человека находим по Max ``user_id`` → ``telegram_user_id`` (как вход на сайт через Max,
-``app.max.webapp``), CRM-аккаунт берётся строго по этому ``telegram_user_id``. Доступ — те же
+``app.max.webapp``), CRM-аккаунт берётся строго по этому ``telegram_user_id``. Личность Max — только
+подтверждённая привязка (``account_identities``); строка ``lead_actor_channels`` (переписка с ботом Max) не в счёт. Доступ — те же
 проверки, что у слова «CRM» в Telegram-боте: функция включена, право ``crm`` у тенанта, PRO/пилот.
 """
 
@@ -72,7 +73,8 @@ def format_leads(result: dict[str, Any]) -> str:
 
 
 async def _telegram_user_id(tenant_id: str, max_user_id: int) -> int | None:
-    # Тот же поиск, что у входа на сайт через Max: lead_actor_channels(max) → lead_actors.telegram_user_id.
+    # Тот же строгий поиск, что у входа на сайт через Max: только account_identities (provider max, не отозванная).
+    # Max с чужим ником в lead_actor_channels своих «заявок» не получит — только подсказку войти.
     from app.max.webapp import _telegram_id_for_max
 
     async with tenant_connection(tenant_id) as conn:

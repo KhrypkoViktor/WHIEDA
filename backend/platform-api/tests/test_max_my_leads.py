@@ -54,13 +54,12 @@ def _settings(monkeypatch):
 @pytest.fixture
 def bot(monkeypatch):
     """Всё, что обработчик трогает снаружи: отправка в Max, советник, привязка Max → Telegram, CRM."""
-    channels: dict[str, int | None] = {}  # Max user_id → telegram_user_id (lead_actors)
+    identities: dict[str, int | None] = {}  # Max user_id → telegram_user_id (account_identities, provider max)
 
-    async def fetch_one(_conn, query: str, params: tuple = ()):
-        assert "lead_actor_channels" in query and "lead_actors" in query, "the same lookup as the Max web login"
-        assert params[0] == "whieda" and "max" in query
-        value = channels.get(params[1])
-        return {"telegram_user_id": value} if value is not None else None
+    async def identity_state(_conn, tenant_id: str, provider: str, external_id: str):
+        assert (tenant_id, provider) == ("whieda", "max"), "the same strict lookup as the Max web login"
+        value = identities.get(external_id)
+        return ("active", value) if value is not None else ("none", None)
 
     @asynccontextmanager
     async def connection(_tenant):
@@ -75,11 +74,11 @@ def bot(monkeypatch):
     monkeypatch.setattr(processor, "handle_structured_query", advisor)
     monkeypatch.setattr(processor, "ensure_channel_actor", ensure)
     monkeypatch.setattr(processor, "should_deliver_telegram_response", lambda _r: True)
-    monkeypatch.setattr(webapp, "fetch_one", fetch_one)
+    monkeypatch.setattr(webapp, "identity_state", identity_state)
     monkeypatch.setattr(my_leads, "tenant_connection", connection)
     monkeypatch.setattr(my_leads, "load_viewer", viewer)
     monkeypatch.setattr(my_leads, "recent_site_leads", leads)
-    return type("Bot", (), {"sent": sent, "advisor": advisor, "channels": channels, "viewer": viewer, "leads": leads})
+    return type("Bot", (), {"sent": sent, "advisor": advisor, "identities": identities, "viewer": viewer, "leads": leads})
 
 
 def _said(bot) -> str:
@@ -114,8 +113,21 @@ async def test_person_not_linked_gets_the_login_hint_and_the_advisor_stays_silen
 
 
 @pytest.mark.asyncio
+async def test_max_user_with_a_partners_username_gets_the_hint_not_the_partners_requests(bot):
+    """17.10.2026: ник партнёра в Max личностью не является — своих заявок партнёра он не увидит."""
+    impostor = MaxEvent(kind="message", user_id=5002, chat_id=7770, text="Мои заявки", username="igor",
+                        display_name="Igor", raw={})
+    out = await processor.handle_max_message(WITH_CRM, impostor, "t1")
+    assert _said(bot) == NOT_LINKED
+    assert (out["route"], out["status"]) == ("max_my_leads", "not_linked")
+    bot.leads.assert_not_awaited()
+    bot.viewer.assert_not_awaited()
+    bot.advisor.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_linked_partner_without_requests_is_told_so(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     out = await processor.handle_max_message(WITH_CRM, _event("заявки"), "t1")
     assert _said(bot) == "Заявок пока нет. Все заявки с сайта попадают в WWC CRM: wwc.best/crm/"
     assert out["status"] == "empty"
@@ -124,7 +136,7 @@ async def test_linked_partner_without_requests_is_told_so(bot):
 
 @pytest.mark.asyncio
 async def test_partner_who_never_opened_the_diary_is_pointed_to_it(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.leads.return_value = None  # no platform_accounts row: nothing is created by reading
     out = await processor.handle_max_message(WITH_CRM, _event("/leads"), "t1")
     text = _said(bot)
@@ -134,7 +146,7 @@ async def test_partner_who_never_opened_the_diary_is_pointed_to_it(bot):
 
 @pytest.mark.asyncio
 async def test_three_requests_are_listed_newest_first_in_one_line_each(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.leads.return_value = {"items": [
         _lead("10-17", "Ольга Иванова", phone="+79991112233"),
         _lead("10-16", "Марат", note_contact="@marat_tg", status="Приглашён"),
@@ -157,7 +169,7 @@ async def test_three_requests_are_listed_newest_first_in_one_line_each(bot):
 
 @pytest.mark.asyncio
 async def test_more_than_ten_says_these_are_the_latest(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.leads.return_value = {"items": [_lead("10-17", f"Человек {n}") for n in range(10)], "more": True}
     await processor.handle_max_message(WITH_CRM, _event("мои заявки"), "t1")
     text = _said(bot)
@@ -167,7 +179,7 @@ async def test_more_than_ten_says_these_are_the_latest(bot):
 
 @pytest.mark.asyncio
 async def test_a_site_form_cannot_stretch_or_break_the_answer(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.leads.return_value = {"items": [
         _lead("10-17", "Очень\nдлинное   имя " + "я" * 200, phone="+7 999 " + "1" * 100),
         _lead("10-16", "   "),
@@ -182,7 +194,7 @@ async def test_a_site_form_cannot_stretch_or_break_the_answer(bot):
 
 @pytest.mark.asyncio
 async def test_without_pro_the_same_text_as_in_telegram(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.viewer.return_value = UNPAID
     out = await processor.handle_max_message(WITH_CRM, _event("мои заявки"), "t1")
     assert _said(bot) == LOCK_TEXT["pro_required"]
@@ -195,7 +207,7 @@ async def test_without_pro_the_same_text_as_in_telegram(bot):
 async def test_outside_the_pilot_the_same_text_as_in_telegram(bot, monkeypatch):
     monkeypatch.setenv("PLATFORM_CRM_PILOT_TELEGRAM_IDS", "77")
     get_settings.cache_clear()
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     await processor.handle_max_message(WITH_CRM, _event("мои заявки"), "t1")
     assert _said(bot) == LOCK_TEXT["crm_pilot_only"]
     bot.leads.assert_not_awaited()
@@ -203,7 +215,7 @@ async def test_outside_the_pilot_the_same_text_as_in_telegram(bot, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tenant_without_crm_or_with_the_feature_off_gets_the_closed_text(bot, monkeypatch):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     out = await processor.handle_max_message(WITHOUT_CRM, _event("мои заявки"), "t1")
     assert _said(bot) == LOCK_TEXT["crm_pilot_only"] and out["status"] == "crm_unavailable"
     bot.sent.reset_mock()
@@ -218,7 +230,7 @@ async def test_tenant_without_crm_or_with_the_feature_off_gets_the_closed_text(b
 
 @pytest.mark.asyncio
 async def test_a_database_failure_is_an_answer_not_silence_and_not_a_question_for_the_advisor(bot, caplog):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     bot.leads.side_effect = RuntimeError('duplicate key (name)=(Ольга Иванова) (phone)=(+79991112233)')
     with caplog.at_level("WARNING"):
         out = await processor.handle_max_message(WITH_CRM, _event("мои заявки"), "t1")
@@ -237,7 +249,7 @@ def test_the_greeting_tells_what_to_write():
 @pytest.mark.asyncio
 async def test_a_group_never_gets_the_list(bot):
     """Группа Max — только мост потока; «Мои заявки» там не отвечает ни советник, ни список."""
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     update = {"update_type": "message_created", "message": {
         "sender": {"user_id": 5001, "first_name": "Айгуль"}, "recipient": {"chat_id": 5, "chat_type": "chat"},
         "body": {"mid": "m1", "text": "Мои заявки"}}}
@@ -251,7 +263,7 @@ async def test_a_group_never_gets_the_list(bot):
 
 @pytest.mark.asyncio
 async def test_the_word_goes_through_the_whole_webhook_path(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     event = parse_max_update({"update_type": "message_created", "message": {
         "sender": {"user_id": 5001, "first_name": "Айгуль"}, "recipient": {"chat_id": 777, "chat_type": "dialog"},
         "body": {"mid": "m1", "text": "Мои заявки"}}})
@@ -262,7 +274,7 @@ async def test_the_word_goes_through_the_whole_webhook_path(bot):
 
 @pytest.mark.asyncio
 async def test_an_ordinary_question_still_goes_to_the_advisor(bot):
-    bot.channels["5001"] = 700
+    bot.identities["5001"] = 700
     out = await processor.handle_max_message(WITH_CRM, _event("стельки с анионами — размеры?"), "t1")
     assert out["route"] == "max_message"
     bot.advisor.assert_awaited_once()
