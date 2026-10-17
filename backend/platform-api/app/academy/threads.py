@@ -200,6 +200,9 @@ async def post_student_message(
     body, wanted = _clean_message(text, media_ids)
     async with tenant_connection(tenant_id) as conn:
         view, lesson = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
+        if view.self_study:
+            # Без оплаты вопросы автору не идут — как и домашка (17.10.2026).
+            raise AcademyError(403, "self_study")
         head = await _student_thread(conn, tenant_id, lesson["lesson_id"], viewer.telegram_user_id, lock=True)
         if head is None:
             raise AcademyError(404, "submission_not_found")

@@ -67,6 +67,9 @@ async def submit_homework(
     # Нить одна на урок (V32): после «Вернули» исправления идут сообщением в ту же нить.
     async with tenant_connection(tenant_id) as conn:
         _view, probe = await open_lesson(conn, tenant_id, slug, lesson_slug, viewer)
+        if _view.self_study:
+            # Без оплаты — самостоятельно: проверка автора только у оплативших курс (17.10.2026).
+            raise AcademyError(403, "self_study")
         latest = await fetch_one(
             conn,
             """

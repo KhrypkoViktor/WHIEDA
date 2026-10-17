@@ -491,6 +491,9 @@ class CourseView:
     started_at: datetime | None
     lock_extra: dict[str, Any] = field(default_factory=dict)
     free_reason: str | None = None  # V35: открыт без покупки — club | course
+    # Без оплаты — самостоятельно (Виктор, 17.10.2026): курс открыт подарком (source gift) или
+    # по free_for — задания видны, но на проверку автору не сдаются; проверка — только с оплатой.
+    self_study: bool = False
 
 
 async def _first_progress_at(conn: Any, tenant_id: str, course_id: str, telegram_user_id: int) -> datetime | None:
@@ -527,9 +530,12 @@ async def _course_view(conn: Any, tenant_id: str, slug: str, viewer: AcademyView
     else:
         # PRO/бесплатный курс без строки доступа: старт — первый пройденный урок.
         started = await _first_progress_at(conn, tenant_id, course["course_id"], viewer.telegram_user_id)
+    self_study = not staff and lock is None and (
+        free is not None or (access is not None and access.get("source") == "gift")
+    )
     return CourseView(
         course=course, lock=lock, staff=staff, started_at=started, lock_extra=extra,
-        free_reason=free if lock is None else None,
+        free_reason=free if lock is None else None, self_study=self_study,
     )
 
 
@@ -553,8 +559,10 @@ async def _load_modules(conn: Any, tenant_id: str, course_id: str) -> list[dict[
     )
 
 
-async def _load_lessons(conn: Any, tenant_id: str, course_id: str, telegram_user_id: int) -> list[dict[str, Any]]:
-    return await fetch_all(
+async def _load_lessons(
+    conn: Any, tenant_id: str, course_id: str, telegram_user_id: int, *, self_study: bool = False,
+) -> list[dict[str, Any]]:
+    rows = await fetch_all(
         conn,
         """
         select l.lesson_id::text as lesson_id, l.slug, l.module_id::text as module_id, l.module_title,
@@ -589,6 +597,10 @@ async def _load_lessons(conn: Any, tenant_id: str, course_id: str, telegram_user
         """,
         {"user": telegram_user_id, "tenant": tenant_id, "course": course_id},
     )
+    if self_study:
+        # Самостоятельно: задание есть, но не сдаётся — урок не ждёт, пока автор примет работу.
+        rows = [{**row, "assignment_required": False} if row.get("assignment_required") is not None else row for row in rows]
+    return rows
 
 
 def build_structure(
@@ -774,7 +786,7 @@ async def course_outline(
         view = await (_course_view if allow_locked else _open_course)(conn, tenant_id, slug, viewer)
         course = view.course
         module_rows = await _load_modules(conn, tenant_id, course["course_id"])
-        lesson_rows = await _load_lessons(conn, tenant_id, course["course_id"], viewer.telegram_user_id)
+        lesson_rows = await _load_lessons(conn, tenant_id, course["course_id"], viewer.telegram_user_id, self_study=view.self_study)
         description = sanitize_html(course.get("description_html")) if course.get("description_html") else ""
         media = await load_media(
             conn, tenant_id,
@@ -798,6 +810,7 @@ async def course_outline(
         "locked": view.lock is not None,
         "lock_reason": view.lock,
         "free_reason": view.free_reason,
+        "self_study": view.self_study,
         **_progress(summaries),
         "next_lesson": _next_slug(view, lessons, locks),
         "started_at": _iso(view.started_at),
@@ -894,7 +907,7 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
         course = view.course
         modules, lessons = build_structure(
             await _load_modules(conn, tenant_id, course["course_id"]),
-            await _load_lessons(conn, tenant_id, course["course_id"], viewer.telegram_user_id),
+            await _load_lessons(conn, tenant_id, course["course_id"], viewer.telegram_user_id, self_study=view.self_study),
         )
         locks = _evaluate(view, modules, lessons)
         index = next((i for i, item in enumerate(lessons) if item["slug"] == lesson_slug), None)
@@ -968,8 +981,10 @@ async def lesson_detail(tenant_id: str, slug: str, lesson_slug: str, viewer: Aca
             "assignment": (
                 {
                     "prompt_html": sanitize_html(assignment["prompt_html"]),
-                    "required": bool(assignment["required"]),
+                    "required": bool(assignment["required"]) and not view.self_study,
                     "review_days": int(course.get("review_days") or 0),
+                    # Без оплаты: задание для себя, кнопки «Сдать» нет (17.10.2026).
+                    "self_study": view.self_study,
                 }
                 if assignment
                 else None
@@ -990,7 +1005,7 @@ async def open_lesson(conn: Any, tenant_id: str, slug: str, lesson_slug: str, vi
     view = await _open_course(conn, tenant_id, slug, viewer)
     modules, lessons = build_structure(
         await _load_modules(conn, tenant_id, view.course["course_id"]),
-        await _load_lessons(conn, tenant_id, view.course["course_id"], viewer.telegram_user_id),
+        await _load_lessons(conn, tenant_id, view.course["course_id"], viewer.telegram_user_id, self_study=view.self_study),
     )
     lesson = next((item for item in lessons if item["slug"] == lesson_slug), None)
     if lesson is None:
@@ -1004,7 +1019,7 @@ async def open_lesson(conn: Any, tenant_id: str, slug: str, lesson_slug: str, vi
 async def course_progress(conn: Any, tenant_id: str, view: CourseView, telegram_user_id: int) -> dict[str, Any]:
     modules, lessons = build_structure(
         await _load_modules(conn, tenant_id, view.course["course_id"]),
-        await _load_lessons(conn, tenant_id, view.course["course_id"], telegram_user_id),
+        await _load_lessons(conn, tenant_id, view.course["course_id"], telegram_user_id, self_study=view.self_study),
     )
     locks = _evaluate(view, modules, lessons)
     summaries = _summaries(lessons, locks)

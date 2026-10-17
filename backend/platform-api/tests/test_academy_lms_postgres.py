@@ -375,7 +375,9 @@ def test_student_sees_modules_locks_and_lesson_media(monkeypatch, tmp_path):
             progress = await set_lesson_done("whieda", "akvarel", "b", student, done=True, source="bot")
             assert (progress["lessons_done"], progress["next_lesson"]["slug"]) == (2, "c")
             detail_c = await lesson_detail("whieda", "akvarel", "c", student)
-            assert detail_c["lesson"]["assignment"] == {"prompt_html": "<p>Пришлите фото заливки</p>", "required": True, "review_days": 0}
+            assert detail_c["lesson"]["assignment"] == {
+                "prompt_html": "<p>Пришлите фото заливки</p>", "required": True, "review_days": 0, "self_study": False,
+            }
 
             # 6. Ссылка на медиа по id: ученик с доступом — да, чужой — нет, автор — да.
             link = await media_url("whieda", FILE_ID, student)
