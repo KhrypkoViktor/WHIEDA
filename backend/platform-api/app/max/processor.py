@@ -15,6 +15,7 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
 from app.max.client import send_max_text
+from app.max.my_leads import is_my_leads_text, my_leads_answer
 from app.max.update_parser import MaxEvent
 from app.referral_bonus.service import inviter_card, parse_referral_start_token, parse_site_start_token
 from app.telegram.modes import should_deliver_telegram_response
@@ -24,9 +25,13 @@ logger = logging.getLogger("whieda.max")
 
 CHANNEL = "max"
 
+# «Мои заявки» (17.10.2026): бот сам ничего не присылает (правила Max, п. 1.5) — человек просит словом.
+MY_LEADS_HINT = "Напишите «Мои заявки» — покажу заявки с сайта."
+
 WELCOME_PLAIN = (
     "Здравствуйте! Это бот WWC — продукты и технологии WHIEDA.\n"
-    "Напишите вопрос по товару (например, «стельки с анионами» или «активатор клеток») — отвечу по документам."
+    "Напишите вопрос по товару (например, «стельки с анионами» или «активатор клеток») — отвечу по документам.\n"
+    + MY_LEADS_HINT
 )
 
 
@@ -44,6 +49,7 @@ def _greeting(status: str, inviter: Any) -> str:
     }[status]
     lines.append("")
     lines.append("Напишите вопрос по товару — отвечу по официальным документам WHIEDA.")
+    lines.append(MY_LEADS_HINT)
     return "\n".join(line for line in lines if line is not None)
 
 
@@ -84,6 +90,10 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     )
     if not event.text:
         return {"ok": True, "route": "max_message", "status": "empty", "trace_id": trace_id}
+    if is_my_leads_text(event.text):
+        text, status = await my_leads_answer(tenant, event.user_id)
+        await _reply(event, text)
+        return {"ok": True, "route": "max_my_leads", "status": status, "trace_id": trace_id}
     wish = await _try_max_wish(tenant, event, trace_id)
     if wish is not None:
         return wish
