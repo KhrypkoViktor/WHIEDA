@@ -52,10 +52,33 @@ update lead_actors set telegram_user_id = 702 where actor_id = 'stranger';
 insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode, public_profile, enabled) values
   ('volkova', 'whieda', 'volkova', 'named', '{"display_name": "Евгения Волкова"}', true),
   ('petrova', 'whieda', 'petrova', 'named', '{"display_name": "Евгения Петрова"}', true);
--- Прежняя привязка Max (V30/V31) у Петровой и Max без Telegram — бэкфилл берёт только первую.
+-- Строки lead_actor_channels(max) до V34. Бэкфилл (17.10.2026) берёт только подтверждённые привязки:
+--   6001 Петрова — кнопка maxlink (V31): max_link_requests использована ею же           -> берётся
+--   6003 Волкова — ссылка /max (V30): channel_link_codes для неё использован этим Max   -> берётся
+--   6002 Max без Telegram                                                                -> нет человека
+--   6004 «прилип» к Петровой по нику, подтверждения нет                                 -> не берётся
+--   6005 заявка maxlink есть, но не использована                                        -> не берётся
+--   6006 заявка использована другим Telegram-человеком (Волковой), строка у Петровой    -> не берётся
+--   6007 код /max использован другим Max-id                                              -> не берётся
+--   6008 код /max выдан другому человеку (actor), использован этим Max-id               -> не берётся
 insert into lead_actor_channels (tenant_id, actor_id, channel, channel_user_id, display_name) values
   ('whieda', 'petrova', 'max', '6001', 'Евгения П.'),
-  ('whieda', 'max-only', 'max', '6002', 'Без Telegram');
+  ('whieda', 'max-only', 'max', '6002', 'Без Telegram'),
+  ('whieda', 'volkova', 'max', '6003', 'Евгения В.'),
+  ('whieda', 'petrova', 'max', '6004', 'Самозванец'),
+  ('whieda', 'petrova', 'max', '6005', 'Не дошёл до Telegram'),
+  ('whieda', 'petrova', 'max', '6006', 'Чужая заявка'),
+  ('whieda', 'petrova', 'max', '6007', 'Чужой код'),
+  ('whieda', 'petrova', 'max', '6008', 'Код другого человека');
+insert into max_link_requests (code_hash, tenant_id, max_user_id, expires_at, used_at, used_by_telegram_user_id) values
+  ('req-6001', 'whieda', '6001', now() + interval '1 hour', now(), 701),
+  ('req-6005', 'whieda', '6005', now() + interval '1 hour', null, null),
+  ('req-6006', 'whieda', '6006', now() + interval '1 hour', now(), 700);
+insert into channel_link_codes (code_hash, tenant_id, actor_id, channel, expires_at, used_at, used_channel_user_id) values
+  ('code-6003', 'whieda', 'volkova', 'max', now() + interval '1 hour', now(), '6003'),
+  ('code-6007', 'whieda', 'petrova', 'max', now() + interval '1 hour', now(), '9007'),
+  ('code-6007b', 'whieda', 'petrova', 'max', now() + interval '1 hour', null, null),
+  ('code-6008', 'whieda', 'volkova', 'max', now() + interval '1 hour', now(), '6008');
 """
 
 
@@ -109,7 +132,9 @@ def test_login_identities_end_to_end(monkeypatch):
             rows = conn.execute(
                 "select telegram_user_id, external_id, linked_by from account_identities where provider = 'max' order by external_id"
             ).fetchall()
-            assert rows == [(PETROVA, "6001", "telegram:/max")], "legacy Max link of a Telegram person only, once"
+            assert rows == [(PETROVA, "6001", "telegram:/max"), (EVGENIA, "6003", "telegram:/max")], (
+                "only legacy Max links with proof (used maxlink request / used /max code), once; no proof, no identity"
+            )
             db.grant_api_role(conn)
 
         async def proof() -> None:
@@ -239,7 +264,8 @@ def test_login_identities_end_to_end(monkeypatch):
             assert session and int(session["telegram_user_id"]) == EVGENIA and session["scope"] == "telegram_verified"
 
             methods = await service.list_login_methods("whieda", EVGENIA)
-            assert [m["provider"] for m in methods] == ["telegram", "google"] and methods[1]["label"] == "evgenia@example.com"
+            assert [m["provider"] for m in methods] == ["telegram", "max", "google"], "Max 6003 came from the proven /max backfill"
+            assert methods[2]["label"] == "evgenia@example.com"
 
             # Повторный вход через Google (семья cookie) — сразу человек, без кода.
             again, _ = await _google_pending(service, google_oauth, host="wwc.best", sub="g-700")
@@ -323,7 +349,12 @@ def test_login_identities_end_to_end(monkeypatch):
             async with tenant_connection("whieda") as conn:
                 assert await webapp._telegram_id_for_max(conn, "whieda", MAX_ID + 1) == EVGENIA
                 assert await webapp._telegram_id_for_max(conn, "whieda", 6001) == PETROVA, "backfilled legacy link"
+                assert await webapp._telegram_id_for_max(conn, "whieda", 6003) == EVGENIA, "backfilled /max link"
                 assert await webapp._telegram_id_for_max(conn, "whieda", 6002) is None, "Max without a Telegram person"
+                for unproven in (6004, 6005, 6006, 6007, 6008):
+                    assert await webapp._telegram_id_for_max(conn, "whieda", unproven) is None, (
+                        f"{unproven}: a lead_actor_channels row without proof is not a login"
+                    )
             assert await service.revoke_identity("whieda", telegram_user_id=PETROVA, provider="max", revoked_by="owner:2") == 1
             async with tenant_connection("whieda") as conn:
                 assert await webapp._telegram_id_for_max(conn, "whieda", 6001) is None, "revoked Max does not come back through lead_actor_channels"

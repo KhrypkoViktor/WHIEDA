@@ -6,8 +6,10 @@
 --
 -- account_identities — привязки: google (sub Google, e-mail), max (id пользователя Max) → telegram_user_id.
 --   Отвязка — revoked_at (строка остаётся для истории; активных на (provider, external_id) не больше одной).
---   Существующие привязки Max (lead_actor_channels, V30/V31) переносятся сюда бэкфиллом как
---   linked_by 'telegram:/max'; lead_actor_channels не трогаем — по нему живёт переписка с ботом Max.
+--   Существующие привязки Max переносятся сюда бэкфиллом как linked_by 'telegram:/max' — только те, у которых
+--   есть доказательство подтверждения (max_link_requests V31 / channel_link_codes V30), а не любая строка
+--   lead_actor_channels(max): в неё попадал и Max-пользователь, назвавшийся ником партнёра. lead_actor_channels
+--   не трогаем — по нему живёт переписка с ботом Max.
 -- login_link_codes — коды владельца: 6 цифр, только хеш, 24 часа, один раз; новый код гасит прежний
 --   (revoked_at), активный код на человека — один.
 -- login_pending — чужая личность, которая ждёт код: для Google — state/nonce/PKCE до callback и sub/e-mail
@@ -134,14 +136,35 @@ create policy login_pending_tenant_isolation on login_pending
   using (tenant_id = platform_current_tenant_id())
   with check (tenant_id = platform_current_tenant_id());
 
--- Бэкфилл: Max, привязанный к человеку Telegram через /max (V30) или одним нажатием (V31),
--- становится max-identity. Отозванную ранее привязку (revoked_at) повторный прогон не воскрешает.
+-- Бэкфилл (17.10.2026: только с доказательством привязки). Строка lead_actor_channels(max) сама по себе
+-- личностью не считается — в неё попадает и Max-пользователь с чужим ником, без всякого подтверждения.
+-- Max становится max-identity, только если его привязал к человеку Telegram сам этот человек:
+--   * одним нажатием (V31): есть max_link_requests, использованная тем же Telegram-человеком для этого Max-id;
+--   * ссылкой /max (V30): есть channel_link_codes для этого человека, использованный этим Max-id.
+-- Отозванную ранее привязку (revoked_at) повторный прогон не воскрешает; без доказательства строка не берётся.
 insert into account_identities (tenant_id, telegram_user_id, provider, external_id, display_name, linked_at, linked_by)
 select c.tenant_id, la.telegram_user_id, 'max', c.channel_user_id, nullif(c.display_name, ''), c.created_at, 'telegram:/max'
 from lead_actor_channels c
 join lead_actors la on la.actor_id = c.actor_id and la.tenant_id = c.tenant_id
 where c.channel = 'max'
   and la.telegram_user_id is not null
+  and (
+    exists (
+      select 1 from max_link_requests r
+      where r.tenant_id = c.tenant_id
+        and r.max_user_id = c.channel_user_id
+        and r.used_at is not null
+        and r.used_by_telegram_user_id = la.telegram_user_id
+    )
+    or exists (
+      select 1 from channel_link_codes k
+      where k.tenant_id = c.tenant_id
+        and k.channel = 'max'
+        and k.actor_id = c.actor_id
+        and k.used_at is not null
+        and k.used_channel_user_id = c.channel_user_id
+    )
+  )
   and not exists (
     select 1 from account_identities ai
     where ai.tenant_id = c.tenant_id and ai.provider = 'max' and ai.external_id = c.channel_user_id
