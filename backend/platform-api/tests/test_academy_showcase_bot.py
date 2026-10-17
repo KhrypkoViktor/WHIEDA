@@ -166,8 +166,10 @@ def _start(text: str, *, username: str | None = "anna_p") -> dict:
     return {"message": {"message_id": 7, "text": text, "chat": {"id": 301, "type": "private"}, "from": user}}
 
 
-def _ad_patches(sent, *, admin: int | None = 5035800725):
+def _ad_patches(sent, *, admin: int | None = 5035800725, pending: bool = False):
     return (
+        patch("app.telegram.showcase_bot.record_open", AsyncMock()),
+        patch("app.telegram.showcase_bot.alert_pending", AsyncMock(return_value=pending)),
         patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)),
         patch("app.telegram.showcase_bot.send_telegram_text", sent),
         patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()),
@@ -178,12 +180,15 @@ def _ad_patches(sent, *, admin: int | None = 5035800725):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября, начало в 17:30"), ("ig_web31", "31 октября")])
+@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября, начало в 17:30"), ("ig_web31", "31 октября, начало в 17:30")])
 async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whieda_tenant, almira_binding, tag, date):
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     p = _ad_patches(sent)
-    with p[0], p[1], p[2], p[3], p[4], p[5] as home:
+    with p[0] as opened, p[1], p[2], p[3], p[4], p[5], p[6], p[7] as home:
         result = await process_core_telegram_update(whieda_tenant, _start(f"/start {tag}"), "t", binding=almira_binding)
+    assert opened.await_args.kwargs == {
+        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": tag, "lead_id": None,
+    }
     assert (result["route"], result["tag"], result["admin_notified"]) == ("showcase_ad_lead", tag, True)
     home.assert_not_called()
     lead, admin = sent.await_args_list
@@ -202,7 +207,7 @@ async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whied
 async def test_ad_lead_other_tag_without_date_and_without_admin(whieda_tenant, almira_binding):
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     p = _ad_patches(sent, admin=None)
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]:
         result = await process_core_telegram_update(
             whieda_tenant, _start("/start ig_kurs", username=None), "t", binding=almira_binding
         )
@@ -213,10 +218,21 @@ async def test_ad_lead_other_tag_without_date_and_without_admin(whieda_tenant, a
 
 
 @pytest.mark.asyncio
+async def test_ad_lead_skips_admin_line_when_the_row_alert_will_carry_the_flag(whieda_tenant, almira_binding):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent, pending=True)
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]:
+        result = await process_core_telegram_update(whieda_tenant, _start("/start ig_web24"), "t", binding=almira_binding)
+    assert (result["route"], result["admin_notified"]) == ("showcase_ad_lead", False)
+    [lead] = sent.await_args_list
+    assert lead.kwargs["chat_id"] == "301"
+
+
+@pytest.mark.asyncio
 async def test_bad_ad_tag_falls_back_to_welcome(whieda_tenant, almira_binding):
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     p = _ad_patches(sent)
-    with p[0], p[1], p[2], p[3], p[4], p[5] as home, patch(
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7] as home, patch(
         "app.telegram.showcase_bot.with_site_login", AsyncMock(side_effect=lambda url, **_: url)
     ):
         result = await process_core_telegram_update(whieda_tenant, _start("/start ig_<b>"), "t", binding=almira_binding)

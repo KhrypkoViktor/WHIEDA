@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.academy.ad_leads import (
+    Opened,
     alert_text,
     clean_phone,
     clean_username,
     match_lead,
+    opened_for,
     opened_text,
     parse_leads,
     sheet_config,
@@ -45,7 +47,9 @@ def test_alert_is_one_field_per_line_in_minsk_time():
     assert alert_text(first) == "\n".join([
         "🔔 Новая заявка · вебинар 24 октября",
         "<b>Анна Петрова</b>",
+        "⚠️ Бот не открыт — свяжитесь напрямую",
         "📞 +375291112233",
+        '💬 <a href="https://wa.me/375291112233">WhatsApp</a> · <a href="https://t.me/+375291112233">Telegram по номеру</a>',
         "✈️ @kvetka_space",
         "🎓 Впервые в ALMIRA",
         "🎯 Интерес: Бесплатный вебинар 24 октября",
@@ -56,8 +60,45 @@ def test_alert_is_one_field_per_line_in_minsk_time():
     assert "✈️ ник не указан" in text and "🎓 Уже учились в ALMIRA — скидка 15%" in text and "🕓 16.10 в 16:54" in text
     # Пустые поля пропускаются; заголовок — по имени формы.
     assert alert_text(organic).splitlines() == [
-        "🔔 Новая заявка · Вебинар композиция 24.10", "✈️ ник не указан", "📣 органика", "🕓 16.10 в 17:10",
+        "🔔 Новая заявка · Вебинар композиция 24.10", "⚠️ Бот не открыт — свяжитесь напрямую",
+        "✈️ ник не указан", "📣 органика", "🕓 16.10 в 17:10",
     ]
+
+
+def test_opened_lead_gets_chat_link_flag_and_nick_from_telegram():
+    _, second, _ = parse_leads(CSV)
+    opened = Opened(telegram_user_id=5373318757, username="maria_i", name="Мария", lead_id="222")
+    lines = alert_text(second, opened).splitlines()
+    assert lines[1:3] == [
+        '<b><a href="tg://user?id=5373318757">Мария Иванова</a></b>',
+        "✅ Бот открыт — ссылку на эфир получит там",
+    ]
+    # Ника в форме нет — берём из Telegram; прямые контакты остаются.
+    assert "✈️ @maria_i" in lines and "📞 +375294445566" in lines
+
+
+def test_direct_contact_links_survive_formatting():
+    from app.telegram.delivery import format_telegram_html
+
+    first, _, _ = parse_leads(CSV)
+    rendered = format_telegram_html(alert_text(first))
+    assert '<a href="https://wa.me/375291112233">WhatsApp</a>' in rendered
+    assert '<a href="https://t.me/+375291112233">Telegram по номеру</a>' in rendered
+    opened = Opened(telegram_user_id=301, username=None, name="Анна", lead_id=None)
+    assert '<b><a href="tg://user?id=301">Анна Петрова</a></b>' in format_telegram_html(alert_text(first, opened))
+
+
+def test_opened_for_matches_row_then_nick_then_name():
+    first, second, organic = parse_leads(CSV)
+    by_row = Opened(1, None, "Кто-то", "222")
+    by_nick = Opened(2, "KVETKA_SPACE", "Цветка", None)
+    by_name = Opened(3, None, "Иванова  Мария", None)
+    assert opened_for(second, [by_nick, by_row]) is by_row
+    assert opened_for(first, [by_row, by_nick]) is by_nick
+    assert opened_for(second, [by_name]) is by_name
+    assert opened_for(first, [by_name]) is None
+    # Пустое имя заявки ни с кем не сопоставляется.
+    assert opened_for(organic, [Opened(4, None, "", None)]) is None
 
 
 def test_username_and_phone_normalisation():

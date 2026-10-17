@@ -18,7 +18,7 @@ import logging
 import re
 from typing import Any
 
-from app.academy.ad_leads import fetch_leads, match_lead, opened_text, sheet_config
+from app.academy.ad_leads import Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
@@ -38,8 +38,8 @@ POLICY_VERSION = "2026-10-11"
 
 # Заявки с рекламы (16.10.2026): форма Meta → кнопка «Открыть Telegram» → /start ig_<метка>.
 _AD_TAG_RE = re.compile(r"^ig_[A-Za-z0-9_-]{1,60}$")
-# Дата вебинара в приветствии; время первого — 17:30 (Виктор, 17.10.2026).
-AD_WEBINARS = {"ig_web24": "24 октября, начало в 17:30", "ig_web31": "31 октября"}
+# Дата и время вебинара в приветствии: оба в 17:30 (Виктор, 17.10.2026).
+AD_WEBINARS = {"ig_web24": "24 октября, начало в 17:30", "ig_web31": "31 октября, начало в 17:30"}
 OPEN_ACADEMY_BUTTON = "🎓 Открыть Академию"
 
 
@@ -97,9 +97,8 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
     )
 
 
-async def _opened_line(msg: Any, showcase: Showcase, *, webinar: bool) -> str:
-    """«✅ Имя (@ник) — в боте»: имя и ник из строки таблицы заявок (по нику, иначе по имени),
-    не нашлась или таблица не читается — из Telegram. Имя — ссылка в чат с человеком."""
+async def _sheet_match(msg: Any, showcase: Showcase) -> tuple[Lead | None, str, str | None]:
+    """Строка таблицы заявок этого человека (по нику, иначе по имени) и его имя и ник в Telegram."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
     tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     tg_username = str(user.get("username") or "").strip() or None
@@ -110,6 +109,12 @@ async def _opened_line(msg: Any, showcase: Showcase, *, webinar: bool) -> str:
             lead = match_lead(await fetch_leads(config), username=tg_username, name=tg_name)
         except Exception as exc:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
+    return lead, tg_name, tg_username
+
+
+def _opened_line(msg: Any, lead: Lead | None, tg_name: str, tg_username: str | None, *, webinar: bool) -> str:
+    """«✅ Имя (@ник) — в боте»: имя и ник из строки таблицы, не нашлась — из Telegram.
+    Имя — ссылка в чат с человеком."""
     name = (lead.name if lead and lead.name else tg_name) or "Без имени"
     username = tg_username or (lead.username if lead else None)
     user_id = int(msg.user_id) if str(msg.user_id or "").isdigit() else None
@@ -125,6 +130,15 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     if notice:
         lines += ["", notice]
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": support_buttons()})
+    lead, tg_name, tg_username = await _sheet_match(msg, showcase)
+    # Отметка «бот открыт» в алерте по заявке (V37, 17.10.2026).
+    try:
+        await record_open(
+            tenant_id, showcase.showcase_id, telegram_user_id=int(msg.user_id), username=tg_username,
+            name=tg_name, tag=tag, lead_id=lead.lead_id if lead else None,
+        )
+    except Exception:
+        logger.warning("showcase_ad_open_record_failed", extra={"trace_id": trace_id}, exc_info=True)
     admin = None
     try:
         admin = (await support_targets(tenant_id, showcase)).get(KIND_ADMIN)
@@ -133,11 +147,14 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     notified = False
     if admin is None:
         logger.info("showcase_ad_lead_no_admin", extra={"trace_id": trace_id, "tag": tag})
+    elif await _alert_follows(tenant_id, showcase, lead, trace_id):
+        # Алерт по строке таблицы ещё не ушёл — «✅ Бот открыт» придёт в нём, второе сообщение лишнее.
+        logger.info("showcase_ad_lead_flag_in_alert", extra={"trace_id": trace_id, "tag": tag})
     else:
         try:
             sent = await send_telegram_text(
                 chat_id=str(admin),
-                text=await _opened_line(msg, showcase, webinar=tag in AD_WEBINARS),
+                text=_opened_line(msg, lead, tg_name, tg_username, webinar=tag in AD_WEBINARS),
                 bot_token=current_bot_binding().bot_token,
             )
             notified = bool(sent.get("ok"))
@@ -148,6 +165,14 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
         "ok": True, "route": "showcase_ad_lead", "showcase": showcase.showcase_id, "tag": tag,
         "admin_notified": notified, "trace_id": trace_id,
     }
+
+
+async def _alert_follows(tenant_id: str, showcase: Showcase, lead: Lead | None, trace_id: str) -> bool:
+    try:
+        return await alert_pending(tenant_id, showcase, lead)
+    except Exception:
+        logger.warning("showcase_ad_lead_alert_check_failed", extra={"trace_id": trace_id}, exc_info=True)
+        return False
 
 
 async def _ensure_actor(tenant: TenantContext, msg: Any) -> None:

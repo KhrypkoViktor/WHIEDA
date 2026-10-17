@@ -8,8 +8,11 @@ Meta пишет каждую заявку моментальной формы в
   где бот витрины разрешается (бой: у staging токена нет — он таблицу не читает).
 * Каждая новая строка — запись ``platform_outbox`` с ключом ``ad_lead:<витрина>:<id лида>``:
   повторный опрос и рестарт ничего не дублируют. Отправляет обычный цикл уведомлений.
-* Алерт — по строке на поле (имя, кликабельный телефон, ник, скидка, интерес, источник,
-  время по Минску), пустые поля пропускаются. Кнопка — открыть таблицу.
+* Алерт — по строке на поле (имя, открыт ли бот, телефон, WhatsApp и Telegram по номеру, ник,
+  скидка, интерес, источник, время по Минску), пустые поля пропускаются. Кнопка — открыть таблицу.
+* «Бот открыт» — строка ``academy_ad_opens`` (V37): /start ig_… пишет её с ником, именем и
+  строкой таблицы. Алерт ждёт ``OPEN_GRACE`` после заявки (бота обычно открывают сразу после
+  формы), чтобы отметка была верной; открыл раньше — алерт уходит сразу (17.10.2026).
 * ``opened_text`` — короткая строка, когда человек с формы открыл бота (``/start ig_…``):
   имя и ник из строки таблицы (по нику, иначе по имени), иначе из Telegram; имя — ссылка
   в личный чат, чтобы администратор открыл человека без публичного ника.
@@ -35,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 EVENT = "showcase_ad_lead_row"
 POLL_INTERVAL_SEC = 90.0
+OPEN_GRACE = timedelta(minutes=3)
 FETCH_TIMEOUT_SEC = 15.0
 MINSK = timezone(timedelta(hours=3))
 _EXPORT_URL = "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}"
@@ -60,6 +64,16 @@ class Lead:
     interest: str
     source: str
     form_name: str
+
+
+@dataclass(frozen=True)
+class Opened:
+    """Человек открыл бота витрины по ссылке с рекламы (строка academy_ad_opens)."""
+
+    telegram_user_id: int
+    username: str | None
+    name: str
+    lead_id: str | None
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -165,15 +179,33 @@ def _when(moment: datetime | None) -> str:
     return moment.astimezone(MINSK).strftime("%d.%m в %H:%M") if moment else ""
 
 
-def alert_text(lead: Lead) -> str:
+def _contacts(phone: str) -> str:
+    """Написать напрямую: WhatsApp и Telegram по номеру (ссылки https — format_telegram_html их сохраняет)."""
+    digits = phone.lstrip("+")
+    if not phone.startswith("+") or len(digits) < 10:
+        return ""
+    return f'💬 <a href="https://wa.me/{digits}">WhatsApp</a> · <a href="https://t.me/+{digits}">Telegram по номеру</a>'
+
+
+def alert_text(lead: Lead, opened: Opened | None = None) -> str:
+    """Алерт по строке таблицы; ``opened`` — человек уже в боте: имя — ссылка на его чат."""
     what = _what(lead)
     lines = ["🔔 Новая заявка" + (f" · {what}" if what else "")]
-    if lead.name:
-        lines.append(f"<b>{_plain(lead.name)}</b>")
+    name = _plain(lead.name) or (_plain(opened.name) if opened else "")
+    if opened:
+        lines.append(f'<b><a href="tg://user?id={int(opened.telegram_user_id)}">{name or "Без имени"}</a></b>')
+        lines.append("✅ Бот открыт" + (" — ссылку на эфир получит там" if what.startswith("вебинар") else ""))
+    else:
+        if name:
+            lines.append(f"<b>{name}</b>")
+        lines.append("⚠️ Бот не открыт — свяжитесь напрямую")
     if lead.phone:
         lines.append(f"📞 {lead.phone}")
-    if lead.username:
-        lines.append(f"✈️ @{lead.username}")
+        if contacts := _contacts(lead.phone):
+            lines.append(contacts)
+    username = lead.username or (opened.username if opened else None)
+    if username:
+        lines.append(f"✈️ @{username}")
     elif lead.nick_raw:
         lines.append(f"✈️ {lead.nick_raw}")
     else:
@@ -208,6 +240,25 @@ def match_lead(leads: list[Lead], *, username: str | None, name: str) -> Lead | 
         for lead in reversed(leads):
             if _norm_name(lead.name) in (target, reverse):
                 return lead
+    return None
+
+
+def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
+    """Открыл ли бота человек этой заявки: по строке, сопоставленной при открытии, по нику, по имени."""
+    for opened in opens:
+        if opened.lead_id and opened.lead_id == lead.lead_id:
+            return opened
+    if lead.username:
+        wanted = lead.username.casefold()
+        for opened in opens:
+            if opened.username and opened.username.lstrip("@").casefold() == wanted:
+                return opened
+    target = _norm_name(lead.name)
+    if target:
+        for opened in opens:
+            name = _norm_name(opened.name)
+            if name and target in (name, " ".join(reversed(name.split()))):
+                return opened
     return None
 
 
@@ -248,10 +299,76 @@ async def fetch_leads(config: dict[str, str]) -> list[Lead]:
     return parse_leads(response.content.decode("utf-8-sig"))
 
 
+# ---- кто открыл бота ----------------------------------------------------------------------------
+
+
+async def record_open(
+    tenant_id: str, showcase_id: str, *, telegram_user_id: int, username: str | None, name: str, tag: str,
+    lead_id: str | None,
+) -> None:
+    """/start ig_… в боте витрины: человек открыл бота (повторное открытие обновляет ник, имя, строку)."""
+    from app.db import fetch_one, tenant_connection
+
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            """
+            insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (tenant_id, showcase_id, telegram_user_id) do update
+              set telegram_username = coalesce(excluded.telegram_username, academy_ad_opens.telegram_username),
+                  name = excluded.name,
+                  tag = excluded.tag,
+                  lead_id = coalesce(excluded.lead_id, academy_ad_opens.lead_id)
+            returning telegram_user_id
+            """,
+            (tenant_id, showcase_id, int(telegram_user_id), username, name, tag, lead_id),
+        )
+
+
+async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened]:
+    from app.db import fetch_all
+
+    rows = await fetch_all(
+        conn,
+        """
+        select telegram_user_id, telegram_username, name, lead_id from academy_ad_opens
+        where tenant_id = %s and showcase_id = %s order by opened_at desc
+        """,
+        (tenant_id, showcase_id),
+    )
+    return [
+        Opened(int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"])
+        for r in rows
+    ]
+
+
+async def alert_pending(tenant_id: str, showcase: Any, lead: Lead | None) -> bool:
+    """Алерт по строке этого человека ещё впереди — отметка «бот открыт» будет в нём, отдельное
+    «✅ … — в боте» не нужно. Строка старше ``since`` алерта не получит — тогда False."""
+    config = sheet_config(showcase.support)
+    if lead is None or config is None or lead.created is None:
+        return False
+    since = _created(config["since"]) if config["since"] else None
+    if since is not None and lead.created < since:
+        return False
+    from app.db import fetch_one, tenant_connection
+
+    async with tenant_connection(tenant_id) as conn:
+        queued = await fetch_one(
+            conn,
+            "select 1 as queued from platform_outbox where idempotency_key = %s",
+            (f"ad_lead:{showcase.showcase_id}:{lead.lead_id}",),
+        )
+    return queued is None
+
+
 # ---- шаг воркера --------------------------------------------------------------------------------
 
 
-async def ad_leads_step(tenant_ids: set[str], bindings: dict[str, Any], *, now: float | None = None) -> int:
+async def ad_leads_step(
+    tenant_ids: set[str], bindings: dict[str, Any], *, now: float | None = None, clock: datetime | None = None,
+) -> int:
     """Новые строки таблиц заявок витрин → алерты администраторам. Возвращает число новых алертов."""
     from app.academy.showcases import load_showcases
     from app.db import tenant_connection
@@ -259,6 +376,7 @@ async def ad_leads_step(tenant_ids: set[str], bindings: dict[str, Any], *, now: 
     from app.telegram.showcase_support import KIND_ADMIN, support_targets
 
     moment = time.monotonic() if now is None else now
+    wall = clock or datetime.now(timezone.utc)
     queued = 0
     for tenant_id in sorted(tenant_ids):
         for showcase in await load_showcases(tenant_id):
@@ -285,7 +403,11 @@ async def ad_leads_step(tenant_ids: set[str], bindings: dict[str, Any], *, now: 
                 continue
             markup = {"inline_keyboard": [[{"text": "Открыть таблицу заявок", "url": sheet_url(config)}]]}
             async with tenant_connection(tenant_id) as conn:
+                opens = await load_opens(conn, tenant_id, showcase.showcase_id)
                 for lead in fresh:
+                    opened = opened_for(lead, opens)
+                    if opened is None and lead.created is not None and wall - lead.created < OPEN_GRACE:
+                        continue  # бота обычно открывают сразу после формы — ждём, чтобы отметка была верной
                     row = await enqueue_outbox_event(
                         conn,
                         tenant_id=tenant_id,
@@ -293,7 +415,7 @@ async def ad_leads_step(tenant_ids: set[str], bindings: dict[str, Any], *, now: 
                         idempotency_key=f"ad_lead:{showcase.showcase_id}:{lead.lead_id}",
                         payload={
                             "chat_id": str(int(admin)),
-                            "text": alert_text(lead),
+                            "text": alert_text(lead, opened),
                             "binding_id": binding_id,
                             "reply_markup": markup,
                         },
