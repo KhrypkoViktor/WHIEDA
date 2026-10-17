@@ -13,8 +13,8 @@
 Незнакомый Max (12.10.2026, владелец: «макс не хочет авторизовывать») получает кнопку
 ``t.me/<бот>?start=maxlink_<код>``: Telegram-бот привязывает Max к нажавшему и сразу подтверждает этот вход
 (max_link_requests, V31). /max в Telegram-боте остаётся запасным путём.
-Сессии сайта по-прежнему на telegram_user_id: Max-пользователь находится через lead_actor_channels(max)
-→ lead_actors.telegram_user_id.
+Сессии сайта по-прежнему на telegram_user_id: Max-пользователь находится через account_identities
+(provider max) → telegram_user_id. lead_actor_channels (переписка с ботом Max) личностью не считается.
 
 15.10.2026 (V34, владелец): Telegram в Max больше не нужен. Незнакомый Max вводит в мини-приложении код,
 который владелец выдал ему в Telegram-боте («код входа volkova»), — привязка в account_identities; дальше
@@ -102,41 +102,16 @@ def _display_name(user: dict[str, Any]) -> str:
 
 
 async def _telegram_id_for_max(conn: Any, tenant_id: str, max_user_id: int) -> int | None:
-    """Человек за этим Max: account_identities (V34), иначе прежняя привязка lead_actor_channels (V30/V31).
+    """Человек за этим Max: ТОЛЬКО действующая строка account_identities (provider max, не отозванная).
 
-    Отозванная в кабинете привязка (revoked_at) прежней таблицей не воскрешается: отвязал — вход через Max
-    закрыт до нового кода. Прежняя привязка без строки в account_identities записывается туда при первом
-    входе (бэкфилл миграции V34 покрывает всё, что было до неё; lead_actor_channels не трогаем — по нему
-    живёт переписка с ботом Max).
+    17.10.2026: запасного пути через lead_actor_channels больше нет. Эта таблица — переписка с ботом Max, а
+    не доказательство личности: канал туда попадает и без подтверждения (чужой Max-пользователь с @username
+    партнёра раньше «прилипал» к его actor). Подтверждённые привязки — код владельца, кнопка maxlink,
+    ссылка /max (link_<код>) — все пишут account_identities; старые подтверждённые перенесены бэкфиллом V34
+    (только с доказательством в max_link_requests / channel_link_codes). Отозванная привязка не воскресает.
     """
-    state, telegram_user_id = await identity_state(conn, tenant_id, "max", str(max_user_id))
-    if state == "active":
-        return telegram_user_id
-    if state == "revoked":
-        return None
-    row = await fetch_one(
-        conn,
-        """
-        select la.telegram_user_id, c.display_name
-        from lead_actor_channels c join lead_actors la on la.actor_id = c.actor_id
-        where c.tenant_id = %s and c.channel = 'max' and c.channel_user_id = %s
-        limit 1
-        """,
-        (tenant_id, str(max_user_id)),
-    )
-    value = (row or {}).get("telegram_user_id")
-    if not value:
-        return None
-    await ensure_identity(
-        conn,
-        tenant_id,
-        telegram_user_id=int(value),
-        provider="max",
-        external_id=str(max_user_id),
-        display_name=(row or {}).get("display_name") or None,
-        linked_by="telegram:/max",
-    )
-    return int(value)
+    _, telegram_user_id = await identity_state(conn, tenant_id, "max", str(max_user_id))
+    return telegram_user_id
 
 
 async def create_max_link(tenant_id: str, *, telegram_user_id: int) -> str:
@@ -198,6 +173,22 @@ async def _redeem_link(conn: Any, tenant_id: str, code: str, user: dict[str, Any
         "update channel_link_codes set used_at = now(), used_channel_user_id = %s where code_hash = %s returning code_hash",
         (max_user_id, _hash(code)),
     )
+    # V34 + 17.10.2026: вход через Max читает только account_identities — подтверждённая ссылка /max пишет сюда.
+    person = await fetch_one(
+        conn,
+        "select telegram_user_id from lead_actors where tenant_id = %s and actor_id = %s limit 1",
+        (tenant_id, actor_id),
+    )
+    if (person or {}).get("telegram_user_id"):
+        await ensure_identity(
+            conn,
+            tenant_id,
+            telegram_user_id=int(person["telegram_user_id"]),
+            provider="max",
+            external_id=max_user_id,
+            display_name=_display_name(user),
+            linked_by="telegram:/max",
+        )
     logger.info("max_linked", extra={"tenant_id": tenant_id, "actor_id": actor_id})
     return "linked"
 
