@@ -30,6 +30,7 @@ from app.telegram.academy import (
     try_handle_academy_text,
 )
 from app.crm.bot import try_handle_crm_text
+from app.lead_email.bot import try_handle_lead_email_message
 from app.login_identities.bot import try_handle_login_identity_message
 from app.referral_bonus.service import (
     accept_referral_start,
@@ -695,6 +696,12 @@ async def _process_core_telegram_update_scoped(
     login_identity_result = await try_handle_login_identity_message(tenant, msg, trace_id=trace_id)
     if login_identity_result is not None:
         return login_identity_result
+
+    # «почта <адрес>» / «почта для заявок …» — адрес для заявок с сайта (партнёр) и «… <кто> <адрес>» (владелец).
+    # После диалогов заявок и поддержки: открытый вопрос анкеты или обращение забирает текст раньше.
+    lead_email_result = await try_handle_lead_email_message(tenant, msg, trace_id=trace_id)
+    if lead_email_result is not None:
+        return lead_email_result
 
     profile_requests_result = await try_handle_profile_requests_command(tenant, msg, trace_id=trace_id)
     if profile_requests_result is not None:
