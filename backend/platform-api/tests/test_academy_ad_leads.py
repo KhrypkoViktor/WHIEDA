@@ -165,3 +165,20 @@ def test_sheet_config_validates_ids():
     assert sheet_config(good)["gid"] == "1983230657"
     assert sheet_config({"leads_sheet": {"id": "../etc", "gid": "1"}}) is None
     assert sheet_config({}) is None and sheet_config(None) is None
+
+
+def test_single_first_name_or_clashing_nicks_do_not_match():
+    """Наталья @Lliiss12345 открыла бота без заявки и сопоставилась с другой Натальей (@Nata_li_70) только
+    по имени — та выпала бы из «Не в боте» (18.10.2026)."""
+    other = replace(parse_leads(CSV)[0], lead_id="971", name="Наталья", username="Nata_li_70")
+    opened_at = datetime(2026, 10, 18, 5, 34, tzinfo=timezone.utc)  # ни одной заявки за 5 минут до
+    assert match_lead([other], username="Lliiss12345", name="Наталья", opened_at=opened_at) is None
+    assert match_lead([other], username=None, name="Наталья", opened_at=opened_at) is None
+    assert opened_for(other, [Opened(5274321005, "Lliiss12345", "Наталья", None, opened_at)]) is None
+    # Имя с фамилией — признак, но разные ники перевешивают.
+    full = replace(other, name="Наталья Иванова")
+    assert match_lead([full], username=None, name="Иванова Наталья").lead_id == "971"
+    assert match_lead([full], username="Lliiss12345", name="Наталья Иванова") is None
+    # По времени (за 5 минут до /start) — да, если ники не спорят.
+    near = replace(other, username=None, created=opened_at - timedelta(seconds=40))
+    assert match_lead([near], username="Lliiss12345", name="Наталья", opened_at=opened_at).lead_id == "971"

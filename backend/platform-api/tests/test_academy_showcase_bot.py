@@ -267,3 +267,22 @@ async def test_move_button_moves_date_confirms_and_tells_admin(whieda_tenant, al
     assert person.kwargs["chat_id"] == "301" and person.kwargs["text"] == "Готово: вы записаны на 24 октября, начало в 17:30 по Минску."
     assert admin.kwargs["chat_id"] == "5035800725"
     assert admin.kwargs["text"] == '🔁 <b><a href="tg://user?id=301">Анна Петрова</a></b>: запись перенесена на 24 октября'
+
+
+def _text(text: str, user_id: int) -> dict:
+    return {"message": {"message_id": 8, "text": text, "chat": {"id": user_id, "type": "private"},
+                        "from": {"id": user_id, "first_name": "Кирилл"}}}
+
+
+@pytest.mark.asyncio
+async def test_admin_asks_who_is_not_in_bot(whieda_tenant, almira_binding):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    texts = AsyncMock(return_value=["Вебинар 24 октября: в боте 18 из 28 заявок. Не в боте — 10 чел.:\n\n1. <b>Дарья</b>"])
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.send_telegram_text", sent
+    ), patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()), patch(
+        "app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"author": 739736805, "admin": 5035800725})
+    ), patch("app.telegram.showcase_bot.not_in_bot_texts", texts):
+        result = await process_core_telegram_update(whieda_tenant, _text("Не в боте?", 5035800725), "t", binding=almira_binding)
+    assert (result["route"], result["messages"]) == ("showcase_not_in_bot", 1)
+    assert sent.await_args.kwargs["chat_id"] == "5035800725" and "Не в боте — 10 чел." in sent.await_args.kwargs["text"]

@@ -252,10 +252,10 @@ async def move_webinar(
     return webinar, opened
 
 
-def call_list_texts(webinar: Webinar, leads: list[Lead]) -> list[str]:
+def call_list_texts(webinar: Webinar, leads: list[Lead], head: str | None = None) -> list[str]:
     """«Не в боте — позвонить или написать до 17:30 (N человек)» и по человеку: имя, телефон, ссылки."""
     time = webinar.at.astimezone(MINSK).strftime("%H:%M")
-    head = f"📞 Не в боте — позвонить или написать до {time} ({len(leads)} чел.) · вебинар {webinar.date}"
+    head = head or f"📞 Не в боте — позвонить или написать до {time} ({len(leads)} чел.) · вебинар {webinar.date}"
     texts, current = [], head
     for number, lead in enumerate(leads, start=1):
         lines = [f"{number}. <b>{_plain(lead.name) or 'Без имени'}</b>"]
@@ -271,6 +271,34 @@ def call_list_texts(webinar: Webinar, leads: list[Lead]) -> list[str]:
             current = f"{head} — продолжение"
         current += "\n\n" + block
     texts.append(current)
+    return texts
+
+
+async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | None = None) -> list[str]:
+    """Администратору по запросу «не в боте»: по каждому предстоящему вебинару — сколько заявок в боте
+    и кто нет (телефон, WhatsApp, Telegram по номеру). Kirill, 18.10.2026: «проверить, кто зарегился»."""
+    from app.db import tenant_connection
+
+    moment = now or datetime.now(timezone.utc)
+    webinars = sorted((w for w in webinars_config(showcase.support) if w.at > moment), key=lambda w: w.at)
+    config = sheet_config(showcase.support)
+    if not webinars or not config:
+        return ["Нет предстоящих вебинаров или таблицы заявок."]
+    leads = await fetch_leads(config)
+    async with tenant_connection(tenant_id) as conn:
+        opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+    texts: list[str] = []
+    for webinar in webinars:
+        mine = [lead for lead in leads if lead_webinar(lead, webinars) == webinar.tag]
+        missing = [lead for lead in mine if opened_for(lead, opens) is None]
+        if not missing:
+            texts.append(f"Вебинар {webinar.date}: все {len(mine)} заявок — в боте.")
+            continue
+        head = (
+            f"Вебинар {webinar.date}: в боте {len(mine) - len(missing)} из {len(mine)} заявок. "
+            f"Не в боте — {len(missing)} чел.:"
+        )
+        texts.extend(call_list_texts(webinar, missing, head))
     return texts
 
 

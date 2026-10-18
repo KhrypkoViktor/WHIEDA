@@ -21,7 +21,7 @@ from typing import Any
 
 from app.academy.ad_leads import MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
-from app.academy.webinars import move_markup, move_webinar, moved_text, webinars_config
+from app.academy.webinars import move_markup, move_webinar, moved_text, not_in_bot_texts, webinars_config
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
 from app.telegram.academy import handle_course_start_token, show_academy_home, try_handle_academy_callback, try_handle_academy_text
@@ -221,6 +221,26 @@ async def _try_webinar_callback(
     return {"ok": True, "route": "showcase_webinar_move", "moved": True, "webinar": webinar.tag, "trace_id": trace_id}
 
 
+NOT_IN_BOT_COMMANDS = {"не в боте", "/nebot", "кто не в боте"}
+
+
+async def _try_not_in_bot(tenant: TenantContext, msg: Any, showcase: Showcase, *, trace_id: str) -> dict[str, Any] | None:
+    """Администратор витрины пишет боту «не в боте» — кто из заявок на предстоящие вебинары бота не открыл."""
+    if str(msg.text or "").strip().casefold().rstrip("?") not in NOT_IN_BOT_COMMANDS:
+        return None
+    admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+    if admin is None or int(admin) != int(msg.user_id):
+        return None
+    try:
+        texts = await not_in_bot_texts(tenant.tenant_id, showcase)
+    except Exception:
+        logger.warning("showcase_not_in_bot_failed", extra={"trace_id": trace_id}, exc_info=True)
+        texts = ["Не получилось прочитать таблицу заявок — попробуйте через минуту."]
+    for text in texts:
+        await _send(msg.chat_id, text)
+    return {"ok": True, "route": "showcase_not_in_bot", "messages": len(texts), "trace_id": trace_id}
+
+
 def _plain_name(value: str) -> str:
     return re.sub(r"[<>]", "", str(value or "")).strip()
 
@@ -304,6 +324,9 @@ async def process_showcase_bot_update(
         return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
     if start_token and _AD_TAG_RE.fullmatch(start_token):
         return await handle_ad_lead(tenant, msg, showcase, start_token, trace_id=trace_id)
+    listed = await _try_not_in_bot(tenant, msg, showcase, trace_id=trace_id)
+    if listed is not None:
+        return listed
     # Кнопки «Написать …» и ответы адресата через Reply — раньше команд Академии.
     support = await try_handle_private_message(tenant, msg, showcase, trace_id=trace_id, early=True)
     if support is not None:
