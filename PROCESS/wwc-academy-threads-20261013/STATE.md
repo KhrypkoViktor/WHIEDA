@@ -152,3 +152,8 @@
   (@Nata_li_70) по одному имени. Теперь по имени — только имя и фамилия (важнее «ника» из формы: Вита Василюк —
   «Vita»), по времени — если ники не спорят; привязка Натальи снята. Кириллу — команда «не в боте» (/nebot) в боте
   витрины: по каждому предстоящему вебинару в боте N из M и кто нет. Кириллу отправлено пояснение, Виктору — копия.
+- 18.10, 14:20: бой Core `40fcb01` — флаг «В боте» в таблице заявок. Core отдаёт id строк in_bot / not_in_bot:
+  GET https://academy.almira.by/api/v1/content-access/academy/showcase/lead-flags, ключ заголовком X-Flags-Key =
+  support.leads_sheet.flags_key (копия ключа — D:/Projects/ALMIRA/.secrets/almira-lead-flags.key). Пишет в таблицу
+  Apps Script владельца: D:/Projects/ALMIRA/tasks/almira-leads-bot-flag.gs (ключ вписан), инструкция —
+  D:/Projects/ALMIRA/tasks/Флаг_в_боте_инструкция.md. На проверке: 24 в боте, 14 нет.
