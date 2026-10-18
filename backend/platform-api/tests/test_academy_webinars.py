@@ -118,3 +118,28 @@ def test_bot_choice_beats_form_choice_beats_tag():
     assert person_webinar(Opened(1, None, "", None, None, "ig_web24"), by_id, webinars) == "ig_web24"
     # Выбор в боте на неизвестный вебинар не учитывается.
     assert person_webinar(Opened(1, None, "", "602", None, "ig_web24", "ig_old"), by_id, webinars) == "ig_web31"
+
+
+def test_followup_text_paid_mark_and_past_date_in_form():
+    from dataclasses import replace
+
+    from app.academy.webinars import followup_markup, followup_text, is_paid, next_webinar
+
+    support = {"webinars": {
+        **SUPPORT["webinars"],
+        "ig_web24": {**SUPPORT["webinars"]["ig_web24"], "followup": {"at": "2026-10-25T12:00:00+03:00", "to": "ig_web31"}},
+    }}
+    webinars = webinars_config(support)
+    w24, w31 = webinars
+    assert w24.followup_at == datetime(2026, 10, 25, 12, 0, tzinfo=MINSK) and w24.followup_to == "ig_web31"
+    assert followup_text(w24, w31) == (
+        "Не получилось прийти на вебинар 24 октября или хотите пересмотреть? "
+        "31 октября в 17:30 по Минску — повтор эфира. Записать вас?"
+    )
+    assert followup_markup(w31) == {"inline_keyboard": [[{"text": "Записаться на 31 октября", "callback_data": "wbn:ig_web31"}]]}
+    dasha, _ = parse_leads(CSV)
+    assert not is_paid(dasha) and is_paid(replace(dasha, status="Оплатил 10к")) and not is_paid(None)
+    # Форма всё ещё предлагает 24 октября: выбрал его после начала эфира — это 31-е.
+    late = replace(dasha, created=datetime(2026, 10, 24, 18, 0, tzinfo=MINSK))
+    assert lead_webinar(late, webinars) == "ig_web31"
+    assert next_webinar(webinars, datetime(2026, 11, 1, tzinfo=MINSK)) is None

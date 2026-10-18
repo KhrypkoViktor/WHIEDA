@@ -19,7 +19,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.academy.ad_leads import Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
+from app.academy.ad_leads import MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
 from app.academy.webinars import move_markup, move_webinar, moved_text, webinars_config
 from app.academy.showcases import Showcase
@@ -193,11 +193,19 @@ async def _try_webinar_callback(
         )
         return {"ok": True, "route": "showcase_webinar_move", "moved": False, "trace_id": trace_id}
     webinar, opened = moved
+    now = datetime.now(timezone.utc)
+    webinars = webinars_config(showcase.support)
+    asked = next((w for w in webinars if w.tag == data[4:]), None)
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
-    await _send(
-        callback.chat_id, moved_text(webinar),
-        move_markup(webinars_config(showcase.support), webinar.tag, datetime.now(timezone.utc)),
-    )
+    if asked is not None and asked.tag != webinar.tag:
+        # Старая кнопка «Перенести на …» на прошедший эфир (25.10 и позже) — записали на ближайший.
+        time = webinar.at.astimezone(MINSK).strftime("%H:%M")
+        text = f"Эфир {asked.date} прошёл, ближайший — {webinar.date} в {time} по Минску. Записали вас на него."
+    else:
+        text = moved_text(webinar)
+    await _send(callback.chat_id, text, move_markup(webinars, webinar.tag, now))
+    # После первого эфира перенос на следующий — это запись на повтор (Виктор: 31.10 — повтор 24.10).
+    repeat = any(w.at <= now for w in webinars)
     try:
         admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
         if admin is not None:
@@ -205,7 +213,7 @@ async def _try_webinar_callback(
             await send_telegram_text(
                 chat_id=str(admin), bot_token=token,
                 text=f'🔁 <b><a href="tg://user?id={int(opened.telegram_user_id)}">{name}</a></b>: '
-                f"запись перенесена на {webinar.date}",
+                + (f"запись на повтор — {webinar.date}" if repeat else f"запись перенесена на {webinar.date}"),
             )
     except Exception:
         logger.warning("showcase_webinar_move_notify_failed", extra={"trace_id": trace_id}, exc_info=True)

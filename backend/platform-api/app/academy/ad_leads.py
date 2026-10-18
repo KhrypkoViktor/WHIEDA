@@ -68,6 +68,7 @@ class Lead:
     interest: str
     source: str
     form_name: str
+    status: str = ""  # колонка «Статус» таблицы: Кирилл отмечает оплативших
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,7 @@ def parse_leads(csv_text: str) -> list[Lead]:
                 interest=_interest(_column(row, "что_интересует")),
                 source=_source(row.get("platform", ""), row.get("ad_name", ""), row.get("is_organic", "")),
                 form_name=str(row.get("form_name") or "").strip(),
+                status=str(row.get("Статус") or "").strip(),
             )
         )
     return leads

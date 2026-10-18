@@ -56,6 +56,12 @@ class Webinar:
     at: datetime
     date: str
     url: str
+    # После эфира — одно приглашение на повтор (``followup``: {at, to}) записанным, кто не оплатил.
+    followup_at: datetime | None = None
+    followup_to: str = ""
+
+
+FOLLOWUP_WINDOW = timedelta(hours=2)
 
 
 # Напоминание: ключ, за сколько до начала, нужна ли ссылка, сколько после своего времени ещё слать
@@ -83,8 +89,41 @@ def webinars_config(support: dict[str, Any] | None) -> list[Webinar]:
         if at.tzinfo is None:
             continue
         url = str(item.get("url") or "").strip()
-        out.append(Webinar(str(tag), at, str(item.get("date") or "").strip(), url if url.startswith("https://") else ""))
+        follow = item.get("followup") if isinstance(item.get("followup"), dict) else {}
+        try:
+            follow_at = datetime.fromisoformat(str(follow.get("at") or "")) if follow else None
+        except ValueError:
+            follow_at = None
+        if follow_at is not None and follow_at.tzinfo is None:
+            follow_at = None
+        out.append(Webinar(
+            str(tag), at, str(item.get("date") or "").strip(), url if url.startswith("https://") else "",
+            follow_at, str(follow.get("to") or "") if follow_at else "",
+        ))
     return out
+
+
+def next_webinar(webinars: list[Webinar], after: datetime) -> Webinar | None:
+    """Ближайший вебинар, который начинается позже ``after``."""
+    future = sorted((w for w in webinars if w.at > after), key=lambda w: w.at)
+    return future[0] if future else None
+
+
+def followup_text(webinar: Webinar, repeat: Webinar) -> str:
+    time = repeat.at.astimezone(MINSK).strftime("%H:%M")
+    return (
+        f"Не получилось прийти на вебинар {webinar.date} или хотите пересмотреть? "
+        f"{repeat.date[:1].upper()}{repeat.date[1:]} в {time} по Минску — повтор эфира. Записать вас?"
+    )
+
+
+def followup_markup(repeat: Webinar) -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": f"Записаться на {repeat.date}", "callback_data": f"wbn:{repeat.tag}"}]]}
+
+
+def is_paid(lead: Lead | None) -> bool:
+    """Кирилл отмечает оплативших в колонке «Статус» таблицы («оплатил», «оплата»…)."""
+    return bool(lead and "оплат" in lead.status.casefold())
 
 
 def reminder_text(kind: str, webinar: Webinar) -> str:
@@ -130,6 +169,10 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
         for webinar in webinars:
             short = webinar.at.astimezone(MINSK).strftime("%d.%m")
             if (webinar.date and webinar.date.casefold() in text) or short in text:
+                # Форма ещё предлагает прошедшую дату: выбрал её после начала эфира — это ближайший.
+                if lead.created is not None and webinar.at <= lead.created:
+                    later = next_webinar(webinars, lead.created)
+                    return later.tag if later else webinar.tag
                 return webinar.tag
     return None
 
@@ -180,9 +223,16 @@ async def move_webinar(
     from app.db import fetch_one, tenant_connection
 
     moment = now or datetime.now(timezone.utc)
-    webinar = next((w for w in webinars_config(showcase.support) if w.tag == tag), None)
-    if webinar is None or webinar.at <= moment:
+    webinars = webinars_config(showcase.support)
+    webinar = next((w for w in webinars if w.tag == tag), None)
+    if webinar is None:
         return None
+    if webinar.at <= moment:
+        # Старая кнопка на прошедший эфир — записываем на ближайший (бот скажет, что дата прошла).
+        webinar = next_webinar(webinars, moment)
+        if webinar is None:
+            return None
+        tag = webinar.tag
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,
@@ -259,6 +309,10 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 for webinar in webinars
             ]
             work = [item for item in work if item[1] or item[2] or item[3]]
+            follow = [
+                w for w in webinars
+                if w.followup_at and w.followup_to and _in(w.followup_at, now, w.followup_at + FOLLOWUP_WINDOW)
+            ]
 
             async def enqueue(conn: Any, key: str, chat_id: int, text: str, markup: dict[str, Any] | None = None) -> int:
                 payload: dict[str, Any] = {"chat_id": str(int(chat_id)), "text": text, "binding_id": binding_id}
@@ -284,7 +338,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 fetch_key = f"{tenant_id}:{showcase.showcase_id}"
                 last = _last_confirm_fetch.get(fetch_key)
                 confirm_now = bool(recent) and (last is None or (now - last).total_seconds() >= CONFIRM_FETCH_SEC)
-                if not work and not confirm_now:
+                if not work and not confirm_now and not follow:
                     continue
                 config = sheet_config(showcase.support)
                 leads: list[Lead] = []
@@ -319,6 +373,26 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                         conn, confirm_key(showcase.showcase_id, opened.telegram_user_id), opened.telegram_user_id,
                         confirm_text(webinar), move_markup(webinars, webinar.tag, now),
                     )
+
+                # После эфира — одно приглашение на повтор записанным, кто не оплатил (колонка «Статус»).
+                for webinar in follow:
+                    repeat = next((w for w in webinars if w.tag == webinar.followup_to and w.at > now), None)
+                    if repeat is None:
+                        continue
+                    sent = 0
+                    for opened in opens:
+                        if person_webinar(opened, leads_by_id, webinars) != webinar.tag:
+                            continue
+                        lead = leads_by_id.get(opened.lead_id or "")
+                        if is_paid(lead):
+                            continue
+                        sent += await enqueue(
+                            conn, f"webinar:{showcase.showcase_id}:{webinar.tag}:followup:{opened.telegram_user_id}",
+                            opened.telegram_user_id, followup_text(webinar, repeat), followup_markup(repeat),
+                        )
+                    queued += sent
+                    if sent:
+                        logger.info("webinar_followup_queued", extra={"webinar": webinar.tag, "queued": sent})
 
                 if not work:
                     continue

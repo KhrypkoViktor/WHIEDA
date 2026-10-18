@@ -175,8 +175,9 @@ def test_confirmation_by_form_choice_and_move_button(monkeypatch):
             assert stored["lead_id"] == "705"  # строка найдена по времени и запомнена
 
             [showcase] = [s for s in await sc.load_showcases("whieda", fresh=True) if s.showcase_id == "almira"]
-            # На прошедший или неизвестный вебинар не переносим.
-            assert await webinars.move_webinar("whieda", showcase, VITA, "ig_web24", now=at(25, 9, 0)) is None
+            # Старая кнопка на прошедший эфир — на ближайший (31-е); неизвестный вебинар — нет.
+            redirected, _ = await webinars.move_webinar("whieda", showcase, VITA, "ig_web24", now=at(25, 9, 0))
+            assert redirected.tag == "ig_web31"
             assert await webinars.move_webinar("whieda", showcase, VITA, "ig_old", now=at(23, 12, 5)) is None
             webinar, opened = await webinars.move_webinar("whieda", showcase, VITA, "ig_web24", now=at(23, 12, 5))
             assert (webinar.tag, opened.webinar, opened.lead_id) == ("ig_web24", "ig_web24", "705")
@@ -191,5 +192,70 @@ def test_confirmation_by_form_choice_and_move_button(monkeypatch):
             async with tenant_connection("whieda") as conn:
                 keys = {r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")}
             assert f"webinar:almira:ig_web31:day:{VITA}" not in keys and f"webinar:almira:ig_web31:day:{SVETA}" in keys
+
+        db.run_with_app(proof)
+
+
+FOLLOWUP = {**NO_LINK, "webinars": {
+    **NO_LINK["webinars"],
+    "ig_web24": {**NO_LINK["webinars"]["ig_web24"], "followup": {"at": "2026-10-25T12:00:00+03:00", "to": "ig_web31"}},
+}}
+# Борис оплатил — Кирилл отметил в колонке «Статус».
+PAID_CSV = CSV.replace(
+    "Борис,p:+375291000002,CREATED,,", "Борис,p:+375291000002,CREATED,Оплатил,",
+)
+
+
+@pytest.mark.integration
+def test_followup_to_repeat_skips_paid_and_old_button_goes_to_next(monkeypatch):
+    """25.10 12:00 — «повтор 31 октября» записанным на 24.10, кроме оплативших; один раз. Нажатие — на 31.10,
+    напоминания 31-го идут ему; старая кнопка «на 24 октября» после эфира — тоже на 31.10."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_webinar_followup") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(FOLLOWUP, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, fetch_one, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(PAID_CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+
+            async def step(when: datetime) -> int:
+                sc._reset_cache()
+                return await webinars.webinar_step({"whieda"}, bindings, clock=when)
+
+            assert await step(at(25, 11, 59)) == 0
+            assert await step(at(25, 12, 1)) == 1  # Анна; Борис оплатил, Светлана — на 31-е
+            assert await step(at(25, 12, 30)) == 0  # один раз
+            async with tenant_connection("whieda") as conn:
+                row = await fetch_one(conn, "select payload from platform_outbox where idempotency_key = %s",
+                                      (f"webinar:almira:ig_web24:followup:{ANNA}",))
+            payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+            assert payload["text"].startswith("Не получилось прийти на вебинар 24 октября или хотите пересмотреть?")
+            assert payload["reply_markup"]["inline_keyboard"][0][0] == {"text": "Записаться на 31 октября", "callback_data": "wbn:ig_web31"}
+
+            [showcase] = [s for s in await sc.load_showcases("whieda", fresh=True) if s.showcase_id == "almira"]
+            webinar, _ = await webinars.move_webinar("whieda", showcase, ANNA, "ig_web31", now=at(25, 12, 5))
+            assert webinar.tag == "ig_web31"
+            # Старая кнопка «Перенести на 24 октября» после эфира — на ближайший, 31-е.
+            redirected, opened = await webinars.move_webinar("whieda", showcase, BORIS, "ig_web24", now=at(25, 13, 0))
+            assert (redirected.tag, opened.webinar) == ("ig_web31", "ig_web31")
+
+            assert await step(at(30, 17, 31)) == 3  # за сутки до 31-го: Светлана, Анна, Борис
+            async with tenant_connection("whieda") as conn:
+                keys = {r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")}
+            assert {f"webinar:almira:ig_web31:day:{uid}" for uid in (ANNA, BORIS, SVETA)} <= keys
 
         db.run_with_app(proof)
