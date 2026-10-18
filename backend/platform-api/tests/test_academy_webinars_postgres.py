@@ -122,3 +122,74 @@ def test_webinar_day_reminders_link_gate_dedupe_and_call_list(monkeypatch):
             assert not [k for k in payloads if k.endswith(f":{SVETA}")]
 
         db.run_with_app(proof)
+
+
+VITA = 3005
+CONFIRM_CSV = CSV + "\n" + (
+    "l:705,2026-10-23T11:59:30+03:00,,,,,,,f:4,Вебинар 24.10,false,ig,бесплатный_вебинар_31_октября,нет,,"
+    "Вита Василюк,p:+375291000005,CREATED,,"
+)
+
+
+@pytest.mark.integration
+def test_confirmation_by_form_choice_and_move_button(monkeypatch):
+    """Вита открыла бота по ig_web24 через 30 с после формы с выбором «31 октября»: подтверждение — 31,
+    кнопка — «Перенести на 24 октября»; после переноса напоминания идут по 24-му. Анна (открыла 22.10) —
+    без подтверждения: больше 10 минут."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_webinar_confirm") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute(
+                "insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, opened_at)"
+                f" values ('whieda', 'almira', {VITA}, null, 'Вита', 'ig_web24', '2026-10-23T12:00:00+03:00')"
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, fetch_one, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CONFIRM_CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+
+            async def step(when: datetime) -> int:
+                sc._reset_cache()
+                return await webinars.webinar_step({"whieda"}, bindings, clock=when)
+
+            assert await step(at(23, 12, 1)) == 1  # подтверждение Вите
+            assert await step(at(23, 12, 3)) == 0  # повтор — без дубля
+            async with tenant_connection("whieda") as conn:
+                row = await fetch_one(conn, "select payload from platform_outbox where idempotency_key = %s", (f"webinar:almira:confirm:{VITA}",))
+                stored = await fetch_one(conn, "select lead_id from academy_ad_opens where telegram_user_id = %s", (VITA,))
+            payload = row["payload"] if isinstance(row["payload"], dict) else json.loads(row["payload"])
+            assert payload["text"] == "Вы записаны на 31 октября, начало в 17:30 по Минску."
+            assert payload["reply_markup"] == {"inline_keyboard": [[{"text": "Перенести на 24 октября", "callback_data": "wbn:ig_web24"}]]}
+            assert stored["lead_id"] == "705"  # строка найдена по времени и запомнена
+
+            [showcase] = [s for s in await sc.load_showcases("whieda", fresh=True) if s.showcase_id == "almira"]
+            # На прошедший или неизвестный вебинар не переносим.
+            assert await webinars.move_webinar("whieda", showcase, VITA, "ig_web24", now=at(25, 9, 0)) is None
+            assert await webinars.move_webinar("whieda", showcase, VITA, "ig_old", now=at(23, 12, 5)) is None
+            webinar, opened = await webinars.move_webinar("whieda", showcase, VITA, "ig_web24", now=at(23, 12, 5))
+            assert (webinar.tag, opened.webinar, opened.lead_id) == ("ig_web24", "ig_web24", "705")
+
+            # За сутки до 24-го — Анне и теперь Вите (выбор в боте важнее «31 октября» в форме).
+            assert await step(at(23, 17, 31)) == 2
+            async with tenant_connection("whieda") as conn:
+                keys = {r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")}
+            assert f"webinar:almira:ig_web24:day:{VITA}" in keys and f"webinar:almira:ig_web24:day:{ANNA}" in keys
+            # Вита в боте — в «Не в боте» 24-го её нет, а за сутки до 31-го ей ничего не уходит.
+            assert await step(at(30, 17, 31)) == 1  # только Светлана (31 октября по форме)
+            async with tenant_connection("whieda") as conn:
+                keys = {r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")}
+            assert f"webinar:almira:ig_web31:day:{VITA}" not in keys and f"webinar:almira:ig_web31:day:{SVETA}" in keys
+
+        db.run_with_app(proof)

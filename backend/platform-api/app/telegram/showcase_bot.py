@@ -21,6 +21,7 @@ from typing import Any
 
 from app.academy.ad_leads import Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
+from app.academy.webinars import move_markup, move_webinar, moved_text, webinars_config
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
 from app.telegram.academy import handle_course_start_token, show_academy_home, try_handle_academy_callback, try_handle_academy_text
@@ -39,8 +40,10 @@ POLICY_VERSION = "2026-10-11"
 
 # Заявки с рекламы (16.10.2026): форма Meta → кнопка «Открыть Telegram» → /start ig_<метка>.
 _AD_TAG_RE = re.compile(r"^ig_[A-Za-z0-9_-]{1,60}$")
-# Дата и время вебинара в приветствии: оба в 17:30 (Виктор, 17.10.2026).
-AD_WEBINARS = {"ig_web24": "24 октября, начало в 17:30", "ig_web31": "31 октября, начало в 17:30"}
+# Метки вебинаров. Дату в приветствии не пишем (Виктор, 18.10.2026): кнопка «Спасибо» формы у всех
+# ведёт на ig_web24, а дату человек выбрал в форме — её подтверждает отдельное сообщение
+# (app.academy.webinars), с кнопкой «Перенести на …».
+AD_WEBINARS = frozenset({"ig_web24", "ig_web31"})
 OPEN_ACADEMY_BUTTON = "🎓 Открыть Академию"
 
 
@@ -85,11 +88,10 @@ async def _first_policy_notice(tenant_id: str, showcase: Showcase, user_id: int,
 def ad_lead_text(showcase: Showcase, tag: str) -> str:
     """Приветствие человеку с рекламной формы: вебинар с датой или общая заявка."""
     hello = f"Здравствуйте! Рады видеть вас в арт-студии {showcase.brand_name}."
-    date = AD_WEBINARS.get(tag)
-    if date:
+    if tag in AD_WEBINARS:
         return (
             f"{hello}\n\nСпасибо, что выбрали нас и записались на бесплатный вебинар Александры Пармон "
-            f"по композиции — {date}.\n\nСсылку на эфир пришлём сюда, в этот чат. "
+            "по композиции.\n\nСсылку на эфир пришлём сюда, в этот чат. "
             "Если появится вопрос — нажмите «Написать администратору»."
         )
     return (
@@ -170,6 +172,51 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     }
 
 
+async def _try_webinar_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«Перенести на …» под подтверждением даты: выбор в боте важнее пункта формы; администратору —
+    одна строка о переносе."""
+    data = str(callback.data or "")
+    if not data.startswith("wbn:") or callback.chat_type != "private":
+        return None
+    token = current_bot_binding().bot_token
+    moved = None
+    try:
+        moved = await move_webinar(tenant.tenant_id, showcase, int(callback.user_id), data[4:])
+    except Exception:
+        logger.warning("showcase_webinar_move_failed", extra={"trace_id": trace_id}, exc_info=True)
+    if moved is None:
+        await answer_callback_query(
+            callback_query_id=callback.callback_query_id, bot_token=token,
+            text="Не получилось перенести — нажмите «Написать администратору».", show_alert=True,
+        )
+        return {"ok": True, "route": "showcase_webinar_move", "moved": False, "trace_id": trace_id}
+    webinar, opened = moved
+    await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
+    await _send(
+        callback.chat_id, moved_text(webinar),
+        move_markup(webinars_config(showcase.support), webinar.tag, datetime.now(timezone.utc)),
+    )
+    try:
+        admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+        if admin is not None:
+            name = _plain_name(opened.name) or (f"@{opened.username}" if opened.username else "Без имени")
+            await send_telegram_text(
+                chat_id=str(admin), bot_token=token,
+                text=f'🔁 <b><a href="tg://user?id={int(opened.telegram_user_id)}">{name}</a></b>: '
+                f"запись перенесена на {webinar.date}",
+            )
+    except Exception:
+        logger.warning("showcase_webinar_move_notify_failed", extra={"trace_id": trace_id}, exc_info=True)
+    logger.info("showcase_webinar_moved", extra={"trace_id": trace_id, "webinar": webinar.tag})
+    return {"ok": True, "route": "showcase_webinar_move", "moved": True, "webinar": webinar.tag, "trace_id": trace_id}
+
+
+def _plain_name(value: str) -> str:
+    return re.sub(r"[<>]", "", str(value or "")).strip()
+
+
 async def _alert_follows(tenant_id: str, showcase: Showcase, lead: Lead | None, trace_id: str) -> bool:
     try:
         return await alert_pending(tenant_id, showcase, lead)
@@ -220,6 +267,9 @@ async def process_showcase_bot_update(
 
     callback = parse_telegram_callback(update)
     if callback:
+        moved = await _try_webinar_callback(tenant, callback, showcase, trace_id=trace_id)
+        if moved is not None:
+            return moved
         # Обращения: «Написать …» в личке, «Закрыть обращение» — в личке адресата или в его теме.
         support = await try_handle_support_callback(tenant, callback, showcase, trace_id=trace_id)
         if support is not None:

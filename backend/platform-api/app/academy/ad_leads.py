@@ -80,6 +80,7 @@ class Opened:
     lead_id: str | None
     opened_at: datetime | None = None
     tag: str = ""  # метка /start: ig_web24 …
+    webinar: str | None = None  # V38: дата, выбранная кнопкой в боте
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -357,7 +358,7 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     rows = await fetch_all(
         conn,
         """
-        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag from academy_ad_opens
+        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar from academy_ad_opens
         where tenant_id = %s and showcase_id = %s order by opened_at desc
         """,
         (tenant_id, showcase_id),
@@ -365,7 +366,7 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     return [
         Opened(
             int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"],
-            str(r["tag"] or ""),
+            str(r["tag"] or ""), r["webinar"],
         )
         for r in rows
     ]

@@ -180,8 +180,8 @@ def _ad_patches(sent, *, admin: int | None = 5035800725, pending: bool = False):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag, date", [("ig_web24", "24 октября, начало в 17:30"), ("ig_web31", "31 октября, начало в 17:30")])
-async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whieda_tenant, almira_binding, tag, date):
+@pytest.mark.parametrize("tag", ["ig_web24", "ig_web31"])
+async def test_ad_lead_webinar_greets_without_date_buttons_and_notifies_admin(whieda_tenant, almira_binding, tag):
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     p = _ad_patches(sent)
     with p[0] as opened, p[1], p[2], p[3], p[4], p[5], p[6], p[7] as home:
@@ -193,7 +193,9 @@ async def test_ad_lead_webinar_greets_with_date_buttons_and_notifies_admin(whied
     home.assert_not_called()
     lead, admin = sent.await_args_list
     assert lead.kwargs["chat_id"] == "301"
-    assert f"бесплатный вебинар Александры Пармон по композиции — {date}" in lead.kwargs["text"]
+    # Дату не пишем: кнопка формы у всех ведёт на ig_web24, дату подтверждает отдельное сообщение.
+    assert "бесплатный вебинар Александры Пармон по композиции.\n\nСсылку на эфир пришлём сюда" in lead.kwargs["text"]
+    assert "октября" not in lead.kwargs["text"]
     assert "https://almira.by/privacy-policy/" in lead.kwargs["text"]
     rows = lead.kwargs["reply_markup"]["inline_keyboard"]
     assert [row[0]["callback_data"] for row in rows] == ["shs:open:author", "shs:open:admin"]
@@ -238,3 +240,30 @@ async def test_bad_ad_tag_falls_back_to_welcome(whieda_tenant, almira_binding):
         result = await process_core_telegram_update(whieda_tenant, _start("/start ig_<b>"), "t", binding=almira_binding)
     assert result["route"] == "showcase_welcome"
     home.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_move_button_moves_date_confirms_and_tells_admin(whieda_tenant, almira_binding):
+    from datetime import datetime, timedelta, timezone
+
+    from app.academy.ad_leads import Opened
+    from app.academy.webinars import Webinar
+
+    w24 = Webinar("ig_web24", datetime(2099, 10, 24, 17, 30, tzinfo=timezone(timedelta(hours=3))), "24 октября", "")
+    opened = Opened(301, "anna_p", "Анна Петрова", "702", None, "ig_web24", "ig_web24")
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    answered = AsyncMock(return_value={"ok": True})
+    update = {"callback_query": {"id": "cb1", "data": "wbn:ig_web24", "from": {"id": 301},
+                                 "message": {"message_id": 9, "chat": {"id": 301, "type": "private"}}}}
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.move_webinar", AsyncMock(return_value=(w24, opened))
+    ) as moved, patch("app.telegram.showcase_bot.send_telegram_text", sent), patch(
+        "app.telegram.showcase_bot.answer_callback_query", answered
+    ), patch("app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"admin": 5035800725})):
+        result = await process_core_telegram_update(whieda_tenant, update, "t", binding=almira_binding)
+    assert (result["route"], result["moved"], result["webinar"]) == ("showcase_webinar_move", True, "ig_web24")
+    assert moved.await_args.args[2:] == (301, "ig_web24")
+    person, admin = sent.await_args_list
+    assert person.kwargs["chat_id"] == "301" and person.kwargs["text"] == "Готово: вы записаны на 24 октября, начало в 17:30 по Минску."
+    assert admin.kwargs["chat_id"] == "5035800725"
+    assert admin.kwargs["text"] == '🔁 <b><a href="tg://user?id=301">Анна Петрова</a></b>: запись перенесена на 24 октября'

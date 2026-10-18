@@ -88,3 +88,33 @@ def test_lead_webinar_by_interest_and_call_list():
     # Длинный список делится на сообщения, каждое с заголовком.
     many = call_list_texts(webinars[0], [dasha] * 40)
     assert len(many) > 1 and all("Не в боте" in t for t in many) and all(len(t) < 4096 for t in many)
+
+
+def test_confirm_texts_and_move_buttons_only_to_future_webinars():
+    from app.academy.webinars import confirm_text, correction_text, move_markup, moved_text
+
+    webinars = webinars_config(SUPPORT)
+    w24, w31 = webinars
+    assert confirm_text(w31) == "Вы записаны на 31 октября, начало в 17:30 по Минску."
+    assert moved_text(w24) == "Готово: вы записаны на 24 октября, начало в 17:30 по Минску."
+    assert correction_text(w31) == "Поправка: вы записаны на 31 октября, начало в 17:30 по Минску."
+    before = datetime(2026, 10, 18, 12, 0, tzinfo=MINSK)
+    assert move_markup(webinars, "ig_web31", before) == {
+        "inline_keyboard": [[{"text": "Перенести на 24 октября", "callback_data": "wbn:ig_web24"}]],
+    }
+    # 24-е прошло — переносить на него нельзя, кнопок нет.
+    assert move_markup(webinars, "ig_web31", datetime(2026, 10, 25, 12, 0, tzinfo=MINSK)) is None
+
+
+def test_bot_choice_beats_form_choice_beats_tag():
+    from app.academy.ad_leads import Opened
+    from app.academy.webinars import person_webinar
+
+    webinars = webinars_config(SUPPORT)
+    dasha, sveta = parse_leads(CSV)  # Дарья — 24, Светлана — 31 (в форме)
+    by_id = {lead.lead_id: lead for lead in (dasha, sveta)}
+    assert person_webinar(Opened(1, None, "", "602", None, "ig_web24"), by_id, webinars) == "ig_web31"
+    assert person_webinar(Opened(1, None, "", "602", None, "ig_web24", "ig_web24"), by_id, webinars) == "ig_web24"
+    assert person_webinar(Opened(1, None, "", None, None, "ig_web24"), by_id, webinars) == "ig_web24"
+    # Выбор в боте на неизвестный вебинар не учитывается.
+    assert person_webinar(Opened(1, None, "", "602", None, "ig_web24", "ig_old"), by_id, webinars) == "ig_web31"

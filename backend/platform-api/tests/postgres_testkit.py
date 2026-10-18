@@ -70,6 +70,7 @@ MIGRATIONS = (
     "platform_academy_mini_quiz_v35.sql",  # мини-курсы: free_for, тест урока (16.10.2026); v34 — ветка логина
     "platform_academy_rhythm_v36.sql",  # ритм «Онлайн-старта»: отметки «Сегодня», табло (17.10.2026)
     "platform_academy_ad_opens_v37.sql",  # кто открыл бота витрины по ссылке с рекламы (17.10.2026)
+    "platform_academy_ad_opens_webinar_v38.sql",  # дата вебинара, выбранная в боте (18.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 
