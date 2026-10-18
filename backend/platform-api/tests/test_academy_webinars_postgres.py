@@ -259,3 +259,31 @@ def test_followup_to_repeat_skips_paid_and_old_button_goes_to_next(monkeypatch):
             assert {f"webinar:almira:ig_web31:day:{uid}" for uid in (ANNA, BORIS, SVETA)} <= keys
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_site_login_open_never_overwrites_ad_open(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_bot_open") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy.ad_leads import BOT_TAG, record_open
+            from app.db import fetch_all, tenant_connection
+
+            # Анна пришла по рекламе (ig_web24, строка 701), потом вошла на сайт через Telegram.
+            await record_open("whieda", "almira", telegram_user_id=ANNA, username="anna_a", name="Анна",
+                              tag=BOT_TAG, lead_id=None, overwrite=False)
+            # Латыпова вошла только через сайт — запись появляется.
+            await record_open("whieda", "almira", telegram_user_id=483279210, username="logoped_latypova",
+                              name="Лариса", tag=BOT_TAG, lead_id=None, overwrite=False)
+            async with tenant_connection("whieda") as conn:
+                rows = {r["telegram_user_id"]: dict(r) for r in await fetch_all(
+                    conn, "select telegram_user_id, tag, lead_id from academy_ad_opens")}
+            assert rows[ANNA]["tag"] == "ig_web24" and rows[ANNA]["lead_id"] == "701"
+            assert rows[483279210]["tag"] == BOT_TAG and rows[483279210]["lead_id"] is None
+
+        db.run_with_app(proof)

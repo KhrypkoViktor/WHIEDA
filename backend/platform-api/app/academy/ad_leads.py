@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 EVENT = "showcase_ad_lead_row"
 POLL_INTERVAL_SEC = 90.0
 OPEN_GRACE = timedelta(minutes=3)
+# Вход в бота не по ссылке с рекламы (вход на сайт через Telegram, /start, ключ курса) — тоже «в боте»:
+# Латыпова вошла на сайт академии через Telegram и числилась «не в боте» (18.10.2026).
+BOT_TAG = "bot"
 # Бота открывают с экрана «спасибо» формы: строка Meta создана за секунды–минуты до /start.
 # Имя в Telegram часто другое («Svetik» — «Светлана Самохвал»), поэтому ещё и по времени (17.10.2026).
 OPEN_AFTER_FORM = timedelta(minutes=5)
@@ -346,22 +349,28 @@ async def fetch_leads(config: dict[str, str]) -> list[Lead]:
 
 async def record_open(
     tenant_id: str, showcase_id: str, *, telegram_user_id: int, username: str | None, name: str, tag: str,
-    lead_id: str | None,
+    lead_id: str | None, overwrite: bool = True,
 ) -> None:
-    """/start ig_… в боте витрины: человек открыл бота (повторное открытие обновляет ник, имя, строку)."""
+    """Человек открыл бота витрины. /start ig_… — с меткой рекламы (повторное открытие обновляет ник, имя,
+    строку); любой другой вход (``tag`` BOT_TAG, ``overwrite=False``) — только если записи ещё нет: вход
+    на сайт через Telegram не стирает метку рекламы."""
     from app.db import fetch_one, tenant_connection
 
-    async with tenant_connection(tenant_id) as conn:
-        await fetch_one(
-            conn,
-            """
-            insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id)
-            values (%s, %s, %s, %s, %s, %s, %s)
-            on conflict (tenant_id, showcase_id, telegram_user_id) do update
+    on_conflict = (
+        """do update
               set telegram_username = coalesce(excluded.telegram_username, academy_ad_opens.telegram_username),
                   name = excluded.name,
                   tag = excluded.tag,
-                  lead_id = coalesce(excluded.lead_id, academy_ad_opens.lead_id)
+                  lead_id = coalesce(excluded.lead_id, academy_ad_opens.lead_id)"""
+        if overwrite else "do nothing"
+    )
+    async with tenant_connection(tenant_id) as conn:
+        await fetch_one(
+            conn,
+            f"""
+            insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id)
+            values (%s, %s, %s, %s, %s, %s, %s)
+            on conflict (tenant_id, showcase_id, telegram_user_id) {on_conflict}
             returning telegram_user_id
             """,
             (tenant_id, showcase_id, int(telegram_user_id), username, name, tag, lead_id),

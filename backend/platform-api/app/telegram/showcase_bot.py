@@ -19,7 +19,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.academy.ad_leads import MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
+from app.academy.ad_leads import BOT_TAG, MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
 from app.academy.webinars import move_markup, move_webinar, moved_text, not_in_bot_texts, webinars_config
 from app.academy.showcases import Showcase
@@ -241,6 +241,23 @@ async def _try_not_in_bot(tenant: TenantContext, msg: Any, showcase: Showcase, *
     return {"ok": True, "route": "showcase_not_in_bot", "messages": len(texts), "trace_id": trace_id}
 
 
+async def _note_bot_open(tenant_id: str, showcase: Showcase, msg: Any) -> None:
+    """Вход в бота не по ссылке с рекламы — «в боте» для таблицы, списков и напоминаний. Строку заявки
+    находит и дату подтверждает шаг воркера (app.academy.webinars) — без задержки входа на сайт."""
+    if not str(msg.user_id or "").isdigit():
+        return
+    user = ((msg.raw or {}).get("message") or {}).get("from") or {}
+    name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
+    try:
+        await record_open(
+            tenant_id, showcase.showcase_id, telegram_user_id=int(msg.user_id),
+            username=str(user.get("username") or "").strip() or None, name=name, tag=BOT_TAG, lead_id=None,
+            overwrite=False,
+        )
+    except Exception:
+        logger.warning("showcase_bot_open_record_failed", exc_info=True)
+
+
 def _plain_name(value: str) -> str:
     return re.sub(r"[<>]", "", str(value or "")).strip()
 
@@ -291,6 +308,7 @@ async def process_showcase_bot_update(
             msg = parse_telegram_message(update)
             if msg is not None:
                 await _first_policy_notice(tenant.tenant_id, showcase, int(msg.user_id), int(msg.chat_id))
+                await _note_bot_open(tenant.tenant_id, showcase, msg)
         return content
 
     callback = parse_telegram_callback(update)
@@ -320,6 +338,8 @@ async def process_showcase_bot_update(
     await _ensure_actor(tenant, msg)
 
     start_token = parse_start_token(msg.text or "")
+    if str(msg.text or "").startswith("/start") and not (start_token and _AD_TAG_RE.fullmatch(start_token)):
+        await _note_bot_open(tenant.tenant_id, showcase, msg)
     if start_token and parse_course_start_token(start_token) is not None:
         return await handle_course_start_token(tenant, msg, start_token, trace_id=trace_id)
     if start_token and _AD_TAG_RE.fullmatch(start_token):

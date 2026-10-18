@@ -286,3 +286,28 @@ async def test_admin_asks_who_is_not_in_bot(whieda_tenant, almira_binding):
         result = await process_core_telegram_update(whieda_tenant, _text("Не в боте?", 5035800725), "t", binding=almira_binding)
     assert (result["route"], result["messages"]) == ("showcase_not_in_bot", 1)
     assert sent.await_args.kwargs["chat_id"] == "5035800725" and "Не в боте — 10 чел." in sent.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_plain_start_and_site_login_count_as_in_bot(whieda_tenant, almira_binding):
+    """Латыпова (18.10.2026) вошла на сайт академии через Telegram — это тоже «в боте», без стирания метки рекламы."""
+    from app.academy.ad_leads import BOT_TAG
+
+    recorded = AsyncMock()
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.record_open", recorded
+    ), patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()), patch(
+        "app.telegram.showcase_bot.show_welcome", AsyncMock(return_value={"ok": True, "route": "showcase_welcome"})
+    ):
+        await process_core_telegram_update(whieda_tenant, _start("/start", username="logoped_latypova"), "t", binding=almira_binding)
+    kwargs = recorded.await_args.kwargs
+    assert (kwargs["tag"], kwargs["overwrite"], kwargs["username"], kwargs["telegram_user_id"]) == (BOT_TAG, False, "logoped_latypova", 301)
+
+    login = AsyncMock()
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.try_handle_content_access", AsyncMock(return_value={"ok": True, "route": "content_access"})
+    ), patch("app.telegram.showcase_bot._first_policy_notice", AsyncMock(return_value=None)), patch(
+        "app.telegram.showcase_bot.record_open", login
+    ):
+        await process_core_telegram_update(whieda_tenant, _start("/start ca_abc", username="logoped_latypova"), "t", binding=almira_binding)
+    assert login.await_args.kwargs["tag"] == BOT_TAG and login.await_args.kwargs["overwrite"] is False
