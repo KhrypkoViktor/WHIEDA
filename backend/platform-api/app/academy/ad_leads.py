@@ -79,6 +79,7 @@ class Opened:
     name: str
     lead_id: str | None
     opened_at: datetime | None = None
+    tag: str = ""  # метка /start: ig_web24 …
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -356,13 +357,16 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     rows = await fetch_all(
         conn,
         """
-        select telegram_user_id, telegram_username, name, lead_id, opened_at from academy_ad_opens
+        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag from academy_ad_opens
         where tenant_id = %s and showcase_id = %s order by opened_at desc
         """,
         (tenant_id, showcase_id),
     )
     return [
-        Opened(int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"])
+        Opened(
+            int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"],
+            str(r["tag"] or ""),
+        )
         for r in rows
     ]
 

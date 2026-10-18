@@ -1,0 +1,124 @@
+"""Напоминания о вебинаре 24.10 на настоящем PostgreSQL — по часам, как пройдёт день.
+
+Анна открыла бота 22.10, Борис — 24.10 в 10:00, Светлана — по ссылке ig_web24, но её заявка на 31.10,
+Дарья оставила заявку на 24.10 и бота не открыла.
+
+  * за сутки — только Анне (Борис открыл бота позже, Светлана — на 31.10); повтор опроса — без дублей;
+  * за 2 часа — Анне и Борису; ссылки нет: в 16:00 администратору одна строка, «за час» не уходит;
+  * ссылку добавили — «за час» и «за 5 минут» со ссылкой и кнопкой;
+  * в 17:00 администратору — «Не в боте» с Дарьей (телефон, WhatsApp, Telegram по номеру).
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+
+import psycopg
+import pytest
+
+from tests.postgres_testkit import temporary_database
+from tests.test_academy_ad_leads import HEADER
+
+ADMIN = 5035800725
+ANNA, BORIS, SVETA = 3001, 3002, 3003
+MINSK = timezone(timedelta(hours=3))
+NO_LINK = {
+    "admin_telegram_user_id": ADMIN,
+    "leads_sheet": {"id": "1-HNjlo54nJvCDNwJ6H-6PNGiOF2xdSKVNwIzp_0Lb5g", "gid": "1983230657", "since": "2026-10-20T00:00:00+03:00"},
+    "webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+        "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
+    },
+}
+SEED = f"""
+insert into academy_showcases (tenant_id, showcase_id, hosts, owner_actor_id, brand_name, academy_title,
+                               telegram_binding_id, more_mode, support)
+values ('whieda', 'almira', array['academy.almira.by'], null, 'ALMIRA', 'Онлайн-академия ALMIRA',
+        'almira-academy-bot', 'none', '{json.dumps(NO_LINK, ensure_ascii=False)}');
+insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id, opened_at) values
+  ('whieda', 'almira', {ANNA}, 'anna_a', 'Анна', 'ig_web24', '701', '2026-10-22T12:00:00+03:00'),
+  ('whieda', 'almira', {BORIS}, null, 'Борис', 'ig_web24', '702', '2026-10-24T10:00:00+03:00'),
+  ('whieda', 'almira', {SVETA}, null, 'Светлана', 'ig_web24', '704', '2026-10-22T12:00:00+03:00');
+"""
+CSV = "\n".join([
+    HEADER,
+    "l:701,2026-10-22T11:59:00+03:00,,,,,,,f:4,Вебинар 24.10,false,ig,бесплатный_вебинар_24_октября,нет,anna_a,Анна Ли,p:+375291000001,CREATED,,",
+    "l:702,2026-10-24T09:59:00+03:00,,,,,,,f:4,Вебинар 24.10,false,ig,бесплатный_вебинар_24_октября,нет,,Борис,p:+375291000002,CREATED,,",
+    "l:703,2026-10-23T09:00:00+03:00,,,,,,,f:4,Вебинар 24.10,false,ig,бесплатный_вебинар_24_октября,нет,,Дарья Звонкова,p:+375291000003,CREATED,,",
+    "l:704,2026-10-22T11:59:00+03:00,,,,,,,f:5,Вебинар 31.10,false,ig,бесплатный_вебинар_31_октября,нет,,Светлана,p:+375291000004,CREATED,,",
+])
+
+
+def at(day: int, hour: int, minute: int) -> datetime:
+    return datetime(2026, 10, day, hour, minute, tzinfo=MINSK)
+
+
+@pytest.mark.integration
+def test_webinar_day_reminders_link_gate_dedupe_and_call_list(monkeypatch):
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_webinars") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            bindings = {"almira-academy-bot": object()}
+
+            async def step(when: datetime) -> int:
+                sc._reset_cache()
+                return await webinars.webinar_step({"whieda"}, bindings, clock=when)
+
+            async def sent() -> dict[str, dict]:
+                async with tenant_connection("whieda") as conn:
+                    rows = await fetch_all(conn, "select idempotency_key, payload from platform_outbox where event_type = %s", (webinars.EVENT,))
+                return {r["idempotency_key"]: (r["payload"] if isinstance(r["payload"], dict) else json.loads(r["payload"])) for r in rows}
+
+            # Без бота витрины в процессе (staging) — ничего.
+            assert await webinars.webinar_step({"whieda"}, {}, clock=at(23, 17, 31)) == 0
+            assert await step(at(23, 17, 31)) == 1  # за сутки — только Анне
+            assert await step(at(23, 17, 40)) == 0  # повтор — без дублей
+            assert await step(at(24, 15, 31)) == 2  # за 2 часа — Анне и Борису
+            assert await step(at(24, 16, 1)) == 1  # нет ссылки — строка администратору
+            assert await step(at(24, 16, 31)) == 0  # без ссылки «за час» не уходит
+            keys = set(await sent())
+            assert keys == {
+                f"webinar:almira:ig_web24:day:{ANNA}",
+                f"webinar:almira:ig_web24:two_hours:{ANNA}", f"webinar:almira:ig_web24:two_hours:{BORIS}",
+                "webinar:almira:ig_web24:no_link",
+            }
+
+            with_link = {**NO_LINK, "webinars": {**NO_LINK["webinars"], "ig_web24": {
+                **NO_LINK["webinars"]["ig_web24"], "url": "https://meet.google.com/abc-defg-hij"}}}
+            async with tenant_connection("whieda") as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                                      (json.dumps(with_link, ensure_ascii=False),))
+            assert await step(at(24, 16, 35)) == 2  # за час — со ссылкой
+            assert await step(at(24, 17, 1)) == 1  # «Не в боте» — Дарья
+            assert await step(at(24, 17, 26)) == 2  # за 5 минут
+            assert await step(at(24, 17, 27)) == 0
+
+            payloads = await sent()
+            hour = payloads[f"webinar:almira:ig_web24:hour:{BORIS}"]
+            assert hour["chat_id"] == str(BORIS) and "https://meet.google.com/abc-defg-hij" in hour["text"]
+            assert hour["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://meet.google.com/abc-defg-hij"
+            assert payloads["webinar:almira:ig_web24:no_link"]["chat_id"] == str(ADMIN)
+            calls = payloads["webinar:almira:ig_web24:calls:0"]
+            assert calls["chat_id"] == str(ADMIN) and "(1 чел.)" in calls["text"]
+            assert "Дарья Звонкова" in calls["text"] and "https://wa.me/375291000003" in calls["text"]
+            assert "Анна" not in calls["text"] and "Светлана" not in calls["text"]
+            # Светлане (заявка на 31.10) напоминания 24-го не уходили.
+            assert not [k for k in payloads if k.endswith(f":{SVETA}")]
+
+        db.run_with_app(proof)

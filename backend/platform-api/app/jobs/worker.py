@@ -470,6 +470,13 @@ async def academy_notifications_step() -> int:
         await ad_leads_step(tenant_ids, showcase_bindings)
     except Exception:
         logger.exception("ad_leads_step_failed")
+    # Напоминания о вебинарах витрины (18.10.2026): за сутки, 2 часа, час, 5 минут; список «не в боте».
+    try:
+        from app.academy.webinars import webinar_step
+
+        await webinar_step(tenant_ids, showcase_bindings)
+    except Exception:
+        logger.exception("webinar_step_failed")
     if not by_id:
         return 0
     return await process_due_notifications(by_id)
