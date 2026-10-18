@@ -119,11 +119,14 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
     """Метка вебинара по строке заявки: «Бесплатный вебинар 24 октября» → ig_web24."""
     if lead is None:
         return None
-    text = f"{lead.interest} {lead.form_name}".casefold()
-    for webinar in webinars:
-        short = webinar.at.astimezone(MINSK).strftime("%d.%m")
-        if (webinar.date and webinar.date.casefold() in text) or short in text:
-            return webinar.tag
+    # Сначала выбранный в форме пункт: имя формы одно на обе даты («Вебинар композиция 24.10»),
+    # и Светлана Летохо, выбравшая 31 октября, попадала на 24-е (18.10.2026).
+    for source in (lead.interest, lead.form_name):
+        text = str(source or "").casefold()
+        for webinar in webinars:
+            short = webinar.at.astimezone(MINSK).strftime("%d.%m")
+            if (webinar.date and webinar.date.casefold() in text) or short in text:
+                return webinar.tag
     return None
 
 
