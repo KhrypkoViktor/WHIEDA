@@ -16,13 +16,15 @@ streams the file (Range) while ``PLATFORM_ACADEMY_MEDIA_VIA_API=true``.
 
 from __future__ import annotations
 
+import hmac
 import mimetypes
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from app.academy.ad_leads import SheetUnavailable, flags_key, lead_flags
 from app.academy.author import (
     author_course,
     author_courses,
@@ -251,6 +253,27 @@ async def showcase_site(request: Request, response: Response) -> dict[str, Any]:
     tenant = get_request_tenant(request)
     showcase = await showcase_for_request(request, tenant.tenant_id, allow_preview=True)
     return {"ok": True, "showcase": await public_payload(showcase)}
+
+
+@router.get(f"{P}/showcase/lead-flags")
+async def showcase_lead_flags(request: Request, key: str = "") -> JSONResponse:
+    """«В боте / нет» по строкам таблицы заявок (Виктор, 18.10.2026): для скрипта таблицы, по ключу
+    ``leads_sheet.flags_key`` витрины хоста. Только id заявок. Без сессии и без превью витрины."""
+    headers = {"Cache-Control": "no-store"}
+    tenant = get_request_tenant(request)
+    showcase = await showcase_for_request(request, tenant.tenant_id)
+    wanted = flags_key(showcase.support)
+    if not wanted:
+        return JSONResponse({"ok": False, "error": "flags_not_configured"}, status_code=404, headers=headers)
+    # Ключ — заголовком X-Flags-Key (не попадает в журнал запросов), ?key= — запасной путь.
+    given = request.headers.get("x-flags-key") or key
+    if not hmac.compare_digest(given.encode(), wanted.encode()):
+        return JSONResponse({"ok": False, "error": "bad_key"}, status_code=403, headers=headers)
+    try:
+        flags = await lead_flags(tenant.tenant_id, showcase)
+    except SheetUnavailable:
+        return JSONResponse({"ok": False, "error": "sheet_unavailable"}, status_code=503, headers=headers)
+    return JSONResponse({"ok": True, **flags}, headers=headers)
 
 
 @router.get(f"{P}/courses")

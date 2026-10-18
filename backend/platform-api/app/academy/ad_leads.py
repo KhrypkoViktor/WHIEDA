@@ -17,6 +17,9 @@ Meta пишет каждую заявку моментальной формы в
   имя и ник из строки таблицы (по нику, иначе по имени), иначе из Telegram; имя — ссылка
   в личный чат, чтобы администратор открыл человека без публичного ника.
 
+* ``lead_flags`` — «в боте / нет» по каждой строке таблицы для скрипта таблицы (Apps Script, раз в
+  5 минут): только id заявок, без имён, телефонов и ников. Ключ — ``leads_sheet.flags_key`` (18.10.2026).
+
 Таблица читается CSV-выгрузкой по ссылке (``export?format=csv&gid=…``): пока она открыта
 «всем, у кого есть ссылка». Закрыть доступ можно после перехода на сервисный аккаунт.
 """
@@ -403,6 +406,47 @@ async def alert_pending(tenant_id: str, showcase: Any, lead: Lead | None) -> boo
             (f"ad_lead:{showcase.showcase_id}:{lead.lead_id}",),
         )
     return queued is None
+
+
+# ---- флаги «в боте» для таблицы ----------------------------------------------------------------
+
+
+class SheetUnavailable(Exception):
+    """Таблицу заявок не удалось прочитать (доступ закрыт, Google не ответил)."""
+
+
+def flags_key(support: dict[str, Any] | None) -> str:
+    """Ключ запроса флагов: ``leads_sheet.flags_key``. Пусто — флаги не настроены (нет ключа или таблицы)."""
+    if sheet_config(support) is None:
+        return ""
+    raw = (support or {}).get("leads_sheet", {}).get("flags_key")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+async def lead_flags(tenant_id: str, showcase: Any) -> dict[str, Any]:
+    """Флаг «в боте» для таблицы заявок (Виктор, 18.10.2026): id строк, чей человек открыл бота, и остальные.
+
+    Тот же ``opened_for``, что и в алертах, — таблица и алерт не расходятся. Повторяющийся id попадает
+    только в ``in_bot``, если хоть одна его строка сопоставлена. Нет таблицы — ``SheetUnavailable``."""
+    from app.db import tenant_connection
+
+    config = sheet_config(showcase.support)
+    if config is None:
+        raise SheetUnavailable("leads_sheet_not_configured")
+    try:
+        leads = await fetch_leads(config)
+    except Exception as exc:
+        logger.warning("ad_leads_flags_fetch_failed", extra={"showcase": showcase.showcase_id, "error": type(exc).__name__})
+        raise SheetUnavailable(type(exc).__name__) from exc
+    async with tenant_connection(tenant_id) as conn:
+        opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+    in_bot = {lead.lead_id for lead in leads if opened_for(lead, opens) is not None}
+    not_in_bot = {lead.lead_id for lead in leads} - in_bot
+    return {
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "in_bot": sorted(in_bot),
+        "not_in_bot": sorted(not_in_bot),
+    }
 
 
 # ---- шаг воркера --------------------------------------------------------------------------------
