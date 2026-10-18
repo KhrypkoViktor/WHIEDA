@@ -157,3 +157,8 @@
   support.leads_sheet.flags_key (копия ключа — D:/Projects/ALMIRA/.secrets/almira-lead-flags.key). Пишет в таблицу
   Apps Script владельца: D:/Projects/ALMIRA/tasks/almira-leads-bot-flag.gs (ключ вписан), инструкция —
   D:/Projects/ALMIRA/tasks/Флаг_в_боте_инструкция.md. На проверке: 24 в боте, 14 нет.
+- 18.10, 22:20: бой Core `3be60b7` — любой вход в бота витрины (вход на сайт через Telegram, /start, ключ курса)
+  записывается в academy_ad_opens с меткой «bot», не стирая метку рекламы (повод: Латыпова вошла через сайт и
+  числилась «не в боте»). Бэкфилл по журналам api (вебхук almira-academy-bot ↔ lead_actors): +6, из них с заявкой
+  Латыпова, Галина Шпакова, Наталья @Nata_li_70, Наталья Прокопенко (@n_prokopenko71painter — вручную). Скрипт
+  таблицы установлен Виктором: колонка «В боте» заполняется; по API сейчас 32 в боте, 14 нет.
