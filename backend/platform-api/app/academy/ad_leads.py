@@ -262,14 +262,15 @@ def match_lead(
     leads: list[Lead], *, username: str | None, name: str, opened_at: datetime | None = None,
 ) -> Lead | None:
     """Строка таблицы человека, открывшего бота: по нику, по имени и фамилии (в любом порядке), иначе
-    ближайшая по времени заявка за ``OPEN_AFTER_FORM`` до открытия. Разные ники — не он."""
+    ближайшая по времени заявка за ``OPEN_AFTER_FORM`` до открытия, если ники не спорят."""
     if username:
         wanted = username.lstrip("@").casefold()
         for lead in reversed(leads):
             if lead.username and lead.username.casefold() == wanted:
                 return lead
     for lead in reversed(leads):
-        if _same_name(name, lead.name) and not _nicks_clash(username, lead.username):
+        # Имя и фамилия важнее «ника» из формы: туда пишут что угодно (Вита Василюк — «Vita»).
+        if _same_name(name, lead.name):
             return lead
     timed = [
         (gap, lead) for lead in leads
@@ -289,7 +290,7 @@ def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
             if opened.username and opened.username.lstrip("@").casefold() == wanted:
                 return opened
     for opened in opens:
-        if not opened.lead_id and _same_name(lead.name, opened.name) and not _nicks_clash(lead.username, opened.username):
+        if not opened.lead_id and _same_name(lead.name, opened.name):
             return opened
     # Строка при открытии ещё не дошла до таблицы — ближайшее по времени открытие без своей строки.
     timed = [

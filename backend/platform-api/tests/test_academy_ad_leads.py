@@ -175,10 +175,13 @@ def test_single_first_name_or_clashing_nicks_do_not_match():
     assert match_lead([other], username="Lliiss12345", name="Наталья", opened_at=opened_at) is None
     assert match_lead([other], username=None, name="Наталья", opened_at=opened_at) is None
     assert opened_for(other, [Opened(5274321005, "Lliiss12345", "Наталья", None, opened_at)]) is None
-    # Имя с фамилией — признак, но разные ники перевешивают.
+    # Имя с фамилией — признак сильнее «ника» из формы (Вита Василюк @vitavasilyuk777 написала в форме «Vita»).
     full = replace(other, name="Наталья Иванова")
     assert match_lead([full], username=None, name="Иванова Наталья").lead_id == "971"
-    assert match_lead([full], username="Lliiss12345", name="Наталья Иванова") is None
+    assert match_lead([full], username="Lliiss12345", name="Наталья Иванова").lead_id == "971"
+    # По времени ники спорят — не он.
+    timed = replace(other, created=opened_at - timedelta(seconds=40))
+    assert match_lead([timed], username="Lliiss12345", name="Наталья", opened_at=opened_at) is None
     # По времени (за 5 минут до /start) — да, если ники не спорят.
     near = replace(other, username=None, created=opened_at - timedelta(seconds=40))
     assert match_lead([near], username="Lliiss12345", name="Наталья", opened_at=opened_at).lead_id == "971"
