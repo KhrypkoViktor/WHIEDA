@@ -200,9 +200,89 @@ async def test_ad_lead_webinar_greets_without_date_buttons_and_notifies_admin(wh
     rows = lead.kwargs["reply_markup"]["inline_keyboard"]
     assert [row[0]["callback_data"] for row in rows] == ["shs:open:author", "shs:open:admin"]
     assert admin.kwargs["chat_id"] == "5035800725"
+    # Таблицы в тесте нет — строка не нашлась, администратору подсказка про личную ссылку (19.10.2026).
     assert admin.kwargs["text"] == (
         '✅ <b><a href="tg://user?id=301">Анна Петрова</a></b> (@anna_p) — в боте, ссылку на эфир получит здесь.'
+        " В таблице заявок не найдена — отправьте человеку личную ссылку из списка «не в боте»."
     )
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("ig_web24_1817700742504331", ("ig_web24", "1817700742504331")),
+        ("ig_web31_701234", ("ig_web31", "701234")),
+        ("ig_web24", ("ig_web24", None)),
+        ("ig_kurs_123456", ("ig_kurs_123456", None)),  # база — не вебинар
+        ("ig_web24_12", ("ig_web24_12", None)),  # id короче 6 цифр
+        ("ig_web24_" + "1" * 26, ("ig_web24_" + "1" * 26, None)),  # длиннее 25
+        ("ig_web24_12ab56", ("ig_web24_12ab56", None)),  # не только цифры
+        ("ig_web24_701234_5", ("ig_web24_701234_5", None)),  # лишний хвост
+    ],
+)
+def test_split_ad_tag(token, expected):
+    from app.telegram.showcase_bot import split_ad_tag
+
+    assert split_ad_tag(token) == expected
+
+
+def _lead(lead_id: str, name: str, username: str | None):
+    from app.academy.ad_leads import Lead
+
+    return Lead(lead_id, None, name, "+375291112233", username, f"@{username}" if username else "", None, "", "ig", "Вебинар")
+
+
+def _sheet_patches(leads):
+    fetch = AsyncMock(return_value=leads)
+    return fetch, (
+        patch("app.telegram.showcase_bot.sheet_config", return_value={"id": "sheet", "gid": "0", "since": ""}),
+        patch("app.telegram.showcase_bot.fetch_leads", fetch),
+    )
+
+
+@pytest.mark.asyncio
+async def test_personal_link_finds_the_row_by_id_with_one_sheet_fetch(whieda_tenant, almira_binding):
+    """Кирилл шлёт ig_web24_<id> тем, кто бота не открывал (19.10.2026): имя и ник в Telegram не совпадают с формой,
+    строку находит только id из ссылки."""
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    row = _lead("701234567", "Мария Иванова", "masha_i")
+    fetch, sheet = _sheet_patches([_lead("700000001", "Дарья Звонкова", None), row])
+    p = _ad_patches(sent)
+    with p[0] as opened, p[1] as pending, p[2], p[3], p[4], p[5], p[6], p[7], sheet[0], sheet[1]:
+        result = await process_core_telegram_update(
+            whieda_tenant, _start("/start ig_web24_701234567"), "t", binding=almira_binding
+        )
+    assert opened.await_args.kwargs == {
+        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": "ig_web24", "lead_id": "701234567",
+    }
+    assert (result["route"], result["tag"], result["admin_notified"]) == ("showcase_ad_lead", "ig_web24", True)
+    fetch.assert_awaited_once()
+    assert pending.await_args.args[2] is row
+    greeting, admin = sent.await_args_list
+    assert greeting.kwargs["chat_id"] == "301"
+    assert "бесплатный вебинар Александры Пармон по композиции." in greeting.kwargs["text"]
+    assert "октября" not in greeting.kwargs["text"]
+    assert admin.kwargs["chat_id"] == "5035800725"
+    assert "Мария Иванова" in admin.kwargs["text"] and "не найдена" not in admin.kwargs["text"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sheet_nick", "lead_id", "hint"), [("masha_i", None, True), ("anna_p", "700000009", False)])
+async def test_personal_link_with_id_missing_in_sheet_falls_back_to_the_usual_match(
+    whieda_tenant, almira_binding, sheet_nick, lead_id, hint,
+):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    fetch, sheet = _sheet_patches([_lead("700000009", "Мария Иванова", sheet_nick)])
+    p = _ad_patches(sent)
+    with p[0] as opened, p[1], p[2], p[3], p[4], p[5], p[6], p[7], sheet[0], sheet[1]:
+        await process_core_telegram_update(
+            whieda_tenant, _start("/start ig_web24_999999999"), "t", binding=almira_binding
+        )
+    fetch.assert_awaited_once()
+    assert opened.await_args.kwargs["tag"] == "ig_web24" and opened.await_args.kwargs["lead_id"] == lead_id
+    admin = sent.await_args_list[-1]
+    assert admin.kwargs["chat_id"] == "5035800725"
+    assert ("В таблице заявок не найдена — отправьте человеку личную ссылку" in admin.kwargs["text"]) is hint
 
 
 @pytest.mark.asyncio

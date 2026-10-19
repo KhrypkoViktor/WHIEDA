@@ -90,6 +90,37 @@ def test_lead_webinar_by_interest_and_call_list():
     assert len(many) > 1 and all("Не в боте" in t for t in many) and all(len(t) < 4096 for t in many)
 
 
+def test_call_list_carries_personal_bot_link_only_with_bot_url():
+    """Личная ссылка ig_<вебинар>_<id заявки> (19.10.2026): открыв её, человек находит свою строку сам."""
+    webinars = webinars_config(SUPPORT)
+    dasha, sveta = parse_leads(CSV)
+    [text] = call_list_texts(webinars[0], [dasha, sveta], bot_url="https://t.me/ALMIRA_I_bot")
+    assert "🔗 Личная ссылка на бота: https://t.me/ALMIRA_I_bot?start=ig_web24_601" in text
+    assert text.count("Личная ссылка") == 2 and "?start=ig_web24_602" in text
+    [plain] = call_list_texts(webinars[0], [dasha])
+    assert "Личная ссылка" not in plain and "?start=" not in plain
+    # Длинный список с ссылками по-прежнему делится на сообщения короче лимита Telegram.
+    many = call_list_texts(webinars[0], [dasha] * 40, bot_url="https://t.me/ALMIRA_I_bot")
+    assert len(many) > 1 and all(len(t) < 4096 for t in many)
+
+
+async def test_showcase_bot_url_is_the_showcase_bot_only():
+    """Личная ссылка — только на бота витрины; не нашли его — пусто (не бот WWC процесса)."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from app.academy.webinars import showcase_bot_url
+
+    showcase = SimpleNamespace(telegram_binding_id="almira-academy-bot")
+    with patch("app.academy.showcases.binding_username", AsyncMock(return_value="ALMIRA_I_bot")) as found:
+        assert await showcase_bot_url(showcase) == "https://t.me/ALMIRA_I_bot"
+    assert found.await_args.args == ("almira-academy-bot",)
+    with patch("app.academy.showcases.binding_username", AsyncMock(return_value=None)):
+        assert await showcase_bot_url(showcase) == ""
+    with patch("app.academy.showcases.binding_username", AsyncMock(side_effect=RuntimeError("db down"))):
+        assert await showcase_bot_url(showcase) == ""
+
+
 def test_confirm_texts_and_move_buttons_only_to_future_webinars():
     from app.academy.webinars import confirm_text, correction_text, move_markup, moved_text
 
@@ -118,6 +149,23 @@ def test_bot_choice_beats_form_choice_beats_tag():
     assert person_webinar(Opened(1, None, "", None, None, "ig_web24"), by_id, webinars) == "ig_web24"
     # Выбор в боте на неизвестный вебинар не учитывается.
     assert person_webinar(Opened(1, None, "", "602", None, "ig_web24", "ig_old"), by_id, webinars) == "ig_web31"
+
+
+def test_paid_mark_in_any_admin_column_but_not_bot_flag():
+    """Кирилл пишет «оплатил» в безымянную колонку после «Комментарий» — это тоже оплата; «В боте» — не пометка."""
+    from app.academy.webinars import is_paid
+
+    head = HEADER + ",,,В боте"
+    csv_text = "\n".join([
+        head,
+        CSV.splitlines()[1] + ",написал,оплатил 10к,✅ да",
+        CSV.splitlines()[2] + ",написал,,нет",
+    ])
+    paid, unpaid = parse_leads(csv_text)
+    assert paid.status == "написал | оплатил 10к" and is_paid(paid)
+    assert unpaid.status == "написал" and not is_paid(unpaid)
+    # Колонки формы читаются как раньше, несмотря на безымянные колонки.
+    assert (paid.name, paid.phone) == ("Дарья Звонкова", "+375291112233")
 
 
 def test_followup_text_paid_mark_and_past_date_in_form():

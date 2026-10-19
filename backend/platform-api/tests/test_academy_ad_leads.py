@@ -150,6 +150,18 @@ def test_bot_open_matches_by_username_then_name():
     )
 
 
+def test_opened_text_hints_at_personal_link_when_row_not_found():
+    """Строка не нашлась (19.10.2026) — администратору подсказка про личную ссылку из списка «не в боте»."""
+    hint = "В таблице заявок не найдена — отправьте человеку личную ссылку из списка «не в боте»."
+    assert opened_text(name="Мария", username=None, user_id=777, webinar=True, found=False) == (
+        '✅ <b><a href="tg://user?id=777">Мария</a></b> (без @ — чат по имени) — в боте, ссылку на эфир получит здесь. '
+        + hint
+    )
+    assert opened_text(name="Мария", username="masha", user_id=None, webinar=False, found=False).endswith(f"в боте. {hint}")
+    assert "не найдена" not in opened_text(name="Мария", username=None, user_id=777, webinar=True)
+    assert "не найдена" not in opened_text(name="Мария", username=None, user_id=777, webinar=True, found=True)
+
+
 def test_opened_link_survives_formatting_and_name_cannot_forge_it():
     from app.telegram.delivery import format_telegram_html
 

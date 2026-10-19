@@ -252,8 +252,9 @@ async def move_webinar(
     return webinar, opened
 
 
-def call_list_texts(webinar: Webinar, leads: list[Lead], head: str | None = None) -> list[str]:
-    """«Не в боте — позвонить или написать до 17:30 (N человек)» и по человеку: имя, телефон, ссылки."""
+def call_list_texts(webinar: Webinar, leads: list[Lead], head: str | None = None, *, bot_url: str = "") -> list[str]:
+    """«Не в боте — позвонить или написать до 17:30 (N человек)» и по человеку: имя, телефон, ссылки.
+    ``bot_url`` — личная ссылка на бота с id заявки (19.10.2026): открыв её, человек сам находит свою строку."""
     time = webinar.at.astimezone(MINSK).strftime("%H:%M")
     head = head or f"📞 Не в боте — позвонить или написать до {time} ({len(leads)} чел.) · вебинар {webinar.date}"
     texts, current = [], head
@@ -265,6 +266,8 @@ def call_list_texts(webinar: Webinar, leads: list[Lead], head: str | None = None
                 lines.append(contacts)
         if lead.username:
             lines.append(f"✈️ @{lead.username}")
+        if bot_url:
+            lines.append(f"🔗 Личная ссылка на бота: {bot_url}?start={webinar.tag}_{lead.lead_id}")
         block = "\n".join(lines)
         if len(current) + len(block) + 2 > MESSAGE_LIMIT:
             texts.append(current)
@@ -272,6 +275,19 @@ def call_list_texts(webinar: Webinar, leads: list[Lead], head: str | None = None
         current += "\n\n" + block
     texts.append(current)
     return texts
+
+
+async def showcase_bot_url(showcase: Any) -> str:
+    """``https://t.me/<бот витрины>``, как в публичных настройках; бота не нашли — пусто (списки без личных ссылок)."""
+    from app.academy.showcases import binding_username
+
+    try:
+        # Только бот витрины: запасной бот процесса (WWC) для личной ссылки ALMIRA неверен.
+        username = await binding_username(showcase.telegram_binding_id)
+    except Exception:
+        logger.warning("webinar_bot_url_failed", exc_info=True)
+        return ""
+    return f"https://t.me/{username}" if username else ""
 
 
 async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | None = None) -> list[str]:
@@ -288,6 +304,7 @@ async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | Non
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
     texts: list[str] = []
+    bot_url: str | None = None
     for webinar in webinars:
         mine = [lead for lead in leads if lead_webinar(lead, webinars) == webinar.tag]
         missing = [lead for lead in mine if opened_for(lead, opens) is None]
@@ -298,7 +315,9 @@ async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | Non
             f"Вебинар {webinar.date}: в боте {len(mine) - len(missing)} из {len(mine)} заявок. "
             f"Не в боте — {len(missing)} чел.:"
         )
-        texts.extend(call_list_texts(webinar, missing, head))
+        if bot_url is None:
+            bot_url = await showcase_bot_url(showcase)
+        texts.extend(call_list_texts(webinar, missing, head, bot_url=bot_url))
     return texts
 
 
@@ -425,6 +444,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 if not work:
                     continue
                 admin = (await support_targets(tenant_id, showcase)).get(KIND_ADMIN)
+                bot_url: str | None = None  # бот витрины для личных ссылок в списке — ищем раз и только по делу
                 for webinar, reminders, warn, calls in work:
                     prefix = f"webinar:{showcase.showcase_id}:{webinar.tag}"
                     audience = [o for o in opens if person_webinar(o, leads_by_id, webinars) == webinar.tag]
@@ -454,6 +474,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                             if lead_webinar(lead, webinars) == webinar.tag and opened_for(lead, opens) is None
                         ]
                         if missing:
-                            for index, text in enumerate(call_list_texts(webinar, missing)):
+                            if bot_url is None:
+                                bot_url = await showcase_bot_url(showcase)
+                            for index, text in enumerate(call_list_texts(webinar, missing, bot_url=bot_url)):
                                 queued += await enqueue(conn, f"{prefix}:calls:{index}", admin, text)
     return queued

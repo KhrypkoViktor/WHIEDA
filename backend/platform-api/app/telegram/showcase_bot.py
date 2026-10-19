@@ -44,6 +44,8 @@ _AD_TAG_RE = re.compile(r"^ig_[A-Za-z0-9_-]{1,60}$")
 # ведёт на ig_web24, а дату человек выбрал в форме — её подтверждает отдельное сообщение
 # (app.academy.webinars), с кнопкой «Перенести на …».
 AD_WEBINARS = frozenset({"ig_web24", "ig_web31"})
+# Личная ссылка ig_<вебинар>_<id заявки> (19.10.2026): Кирилл шлёт её тем, кто бота не открыл, и бот сразу знает строку таблицы.
+_LEAD_ID_RE = re.compile(r"[0-9]{6,25}")
 OPEN_ACADEMY_BUTTON = "🎓 Открыть Академию"
 
 
@@ -85,6 +87,14 @@ async def _first_policy_notice(tenant_id: str, showcase: Showcase, user_id: int,
     return text if first else None
 
 
+def split_ad_tag(token: str) -> tuple[str, str | None]:
+    """``ig_web24_1817700742504331`` → (``ig_web24``, id заявки); любая другая метка — как есть, без id."""
+    base, _, tail = token.rpartition("_")
+    if base in AD_WEBINARS and _LEAD_ID_RE.fullmatch(tail):
+        return base, tail
+    return token, None
+
+
 def ad_lead_text(showcase: Showcase, tag: str) -> str:
     """Приветствие человеку с рекламной формы: вебинар с датой или общая заявка."""
     hello = f"Здравствуйте! Рады видеть вас в арт-студии {showcase.brand_name}."
@@ -100,8 +110,11 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
     )
 
 
-async def _sheet_match(msg: Any, showcase: Showcase) -> tuple[Lead | None, str, str | None]:
-    """Строка таблицы заявок этого человека (по нику, иначе по имени) и его имя и ник в Telegram."""
+async def _sheet_match(
+    msg: Any, showcase: Showcase, lead_id: str | None = None,
+) -> tuple[Lead | None, str, str | None]:
+    """Строка таблицы заявок этого человека и его имя и ник в Telegram. Пришёл по личной ссылке —
+    строка с этим id (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
     tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     tg_username = str(user.get("username") or "").strip() or None
@@ -109,9 +122,10 @@ async def _sheet_match(msg: Any, showcase: Showcase) -> tuple[Lead | None, str, 
     config = sheet_config(showcase.support)
     if config:
         try:
-            lead = match_lead(
-                await fetch_leads(config), username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc),
-            )
+            leads = await fetch_leads(config)
+            lead = next((item for item in leads if item.lead_id == lead_id), None) if lead_id else None
+            if lead is None:
+                lead = match_lead(leads, username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc))
         except Exception as exc:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
     return lead, tg_name, tg_username
@@ -123,19 +137,21 @@ def _opened_line(msg: Any, lead: Lead | None, tg_name: str, tg_username: str | N
     name = (lead.name if lead and lead.name else tg_name) or "Без имени"
     username = tg_username or (lead.username if lead else None)
     user_id = int(msg.user_id) if str(msg.user_id or "").isdigit() else None
-    return opened_text(name=name, username=username, user_id=user_id, webinar=webinar)
+    return opened_text(name=name, username=username, user_id=user_id, webinar=webinar, found=lead is not None)
 
 
 async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, tag: str, *, trace_id: str) -> dict[str, Any]:
     """/start ig_<метка>: приветствие заявке с рекламы и кнопки обращений; администратору витрины —
-    короткое сообщение (телефон и ответы формы — в таблице заявок). Академию здесь не показываем."""
+    короткое сообщение (телефон и ответы формы — в таблице заявок). Академию здесь не показываем.
+    ``ig_<вебинар>_<id заявки>`` — личная ссылка: метка вебинара отдельно, строка таблицы по id."""
     tenant_id = tenant.tenant_id
+    tag, link_lead_id = split_ad_tag(tag)
     lines = [ad_lead_text(showcase, tag)]
     notice = await _first_policy_notice(tenant_id, showcase, int(msg.user_id), int(msg.chat_id))
     if notice:
         lines += ["", notice]
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": support_buttons()})
-    lead, tg_name, tg_username = await _sheet_match(msg, showcase)
+    lead, tg_name, tg_username = await _sheet_match(msg, showcase, link_lead_id)
     # Отметка «бот открыт» в алерте по заявке (V37, 17.10.2026).
     try:
         await record_open(

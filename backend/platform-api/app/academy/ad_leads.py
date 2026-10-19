@@ -74,7 +74,9 @@ class Lead:
     interest: str
     source: str
     form_name: str
-    status: str = ""  # колонка «Статус» таблицы: Кирилл отмечает оплативших
+    # Пометки администратора: все колонки после lead_status, кроме «В боте» (Кирилл пишет «написал»,
+    # «оплатил» и в безымянные колонки, «Статус» у него пуст — 19.10.2026).
+    status: str = ""
 
 
 @dataclass(frozen=True)
@@ -149,9 +151,32 @@ def _column(row: dict[str, str], prefix: str) -> str:
     return ""
 
 
+FLAG_HEADER = "В боте"  # колонку пишет скрипт таблицы (lead-flags), это не пометка администратора
+
+
+def _rows(csv_text: str) -> list[tuple[dict[str, str], str]]:
+    """Строки как {заголовок: значение} (первая колонка с таким именем) и пометки администратора —
+    непустые значения всех колонок после lead_status, кроме «В боте», включая безымянные."""
+    reader = csv.reader(io.StringIO(csv_text))
+    names = [str(name or "").strip() for name in next(reader, [])]
+    notes_from = names.index("lead_status") + 1 if "lead_status" in names else len(names)
+    out = []
+    for values in reader:
+        row: dict[str, str] = {}
+        for index, name in enumerate(names):
+            if name and name not in row:
+                row[name] = values[index] if index < len(values) else ""
+        notes = [
+            str(values[index]).strip() for index in range(notes_from, len(values))
+            if str(values[index]).strip() and (index >= len(names) or names[index] != FLAG_HEADER)
+        ]
+        out.append((row, " | ".join(notes)))
+    return out
+
+
 def parse_leads(csv_text: str) -> list[Lead]:
     leads = []
-    for row in csv.DictReader(io.StringIO(csv_text)):
+    for row, notes in _rows(csv_text):
         lead_id = _strip_prefix(row.get("id", ""))
         if not lead_id:
             continue
@@ -168,7 +193,7 @@ def parse_leads(csv_text: str) -> list[Lead]:
                 interest=_interest(_column(row, "что_интересует")),
                 source=_source(row.get("platform", ""), row.get("ad_name", ""), row.get("is_organic", "")),
                 form_name=str(row.get("form_name") or "").strip(),
-                status=str(row.get("Статус") or "").strip(),
+                status=notes,
             )
         )
     return leads
@@ -307,14 +332,18 @@ def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
     return min(timed, key=lambda item: item[0])[1] if timed else None
 
 
-def opened_text(*, name: str, username: str | None, user_id: int | None, webinar: bool) -> str:
+def opened_text(*, name: str, username: str | None, user_id: int | None, webinar: bool, found: bool = True) -> str:
     """Имя — ссылка в личный чат (``tg://user?id=…``, ``format_telegram_html`` её сохраняет):
-    у человека без публичного ника администратор открывает чат нажатием на имя (16.10.2026)."""
+    у человека без публичного ника администратор открывает чат нажатием на имя (16.10.2026).
+    Строка таблицы не нашлась (``found=False``) — подсказка про личную ссылку (19.10.2026)."""
     who = _plain(name) or "Без имени"
     if user_id:
         who = f'<a href="tg://user?id={int(user_id)}">{who}</a>'
     nick = f" (@{username})" if username else " (без @ — чат по имени)"
-    return f"✅ <b>{who}</b>{nick} — в боте" + (", ссылку на эфир получит здесь." if webinar else ".")
+    text = f"✅ <b>{who}</b>{nick} — в боте" + (", ссылку на эфир получит здесь." if webinar else ".")
+    if not found:
+        text += " В таблице заявок не найдена — отправьте человеку личную ссылку из списка «не в боте»."
+    return text
 
 
 # ---- таблица ------------------------------------------------------------------------------------
