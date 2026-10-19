@@ -235,17 +235,49 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "teaser": _teaser_out(course.get("teaser"), media),
         "landing_url": course.get("landing_url") or None,
         # Бесплатно клубу / участникам курсов (V35) / за тест и приложение (V39):
-        # {"club": true, "courses": [slug], "unlock": {"quiz": {"course", "lesson"}, "app": true}} или null.
+        # {"club": true, "courses": [slug], "unlock": {"quiz": {"course", "lesson"}, "app": true,
+        # "members": {"club": true, "courses": [slug]}}} или null.
         "free_for": course.get("free_for") or None,
     }
 
 
+def _parse_courses(courses: Any, label: str) -> list[str]:
+    if not isinstance(courses, list) or len(courses) > MAX_FREE_FOR_COURSES:
+        raise ValueError(f"{label}: список до {MAX_FREE_FOR_COURSES} адресов курсов")
+    slugs: list[str] = []
+    for slug in courses:
+        if not isinstance(slug, str) or not _SLUG_RE.match(slug) or len(slug) > 60:
+            raise ValueError(f"{label}: плохой адрес курса {slug!r}")
+        if slug not in slugs:
+            slugs.append(slug)
+    return slugs
+
+
+def _parse_members(raw: Any) -> dict[str, Any]:
+    """``{"club": bool, "courses": [slug, …]}`` of ``unlock.members`` → the stored form; at least one key must open."""
+    if not isinstance(raw, dict) or set(raw) - {"club", "courses"}:
+        raise ValueError("free_for.unlock.members: только ключи club и courses")
+    club = raw.get("club", False)
+    if not isinstance(club, bool):
+        raise ValueError("free_for.unlock.members.club: true или false")
+    slugs = _parse_courses(raw.get("courses") or [], "free_for.unlock.members.courses")
+    if not club and not slugs:
+        raise ValueError("free_for.unlock.members: нужен club: true или список courses")
+    out: dict[str, Any] = {}
+    if club:
+        out["club"] = True
+    if slugs:
+        out["courses"] = slugs
+    return out
+
+
 def _parse_unlock(raw: Any) -> dict[str, Any] | None:
-    """``{"quiz": {"course": slug, "lesson": slug}, "app": bool}`` → the stored form; no condition → None."""
+    """``{"quiz": {"course": slug, "lesson": slug}, "app": bool, "members": {…}}`` → the stored form;
+    no condition → None. ``members`` only narrows who unlocks: it needs a quiz or the app beside it."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) - {"quiz", "app"}:
-        raise ValueError("free_for.unlock: только ключи quiz и app")
+    if not isinstance(raw, dict) or set(raw) - {"quiz", "app", "members"}:
+        raise ValueError("free_for.unlock: только ключи quiz, app и members")
     out: dict[str, Any] = {}
     quiz = raw.get("quiz")
     if quiz is not None:
@@ -261,12 +293,16 @@ def _parse_unlock(raw: Any) -> dict[str, Any] | None:
         raise ValueError("free_for.unlock.app: true или false")
     if app:
         out["app"] = True
+    if raw.get("members") is not None:
+        if not out:
+            raise ValueError("free_for.unlock.members: нужны ещё quiz или app — членство само ничего не проверяет")
+        out["members"] = _parse_members(raw["members"])
     return out or None
 
 
 def parse_free_for(raw: Any) -> dict[str, Any] | None:
-    """``{"club": bool, "courses": [slug, …], "unlock": {"quiz": {…}, "app": bool}}`` → the stored form (only
-    what opens the course); nothing that opens it → None. ValueError for anything else."""
+    """``{"club": bool, "courses": [slug, …], "unlock": {"quiz": {…}, "app": bool, "members": {…}}}`` → the
+    stored form (only what opens the course); nothing that opens it → None. ValueError for anything else."""
     if raw is None:
         return None
     if not isinstance(raw, dict) or set(raw) - {"club", "courses", "unlock"}:
@@ -274,15 +310,7 @@ def parse_free_for(raw: Any) -> dict[str, Any] | None:
     club = raw.get("club", False)
     if not isinstance(club, bool):
         raise ValueError("free_for.club: true или false")
-    courses = raw.get("courses") or []
-    if not isinstance(courses, list) or len(courses) > MAX_FREE_FOR_COURSES:
-        raise ValueError(f"free_for.courses: список до {MAX_FREE_FOR_COURSES} адресов курсов")
-    slugs: list[str] = []
-    for slug in courses:
-        if not isinstance(slug, str) or not _SLUG_RE.match(slug) or len(slug) > 60:
-            raise ValueError(f"free_for.courses: плохой адрес курса {slug!r}")
-        if slug not in slugs:
-            slugs.append(slug)
+    slugs = _parse_courses(raw.get("courses") or [], "free_for.courses")
     out: dict[str, Any] = {}
     if club:
         out["club"] = True

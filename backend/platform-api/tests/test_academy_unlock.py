@@ -13,8 +13,18 @@ import pytest
 
 from app.academy.author import parse_free_for
 from app.academy.quiz import MAX_RETRY_AFTER_MIN, QuizError, public_quiz, retry_after_min, retry_at, validate_quiz
-from app.academy.service import FreeFacts, UnlockSpec, course_unlock, free_reason_for, quiz_path, unlock_met, unlock_spec
-from app.academy.unlock import clean_platform, unlock_text, unlock_view
+from app.academy.service import (
+    FreeFacts,
+    Members,
+    UnlockSpec,
+    course_unlock,
+    free_reason_for,
+    quiz_path,
+    unlock_member,
+    unlock_met,
+    unlock_spec,
+)
+from app.academy.unlock import clean_platform, unlock_progress, unlock_text, unlock_view
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
 RULE = {"unlock": {"quiz": {"course": "zapusk-wwc", "lesson": "itogi-i-plan"}, "app": True}}
@@ -273,3 +283,134 @@ def test_owner_can_write_the_unlock_rule():
 def test_owner_mistakes_in_the_rule_are_refused(raw):
     with pytest.raises(ValueError, match="free_for"):
         parse_free_for(raw)
+
+
+# ---- unlock.members: only the club and the course students may unlock (19.10.2026) --------------------
+
+MEMBERS_RULE = {
+    "unlock": {
+        "quiz": TEST_DICT,
+        "app": True,
+        "members": {"club": True, "courses": ["online-start-4w"]},
+    }
+}
+STUDENT = ("online-start-4w",)
+
+
+def test_only_members_unlock_and_only_with_both_conditions():
+    mini = course(MEMBERS_RULE)
+    # Участник клуба / ученик «Онлайн-старта»: тест + приложение — открыто.
+    assert free_reason_for(mini, facts(club=True, tests=[TEST], app=True)) == "unlock"
+    assert free_reason_for(mini, facts(courses=STUDENT, tests=[TEST], app=True)) == "unlock"
+    assert free_reason_for(mini, facts(club=True, courses=STUDENT, tests=[TEST], app=True)) == "unlock"
+    # Без одного из условий участник не открывает.
+    assert free_reason_for(mini, facts(club=True, tests=[TEST])) is None
+    assert free_reason_for(mini, facts(club=True, app=True)) is None
+    assert free_reason_for(mini, facts(courses=STUDENT)) is None
+    # Не участник — платит на общих основаниях, хоть тест и приложение есть (PRO сюда не входит).
+    assert free_reason_for(mini, facts(tests=[TEST], app=True)) is None
+    assert free_reason_for(mini, facts(courses=("other-course",), tests=[TEST], app=True)) is None
+    assert free_reason_for(mini, None) is None
+
+
+def test_members_with_one_key_means_that_key_only():
+    club_only = course({"unlock": {"app": True, "members": {"club": True}}})
+    courses_only = course({"unlock": {"app": True, "members": {"courses": ["online-start-4w"]}}})
+    assert free_reason_for(club_only, facts(club=True, app=True)) == "unlock"
+    assert free_reason_for(club_only, facts(courses=STUDENT, app=True)) is None
+    assert free_reason_for(courses_only, facts(courses=STUDENT, app=True)) == "unlock"
+    assert free_reason_for(courses_only, facts(club=True, app=True)) is None
+    off = course({"unlock": {"app": True, "members": {"club": False, "courses": ["online-start-4w"]}}})
+    assert free_reason_for(off, facts(club=True, app=True)) is None  # club: false — клуб не в счёт
+
+
+def test_top_level_club_and_courses_of_other_courses_work_as_before():
+    both = course({"club": True, **MEMBERS_RULE})
+    assert free_reason_for(both, facts(club=True)) == "club"  # верхний club — без теста и приложения
+    assert free_reason_for(both, facts(tests=[TEST], app=True)) is None  # не участник
+    assert free_reason_for(course({"club": True}), facts(club=True)) == "club"
+    assert free_reason_for(course({"courses": ["online-start-4w"]}), facts(courses=STUDENT)) == "course"
+    # unlock без members — для всех, как в первой версии V39.
+    assert free_reason_for(course(), facts(tests=[TEST], app=True)) == "unlock"
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        {},  # ни одного ключа
+        {"club": False},
+        {"courses": []},
+        {"club": "yes", "courses": ["a"]},
+        {"club": True, "courses": "online-start-4w"},
+        {"courses": [5]},
+        {"courses": [""]},
+        {"club": True, "extra": 1},
+        {"clubs": True},
+        None,
+        True,
+        ["online-start-4w"],
+        "club",
+    ],
+)
+def test_broken_members_open_nothing(members):
+    rule = {"unlock": {"quiz": TEST_DICT, "app": True, "members": members}}
+    assert unlock_spec(rule) is None
+    everyone = facts(club=True, courses=STUDENT, tests=[TEST], app=True)
+    assert free_reason_for(course(rule), everyone) is None
+
+
+def test_members_are_read_into_the_spec():
+    spec = unlock_spec(MEMBERS_RULE)
+    assert spec == UnlockSpec(quiz=TEST, app=True, members=Members(club=True, courses=frozenset(STUDENT)))
+    assert unlock_spec(RULE) == UnlockSpec(quiz=TEST, app=True, members=None)
+    assert unlock_member(spec, facts()) is False
+    assert unlock_member(spec, facts(club=True)) is True
+    assert unlock_member(spec, facts(courses=STUDENT)) is True
+    assert unlock_member(unlock_spec(RULE), facts()) is True  # без members — все
+    assert unlock_member(spec, None) is False
+
+
+@pytest.mark.asyncio
+async def test_a_person_outside_members_gets_no_unlock_object():
+    from app.academy.service import AcademyViewer
+
+    viewer = AcademyViewer(telegram_user_id=1, is_preview_admin=False, partner_paid=True)  # PRO без клуба и курса
+    mini = course(MEMBERS_RULE)
+    # Решение принимается до запросов в базу: соединение не нужно.
+    assert await unlock_progress(None, "whieda", viewer, mini, facts(tests=[TEST], app=True)) is None
+    assert await unlock_progress(None, "whieda", viewer, mini, None) is None
+
+
+def test_owner_can_write_members():
+    stored = parse_free_for(MEMBERS_RULE)
+    assert stored == {
+        "unlock": {"quiz": TEST_DICT, "app": True, "members": {"club": True, "courses": ["online-start-4w"]}}
+    }
+    assert unlock_spec(stored) == unlock_spec(MEMBERS_RULE)  # записанное читается тем же кодом
+    only_club = parse_free_for({"unlock": {"app": True, "members": {"club": True, "courses": []}}})
+    assert only_club == {"unlock": {"app": True, "members": {"club": True}}}
+    twice = parse_free_for({"unlock": {"app": True, "members": {"courses": ["a", "a", "b"]}}})
+    assert twice["unlock"]["members"] == {"courses": ["a", "b"]}
+    assert parse_free_for({"unlock": {"app": True, "members": None}}) == {"unlock": {"app": True}}
+    assert parse_free_for({"unlock": {"app": False}}) is None  # как и было
+
+
+@pytest.mark.parametrize(
+    "unlock",
+    [
+        {"app": True, "members": {}},
+        {"app": True, "members": {"club": False}},
+        {"app": True, "members": {"club": "true"}},
+        {"app": True, "members": {"courses": "online-start-4w"}},
+        {"app": True, "members": {"courses": ["Не slug"]}},
+        {"app": True, "members": {"courses": [None]}},
+        {"app": True, "members": {"club": True, "extra": 1}},
+        {"app": True, "members": "club"},
+        {"app": True, "members": ["club"]},
+        {"members": {"club": True}},  # членство само ничего не проверяет
+        {"app": False, "members": {"club": True}},
+    ],
+)
+def test_owner_mistakes_in_members_are_refused(unlock):
+    with pytest.raises(ValueError, match="free_for.unlock"):
+        parse_free_for({"unlock": unlock})

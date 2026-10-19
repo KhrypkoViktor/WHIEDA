@@ -5,13 +5,16 @@
 
     {"unlock": {"quiz": {"course": "zapusk-wwc", "lesson": "itogi-i-plan"}, "app": true}}
 
-Все перечисленные условия выполнены — ``free_reason = "unlock"`` (``app.academy.service.free_reason_for``):
+Все перечисленные условия выполнены (и человек — из ``members``, если они заданы) —
+``free_reason = "unlock"`` (``app.academy.service.free_reason_for``):
 курс открыт без покупки, ученик проходит его самостоятельно, как при ``club`` и ``course``.
 
 * ``unlock_progress`` — закрытому покупкой курсу с таким правилом: что человек уже сделал
   (``quiz_passed``, ``app_installed``), куда идти за тестом (``quiz_url``, ``quiz_course_title``)
   и может ли он вообще открыть курс теста (``eligible``: обычная проверка замка этого курса,
-  у «Запуска» — PRO или строка доступа). Открытым и курсам без правила — null.
+  у «Запуска» — PRO или строка доступа). Открытым и курсам без правила — null. Правило с
+  ``members`` (только клуб и/или ученики названных курсов, 19.10.2026): не участнику — тоже null,
+  он видит только покупку; сообщение об открытии ему не шлётся.
 * ``mark_app_installed`` — отметка приложения: сайт сам шлёт её из установленного приложения
   (``POST /academy/app/installed``, раз в сутки на устройство). Таблица ``academy_app_installs``.
 * ``notify_unlocks`` — как только после сданного теста или отметки приложения условия курса
@@ -44,6 +47,7 @@ from app.academy.service import (
     free_reason_for,
     is_staff_for,
     quiz_path,
+    unlock_member,
     viewer_actor_ids,
 )
 from app.academy.showcases import showcase_for_author
@@ -91,9 +95,10 @@ async def _quiz_course(conn: Any, tenant_id: str, viewer: AcademyViewer, slug: s
 async def unlock_progress(
     conn: Any, tenant_id: str, viewer: AcademyViewer, course: dict[str, Any], facts: FreeFacts | None
 ) -> dict[str, Any] | None:
-    """Progress towards opening a course closed by purchase; None — the course has no ``unlock`` rule."""
+    """Progress towards opening a course closed by purchase; None — the course has no ``unlock`` rule,
+    or the rule is for ``members`` and the person is not one (they see the purchase only)."""
     spec = course_unlock(course)
-    if spec is None:
+    if spec is None or (spec.members is not None and not unlock_member(spec, facts)):
         return None
     title, eligible = None, True
     if spec.quiz is not None:

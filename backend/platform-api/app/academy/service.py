@@ -13,12 +13,15 @@ Access to a course:
 - access_rule 'purchase' — a row in academy_access (purchase / gift / admin / key), or
   ``free_for`` (V35, mini-courses): ``{"club": true}`` — the club is active or in grace,
   ``{"courses": [slug, …]}`` — an active access row to one of those courses;
-  ``{"unlock": {"quiz": {"course": c, "lesson": l}, "app": true}}`` (V39) — the person passed the
-  test of that lesson and the WWC app was seen installed on their device
-  (``academy_app_installs``); every listed condition must hold. The reason goes out as
-  ``free_reason`` (``club`` | ``course`` | ``unlock``) and no «Купить» button is shown;
-  a course still closed by purchase carries ``unlock`` — the person's progress towards it
-  (``quiz_passed``, ``app_installed``, ``quiz_url``, ``quiz_course_title``, ``eligible``), else null;
+  ``{"unlock": {"quiz": {"course": c, "lesson": l}, "app": true, "members": {"club": true,
+  "courses": [slug, …]}}}`` (V39) — the person passed the test of that lesson and the WWC app was
+  seen installed on their device (``academy_app_installs``); every listed condition must hold.
+  ``members`` (optional, 19.10.2026) narrows it to the club (active or in grace) and/or students
+  of those courses — the same facts as the top-level ``club`` / ``courses``; anyone else pays as
+  usual. The reason goes out as ``free_reason`` (``club`` | ``course`` | ``unlock``) and no
+  «Купить» button is shown; a course still closed by purchase carries ``unlock`` — the person's
+  progress towards it (``quiz_passed``, ``app_installed``, ``quiz_url``, ``quiz_course_title``,
+  ``eligible``), else null (also null for a person outside ``members``);
 - an access row with ``expires_at`` in the past counts as none;
 - staff — the course author (any actor row of the person) and preview admins —
   see their course whole: no access lock, no schedule.
@@ -155,12 +158,34 @@ class FreeFacts:
 
 
 @dataclass(frozen=True)
+class Members:
+    """``free_for.unlock.members``: who may unlock at all — the club and/or students of ``courses``."""
+
+    club: bool
+    courses: frozenset[str]
+
+
+@dataclass(frozen=True)
 class UnlockSpec:
     """``free_for.unlock`` (V39): every condition present must hold. ``quiz`` — (course slug, lesson slug)
-    of the test to pass, ``app`` — the WWC app is installed."""
+    of the test to pass, ``app`` — the WWC app is installed. ``members`` — when set, only these people
+    unlock (membership is a precondition, not something to do)."""
 
     quiz: tuple[str, str] | None
     app: bool
+    members: Members | None = None
+
+
+def _members(raw: Any) -> Members | None:
+    """``{"club": bool, "courses": [slug, …]}`` with at least one effective key; anything else — None."""
+    if not isinstance(raw, dict) or set(raw) - {"club", "courses"}:
+        return None
+    club, courses = raw.get("club", False), raw.get("courses", [])
+    if not isinstance(club, bool) or not isinstance(courses, list):
+        return None
+    if not all(isinstance(slug, str) and slug for slug in courses) or not (club or courses):
+        return None
+    return Members(club=club, courses=frozenset(courses))
 
 
 def unlock_spec(rule: dict[str, Any] | None) -> UnlockSpec | None:
@@ -168,8 +193,13 @@ def unlock_spec(rule: dict[str, Any] | None) -> UnlockSpec | None:
     A shape that is off (an unknown key, a half-written quiz, nothing to check) is refused whole:
     a condition lost on the way must never open the course."""
     raw = (rule or {}).get("unlock")
-    if not isinstance(raw, dict) or set(raw) - {"quiz", "app"}:
+    if not isinstance(raw, dict) or set(raw) - {"quiz", "app", "members"}:
         return None
+    members = None
+    if "members" in raw:
+        members = _members(raw["members"])
+        if members is None:
+            return None
     quiz = None
     if "quiz" in raw:
         item = raw["quiz"]
@@ -182,11 +212,21 @@ def unlock_spec(rule: dict[str, Any] | None) -> UnlockSpec | None:
     app = raw.get("app", False)
     if not isinstance(app, bool) or (quiz is None and not app):
         return None
-    return UnlockSpec(quiz=quiz, app=app)
+    return UnlockSpec(quiz=quiz, app=app, members=members)
+
+
+def unlock_member(spec: UnlockSpec, facts: FreeFacts | None) -> bool:
+    """May this person unlock at all: no ``members`` — everyone; otherwise the club is open for them
+    (``members.club``) or they hold an active access to one of ``members.courses``."""
+    if facts is None:
+        return False
+    if spec.members is None:
+        return True
+    return (spec.members.club and facts.club) or bool(spec.members.courses & facts.course_slugs)
 
 
 def unlock_met(spec: UnlockSpec, facts: FreeFacts | None) -> bool:
-    if facts is None:
+    if facts is None or not unlock_member(spec, facts):
         return False
     return (spec.quiz is None or spec.quiz in facts.passed_quizzes) and (not spec.app or facts.app_installed)
 
@@ -251,8 +291,15 @@ async def free_facts(
     rules = [rule for rule in (_free_rule(course) for course in courses) if rule is not None]
     if not rules:
         return None
-    club = any(rule.get("club") is True for rule in rules) and await club_open(conn, tenant_id, telegram_user_id)
-    wanted = sorted({str(slug) for rule in rules for slug in (rule.get("courses") or []) if isinstance(slug, str)})
+    specs = [spec for spec in (unlock_spec(rule) for rule in rules) if spec is not None]
+    members = [spec.members for spec in specs if spec.members is not None]
+    club = (
+        any(rule.get("club") is True for rule in rules) or any(item.club for item in members)
+    ) and await club_open(conn, tenant_id, telegram_user_id)
+    wanted = sorted(
+        {str(slug) for rule in rules for slug in (rule.get("courses") or []) if isinstance(slug, str)}
+        | {slug for item in members for slug in item.courses}
+    )
     slugs: set[str] = set()
     if wanted:
         rows = await fetch_all(
@@ -265,7 +312,6 @@ async def free_facts(
             (tenant_id, int(telegram_user_id), wanted),
         )
         slugs = {str(row["slug"]) for row in rows}
-    specs = [spec for spec in (unlock_spec(rule) for rule in rules) if spec is not None]
     tests = sorted({spec.quiz for spec in specs if spec.quiz is not None})
     passed: set[tuple[str, str]] = set()
     if tests:

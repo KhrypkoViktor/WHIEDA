@@ -10,7 +10,9 @@
   * закрытый курс отдаёт ``unlock`` (список и деталь), сданный тест и приложение вместе открывают его
     (``free_reason: unlock``, самостоятельно), открытому ``unlock`` — null;
   * сообщение об открытии — ровно одно, в любом порядке событий; не уходит купившему; сбой постановки
-    не ломает ответ и не пишет запись, следующий повод шлёт.
+    не ломает ответ и не пишет запись, следующий повод шлёт;
+  * ``unlock.members`` (19.10.2026): клуб и ученики «Онлайн-старта» с тестом и приложением открывают курс
+    и получают одно сообщение; PRO без клуба и курса — курс закрыт, ``unlock`` null, сообщения нет.
 """
 
 from __future__ import annotations
@@ -332,5 +334,173 @@ def test_cooldown_unlock_progress_and_one_notice_over_http(monkeypatch):
                     assert (FRANK,) not in notices() and len(outbox()) == 3
                     await call("POST", f"{P}/app/installed", json={"platform": "ios"})
                     assert (FRANK,) in notices() and len(outbox()) == 4
+
+        db.run_with_app(proof)
+
+
+# ---- unlock.members: тест и приложение открывают мини-курс только клубу и ученикам «Онлайн-старта» ------------
+
+MEMBERS_RULE = {
+    "unlock": {
+        "quiz": {"course": "zapusk-wwc", "lesson": "itogi-i-plan"},
+        "app": True,
+        "members": {"club": True, "courses": ["online-start-4w"]},
+    }
+}
+CLUBBER, MEMBER, STUDENT, PRO, CLUBNOPRO, PLAIN = 9401, 9402, 9403, 9404, 9405, 9406
+
+MEMBERS_PEOPLE = f"""
+insert into lead_actors (actor_id, tenant_id, display_name, telegram_user_id, telegram_chat_id) values
+  ('clubber', 'whieda', 'Клуб без теста', {CLUBBER}, '{CLUBBER}'),
+  ('member', 'whieda', 'Клуб с тестом', {MEMBER}, '{MEMBER}'),
+  ('student', 'whieda', 'Онлайн-старт', {STUDENT}, '{STUDENT}'),
+  ('pro', 'whieda', 'PRO без клуба', {PRO}, '{PRO}'),
+  ('clubnopro', 'whieda', 'Клуб без доступа к Запуску', {CLUBNOPRO}, '{CLUBNOPRO}'),
+  ('plain', 'whieda', 'Никто', {PLAIN}, '{PLAIN}');
+insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode) values
+  ('clubber', 'whieda', 'clubber', 'named'), ('member', 'whieda', 'member', 'named'),
+  ('clubnopro', 'whieda', 'clubnopro', 'named'), ('pro', 'whieda', 'pro', 'named');
+-- Клуб: club_subscription действует; сам PRO у этих троих давно истёк, у настоящего PRO — оплачен.
+insert into partner_subscriptions (tenant_id, ref_code, paid_until) values
+  ('whieda', 'clubber', now() - interval '30 days'), ('whieda', 'member', now() - interval '30 days'),
+  ('whieda', 'clubnopro', now() - interval '30 days'), ('whieda', 'pro', now() + interval '60 days');
+insert into partner_product_access (tenant_id, ref_code, product_code, paid_until) values
+  ('whieda', 'clubber', 'club_subscription', now() + interval '30 days'),
+  ('whieda', 'member', 'club_subscription', now() + interval '30 days'),
+  ('whieda', 'clubnopro', 'club_subscription', now() + interval '30 days');
+insert into academy_courses (tenant_id, slug, title, access_rule, status)
+values ('whieda', 'zapusk-wwc', 'Запуск WWC', 'pro', 'published'),
+       ('whieda', 'online-start-4w', 'Онлайн-старт: 4 недели практики', 'purchase', 'published');
+insert into academy_courses (tenant_id, slug, title, access_rule, status, kind, free_for)
+values ('whieda', 'mini-dhando', 'Алхимия капитала', 'purchase', 'published', 'mini', '@RULE@');
+insert into academy_lessons (tenant_id, course_id, slug, position, title, body_html, quiz_json)
+select 'whieda', course_id, 'itogi-i-plan', 1, 'Итоги запуска и план на 30 дней', '<p>Итоги</p>', '@QUIZ@'
+from academy_courses where slug = 'zapusk-wwc';
+insert into academy_lessons (tenant_id, course_id, slug, position, title, body_html)
+select 'whieda', course_id, 'urok-1', 1, 'Первый урок', '<p>Урок</p>' from academy_courses where slug = 'mini-dhando';
+-- Запуск открыт строкой доступа клубу и ученику; у CLUBNOPRO её нет (не PRO), у PRO открыт по оплате.
+insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
+select 'whieda', c.course_id, u.uid, 'purchase', 'shop:' || u.uid
+from academy_courses c, (values ({CLUBBER}), ({MEMBER}), ({STUDENT})) as u(uid) where c.slug = 'zapusk-wwc';
+insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref)
+select 'whieda', course_id, {STUDENT}, 'purchase', 'shop:online' from academy_courses where slug = 'online-start-4w';
+"""
+
+
+@pytest.mark.integration
+def test_members_only_rule_over_http(monkeypatch):
+    _env(monkeypatch)
+    with temporary_database("whieda_unlock_members") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn, (*MIGRATIONS, "platform_service_sales_v10.sql"))
+            conn.execute(
+                MEMBERS_PEOPLE.replace("@RULE@", json.dumps(MEMBERS_RULE, ensure_ascii=False)).replace(
+                    "@QUIZ@", json.dumps(_stored_quiz(), ensure_ascii=False)
+                )
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.main import create_app
+            from app.tenancy import TenantContext
+
+            async def resolve(_host: str) -> TenantContext:
+                return TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA",
+                                     entitlements={"structure_basic": True})
+
+            who: dict[str, int | None] = {"uid": CLUBBER}
+
+            async def session(*_args, **_kwargs) -> dict:
+                return {"session_id": "s1", "tenant_id": "whieda", "scope": "telegram_verified",
+                        "expires_at": datetime.now(timezone.utc) + timedelta(days=1), "telegram_user_id": who["uid"]}
+
+            quiz_path = f"{P}/courses/zapusk-wwc/lessons/itogi-i-plan/quiz"
+            with (
+                patch("app.tenancy.resolve_tenant_from_host", resolve),
+                patch("app.content_access.routes.read_session_cookie", return_value="raw"),
+                patch("app.content_access.routes.validate_content_session", session),
+            ):
+                app = create_app()
+                app.state.http_client = AsyncMock()
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
+                                       headers={"host": "wwc.best"}) as client:
+
+                    async def call(method: str, path: str, expected: int = 200, **kwargs):
+                        response = await client.request(method, path, **kwargs)
+                        assert response.status_code == expected, (method, path, response.status_code, response.text)
+                        return response.json()
+
+                    async def mini(uid: int) -> dict:
+                        who["uid"] = uid
+                        courses = {c["slug"]: c for c in (await call("GET", f"{P}/courses"))["courses"]}
+                        return courses["mini-dhando"]
+
+                    def notices() -> list[int]:
+                        return [row[0] for row in _select(db, "select telegram_user_id from academy_unlock_notices order by 1")]
+
+                    def outbox() -> list[tuple]:
+                        return _select(
+                            db, "select payload from platform_outbox where event_type = 'academy_unlock_opened' order by outbox_id"
+                        )
+
+                    async def do(uid: int, *, quiz: bool = False, app: bool = False) -> None:
+                        who["uid"] = uid
+                        if quiz:
+                            assert (await call("POST", quiz_path, json=RIGHT))["passed"] is True
+                        if app:
+                            await call("POST", f"{P}/app/installed", json={"platform": "android"})
+
+                    waiting = {"quiz_passed": False, "app_installed": False, "quiz_url": QUIZ_URL,
+                               "quiz_course_title": "Запуск WWC", "eligible": True}
+
+                    # 1. Участник клуба / ученик «Онлайн-старта» без теста: курс закрыт, прогресс в списке и в детали.
+                    for uid in (CLUBBER, STUDENT):
+                        card = await mini(uid)
+                        assert (card["locked"], card["free_reason"], card["unlock"]) == (True, None, waiting)
+                    assert (await call("GET", f"{P}/courses/mini-dhando"))["course"]["unlock"] == waiting
+                    # Участник клуба без доступа к «Запуску» (не PRO): прогресс есть, но eligible: false.
+                    assert (await mini(CLUBNOPRO))["unlock"] == {**waiting, "eligible": False}
+                    # Не участник — PRO без клуба и курса, и просто чужой: видят только покупку.
+                    for uid in (PRO, PLAIN):
+                        card = await mini(uid)
+                        assert (card["locked"], card["lock_reason"], card["free_reason"], card["unlock"]) == (
+                            True, "purchase_required", None, None,
+                        )
+                        assert (await call("GET", f"{P}/courses/mini-dhando"))["course"]["unlock"] is None
+
+                    # 2. PRO без клуба и курса сдаёт тест «Запуска» и ставит приложение — курс закрыт, сообщения нет.
+                    await do(PRO, quiz=True, app=True)
+                    card = await mini(PRO)
+                    assert (card["locked"], card["free_reason"], card["unlock"]) == (True, None, None)
+                    outline = (await call("GET", f"{P}/courses/mini-dhando"))["course"]
+                    assert (outline["locked"], outline["free_reason"], outline["unlock"]) == (True, None, None)
+                    assert notices() == [] and outbox() == []
+
+                    # 3. Участник клуба: тест и приложение — открыто, самостоятельно, одно сообщение.
+                    await do(MEMBER, quiz=True)
+                    assert (await mini(MEMBER))["unlock"] == {**waiting, "quiz_passed": True}
+                    assert notices() == []
+                    await do(MEMBER, app=True)
+                    opened = await mini(MEMBER)
+                    assert (opened["locked"], opened["free_reason"], opened["unlock"]) == (False, "unlock", None)
+                    outline = (await call("GET", f"{P}/courses/mini-dhando"))["course"]
+                    assert (outline["free_reason"], outline["self_study"], outline["unlock"]) == ("unlock", True, None)
+                    assert notices() == [MEMBER] and len(outbox()) == 1
+                    assert outbox()[0][0]["chat_id"] == str(MEMBER)
+                    await do(MEMBER, quiz=True, app=True)  # повторы ничего не добавляют
+                    assert notices() == [MEMBER] and len(outbox()) == 1
+
+                    # 4. Ученик «Онлайн-старта» — так же, в обратном порядке событий.
+                    await do(STUDENT, app=True)
+                    assert (await mini(STUDENT))["unlock"] == {**waiting, "app_installed": True}
+                    await do(STUDENT, quiz=True)
+                    assert (await mini(STUDENT))["free_reason"] == "unlock"
+                    assert notices() == [MEMBER, STUDENT] and len(outbox()) == 2
+
+                    # 5. Участник клуба сдал только тест: закрыт, прогресс виден, сообщения нет.
+                    await do(CLUBBER, quiz=True)
+                    half = await mini(CLUBBER)
+                    assert (half["locked"], half["unlock"]) == (True, {**waiting, "quiz_passed": True})
+                    assert notices() == [MEMBER, STUDENT]
 
         db.run_with_app(proof)
