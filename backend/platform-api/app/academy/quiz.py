@@ -16,6 +16,13 @@ to the number of questions. Missing ids become ``q1..qN`` and ``a..f``. Unknown
 keys are refused — a typo («corect», «hnt») must not silently drop a field.
 Texts are plain text (the site inserts them as text, not HTML).
 
+A pause between attempts (V39, 19.10.2026): the optional top-level key
+``retry_after_min`` — a whole number of minutes, 0–1440 (default 0 = no pause, as in
+V35; it is kept in the stored form only when above 0). While the test is not passed
+and the last attempt was less than that long ago, ``POST …/quiz`` answers 429
+``quiz_cooldown`` with ``retry_at`` and writes nothing (``retry_at`` here: the pure rule).
+After a passed attempt there are no pauses. ``public_quiz`` shows the number to the site.
+
 The student sees the test without ``correct`` and ``hint`` (``public_quiz``); an
 answer (``grade_quiz``) returns, per question, right or wrong and the hint of the
 chosen option. An unanswered question is wrong.
@@ -25,6 +32,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 MAX_QUESTIONS = 20
@@ -35,7 +43,8 @@ MAX_HINT_CHARS = 2000
 MAX_REF_CHARS = 300
 OPTION_IDS = "abcdef"
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}\Z")
-_QUIZ_KEYS = {"pass", "questions"}
+MAX_RETRY_AFTER_MIN = 1440  # сутки
+_QUIZ_KEYS = {"pass", "questions", "retry_after_min"}
 _QUESTION_KEYS = {"id", "q", "ref", "options"}
 _OPTION_KEYS = {"id", "text", "correct", "hint"}
 
@@ -127,7 +136,34 @@ def validate_quiz(raw: Any) -> dict[str, Any]:
     threshold = raw.get("pass")
     if isinstance(threshold, bool) or not isinstance(threshold, int) or not 1 <= threshold <= len(out_questions):
         raise QuizError(f"тест: «pass» — целое число от 1 до {len(out_questions)} (число вопросов)")
-    return {"pass": threshold, "questions": out_questions}
+    stored: dict[str, Any] = {"pass": threshold, "questions": out_questions}
+    pause = raw.get("retry_after_min")
+    if pause is not None:
+        if isinstance(pause, bool) or not isinstance(pause, int) or not 0 <= pause <= MAX_RETRY_AFTER_MIN:
+            raise QuizError(f"тест: «retry_after_min» — целое число минут от 0 до {MAX_RETRY_AFTER_MIN}")
+        if pause:
+            stored["retry_after_min"] = pause
+    return stored
+
+
+def retry_after_min(quiz: dict[str, Any] | None) -> int:
+    """The pause (minutes) between attempts of a stored test; 0 — none. A stored value that does not
+    fit the rules (written by hand around the validator) counts as no pause."""
+    pause = (quiz or {}).get("retry_after_min")
+    if isinstance(pause, bool) or not isinstance(pause, int) or not 0 < pause <= MAX_RETRY_AFTER_MIN:
+        return 0
+    return pause
+
+
+def retry_at(
+    pause_min: int, last_attempt_at: datetime | None, *, passed: bool, now: datetime
+) -> datetime | None:
+    """When the next attempt is allowed; None — now. A pause only follows a failed attempt of a test
+    that was never passed: ``passed`` (an attempt of this student passed) lifts it for good."""
+    if passed or pause_min <= 0 or last_attempt_at is None:
+        return None
+    moment = last_attempt_at + timedelta(minutes=pause_min)
+    return moment if moment > now else None
 
 
 def public_quiz(quiz: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -136,6 +172,7 @@ def public_quiz(quiz: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     return {
         "pass": int(quiz["pass"]),
+        "retry_after_min": retry_after_min(quiz),
         "questions": [
             {
                 "id": question["id"],

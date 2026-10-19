@@ -7,6 +7,9 @@ same person as in the bot, so progress is shared. Every response is private.
 Student: courses, a course (modules, lessons with locks), a lesson, «Сделал»,
 the lesson's test (V35), homework, media links, photo uploads for homework, and the
 rhythm card «Сегодня» (``/rhythm/today``, 17.10.2026: marks, streak, lesson of the day).
+V39 (19.10.2026): ``POST /app/installed`` — the installed app tells the site it runs (a mini-course
+opens for free after a test and the app, ``app.academy.unlock``); the test answers 429
+``quiz_cooldown`` with ``retry_at`` during the pause after a failed attempt.
 Author (``/author/…``): courses, modules, lessons, order, students, homework
 review, Markdown preview, uploads (video, files, images). 403 ``not_author`` —
 the person has no author cabinet.
@@ -77,6 +80,7 @@ from app.academy.threads import (
     save_profile,
     set_seen,
 )
+from app.academy.unlock import mark_app_installed
 from app.content_access.routes import _current_session
 from app.tenancy import get_request_tenant
 
@@ -203,6 +207,12 @@ class RhythmMarkBody(BaseModel):
     """Галочка дня ритма: ``post`` | ``person`` | ``five``; другое значение — 400 ``bad_field``."""
 
     field: Any = None
+
+
+class AppInstalledBody(BaseModel):
+    """Отметка приложения (V39): ``platform`` — android | ios | desktop; другое значение или пусто — не указана."""
+
+    platform: Any = None
 
 
 class PreviewBody(BaseModel):
@@ -377,6 +387,17 @@ async def rhythm_today_toggle_site(
     403 ``rhythm_not_member``."""
     tenant_id, viewer = await _viewer(request, response)
     return await _guard(toggle_today(tenant_id, viewer.telegram_user_id, body.field if body else None))
+
+
+@router.post(f"{P}/app/installed")
+async def app_installed_site(
+    request: Request, response: Response, body: AppInstalledBody | None = None
+) -> dict[str, Any]:
+    """Сайт открыт как установленное приложение WWC (V39): отметка человека, раз в сутки на устройство.
+    ``{"ok": true, "installed": true, "first_seen_at": …}``; без входа — 401 ``telegram_session_required``.
+    Курс, для которого это было последним условием, открывается и сообщает об этом в бот."""
+    tenant_id, viewer = await _viewer(request, response)
+    return await mark_app_installed(tenant_id, viewer.telegram_user_id, body.platform if body else None)
 
 
 # ---- media: signed files (declared before /media/{id}) ----------------------------------------

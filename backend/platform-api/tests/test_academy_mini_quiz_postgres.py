@@ -278,7 +278,7 @@ def test_free_for_the_club_and_course_students_and_the_lesson_test(monkeypatch, 
             assert quiz["questions"][0]["ref"] == "Разбор, семья Пателей"
             dumped = json.dumps(detail, ensure_ascii=False)
             assert "correct" not in dumped and "hint" not in dumped and "Не совсем" not in dumped
-            assert detail["lesson"]["quiz_state"] == {"passed": False, "best": 0, "attempts": 0}
+            assert detail["lesson"]["quiz_state"] == {"passed": False, "best": 0, "attempts": 0, "retry_at": None}
             plain = await lesson_detail("whieda", "mini-dhando", "kak-prokhodit", club_viewer)
             assert (plain["lesson"]["quiz"], plain["lesson"]["quiz_state"]) == (None, None)
 
@@ -308,7 +308,7 @@ def test_free_for_the_club_and_course_students_and_the_lesson_test(monkeypatch, 
             ]
             assert [row["slug"] for row in await progress_rows()] == ["kak-prokhodit"]
             half = await submit_quiz("whieda", "mini-dhando", "orel-reshka", club_viewer, answers={"q1": "b", "q2": "c"})
-            assert (half["score"], half["passed"], half["quiz_state"]) == (1, False, {"passed": False, "best": 1, "attempts": 2})
+            assert (half["score"], half["passed"], half["quiz_state"]) == (1, False, {"passed": False, "best": 1, "attempts": 2, "retry_at": None})
             assert [row["slug"] for row in await progress_rows()] == ["kak-prokhodit"]
 
             # 6. Сданная попытка: урок отмечен (source=site), курс пройден; повтор — без дублей.
@@ -317,7 +317,7 @@ def test_free_for_the_club_and_course_students_and_the_lesson_test(monkeypatch, 
             assert passed["results"][1] == {"id": "q2", "answer": "b", "correct": True, "hint": ""}
             assert (passed["lessons_done"], passed["lessons_total"], passed["next_lesson"]) == (2, 2, None)
             again = await submit_quiz("whieda", "mini-dhando", "orel-reshka", club_viewer, answers={"q1": "b", "q2": "b"})
-            assert again["quiz_state"] == {"passed": True, "best": 2, "attempts": 4}
+            assert again["quiz_state"] == {"passed": True, "best": 2, "attempts": 4, "retry_at": None}
             assert [(row["slug"], row["source"]) for row in await progress_rows()] == [
                 ("kak-prokhodit", "site"), ("orel-reshka", "site"),
             ]
@@ -326,7 +326,7 @@ def test_free_for_the_club_and_course_students_and_the_lesson_test(monkeypatch, 
             await set_lesson_done("whieda", "mini-dhando", "orel-reshka", club_viewer, done=True, source="bot")
             assert (await card(CLUB))["lessons_done"] == 2
             detail = await lesson_detail("whieda", "mini-dhando", "orel-reshka", club_viewer)
-            assert detail["lesson"]["quiz_state"] == {"passed": True, "best": 2, "attempts": 4}
+            assert detail["lesson"]["quiz_state"] == {"passed": True, "best": 2, "attempts": 4, "retry_at": None}
             assert detail["lesson"]["complete"] is True
             async with tenant_connection("whieda") as conn:
                 attempts = await fetch_all(

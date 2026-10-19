@@ -21,7 +21,8 @@ Text is Markdown, rendered and cleaned on the server (``app.academy.content``).
 A ```quiz block in a lesson's Markdown (V35) is the lesson's test: it is cut out of
 ``body_md``/``body_html`` and kept in ``quiz_json``; a lesson saved without the block
 keeps its test, ``quiz: null`` removes it. The course rubric (``kind``: course | mini)
-and ``free_for`` (open to the club / to students of other courses) — owner only.
+and ``free_for`` (open to the club / to students of other courses / after a test and the
+installed app, V39 ``unlock``) — owner only.
 Media the author attaches must be their own uploads (or already in this lesson /
 course). Lesson ``position`` is the course order (modules, then lessons) and is
 renumbered after every structural change — the bot addresses lessons by it.
@@ -233,18 +234,43 @@ def _course_out(course: dict[str, Any], media: dict[str, dict[str, Any]], telegr
         "review_days": int(course.get("review_days") or 0),
         "teaser": _teaser_out(course.get("teaser"), media),
         "landing_url": course.get("landing_url") or None,
-        # Бесплатно клубу / участникам курсов (V35): {"club": true, "courses": [slug]} или null.
+        # Бесплатно клубу / участникам курсов (V35) / за тест и приложение (V39):
+        # {"club": true, "courses": [slug], "unlock": {"quiz": {"course", "lesson"}, "app": true}} или null.
         "free_for": course.get("free_for") or None,
     }
 
 
-def parse_free_for(raw: Any) -> dict[str, Any] | None:
-    """``{"club": bool, "courses": [slug, …]}`` → the stored form (only what opens the course);
-    nothing that opens it → None. ValueError for anything else."""
+def _parse_unlock(raw: Any) -> dict[str, Any] | None:
+    """``{"quiz": {"course": slug, "lesson": slug}, "app": bool}`` → the stored form; no condition → None."""
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) - {"club", "courses"}:
-        raise ValueError("free_for: только ключи club и courses")
+    if not isinstance(raw, dict) or set(raw) - {"quiz", "app"}:
+        raise ValueError("free_for.unlock: только ключи quiz и app")
+    out: dict[str, Any] = {}
+    quiz = raw.get("quiz")
+    if quiz is not None:
+        if not isinstance(quiz, dict) or set(quiz) != {"course", "lesson"}:
+            raise ValueError("free_for.unlock.quiz: ровно course и lesson — адреса курса и урока теста")
+        for key in ("course", "lesson"):
+            value = quiz[key]
+            if not isinstance(value, str) or not _SLUG_RE.match(value) or len(value) > 60:
+                raise ValueError(f"free_for.unlock.quiz.{key}: плохой адрес {value!r}")
+        out["quiz"] = {"course": quiz["course"], "lesson": quiz["lesson"]}
+    app = raw.get("app", False)
+    if not isinstance(app, bool):
+        raise ValueError("free_for.unlock.app: true или false")
+    if app:
+        out["app"] = True
+    return out or None
+
+
+def parse_free_for(raw: Any) -> dict[str, Any] | None:
+    """``{"club": bool, "courses": [slug, …], "unlock": {"quiz": {…}, "app": bool}}`` → the stored form (only
+    what opens the course); nothing that opens it → None. ValueError for anything else."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {"club", "courses", "unlock"}:
+        raise ValueError("free_for: только ключи club, courses и unlock")
     club = raw.get("club", False)
     if not isinstance(club, bool):
         raise ValueError("free_for.club: true или false")
@@ -262,6 +288,9 @@ def parse_free_for(raw: Any) -> dict[str, Any] | None:
         out["club"] = True
     if slugs:
         out["courses"] = slugs
+    unlock = _parse_unlock(raw.get("unlock"))
+    if unlock:
+        out["unlock"] = unlock
     return out or None
 
 
