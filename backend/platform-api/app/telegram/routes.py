@@ -292,8 +292,16 @@ async def telegram_webhook(
     bridge = bridge_for_telegram(group.get("id"))
     if bridge is not None:
         # Группа потока с мостом в Max (V27): сообщения владельца/куратора → Max, вступившие —
-        # проверка оплаты. Обычная обработка обновления идёт дальше как была.
+        # проверка оплаты. Обычная обработка обновления идёт дальше как была…
         background_tasks.add_task(_bridge_group_message, binding, bridge, update.get("message") or {}, trace_id)
+        from app.max.bridge import bot_id_from_token, is_reply_to_bot_only
+
+        # …кроме реплая на сообщение самого бота (переслано из Max) без @бота и не команды:
+        # мост его взял, а подборщик ответил бы в группу «Не понял вопрос…».
+        if is_reply_to_bot_only(
+            update.get("message") or {}, bot_id=bot_id_from_token(binding.bot_token), bot_username=binding.bot_username
+        ):
+            return {"ok": True}
     callback = update.get("callback_query") or {}
     if str(callback.get("data") or "").startswith("brg:"):
         # Кнопки владельца «Удалить» / «Оставить» по вступившему без оплаты (V27).

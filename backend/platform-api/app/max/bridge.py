@@ -21,6 +21,7 @@ import asyncio
 import html
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -70,6 +71,29 @@ def telegram_role(message: dict[str, Any], bridge: ChatBridge, *, owner_id: int 
         if bot_id and replied and int(replied) == bot_id:
             return "curator"
     return None
+
+
+def is_reply_to_bot_only(message: dict[str, Any], *, bot_id: int | None, bot_username: str | None) -> bool:
+    """Группа с мостом: ответ реплаем на сообщение этого бота, без явного @бота и не команда.
+
+    Такой ответ — часть разговора через мост (владелец отвечает на сообщение, которое бот
+    переслал из Max): мост его уже взял, а обычная обработка приняла бы реплай за вопрос боту
+    и ответила бы в группу «Не понял вопрос…». True — дальше обновление не идёт. Явное
+    упоминание (@username), команда («/…»), ответ человеку и сообщение без реплая — как раньше."""
+    replied = (message.get("reply_to_message") or {}).get("from") or {}
+    if not replied:
+        return False
+    name = (bot_username or "").lstrip("@").strip().lower()
+    by_id = bool(bot_id) and replied.get("id") is not None and str(replied.get("id")) == str(bot_id)
+    by_name = bool(name) and str(replied.get("username") or "").lstrip("@").lower() == name
+    if not (by_id or by_name):
+        return False
+    text = str(message.get("text") or message.get("caption") or "").strip()
+    if text.startswith("/"):
+        return False
+    if name and re.search(rf"(?<!\w)@{re.escape(name)}\b", text, re.I):
+        return False
+    return True
 
 
 async def _max_mid_for(tenant_id: str, tg_chat_id: int, tg_message_id: int | None) -> str | None:
