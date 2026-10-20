@@ -52,6 +52,16 @@ _LEAD_ID_RE = re.compile(r"[0-9]{6,25}")
 OPEN_ACADEMY_BUTTON = "🎓 Открыть Академию"
 
 
+def start_alias(showcase: Showcase, token: str | None) -> str | None:
+    """Короткая ссылка администратора (20.10.2026: Кирилл — ?start=kvk) ведёт как ссылка с рекламы:
+    ``support.start_aliases = {\"kvk\": \"ig_web24\"}`` — приветствие к эфиру, строка таблицы, подтверждение даты."""
+    raw = (showcase.support or {}).get("start_aliases")
+    if not token or not isinstance(raw, dict):
+        return None
+    target = raw.get(token) or raw.get(token.casefold())
+    return str(target) if target and _AD_TAG_RE.fullmatch(str(target)) else None
+
+
 def welcome_text(showcase: Showcase) -> str:
     return (
         f"Здравствуйте! Это {showcase.academy_title}.\n\n"
@@ -386,6 +396,7 @@ async def process_showcase_bot_update(
     await _ensure_actor(tenant, msg)
 
     start_token = parse_start_token(msg.text or "")
+    start_token = start_alias(showcase, start_token) or start_token
     if str(msg.text or "").startswith("/start") and not (start_token and _AD_TAG_RE.fullmatch(start_token)):
         await _note_bot_open(tenant.tenant_id, showcase, msg)
     if start_token and parse_course_start_token(start_token) is not None:

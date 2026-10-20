@@ -391,3 +391,27 @@ async def test_plain_start_and_site_login_count_as_in_bot(whieda_tenant, almira_
     ):
         await process_core_telegram_update(whieda_tenant, _start("/start ca_abc", username="logoped_latypova"), "t", binding=almira_binding)
     assert login.await_args.kwargs["tag"] == BOT_TAG and login.await_args.kwargs["overwrite"] is False
+
+
+@pytest.mark.asyncio
+async def test_admin_short_link_kvk_works_as_the_webinar_link(whieda_tenant, almira_binding):
+    """?start=kvk (ссылка Кирилла, 20.10.2026) — как ig_web24: приветствие к эфиру и запись с меткой вебинара."""
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent)
+    kvk = replace(ALMIRA, support={"start_aliases": {"kvk": "ig_web24"}})
+    with p[0] as opened, p[1], patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=kvk)),             p[3], p[4], p[5], p[6], p[7] as home:
+        result = await process_core_telegram_update(whieda_tenant, _start("/start kvk"), "t", binding=almira_binding)
+    assert (result["route"], result["tag"]) == ("showcase_ad_lead", "ig_web24")
+    assert opened.await_args.kwargs["tag"] == "ig_web24"
+    home.assert_not_called()
+
+
+def test_start_alias_only_to_an_ad_tag():
+    from app.telegram.showcase_bot import start_alias
+
+    shop = replace(ALMIRA, support={"start_aliases": {"kvk": "ig_web24", "bad": "course_123"}})
+    assert start_alias(shop, "kvk") == "ig_web24"
+    assert start_alias(shop, "KVK") == "ig_web24"
+    assert start_alias(shop, "bad") is None
+    assert start_alias(shop, "other") is None
+    assert start_alias(ALMIRA, "kvk") is None
