@@ -176,3 +176,5 @@
 - Курс `igra-formy-podarok` (kind=gift, без цены): неделя 1 «Игры формы» без вебинара, 8 уроков, задание dz-1 без строки срока. Курсы kind=gift в каталоге — только тем, у кого доступ (`_showcase_keeps`).
 - Прогрев не повторяется тем, кто перенёс запись (поиск `webinar:<витрина>:%:warm_<ключ>:<uid>` в outbox).
 - Тесты: `tests/test_academy_webinar_gift.py`, два postgres-теста в `test_academy_webinars_postgres.py`. Красные golden-corpus тесты telegram — были красными и до (среда).
+
+- 6b87aac: `support.broadcast_copy = [688931415]` — копия каждой рассылки вебинара Виктору (один раз, пометка «вебинар · что · получили N»). Включено на бою 20.10.
