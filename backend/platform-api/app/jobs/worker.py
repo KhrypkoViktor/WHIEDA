@@ -17,6 +17,8 @@ from app.telegram.delivery import (
     TelegramDeliveryError,
     TelegramDeliveryUnknown,
     outbound_binding_guard,
+    send_telegram_media_group,
+    send_telegram_photo,
     send_telegram_text,
 )
 from app.telegram.inbox import safe_error_summary
@@ -211,7 +213,17 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
         # Кнопки решения (премодерация курса) остаются, кнопка сайта — последней строкой.
         rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
         markup = {"inline_keyboard": [*(rows if isinstance(rows, list) else []), row]}
+    photos = [str(p) for p in payload.get("photos") or [] if str(p).strip()]
     with outbound_binding_guard(binding.bot_token):
+        if photos:
+            # Прогрев (20.10.2026): сначала фото или альбом, текст следом. Фото не ушло — текст всё равно уходит.
+            try:
+                if len(photos) == 1:
+                    await send_telegram_photo(chat_id=chat_id, photo_url=photos[0], bot_token=binding.bot_token)
+                else:
+                    await send_telegram_media_group(chat_id=chat_id, photos=photos, bot_token=binding.bot_token)
+            except Exception as exc:
+                logger.warning("due_notification_photos_failed", extra={"error_class": type(exc).__name__})
         result = await send_telegram_text(
             chat_id=chat_id,
             text=text,

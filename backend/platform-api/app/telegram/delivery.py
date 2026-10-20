@@ -207,6 +207,18 @@ async def send_telegram_photo(
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
 
 
+async def send_telegram_media_group(*, chat_id: str, photos: list[str], bot_token: str) -> dict[str, Any]:
+    """Альбом фото без подписи (file_id или https) — текст всегда отдельным сообщением, как у sendPhoto."""
+    media = [{"type": "photo", "media": str(photo)} for photo in photos[:10] if str(photo).strip()]
+    if len(media) < 2:
+        return {"ok": False, "skipped": True}
+    _assert_outbound_token(bot_token)
+    data = await _call_telegram("sendMediaGroup", {"chat_id": chat_id, "media": media}, bot_token=bot_token, timeout_sec=20.0)
+    if not data.get("ok"):
+        logger.warning("telegram_media_group_failed", extra={"chat_id": chat_ref(chat_id)})
+    return data
+
+
 async def copy_telegram_message(
     *,
     chat_id: str,

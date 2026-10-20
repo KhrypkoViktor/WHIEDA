@@ -75,6 +75,11 @@ class Warmup:
     key: str
     before: timedelta
     text: str
+    photos: tuple[str, ...] = ()  # file_id бота витрины: одна — фото, несколько — альбом; текст — следом
+    button: dict[str, str] | None = None  # {text, url} — кнопка-ссылка под текстом
+
+
+_PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
 
 
 def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
@@ -88,8 +93,17 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
             minutes = int(item.get("before_min"))
         except (TypeError, ValueError):
             continue
+        photos = tuple(
+            str(p) for p in (item.get("photos") if isinstance(item.get("photos"), list) else [])
+            if _PHOTO_ID_RE.fullmatch(str(p))
+        )[:10]
+        raw_button = item.get("button") if isinstance(item.get("button"), dict) else {}
+        button = (
+            {"text": str(raw_button["text"])[:64], "url": str(raw_button["url"])}
+            if raw_button.get("text") and str(raw_button.get("url") or "").startswith("https://") else None
+        )
         if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
-            out.append(Warmup(key, timedelta(minutes=minutes), text))
+            out.append(Warmup(key, timedelta(minutes=minutes), text, photos, button))
     return out
 
 
@@ -179,15 +193,17 @@ def _link_markup(webinar: Webinar) -> dict[str, Any]:
 
 def due_messages(
     webinar: Webinar, warmups: list[Warmup], now: datetime,
-) -> list[tuple[str, datetime, str, dict[str, Any] | None]]:
-    """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки)."""
-    out: list[tuple[str, datetime, str, dict[str, Any] | None]] = []
+) -> list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]]:
+    """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки, фото)."""
+    out: list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]] = []
     for item in warmups:
         moment = webinar.at - item.before
         if moment <= now < min(moment + WARMUP_WINDOW, webinar.at):
-            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), None))
+            markup = {"inline_keyboard": [[item.button]]} if item.button else None
+            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), markup, item.photos))
     for kind, moment in due_reminders(webinar, now):
-        out.append((kind, moment, reminder_text(kind, webinar), _link_markup(webinar) if kind in ("hour", "five") else None))
+        markup = _link_markup(webinar) if kind in ("hour", "five") else None
+        out.append((kind, moment, reminder_text(kind, webinar), markup, ()))
     return out
 
 
@@ -409,10 +425,15 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 if w.followup_at and w.followup_to and _in(w.followup_at, now, w.followup_at + FOLLOWUP_WINDOW)
             ]
 
-            async def enqueue(conn: Any, key: str, chat_id: int, text: str, markup: dict[str, Any] | None = None) -> int:
+            async def enqueue(
+                conn: Any, key: str, chat_id: int, text: str, markup: dict[str, Any] | None = None,
+                photos: tuple[str, ...] = (),
+            ) -> int:
                 payload: dict[str, Any] = {"chat_id": str(int(chat_id)), "text": text, "binding_id": binding_id}
                 if markup:
                     payload["reply_markup"] = markup
+                if photos:
+                    payload["photos"] = list(photos)
                 row = await enqueue_outbox_event(
                     conn, tenant_id=tenant_id, event_type=EVENT, idempotency_key=key, payload=payload, due_at=now,
                 )
@@ -496,13 +517,14 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 for webinar, reminders, warn, calls in work:
                     prefix = f"webinar:{showcase.showcase_id}:{webinar.tag}"
                     audience = [o for o in opens if person_webinar(o, leads_by_id, webinars) == webinar.tag]
-                    for kind, moment, text, markup in reminders:
+                    for kind, moment, text, markup, photos in reminders:
                         sent = 0
                         for opened in audience:
                             if opened.opened_at is not None and opened.opened_at > moment:
                                 continue  # открыл бота позже — это сообщение ему уже не нужно
                             sent += await enqueue(
                                 conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id, text, markup,
+                                photos,
                             )
                         queued += sent
                         if sent:

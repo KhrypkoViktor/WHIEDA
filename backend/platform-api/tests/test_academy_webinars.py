@@ -208,9 +208,48 @@ def test_warmup_config_texts_and_windows():
     assert [w.key for w in warmups] == ["w1", "w2"]
     webinar = webinars_config(SUPPORT)[0]  # 24 октября, 17:30, без ссылки
     at = lambda d, h, m: datetime(2026, 10, d, h, m, tzinfo=MINSK)  # noqa: E731
-    [(kind, moment, text, markup)] = due_messages(webinar, warmups, at(21, 12, 5))
-    assert (kind, moment, markup) == ("warm_w1", at(21, 12, 0), None)
+    [(kind, moment, text, markup, photos)] = due_messages(webinar, warmups, at(21, 12, 5))
+    assert (kind, moment, markup, photos) == ("warm_w1", at(21, 12, 0), None, ())
     assert text == "Через три дня, 24 октября в 17:30, — вебинар."
     assert [m[0] for m in due_messages(webinar, warmups, at(22, 19, 1))] == ["warm_w2"]
     assert due_messages(webinar, warmups, at(21, 14, 1)) == []  # окно 2 часа закрылось
     assert warmup_config(None) == [] and warmup_config({"webinar_warmup": "не список"}) == []
+
+
+def test_warmup_photos_and_button():
+    from app.academy.webinars import due_messages, warmup_config
+
+    photo = "AgACAgIAAxkDAAIBQ2c_" + "x" * 30
+    support = {"webinar_warmup": [{
+        "key": "p3", "before_min": 2790, "text": "Работы учеников.", "photos": [photo, photo + "y", "плохой id"],
+        "button": {"text": "Программа курса", "url": "https://almira.by/composition-play-of-shapes/"},
+    }, {"key": "p1", "before_min": 5670, "text": "Миф.", "button": {"text": "x", "url": "http://нет"}}]}
+    p3, p1 = warmup_config(support)
+    assert p3.photos == (photo, photo + "y") and p1.photos == () and p1.button is None
+    webinar = webinars_config(SUPPORT)[0]
+    [(_, _, _, markup, photos)] = due_messages(webinar, [p3], datetime(2026, 10, 22, 19, 1, tzinfo=MINSK))
+    assert photos == (photo, photo + "y")
+    assert markup == {"inline_keyboard": [[{"text": "Программа курса", "url": "https://almira.by/composition-play-of-shapes/"}]]}
+
+
+async def test_due_notification_sends_photos_then_text():
+    """Сначала альбом (или одно фото), потом текст с кнопкой; фото не ушло — текст всё равно уходит."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from app.jobs import worker
+
+    binding = SimpleNamespace(bot_token="123:abc", tenant=SimpleNamespace(tenant_id="whieda"))
+    calls = []
+    album = AsyncMock(side_effect=lambda **kw: calls.append(("album", kw["photos"])) or {"ok": True})
+    photo = AsyncMock(side_effect=lambda **kw: calls.append(("photo", kw["photo_url"])) or {"ok": True})
+    text = AsyncMock(side_effect=lambda **kw: calls.append(("text", kw["text"])) or {"ok": True})
+    with patch.object(worker, "send_telegram_media_group", album), patch.object(worker, "send_telegram_photo", photo),             patch.object(worker, "send_telegram_text", text):
+        await worker._send_due_notification(binding, {"chat_id": "1", "text": "Пост", "photos": ["a" * 25, "b" * 25]})
+        await worker._send_due_notification(binding, {"chat_id": "1", "text": "Пост 2", "photos": ["c" * 25]})
+    assert calls == [("album", ["a" * 25, "b" * 25]), ("text", "Пост"), ("photo", "c" * 25), ("text", "Пост 2")]
+    calls.clear()
+    broken = AsyncMock(side_effect=RuntimeError("telegram down"))
+    with patch.object(worker, "send_telegram_photo", broken), patch.object(worker, "send_telegram_text", text):
+        await worker._send_due_notification(binding, {"chat_id": "1", "text": "Пост 3", "photos": ["d" * 25]})
+    assert calls == [("text", "Пост 3")]
