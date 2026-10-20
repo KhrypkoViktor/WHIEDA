@@ -21,6 +21,9 @@ from typing import Any
 
 from app.academy.ad_leads import BOT_TAG, MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
 from app.academy.keys import parse_course_start_token
+from app.academy.notify import course_page_url
+from app.academy.service import preview_admin_ids
+from app.academy.webinar_gift import GIFT_BUTTON, gift_closed_text, gift_config, gift_text, gift_webinar, grant_gift, is_code_word
 from app.academy.webinars import move_markup, move_webinar, moved_text, not_in_bot_texts, webinars_config
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
@@ -257,6 +260,35 @@ async def _try_not_in_bot(tenant: TenantContext, msg: Any, showcase: Showcase, *
     return {"ok": True, "route": "showcase_not_in_bot", "messages": len(texts), "trace_id": trace_id}
 
 
+async def _try_code_word(tenant: TenantContext, msg: Any, showcase: Showcase, *, trace_id: str) -> dict[str, Any] | None:
+    """Кодовое слово с эфира (20.10.2026) — подарочный курс на 7 дней (app.academy.webinar_gift)."""
+    gift = gift_config(showcase.support)
+    if gift is None or not msg.text or not is_code_word(msg.text, gift):
+        return None
+    now = datetime.now(timezone.utc)
+    webinars = webinars_config(showcase.support)
+    webinar = gift_webinar(webinars, now)
+    if webinar is None and int(msg.user_id) in preview_admin_ids() and webinars:
+        webinar = min(webinars, key=lambda w: w.at)  # проверка владельцем — в любой день
+    if webinar is None:
+        await _send(msg.chat_id, gift_closed_text(webinars, now))
+        return {"ok": True, "route": "showcase_gift_closed", "trace_id": trace_id}
+    try:
+        granted = await grant_gift(tenant.tenant_id, gift, int(msg.user_id), webinar.tag, now)
+    except Exception:
+        logger.warning("showcase_gift_failed", extra={"trace_id": trace_id}, exc_info=True)
+        granted = None
+    if granted is None:
+        logger.warning("showcase_gift_not_granted", extra={"trace_id": trace_id, "course": gift.course})
+        await _send(msg.chat_id, "Не получилось открыть урок — попробуйте через минуту.")
+        return {"ok": False, "route": "showcase_gift_failed", "trace_id": trace_id}
+    url = await with_site_login(
+        course_page_url(gift.course, showcase.base_url), tenant_id=tenant.tenant_id, telegram_user_id=msg.user_id,
+    )
+    await _send(msg.chat_id, gift_text(granted), {"inline_keyboard": [[{"text": GIFT_BUTTON, "url": url}]]})
+    return {"ok": True, "route": "showcase_gift", "webinar": webinar.tag, "already": granted.already, "trace_id": trace_id}
+
+
 async def _note_bot_open(tenant_id: str, showcase: Showcase, msg: Any) -> None:
     """Вход в бота не по ссылке с рекламы — «в боте» для таблицы, списков и напоминаний. Строку заявки
     находит и дату подтверждает шаг воркера (app.academy.webinars) — без задержки входа на сайт."""
@@ -363,6 +395,11 @@ async def process_showcase_bot_update(
     listed = await _try_not_in_bot(tenant, msg, showcase, trace_id=trace_id)
     if listed is not None:
         return listed
+    # Кодовое слово с эфира — раньше обращений: слово, написанное при открытом «Написать художнику», — тоже подарок.
+    if not start_token:
+        gifted = await _try_code_word(tenant, msg, showcase, trace_id=trace_id)
+        if gifted is not None:
+            return gifted
     # Кнопки «Написать …» и ответы адресата через Reply — раньше команд Академии.
     support = await try_handle_private_message(tenant, msg, showcase, trace_id=trace_id, early=True)
     if support is not None:

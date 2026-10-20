@@ -519,9 +519,20 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     audience = [o for o in opens if person_webinar(o, leads_by_id, webinars) == webinar.tag]
                     for kind, moment, text, markup, photos in reminders:
                         sent = 0
+                        got: set[str] = set()
+                        if kind.startswith("warm_"):
+                            # Перенёс запись с 24 на 31 — тот же прогрев второй раз не получает.
+                            got = {
+                                str(r["idempotency_key"]).rsplit(":", 1)[-1] for r in await fetch_all(
+                                    conn, "select idempotency_key from platform_outbox where idempotency_key like %s",
+                                    (f"webinar:{showcase.showcase_id}:%:{kind}:%",),
+                                )
+                            }
                         for opened in audience:
                             if opened.opened_at is not None and opened.opened_at > moment:
                                 continue  # открыл бота позже — это сообщение ему уже не нужно
+                            if str(opened.telegram_user_id) in got:
+                                continue
                             sent += await enqueue(
                                 conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id, text, markup,
                                 photos,

@@ -325,3 +325,98 @@ def test_warmup_goes_once_to_those_registered_for_this_webinar(monkeypatch):
             ]
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_warmup_is_not_repeated_after_moving_to_the_next_webinar(monkeypatch):
+    """Анна получила прогрев к 24.10 и перенесла запись на 31.10 — к 31.10 тот же прогрев идёт только Светлане."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    warm = {**NO_LINK, "webinar_warmup": [{"key": "w3", "before_min": 1770, "text": "Завтра, {date} в {time}, ждём вас."}]}
+    with temporary_database("whieda_warmup_move") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(warm, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(23, 12, 3)) == 1
+            async with tenant_connection("whieda") as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute("update academy_ad_opens set webinar = 'ig_web31' where telegram_user_id = %s", (ANNA,))
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(30, 12, 3)) == 1
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(conn, "select idempotency_key from platform_outbox order by idempotency_key")
+            assert [r["idempotency_key"] for r in rows] == [
+                f"webinar:almira:ig_web24:warm_w3:{ANNA}",
+                f"webinar:almira:ig_web31:warm_w3:{SVETA}",
+            ]
+
+        db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_code_word_gift_opens_for_days_once_and_hides_from_others(monkeypatch):
+    """Кодовое слово: подарочный курс на 7 дней; повтор — тот же срок; после срока — снова 7 дней,
+    метки эфиров копятся («был на эфире»). В каталоге подарок видят только те, кому открыт."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_gift") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set owner_actor_id = 'almira' where showcase_id = 'almira'")
+            conn.execute(
+                "insert into academy_courses (tenant_id, slug, title, access_rule, author_actor_id, status, kind) values"
+                " ('whieda', 'igra-formy-podarok', 'Урок 1. Точка, линия, пятно', 'purchase', 'almira', 'published', 'gift'),"
+                " ('whieda', 'igra-formy', 'Игра формы', 'purchase', 'almira', 'published', 'course')"
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy.service import AcademyViewer, list_courses
+            from app.academy.webinar_gift import Gift, grant_gift
+            from app.db import fetch_one, tenant_connection
+
+            gift = Gift(word="мастерство", course="igra-formy-podarok", days=7)
+            now = datetime.now(timezone.utc)
+            first = await grant_gift("whieda", gift, ANNA, "ig_web24", now)
+            assert (first.already, first.expires_at) == (False, now + timedelta(days=7))
+            again = await grant_gift("whieda", gift, ANNA, "ig_web24", now + timedelta(hours=1))
+            assert (again.already, again.expires_at) == (True, now + timedelta(days=7))
+            assert await grant_gift("whieda", replace_course(gift, "net-takogo"), ANNA, "ig_web24", now) is None
+
+            sc._reset_cache()
+            almira = next(s for s in await sc.load_showcases("whieda") if s.showcase_id == "almira")
+            seen = {c["slug"] for c in await list_courses("whieda", AcademyViewer(ANNA, False, False), almira)}
+            other = {c["slug"] for c in await list_courses("whieda", AcademyViewer(BORIS, False, False), almira)}
+            assert seen == {"igra-formy-podarok", "igra-formy"} and other == {"igra-formy"}
+
+            later = now + timedelta(days=8)
+            renewed = await grant_gift("whieda", gift, ANNA, "ig_web31", later)
+            assert (renewed.already, renewed.expires_at) == (False, later + timedelta(days=7))
+            async with tenant_connection("whieda") as conn:
+                row = await fetch_one(conn, "select source, payment_ref from academy_access where telegram_user_id = %s", (ANNA,))
+            assert (row["source"], row["payment_ref"]) == ("gift", "code:ig_web24,ig_web31")
+
+        db.run_with_app(proof)
+
+
+def replace_course(gift, slug):
+    from dataclasses import replace
+
+    return replace(gift, course=slug)

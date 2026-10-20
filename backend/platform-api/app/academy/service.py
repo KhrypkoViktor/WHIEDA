@@ -465,6 +465,8 @@ def _showcase_keeps(
     """Курс на витрине: свой; купленный чужой — только там, где чужие курсы вообще показывают
     (``more_mode`` не ``none``): витрина партнёра с ``none`` — только его курсы, даже владельцу
     платформы (решение владельца 14.10: «мои курсы из Алмиры скрой»)."""
+    if str(course.get("kind") or "") == "gift" and not has_access:
+        return False  # подарок за эфир (20.10.2026) — виден только тем, кому открыт
     if own:
         return True
     if showcase.more_mode == "none" and not showcase.is_default:
