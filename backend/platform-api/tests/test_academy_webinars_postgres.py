@@ -420,3 +420,49 @@ def replace_course(gift, slug):
     from dataclasses import replace
 
     return replace(gift, course=slug)
+
+
+@pytest.mark.integration
+def test_broadcast_copy_goes_once_with_a_count(monkeypatch):
+    """support.broadcast_copy: Виктор получает каждую рассылку один раз — как её видят люди, с пометкой сверху."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    viktor = 688931415
+    warm = {**NO_LINK, "broadcast_copy": [viktor],
+            "webinar_warmup": [{"key": "p4", "before_min": 1770, "text": "Завтра, {date} в {time}, ждём вас.",
+                                "photos": ["A" * 30]}]}
+    with temporary_database("whieda_copy") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(warm, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(23, 12, 3)) == 2
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(23, 12, 40)) == 0
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(
+                    conn, "select idempotency_key, payload from platform_outbox where idempotency_key like '%%copy%%'"
+                )
+            assert [r["idempotency_key"] for r in rows] == [f"webinar:almira:ig_web24:warm_p4:copy:{viktor}"]
+            payload = rows[0]["payload"]
+            assert payload["chat_id"] == str(viktor) and payload["photos"] == ["A" * 30]
+            assert payload["text"] == (
+                "<i>📋 Копия рассылки · вебинар 24 октября · прогрев П4 · получили 1</i>\n\nЗавтра, 24 октября в 17:30, ждём вас."
+            )
+
+        db.run_with_app(proof)

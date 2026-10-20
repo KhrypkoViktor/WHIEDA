@@ -82,6 +82,22 @@ class Warmup:
 _PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
 
 
+# Копия рассылок (Виктор, 20.10.2026): support.broadcast_copy = [telegram id] — каждую рассылку
+# (прогрев, напоминания, приглашение на повтор) один раз, как её видят люди, с пометкой «сколько получили».
+_COPY_LABELS = {"day": "за сутки", "two_hours": "за 2 часа", "hour": "за час", "five": "за 5 минут",
+                "followup": "приглашение на повтор"}
+
+
+def copy_recipients(support: dict[str, Any] | None) -> list[int]:
+    raw = (support or {}).get("broadcast_copy")
+    return [int(x) for x in raw if str(x).isdigit()] if isinstance(raw, list) else []
+
+
+def copy_header(webinar: Webinar, kind: str, sent: int) -> str:
+    label = f"прогрев {kind[5:].upper().replace('P', 'П')}" if kind.startswith("warm_") else _COPY_LABELS.get(kind, kind)
+    return f"<i>📋 Копия рассылки · вебинар {webinar.date} · {label} · получили {sent}</i>\n\n"
+
+
 def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
     raw = (support or {}).get("webinar_warmup")
     out = []
@@ -439,6 +455,18 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 )
                 return 1 if row and row.get("created") else 0
 
+            copies = copy_recipients(showcase.support)
+
+            async def copy(
+                conn: Any, key: str, webinar: Webinar, kind: str, sent: int, text: str,
+                markup: dict[str, Any] | None = None, photos: tuple[str, ...] = (),
+            ) -> int:
+                """Копия рассылки — один раз, когда она ушла хоть кому-то."""
+                if not sent:
+                    return 0
+                head = copy_header(webinar, kind, sent)
+                return sum([await enqueue(conn, f"{key}:copy:{uid}", uid, head + text, markup, photos) for uid in copies])
+
             async with tenant_connection(tenant_id) as conn:
                 opens = await load_opens(conn, tenant_id, showcase.showcase_id)
                 # Открыли бота за последние 10 минут и подтверждения ещё не было.
@@ -507,6 +535,10 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                             opened.telegram_user_id, followup_text(webinar, repeat), followup_markup(repeat),
                         )
                     queued += sent
+                    queued += await copy(
+                        conn, f"webinar:{showcase.showcase_id}:{webinar.tag}:followup", webinar, "followup", sent,
+                        followup_text(webinar, repeat), followup_markup(repeat),
+                    )
                     if sent:
                         logger.info("webinar_followup_queued", extra={"webinar": webinar.tag, "queued": sent})
 
@@ -538,6 +570,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                 photos,
                             )
                         queued += sent
+                        queued += await copy(conn, f"{prefix}:{kind}", webinar, kind, sent, text, markup, photos)
                         if sent:
                             logger.info("webinar_reminders_queued", extra={"webinar": webinar.tag, "kind": kind, "queued": sent})
                     if admin is None:
