@@ -169,3 +169,10 @@
   button). Подготовлено П1–П3 из D:/Projects/ALMIRA/tasks/Сценарий_рассылок_вебинары.md (before_min 5670/4230/2790 → вт/ср/чт
   19:00), образцы отправлены Виктору; включение — после его отмашки (настройка в scratchpad webinar_warmup.json). П4 ждёт
   кодового слова и открытия урока 1.
+
+## 20.10.2026 — прогрев в бою, кодовое слово (core 855e4f4)
+- П1–П4 в `academy_showcases.support.webinar_warmup` (almira): П1 без строки «Разберём это на вебинаре» (правка Александры); П4 — 1350 мин до эфира (23.10 и 30.10, 19:00).
+- Кодовое слово «мастерство»: `support.webinar_gift = {word, course: igra-formy-podarok, days: 7}`; `app/academy/webinar_gift.py`, обработчик `_try_code_word` в боте витрины (раньше обращений). Окно — день эфира от начала до полуночи по Минску; preview-админ — в любой день. Доступ — `academy_access` source=gift, expires_at, payment_ref `code:<метки>` (сегмент «был на эфире»).
+- Курс `igra-formy-podarok` (kind=gift, без цены): неделя 1 «Игры формы» без вебинара, 8 уроков, задание dz-1 без строки срока. Курсы kind=gift в каталоге — только тем, у кого доступ (`_showcase_keeps`).
+- Прогрев не повторяется тем, кто перенёс запись (поиск `webinar:<витрина>:%:warm_<ключ>:<uid>` в outbox).
+- Тесты: `tests/test_academy_webinar_gift.py`, два postgres-теста в `test_academy_webinars_postgres.py`. Красные golden-corpus тесты telegram — были красными и до (среда).
