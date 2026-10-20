@@ -191,3 +191,26 @@ def test_followup_text_paid_mark_and_past_date_in_form():
     late = replace(dasha, created=datetime(2026, 10, 24, 18, 0, tzinfo=MINSK))
     assert lead_webinar(late, webinars) == "ig_web31"
     assert next_webinar(webinars, datetime(2026, 11, 1, tzinfo=MINSK)) is None
+
+
+def test_warmup_config_texts_and_windows():
+    """Прогрев (20.10.2026): тексты из настройки, {date}/{time}, окно 2 часа; битые пункты пропускаются."""
+    from app.academy.webinars import due_messages, warmup_config
+
+    support = {"webinar_warmup": [
+        {"key": "w1", "before_min": 4650, "text": "Через три дня, {date} в {time}, — вебинар."},
+        {"key": "w2", "before_min": 2790, "text": "Идея на сегодня."},
+        {"key": "BAD KEY", "before_min": 100, "text": "x"},
+        {"key": "w9", "before_min": "много", "text": "x"},
+        {"key": "w8", "before_min": 120, "text": "  "},
+    ]}
+    warmups = warmup_config(support)
+    assert [w.key for w in warmups] == ["w1", "w2"]
+    webinar = webinars_config(SUPPORT)[0]  # 24 октября, 17:30, без ссылки
+    at = lambda d, h, m: datetime(2026, 10, d, h, m, tzinfo=MINSK)  # noqa: E731
+    [(kind, moment, text, markup)] = due_messages(webinar, warmups, at(21, 12, 5))
+    assert (kind, moment, markup) == ("warm_w1", at(21, 12, 0), None)
+    assert text == "Через три дня, 24 октября в 17:30, — вебинар."
+    assert [m[0] for m in due_messages(webinar, warmups, at(22, 19, 1))] == ["warm_w2"]
+    assert due_messages(webinar, warmups, at(21, 14, 1)) == []  # окно 2 часа закрылось
+    assert warmup_config(None) == [] and warmup_config({"webinar_warmup": "не список"}) == []

@@ -287,3 +287,41 @@ def test_site_login_open_never_overwrites_ad_open(monkeypatch):
             assert rows[483279210]["tag"] == BOT_TAG and rows[483279210]["lead_id"] is None
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_warmup_goes_once_to_those_registered_for_this_webinar(monkeypatch):
+    """Прогрев 23.10 12:00 (за 29,5 ч до 24.10 17:30): Анне — да; Борис открыл бота позже, Светлана — на 31.10."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    warm = {**NO_LINK, "webinar_warmup": [{"key": "w3", "before_min": 1770, "text": "Завтра, {date} в {time}, ждём вас."}]}
+    with temporary_database("whieda_warmup") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(warm, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(23, 12, 3)) == 1
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(23, 12, 40)) == 0
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(conn, "select idempotency_key, payload ->> 'text' as text from platform_outbox")
+            assert [(r["idempotency_key"], r["text"]) for r in rows] == [
+                (f"webinar:almira:ig_web24:warm_w3:{ANNA}", "Завтра, 24 октября в 17:30, ждём вас."),
+            ]
+
+        db.run_with_app(proof)

@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -62,6 +63,38 @@ class Webinar:
 
 
 FOLLOWUP_WINDOW = timedelta(hours=2)
+
+# Прогрев (20.10.2026): support.webinar_warmup = [{"key": "w1", "before_min": 4650, "text": "…{date}…{time}…"}].
+# Тексты — в настройке: правка текста без выпуска. Окно отправки — 2 часа после своего времени.
+WARMUP_WINDOW = timedelta(hours=2)
+_WARMUP_KEY_RE = re.compile(r"^[a-z0-9_]{1,20}$")
+
+
+@dataclass(frozen=True)
+class Warmup:
+    key: str
+    before: timedelta
+    text: str
+
+
+def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
+    raw = (support or {}).get("webinar_warmup")
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        key, text = str(item.get("key") or ""), str(item.get("text") or "").strip()
+        try:
+            minutes = int(item.get("before_min"))
+        except (TypeError, ValueError):
+            continue
+        if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
+            out.append(Warmup(key, timedelta(minutes=minutes), text))
+    return out
+
+
+def warmup_text(item: Warmup, webinar: Webinar) -> str:
+    return item.text.replace("{date}", webinar.date).replace("{time}", webinar.at.astimezone(MINSK).strftime("%H:%M"))
 
 
 # Напоминание: ключ, за сколько до начала, нужна ли ссылка, сколько после своего времени ещё слать
@@ -142,6 +175,20 @@ def reminder_text(kind: str, webinar: Webinar) -> str:
 
 def _link_markup(webinar: Webinar) -> dict[str, Any]:
     return {"inline_keyboard": [[{"text": "Перейти к эфиру", "url": webinar.url}]]}
+
+
+def due_messages(
+    webinar: Webinar, warmups: list[Warmup], now: datetime,
+) -> list[tuple[str, datetime, str, dict[str, Any] | None]]:
+    """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки)."""
+    out: list[tuple[str, datetime, str, dict[str, Any] | None]] = []
+    for item in warmups:
+        moment = webinar.at - item.before
+        if moment <= now < min(moment + WARMUP_WINDOW, webinar.at):
+            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), None))
+    for kind, moment in due_reminders(webinar, now):
+        out.append((kind, moment, reminder_text(kind, webinar), _link_markup(webinar) if kind in ("hour", "five") else None))
+    return out
 
 
 def due_reminders(webinar: Webinar, now: datetime) -> list[tuple[str, datetime]]:
@@ -349,8 +396,9 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
             if not webinars or not binding_id or binding_id not in bindings:
                 continue
             # Что пора делать по расписанию — считается без базы.
+            warmups = warmup_config(showcase.support)
             work = [
-                (webinar, due_reminders(webinar, now),
+                (webinar, due_messages(webinar, warmups, now),
                  not webinar.url and _in(webinar.at - NO_LINK_WARNING, now, webinar.at - timedelta(hours=1)),
                  _in(webinar.at - CALL_LIST, now, webinar.at))
                 for webinar in webinars
@@ -448,15 +496,13 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 for webinar, reminders, warn, calls in work:
                     prefix = f"webinar:{showcase.showcase_id}:{webinar.tag}"
                     audience = [o for o in opens if person_webinar(o, leads_by_id, webinars) == webinar.tag]
-                    for kind, moment in reminders:
+                    for kind, moment, text, markup in reminders:
                         sent = 0
                         for opened in audience:
                             if opened.opened_at is not None and opened.opened_at > moment:
-                                continue  # открыл бота позже — это напоминание ему уже не нужно
-                            markup = _link_markup(webinar) if kind in ("hour", "five") else None
+                                continue  # открыл бота позже — это сообщение ему уже не нужно
                             sent += await enqueue(
-                                conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id,
-                                reminder_text(kind, webinar), markup,
+                                conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id, text, markup,
                             )
                         queued += sent
                         if sent:
