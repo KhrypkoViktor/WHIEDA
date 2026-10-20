@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -494,6 +494,22 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 if confirm_now:
                     _last_confirm_fetch[fetch_key] = now
                 leads_by_id = {lead.lead_id: lead for lead in leads}
+
+                # Вошёл в бота, а строка не нашлась в первые 10 минут (форма позже; вход без метки до 19.10 —
+                # Павел Бацяновский, 20.10) — перед каждой рассылкой связываем по нику или имени с фамилией.
+                for i, opened in enumerate(opens):
+                    if opened.lead_id or not leads:
+                        continue
+                    lead = match_lead(leads, username=opened.username, name=opened.name)
+                    if lead is None:
+                        continue
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "update academy_ad_opens set lead_id = %s where tenant_id = %s and showcase_id = %s"
+                            " and telegram_user_id = %s and lead_id is null",
+                            (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id),
+                        )
+                    opens[i] = replace(opened, lead_id=lead.lead_id)
 
                 # Подтверждение даты: строка заявки нашлась — «Вы записаны на …» с кнопкой переноса.
                 for opened in recent if confirm_now else []:

@@ -466,3 +466,43 @@ def test_broadcast_copy_goes_once_with_a_count(monkeypatch):
             )
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_entrant_without_row_is_linked_by_name_before_a_send(monkeypatch):
+    """Дарья вошла в бота без метки 22.10 и строка не нашлась сразу — к напоминанию «за сутки» её связывают
+    по имени и фамилии, и напоминание уходит ей вместе с Анной."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    dasha = 3005
+    with temporary_database("whieda_relink") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute(
+                "insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, opened_at)"
+                " values ('whieda', 'almira', %s, null, 'Дарья Звонкова', 'bot', '2026-10-22T12:00:00+03:00')", (dasha,)
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, fetch_one, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, {"almira-academy-bot": object()}, clock=at(23, 17, 35)) == 2
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(conn, "select idempotency_key from platform_outbox order by idempotency_key")
+                linked = await fetch_one(conn, "select lead_id from academy_ad_opens where telegram_user_id = %s", (dasha,))
+            assert [r["idempotency_key"] for r in rows] == [
+                f"webinar:almira:ig_web24:day:{ANNA}", f"webinar:almira:ig_web24:day:{dasha}",
+            ]
+            assert linked["lead_id"] == "703"
+
+        db.run_with_app(proof)
