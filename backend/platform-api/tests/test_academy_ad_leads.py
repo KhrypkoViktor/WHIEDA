@@ -202,3 +202,52 @@ def test_single_first_name_or_clashing_nicks_do_not_match():
     # По времени (за 5 минут до /start) — да, если ники не спорят.
     near = replace(other, username=None, created=opened_at - timedelta(seconds=40))
     assert match_lead([near], username="Lliiss12345", name="Наталья", opened_at=opened_at).lead_id == "971"
+
+
+# Вкладка формы 31.10 (21.10.2026): те же колонки, без ручных колонок Кирилла — он добавит их справа.
+TAB31 = "\n".join([
+    "id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,form_name,is_organic,"
+    "platform,что_интересует,учились_в_almira_раньше?,ваш_ник_в_telegram_(для_ссылки_на_эфир),полное_имя,"
+    "номер_телефона,lead_status,,",
+    "l:444,2026-10-24T03:10:00-05:00,ag:9,D1,as:9,D,c:9,Композиция,f:1126256416558363,Вебинар композиция 31.10,false,ig,"
+    "курс_«игра_формы»,нет,,Ольга Курсова,p:+375291234567,CREATED,написал,оплатил 10к",
+    "l:111,2026-10-16T08:40:11-05:00,ag:1,A3 — ошибки,as:2,A,c:3,Композиция,f:4,Вебинар композиция 24.10,false,ig,"
+    "бесплатный_вебинар_24_октября,нет,t.me/kvetka_space,Анна Петрова,p:+375291112233,CREATED,,",
+])
+
+
+def test_both_tabs_read_merged_by_id_and_course_interest_goes_to_the_form_date(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    from app.academy import ad_leads
+    from app.academy.webinars import is_paid, lead_webinar, webinars_config
+
+    config = sheet_config({"leads_sheet": {"id": "1-HNjlo54nJvCDNwJ6H-6PNGiOF2xdSKVNwIzp_0Lb5g", "gid": "1983230657",
+                                           "gids": ["1983230657", "1990357724", "bad"]}})
+    assert config["gids"] == ["1983230657", "1990357724"]
+    assert sheet_config({"leads_sheet": {"id": config["id"], "gid": "5"}})["gids"] == ["5"]
+
+    tabs = {"1983230657": CSV, "1990357724": TAB31}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=tabs[request.url.params["gid"]], headers={"content-type": "text/csv"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(ad_leads.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    leads = asyncio.run(ad_leads.fetch_leads(config))
+    # Повтор id из второй вкладки не дублируется; по времени — новая заявка последней.
+    assert [lead.lead_id for lead in leads] == ["111", "222", "333", "444"]
+    olga = leads[-1]
+    assert (olga.tab, leads[0].tab) == ("1990357724", "1983230657")
+    assert olga.interest == "Курс «игра формы»"
+    webinars = webinars_config({"webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+        "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
+    }})
+    assert lead_webinar(olga, webinars) == "ig_web31"  # «Курс…» в форме 31.10 — дата по имени формы
+    assert is_paid(olga) and olga.status == "написал | оплатил 10к"  # пометки Кирилла справа от lead_status
+    text = alert_text(olga)
+    assert text.startswith("🔔 Новая заявка · курс «") and "🎯 Интерес: Курс «" in text
+    assert ad_leads.sheet_url(config, olga.tab).endswith("gid=1990357724")

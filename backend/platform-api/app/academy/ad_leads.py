@@ -31,7 +31,7 @@ import io
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -80,6 +80,7 @@ class Lead:
     # Пометки администратора: все колонки после lead_status, кроме «В боте» (Кирилл пишет «написал»,
     # «оплатил» и в безымянные колонки, «Статус» у него пуст — 19.10.2026).
     status: str = ""
+    tab: str = ""  # gid вкладки таблицы, откуда строка (кнопка «Открыть таблицу заявок» — на неё)
 
 
 @dataclass(frozen=True)
@@ -215,7 +216,7 @@ def _what(lead: Lead) -> str:
     interest = lead.interest
     if interest.lower().startswith("бесплатный вебинар"):
         return interest[len("бесплатный "):]
-    return interest.lower() if interest else lead.form_name
+    return interest[:1].lower() + interest[1:] if interest else lead.form_name
 
 
 def _when(moment: datetime | None) -> str:
@@ -358,28 +359,49 @@ def opened_text(*, name: str, username: str | None, user_id: int | None, webinar
 # ---- таблица ------------------------------------------------------------------------------------
 
 
-def sheet_config(support: dict[str, Any] | None) -> dict[str, str] | None:
+def sheet_config(support: dict[str, Any] | None) -> dict[str, Any] | None:
+    """``leads_sheet = {id, gid, gids?, since}``. ``gids`` — все вкладки с заявками (21.10.2026: форма 31.10
+    Meta пишет в свою вкладку той же таблицы); ``gid`` — первая."""
     raw = (support or {}).get("leads_sheet")
     if not isinstance(raw, dict):
         return None
     sheet_id, gid = str(raw.get("id") or "").strip(), str(raw.get("gid") or "0").strip()
     if not _SHEET_ID_RE.fullmatch(sheet_id) or not _GID_RE.fullmatch(gid):
         return None
-    return {"id": sheet_id, "gid": gid, "since": str(raw.get("since") or "").strip()}
+    extra = raw.get("gids") if isinstance(raw.get("gids"), list) else []
+    gids = list(dict.fromkeys([gid] + [str(g).strip() for g in extra if _GID_RE.fullmatch(str(g).strip())]))
+    return {"id": sheet_id, "gid": gid, "gids": gids, "since": str(raw.get("since") or "").strip()}
 
 
-def sheet_url(config: dict[str, str]) -> str:
-    return _SHEET_URL.format(id=config["id"], gid=config["gid"])
+def sheet_url(config: dict[str, Any], tab: str = "") -> str:
+    return _SHEET_URL.format(id=config["id"], gid=tab or config["gid"])
 
 
-async def fetch_leads(config: dict[str, str]) -> list[Lead]:
+def merge_leads(tabs: list[list[Lead]]) -> list[Lead]:
+    """Заявки всех вкладок одним списком по времени (поиск идёт с конца — свежие важнее); один id — одна заявка."""
+    seen: set[str] = set()
+    out: list[Lead] = []
+    for lead in (lead for tab in tabs for lead in tab):
+        if lead.lead_id in seen:
+            continue
+        seen.add(lead.lead_id)
+        out.append(lead)
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    return sorted(out, key=lambda lead: lead.created or floor)
+
+
+async def fetch_leads(config: dict[str, Any]) -> list[Lead]:
+    """Все вкладки ``gids``; не прочиталась хоть одна — ошибка: неполный список врал бы «не в боте»."""
+    tabs: list[list[Lead]] = []
     async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SEC, follow_redirects=True) as client:
-        response = await client.get(_EXPORT_URL.format(id=config["id"], gid=config["gid"]))
-    response.raise_for_status()
-    if "text/csv" not in response.headers.get("content-type", ""):
-        # Доступ по ссылке закрыт — Google отдаёт страницу входа, а не CSV.
-        raise RuntimeError("leads_sheet_not_csv")
-    return parse_leads(response.content.decode("utf-8-sig"))
+        for gid in config.get("gids") or [config["gid"]]:
+            response = await client.get(_EXPORT_URL.format(id=config["id"], gid=gid))
+            response.raise_for_status()
+            if "text/csv" not in response.headers.get("content-type", ""):
+                # Доступ по ссылке закрыт — Google отдаёт страницу входа, а не CSV.
+                raise RuntimeError("leads_sheet_not_csv")
+            tabs.append([replace(lead, tab=gid) for lead in parse_leads(response.content.decode("utf-8-sig"))])
+    return merge_leads(tabs)
 
 
 # ---- кто открыл бота ----------------------------------------------------------------------------
@@ -534,7 +556,6 @@ async def ad_leads_step(
             fresh = [lead for lead in leads if since is None or (lead.created is not None and lead.created >= since)]
             if not fresh:
                 continue
-            markup = {"inline_keyboard": [[{"text": "Открыть таблицу заявок", "url": sheet_url(config)}]]}
             async with tenant_connection(tenant_id) as conn:
                 opens = await load_opens(conn, tenant_id, showcase.showcase_id)
                 for lead in fresh:
@@ -550,7 +571,9 @@ async def ad_leads_step(
                             "chat_id": str(int(admin)),
                             "text": alert_text(lead, opened),
                             "binding_id": binding_id,
-                            "reply_markup": markup,
+                            "reply_markup": {"inline_keyboard": [[
+                                {"text": "Открыть таблицу заявок", "url": sheet_url(config, lead.tab)},
+                            ]]},
                         },
                         due_at=datetime.now(timezone.utc),
                     )
