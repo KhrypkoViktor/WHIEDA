@@ -120,7 +120,15 @@ def clean_username(value: str) -> str | None:
 
 def _interest(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "").replace("_", " ")).strip()
+    # Meta пишет ответ строчными: «курс_«игра_формы»» → «Курс «Игра формы»».
+    text = re.sub(r"«(\w)", lambda m: "«" + m.group(1).upper(), text)
     return text[:1].upper() + text[1:] if text else ""
+
+
+def wants_course(lead: Lead) -> bool:
+    """В форме вебинара выбран курс, а не дата: на эфир такого человека бот всё равно записывает — по
+    дате из имени формы (Валентина Чижикова, форма 24.10, 21.10.2026), а Кириллу — подсказка предложить курс."""
+    return lead.interest.casefold().startswith("курс")
 
 
 def _studied(value: str) -> bool | None:
@@ -235,6 +243,8 @@ def alert_text(lead: Lead, opened: Opened | None = None) -> str:
     """Алерт по строке таблицы; ``opened`` — человек уже в боте: имя — ссылка на его чат."""
     what = _what(lead)
     lines = ["🔔 Новая заявка" + (f" · {what}" if what else "")]
+    if wants_course(lead):
+        lines.append(f"💡 Выбран курс, а не дата эфира. На вебинар бот запишет по форме ({lead.form_name}) — предложите и курс.")
     name = _plain(lead.name) or (_plain(opened.name) if opened else "")
     if opened:
         lines.append(f'<b><a href="tg://user?id={int(opened.telegram_user_id)}">{name or "Без имени"}</a></b>')

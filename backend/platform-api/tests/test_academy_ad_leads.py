@@ -241,7 +241,7 @@ def test_both_tabs_read_merged_by_id_and_course_interest_goes_to_the_form_date(m
     assert [lead.lead_id for lead in leads] == ["111", "222", "333", "444"]
     olga = leads[-1]
     assert (olga.tab, leads[0].tab) == ("1990357724", "1983230657")
-    assert olga.interest == "Курс «игра формы»"
+    assert olga.interest == "Курс «Игра формы»"
     webinars = webinars_config({"webinars": {
         "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
         "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
@@ -249,5 +249,7 @@ def test_both_tabs_read_merged_by_id_and_course_interest_goes_to_the_form_date(m
     assert lead_webinar(olga, webinars) == "ig_web31"  # «Курс…» в форме 31.10 — дата по имени формы
     assert is_paid(olga) and olga.status == "написал | оплатил 10к"  # пометки Кирилла справа от lead_status
     text = alert_text(olga)
-    assert text.startswith("🔔 Новая заявка · курс «") and "🎯 Интерес: Курс «" in text
+    assert text.startswith("🔔 Новая заявка · курс «Игра формы»\n💡 Выбран курс, а не дата эфира.")
+    assert "по форме (Вебинар композиция 31.10)" in text and "🎯 Интерес: Курс «Игра формы»" in text
+    assert "💡" not in alert_text(leads[0])  # вебинарная заявка — без подсказки
     assert ad_leads.sheet_url(config, olga.tab).endswith("gid=1990357724")
