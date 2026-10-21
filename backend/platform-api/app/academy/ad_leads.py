@@ -49,6 +49,9 @@ BOT_TAG = "bot"
 # Имя в Telegram часто другое («Svetik» — «Светлана Самохвал»), поэтому ещё и по времени (17.10.2026).
 OPEN_AFTER_FORM = timedelta(minutes=5)
 OPEN_CLOCK_SKEW = timedelta(seconds=15)
+# Форма за минуту до /start — это он, даже если «ник» в форме другой: туда пишут ник Instagram
+# (Маргарита Пятых — «Sirni_pelmen», открыла бота @Bonni_P через 13 с после формы, 20.10.2026).
+CLASH_TIGHT = timedelta(seconds=60)
 FETCH_TIMEOUT_SEC = 15.0
 MINSK = timezone(timedelta(hours=3))
 _EXPORT_URL = "https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}"
@@ -277,6 +280,10 @@ def _near(created: datetime | None, opened_at: datetime | None) -> tuple[bool, t
     return (gap < timedelta(0), abs(gap)) if -OPEN_CLOCK_SKEW <= gap <= OPEN_AFTER_FORM else None
 
 
+def _tight(created: datetime | None, opened_at: datetime | None) -> bool:
+    return bool(created and opened_at) and -OPEN_CLOCK_SKEW <= opened_at - created <= CLASH_TIGHT
+
+
 def _nicks_clash(a: str | None, b: str | None) -> bool:
     """Оба ника известны и разные — это разные люди."""
     return bool(a and b and a.lstrip("@").casefold() != b.lstrip("@").casefold())
@@ -305,7 +312,8 @@ def match_lead(
             return lead
     timed = [
         (gap, lead) for lead in leads
-        if not _nicks_clash(username, lead.username) and (gap := _near(lead.created, opened_at)) is not None
+        if (not _nicks_clash(username, lead.username) or _tight(lead.created, opened_at))
+        and (gap := _near(lead.created, opened_at)) is not None
     ]
     return min(timed, key=lambda item: item[0])[1] if timed else None
 
@@ -326,7 +334,8 @@ def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
     # Строка при открытии ещё не дошла до таблицы — ближайшее по времени открытие без своей строки.
     timed = [
         (gap, opened) for opened in opens
-        if not opened.lead_id and not _nicks_clash(lead.username, opened.username)
+        if not opened.lead_id
+        and (not _nicks_clash(lead.username, opened.username) or _tight(lead.created, opened.opened_at))
         and (gap := _near(lead.created, opened.opened_at)) is not None
     ]
     return min(timed, key=lambda item: item[0])[1] if timed else None

@@ -497,10 +497,14 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
 
                 # Вошёл в бота, а строка не нашлась в первые 10 минут (форма позже; вход без метки до 19.10 —
                 # Павел Бацяновский, 20.10) — перед каждой рассылкой связываем по нику или имени с фамилией.
+                taken = {o.lead_id for o in opens if o.lead_id}
                 for i, opened in enumerate(opens):
                     if opened.lead_id or not leads:
                         continue
-                    lead = match_lead(leads, username=opened.username, name=opened.name)
+                    lead = match_lead(
+                        [x for x in leads if x.lead_id not in taken],
+                        username=opened.username, name=opened.name, opened_at=opened.opened_at,
+                    )
                     if lead is None:
                         continue
                     async with conn.cursor() as cur:
@@ -510,6 +514,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                             (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id),
                         )
                     opens[i] = replace(opened, lead_id=lead.lead_id)
+                    taken.add(lead.lead_id)
 
                 # Подтверждение даты: строка заявки нашлась — «Вы записаны на …» с кнопкой переноса.
                 for opened in recent if confirm_now else []:

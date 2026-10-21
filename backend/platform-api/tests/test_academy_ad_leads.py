@@ -192,8 +192,13 @@ def test_single_first_name_or_clashing_nicks_do_not_match():
     assert match_lead([full], username=None, name="Иванова Наталья").lead_id == "971"
     assert match_lead([full], username="Lliiss12345", name="Наталья Иванова").lead_id == "971"
     # По времени ники спорят — не он.
-    timed = replace(other, created=opened_at - timedelta(seconds=40))
+    timed = replace(other, created=opened_at - timedelta(seconds=90))
     assert match_lead([timed], username="Lliiss12345", name="Наталья", opened_at=opened_at) is None
+    # …кроме формы за минуту до /start: в «ник» формы пишут ник Instagram (Маргарита Пятых «Sirni_pelmen»,
+    # @Bonni_P через 13 с, 20.10.2026) — и строке, и флагу таблицы.
+    rita = replace(other, name="Marharita Pyatykh", username="Sirni_pelmen", created=opened_at - timedelta(seconds=13))
+    assert match_lead([rita], username="Bonni_P", name="®", opened_at=opened_at).lead_id == "971"
+    assert opened_for(rita, [Opened(461610600, "Bonni_P", "®", None, opened_at)]) is not None
     # По времени (за 5 минут до /start) — да, если ники не спорят.
     near = replace(other, username=None, created=opened_at - timedelta(seconds=40))
     assert match_lead([near], username="Lliiss12345", name="Наталья", opened_at=opened_at).lead_id == "971"
