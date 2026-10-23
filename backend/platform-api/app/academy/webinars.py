@@ -238,10 +238,21 @@ def _in(moment: datetime, now: datetime, until: datetime) -> bool:
     return moment <= now < until
 
 
+def marked_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
+    """Колонка «Эфир» администратора: «31», «31.10», «на 31» → вебинар этого числа (Виктор, 23.10.2026)."""
+    found = re.search(r"(?<!\d)(\d{1,2})(?!\d)", lead.webinar_mark) if lead and lead.webinar_mark else None
+    if not found:
+        return None
+    day = int(found.group(1))
+    return next((w.tag for w in webinars if w.at.astimezone(MINSK).day == day), None)
+
+
 def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
-    """Метка вебинара по строке заявки: «Бесплатный вебинар 24 октября» → ig_web24."""
+    """Метка вебинара по строке заявки: колонка «Эфир», иначе «Бесплатный вебинар 24 октября» → ig_web24."""
     if lead is None:
         return None
+    if marked := marked_webinar(lead, webinars):
+        return marked
     # Сначала выбранный в форме пункт: имя формы одно на обе даты («Вебинар композиция 24.10»),
     # и Светлана Летохо, выбравшая 31 октября, попадала на 24-е (18.10.2026).
     for source in (lead.interest, lead.form_name):
@@ -258,7 +269,10 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
 
 
 def person_webinar(opened: Opened, leads_by_id: dict[str, Lead], webinars: list[Webinar]) -> str:
-    """Вебинар человека, открывшего бота: выбор кнопкой в боте, иначе пункт формы, иначе метка /start."""
+    """Вебинар человека, открывшего бота: колонка «Эфир» администратора, выбор кнопкой в боте, пункт формы,
+    метка /start."""
+    if marked := marked_webinar(leads_by_id.get(opened.lead_id or ""), webinars):
+        return marked
     if opened.webinar and any(w.tag == opened.webinar for w in webinars):
         return opened.webinar
     return lead_webinar(leads_by_id.get(opened.lead_id or ""), webinars) or opened.tag

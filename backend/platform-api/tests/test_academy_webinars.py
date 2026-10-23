@@ -284,3 +284,32 @@ def test_ticket_card_says_who_it_is_in_the_sheet():
     assert card_text(None, leads, webinars, username=None, name="Самохвал Светлана").startswith(
         "📋 В таблице: <b>Светлана Самохвал</b> · вебинар 24 октября"
     )
+
+
+def test_admin_column_efir_decides_the_webinar():
+    """Колонка «Эфир» (Кирилл после звонка пишет 24 или 31) важнее пункта формы и кнопки в боте (23.10.2026)."""
+    from app.academy.ad_leads import Opened
+    from app.academy.webinars import person_webinar
+
+    webinars = webinars_config({"webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+        "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
+    }})
+    head = HEADER + ",В боте,Эфир"
+    rows = [
+        "l:801,2026-10-20T10:00:00+03:00,,,,,,,f:4,Вебинар композиция 24.10,false,ig,бесплатный_вебинар_24_октября,нет,,"
+        "Ирина Пример,p:+375291000801,CREATED,написал,,✅ да,на 31",
+        "l:802,2026-10-20T10:00:00+03:00,,,,,,,f:4,Вебинар композиция 24.10,false,ig,бесплатный_вебинар_31_октября,нет,,"
+        "Олег Пример,p:+375291000802,CREATED,,,нет,24.10",
+        "l:803,2026-10-20T10:00:00+03:00,,,,,,,f:4,Вебинар композиция 24.10,false,ig,бесплатный_вебинар_24_октября,нет,,"
+        "Без Пометки,p:+375291000803,CREATED,,,нет,",
+    ]
+    irina, oleg, plain = parse_leads("\n".join([head, *rows]))
+    assert (irina.webinar_mark, oleg.webinar_mark, plain.webinar_mark) == ("на 31", "24.10", "")
+    assert [lead_webinar(x, webinars) for x in (irina, oleg, plain)] == ["ig_web31", "ig_web24", "ig_web24"]
+    by_id = {x.lead_id: x for x in (irina, oleg, plain)}
+    # Нажал в боте «Перенести на 24», а Кирилл после звонка поставил 31 — верим таблице.
+    pressed = Opened(1, None, "Ирина", "801", None, "ig_web24", "ig_web24")
+    assert person_webinar(pressed, by_id, webinars) == "ig_web31"
+    # Без пометки — как раньше: кнопка в боте.
+    assert person_webinar(Opened(3, None, "Без", "803", None, "ig_web24", "ig_web31"), by_id, webinars) == "ig_web31"

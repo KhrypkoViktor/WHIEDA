@@ -81,6 +81,8 @@ class Lead:
     # «оплатил» и в безымянные колонки, «Статус» у него пуст — 19.10.2026).
     status: str = ""
     tab: str = ""  # gid вкладки таблицы, откуда строка (кнопка «Открыть таблицу заявок» — на неё)
+    # Колонка «Эфир» (Кирилл, 23.10.2026): 24 или 31 — на какой вебинар человек записан по факту звонка.
+    webinar_mark: str = ""
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,7 @@ def _column(row: dict[str, str], prefix: str) -> str:
 
 
 FLAG_HEADER = "В боте"  # колонку пишет скрипт таблицы (lead-flags), это не пометка администратора
+WEBINAR_HEADER = "эфир"  # колонка «Эфир» администратора: 24 / 31 — важнее пункта формы и кнопки в боте
 
 
 def _rows(csv_text: str) -> list[tuple[dict[str, str], str]]:
@@ -206,6 +209,9 @@ def parse_leads(csv_text: str) -> list[Lead]:
                 source=_source(row.get("platform", ""), row.get("ad_name", ""), row.get("is_organic", "")),
                 form_name=str(row.get("form_name") or "").strip(),
                 status=notes,
+                webinar_mark=next(
+                    (str(value).strip() for key, value in row.items() if key.casefold() == WEBINAR_HEADER), ""
+                ),
             )
         )
     return leads
