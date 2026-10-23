@@ -313,3 +313,55 @@ def test_admin_column_efir_decides_the_webinar():
     assert person_webinar(pressed, by_id, webinars) == "ig_web31"
     # Без пометки — как раньше: кнопка в боте.
     assert person_webinar(Opened(3, None, "Без", "803", None, "ig_web24", "ig_web31"), by_id, webinars) == "ig_web31"
+
+
+# Серия «анатомия» (23.10.2026): свои даты, форма, тема напоминаний и перенос только внутри серии.
+ANATOMY = {
+    "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+    "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
+    "ig_an28": {"at": "2026-10-28T19:30:00+03:00", "date": "28 октября", "url": "", "series": "anatomy",
+                "form": "анатом", "subject": "по пластической анатомии", "label": "анатомия", "greeting": "Привет, анатомия"},
+    "ig_an07": {"at": "2026-11-07T18:00:00+03:00", "date": "7 ноября", "url": "", "series": "anatomy",
+                "form": "анатом", "subject": "по пластической анатомии", "label": "анатомия", "greeting": "Привет, анатомия"},
+}
+AN_HEADER = (
+    "id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,form_name,is_organic,"
+    "platform,какой_эфир_удобнее?,есть_ли_у_вас_база_академического_рисунка?,ваш_ник_в_telegram_(для_ссылки_на_эфир),"
+    "полное_имя,номер_телефона,lead_status"
+)
+
+
+def test_anatomy_series_dates_texts_and_moves_stay_inside_the_series():
+    from app.academy.ad_leads import Opened
+    from app.academy.webinars import Warmup, due_messages, move_markup, person_webinar
+
+    webinars = webinars_config({"webinars": ANATOMY})
+    an28 = next(w for w in webinars if w.tag == "ig_an28")
+    assert (an28.series, an28.form, an28.label) == ("anatomy", "анатом", "анатомия")
+    assert "бесплатный вебинар Александры Пармон по пластической анатомии" in reminder_text("day", an28)
+    assert reminder_text("two_hours", an28).startswith("Сегодня в 19:30 по Минску — вебинар по пластической анатомии")
+    leads = parse_leads("\n".join([
+        AN_HEADER,
+        "l:901,2026-10-23T10:00:00+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,"
+        "\"вебинар_7_ноября,_суббота,_18:00\",немного,,Анна Анатомова,p:+375291000901,CREATED",
+        "l:902,2026-10-28T20:00:00+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,"
+        "\"вебинар_28_октября,_среда,_19:30\",нет,,Поздний Человек,p:+375291000902,CREATED",
+        "l:903,2026-10-23T10:00:00+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,,да,,Без Выбора,p:+375291000903,CREATED",
+    ]))
+    chose07, late, nochoice = leads
+    assert chose07.base == "Немного" and chose07.interest.startswith("Вебинар 7 ноября")
+    assert lead_webinar(chose07, webinars) == "ig_an07"
+    assert lead_webinar(late, webinars) == "ig_an07"  # выбрал 28.10 уже после эфира — ближайший, 7.11
+    # Без выбора — дата из имени формы: первая дата серии («28.10» в «… 28.10 и 7.11»), не композиция.
+    assert lead_webinar(nochoice, webinars) == "ig_an28"
+    # Перенос — только внутри серии: под анатомией нет кнопок 24 и 31 октября.
+    rows = move_markup(webinars, "ig_an28", datetime(2026, 10, 23, 12, tzinfo=MINSK))["inline_keyboard"]
+    assert [r[0]["callback_data"] for r in rows] == ["wbn:ig_an07"]
+    # Запись анатомии со строкой композиции — строка не её, вебинар по метке.
+    by_id = {"701": parse_leads(HEADER + "\nl:701,2026-10-20T10:00:00+03:00,,,,,,,f:4,Вебинар композиция 24.10,false,ig,"
+                                 "бесплатный_вебинар_24_октября,нет,,Анна Ли,p:+375291000001,CREATED,,")[0]}
+    stray = Opened(1, None, "Анна", "701", None, "ig_an28", None, "anatomy")
+    assert person_webinar(stray, by_id, webinars) == "ig_an28"
+    # Прогрев композиции к анатомии не уходит.
+    warm = [Warmup("p1", timedelta(minutes=60), "Прогрев {date}")]
+    assert due_messages(an28, warm, an28.at - timedelta(minutes=59)) == []

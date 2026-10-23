@@ -24,7 +24,15 @@ from app.academy.keys import parse_course_start_token
 from app.academy.notify import course_page_url
 from app.academy.service import preview_admin_ids
 from app.academy.webinar_gift import GIFT_BUTTON, gift_closed_text, gift_config, gift_text, gift_webinar, grant_gift, is_code_word
-from app.academy.webinars import move_markup, move_webinar, moved_text, not_in_bot_texts, webinars_config
+from app.academy.webinars import (
+    move_markup,
+    move_webinar,
+    moved_text,
+    not_in_bot_texts,
+    series_webinars,
+    webinar_series_of,
+    webinars_config,
+)
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
 from app.telegram.academy import handle_course_start_token, show_academy_home, try_handle_academy_callback, try_handle_academy_text
@@ -100,10 +108,15 @@ async def _first_policy_notice(tenant_id: str, showcase: Showcase, user_id: int,
     return text if first else None
 
 
-def split_ad_tag(token: str) -> tuple[str, str | None]:
+def webinar_tags(showcase: Showcase) -> frozenset[str]:
+    """Метки вебинаров витрины: из настройки (анатомия ig_an28, ig_an07 …) и композиции."""
+    return AD_WEBINARS | {w.tag for w in webinars_config(showcase.support)}
+
+
+def split_ad_tag(token: str, tags: frozenset[str] = AD_WEBINARS) -> tuple[str, str | None]:
     """``ig_web24_1817700742504331`` → (``ig_web24``, id заявки); любая другая метка — как есть, без id."""
     base, _, tail = token.rpartition("_")
-    if base in AD_WEBINARS and _LEAD_ID_RE.fullmatch(tail):
+    if base in tags and _LEAD_ID_RE.fullmatch(tail):
         return base, tail
     return token, None
 
@@ -111,7 +124,11 @@ def split_ad_tag(token: str) -> tuple[str, str | None]:
 def ad_lead_text(showcase: Showcase, tag: str) -> str:
     """Приветствие человеку с рекламной формы: вебинар с датой или общая заявка."""
     hello = f"Здравствуйте! Рады видеть вас в арт-студии {showcase.brand_name}."
-    if tag in AD_WEBINARS:
+    own = next((w for w in webinars_config(showcase.support) if w.tag == tag), None)
+    if own is not None and own.greeting:
+        # Своё приветствие серии (анатомия, 23.10.2026) — текст из настройки, после «да» владельца.
+        return f"{own.greeting}\n\nЕсли появится вопрос — нажмите «Написать администратору»."
+    if tag in webinar_tags(showcase):
         return (
             f"{hello}\n\nСпасибо, что выбрали нас и записались на бесплатный вебинар Александры Пармон "
             "по композиции.\n\nСсылку на эфир пришлём сюда, в этот чат. "
@@ -124,7 +141,7 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
 
 
 async def _sheet_match(
-    msg: Any, showcase: Showcase, lead_id: str | None = None,
+    msg: Any, showcase: Showcase, lead_id: str | None = None, series: str = "",
 ) -> tuple[Lead | None, str, str | None]:
     """Строка таблицы заявок этого человека и его имя и ник в Telegram. Пришёл по личной ссылке —
     строка с этим id (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
@@ -135,7 +152,8 @@ async def _sheet_match(
     config = sheet_config(showcase.support)
     if config:
         try:
-            leads = await fetch_leads(config)
+            webinars = webinars_config(showcase.support)
+            leads = [x for x in await fetch_leads(config) if webinar_series_of(x, webinars) == series]
             lead = next((item for item in leads if item.lead_id == lead_id), None) if lead_id else None
             if lead is None:
                 lead = match_lead(leads, username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc))
@@ -158,18 +176,20 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     короткое сообщение (телефон и ответы формы — в таблице заявок). Академию здесь не показываем.
     ``ig_<вебинар>_<id заявки>`` — личная ссылка: метка вебинара отдельно, строка таблицы по id."""
     tenant_id = tenant.tenant_id
-    tag, link_lead_id = split_ad_tag(tag)
+    tags = webinar_tags(showcase)
+    tag, link_lead_id = split_ad_tag(tag, tags)
+    series = next((w.series for w in webinars_config(showcase.support) if w.tag == tag), "")
     lines = [ad_lead_text(showcase, tag)]
     notice = await _first_policy_notice(tenant_id, showcase, int(msg.user_id), int(msg.chat_id))
     if notice:
         lines += ["", notice]
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": support_buttons()})
-    lead, tg_name, tg_username = await _sheet_match(msg, showcase, link_lead_id)
+    lead, tg_name, tg_username = await _sheet_match(msg, showcase, link_lead_id, series)
     # Отметка «бот открыт» в алерте по заявке (V37, 17.10.2026).
     try:
         await record_open(
             tenant_id, showcase.showcase_id, telegram_user_id=int(msg.user_id), username=tg_username,
-            name=tg_name, tag=tag, lead_id=lead.lead_id if lead else None,
+            name=tg_name, tag=tag, lead_id=lead.lead_id if lead else None, series=series,
         )
     except Exception:
         logger.warning("showcase_ad_open_record_failed", extra={"trace_id": trace_id}, exc_info=True)
@@ -188,7 +208,7 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
         try:
             sent = await send_telegram_text(
                 chat_id=str(admin),
-                text=_opened_line(msg, lead, tg_name, tg_username, webinar=tag in AD_WEBINARS),
+                text=_opened_line(msg, lead, tg_name, tg_username, webinar=tag in tags),
                 bot_token=current_bot_binding().bot_token,
             )
             notified = bool(sent.get("ok"))
@@ -234,7 +254,7 @@ async def _try_webinar_callback(
         text = moved_text(webinar)
     await _send(callback.chat_id, text, move_markup(webinars, webinar.tag, now))
     # После первого эфира перенос на следующий — это запись на повтор (Виктор: 31.10 — повтор 24.10).
-    repeat = any(w.at <= now for w in webinars)
+    repeat = any(w.at <= now for w in series_webinars(webinars, webinar.series))
     try:
         admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
         if admin is not None:
@@ -276,7 +296,7 @@ async def _try_code_word(tenant: TenantContext, msg: Any, showcase: Showcase, *,
     if gift is None or not msg.text or not is_code_word(msg.text, gift):
         return None
     now = datetime.now(timezone.utc)
-    webinars = webinars_config(showcase.support)
+    webinars = series_webinars(webinars_config(showcase.support), "")
     webinar = gift_webinar(webinars, now)
     if webinar is None and int(msg.user_id) in preview_admin_ids() and webinars:
         webinar = min(webinars, key=lambda w: w.at)  # проверка владельцем — в любой день

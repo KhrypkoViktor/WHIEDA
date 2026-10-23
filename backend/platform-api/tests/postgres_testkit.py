@@ -72,6 +72,7 @@ MIGRATIONS = (
     "platform_academy_ad_opens_v37.sql",  # кто открыл бота витрины по ссылке с рекламы (17.10.2026)
     "platform_academy_ad_opens_webinar_v38.sql",  # дата вебинара, выбранная в боте (18.10.2026)
     "platform_academy_unlock_v39.sql",  # мини-курс за «Запуск»: отметка приложения, сообщения об открытии (19.10.2026)
+    "platform_academy_ad_opens_series_v40.sql",  # серии вебинаров: композиция и анатомия (23.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

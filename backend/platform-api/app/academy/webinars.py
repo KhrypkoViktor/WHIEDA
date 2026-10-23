@@ -61,6 +61,22 @@ class Webinar:
     # После эфира — одно приглашение на повтор (``followup``: {at, to}) записанным, кто не оплатил.
     followup_at: datetime | None = None
     followup_to: str = ""
+    # Серии (V40, 23.10.2026): '' — композиция; 'anatomy' — анатомия со своими датами, формой и текстами.
+    series: str = ""
+    form: str = ""  # слово в имени формы Meta, по которому заявка относится к серии («анатом»)
+    subject: str = "по композиции"  # «вебинар … по композиции» в напоминаниях
+    greeting: str = ""  # приветствие на /start с меткой этого вебинара; пусто — приветствие композиции
+    label: str = ""  # подпись серии в алертах администратору («анатомия»)
+
+
+def series_webinars(webinars: list["Webinar"], series: str) -> list["Webinar"]:
+    return [w for w in webinars if w.series == series]
+
+
+def webinar_series_of(lead: Lead | None, webinars: list["Webinar"]) -> str:
+    """Серия заявки — по слову формы из настройки вебинаров; не подошла ни к одной — композиция ('')."""
+    form = (lead.form_name if lead else "").casefold()
+    return next((w.series for w in webinars if w.form and w.form in form), "")
 
 
 FOLLOWUP_WINDOW = timedelta(hours=2)
@@ -78,6 +94,7 @@ class Warmup:
     text: str
     photos: tuple[str, ...] = ()  # file_id бота витрины: одна — фото, несколько — альбом; текст — следом
     button: dict[str, str] | None = None  # {text, url} — кнопка-ссылка под текстом
+    series: str = ""  # серия вебинаров, к которой относится прогрев ('' — композиция)
 
 
 _PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
@@ -120,7 +137,7 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
             if raw_button.get("text") and str(raw_button.get("url") or "").startswith("https://") else None
         )
         if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
-            out.append(Warmup(key, timedelta(minutes=minutes), text, photos, button))
+            out.append(Warmup(key, timedelta(minutes=minutes), text, photos, button, str(item.get("series") or "").strip()))
     return out
 
 
@@ -163,6 +180,11 @@ def webinars_config(support: dict[str, Any] | None) -> list[Webinar]:
         out.append(Webinar(
             str(tag), at, str(item.get("date") or "").strip(), url if url.startswith("https://") else "",
             follow_at, str(follow.get("to") or "") if follow_at else "",
+            series=str(item.get("series") or "").strip(),
+            form=str(item.get("form") or "").strip().casefold(),
+            subject=str(item.get("subject") or "").strip() or "по композиции",
+            greeting=str(item.get("greeting") or "").strip(),
+            label=str(item.get("label") or "").strip(),
         ))
     return out
 
@@ -194,11 +216,11 @@ def reminder_text(kind: str, webinar: Webinar) -> str:
     time = webinar.at.astimezone(MINSK).strftime("%H:%M")
     if kind == "day":
         return (
-            f"Завтра, {webinar.date}, в {time} по Минску — бесплатный вебинар Александры Пармон по композиции.\n\n"
+            f"Завтра, {webinar.date}, в {time} по Минску — бесплатный вебинар Александры Пармон {webinar.subject}.\n\n"
             "Ссылку на эфир пришлём сюда, в этот чат."
         )
     if kind == "two_hours":
-        return f"Сегодня в {time} по Минску — вебинар по композиции с Александрой Пармон. Ссылку пришлём за час до начала."
+        return f"Сегодня в {time} по Минску — вебинар {webinar.subject} с Александрой Пармон. Ссылку пришлём за час до начала."
     if kind == "hour":
         return f"Через час начинаем. Ссылка на эфир: {webinar.url}\n\nНачало в {time} по Минску."
     return f"Начинаем через 5 минут. Заходите: {webinar.url}"
@@ -214,6 +236,8 @@ def due_messages(
     """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки, фото)."""
     out: list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]] = []
     for item in warmups:
+        if item.series != webinar.series:
+            continue
         moment = webinar.at - item.before
         if moment <= now < min(moment + WARMUP_WINDOW, webinar.at):
             markup = {"inline_keyboard": [[item.button]]} if item.button else None
@@ -251,6 +275,7 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
     """Метка вебинара по строке заявки: колонка «Эфир», иначе «Бесплатный вебинар 24 октября» → ig_web24."""
     if lead is None:
         return None
+    webinars = series_webinars(webinars, webinar_series_of(lead, webinars))
     if marked := marked_webinar(lead, webinars):
         return marked
     # Сначала выбранный в форме пункт: имя формы одно на обе даты («Вебинар композиция 24.10»),
@@ -271,11 +296,15 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
 def person_webinar(opened: Opened, leads_by_id: dict[str, Lead], webinars: list[Webinar]) -> str:
     """Вебинар человека, открывшего бота: колонка «Эфир» администратора, выбор кнопкой в боте, пункт формы,
     метка /start."""
-    if marked := marked_webinar(leads_by_id.get(opened.lead_id or ""), webinars):
+    lead = leads_by_id.get(opened.lead_id or "")
+    if lead is not None and webinar_series_of(lead, webinars) != opened.series:
+        lead = None  # строка другой серии к этой записи не относится
+    mine = series_webinars(webinars, opened.series)
+    if marked := marked_webinar(lead, mine):
         return marked
-    if opened.webinar and any(w.tag == opened.webinar for w in webinars):
+    if opened.webinar and any(w.tag == opened.webinar for w in mine):
         return opened.webinar
-    return lead_webinar(leads_by_id.get(opened.lead_id or ""), webinars) or opened.tag
+    return lead_webinar(lead, webinars) or opened.tag
 
 
 def card_text(
@@ -284,6 +313,9 @@ def card_text(
     """Кто это в таблице заявок — для темы обращения администратору: Кирилл не понимал, кто «Svetik»
     (#A-47, это Светлана Самохвал; 22.10.2026). Имя из формы, прямые контакты, вебинар, пометки."""
     by_id = {lead.lead_id: lead for lead in leads}
+    series = opened.series if opened else ""
+    if opened is not None:
+        leads = [x for x in leads if webinar_series_of(x, webinars) == series]
     lead = (by_id.get(opened.lead_id or "") if opened else None) or match_lead(
         leads,
         username=(opened.username if opened else None) or username,
@@ -322,8 +354,13 @@ async def lead_card(tenant_id: str, showcase: Any, *, telegram_user_id: int, use
         return "📋 Таблица заявок сейчас не открылась — найдите человека в ней вручную."
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
-    opened = next((o for o in opens if o.telegram_user_id == int(telegram_user_id)), None)
-    return card_text(opened, leads, webinars_config(showcase.support), username=username, name=name)
+    webinars = webinars_config(showcase.support)
+    mine = [o for o in opens if o.telegram_user_id == int(telegram_user_id)]
+    cards = [card_text(o, leads, webinars, username=username, name=name) for o in mine] or [
+        card_text(None, leads, webinars, username=username, name=name)
+    ]
+    found = [c for c in cards if not c.startswith("📋 В таблице заявок не найдено")]
+    return "\n\n".join(dict.fromkeys(found or cards[:1]))
 
 
 # ---- подтверждение и перенос даты (Виктор, 18.10.2026) ------------------------------------------
@@ -348,7 +385,9 @@ def correction_text(webinar: Webinar) -> str:
 
 
 def move_markup(webinars: list[Webinar], current: str, now: datetime) -> dict[str, Any] | None:
-    """«Перенести на …» — на каждый другой вебинар, который ещё не начался."""
+    """«Перенести на …» — на каждый другой вебинар той же серии, который ещё не начался."""
+    series = next((w.series for w in webinars if w.tag == current), "")
+    webinars = series_webinars(webinars, series)
     rows = [
         [{"text": f"Перенести на {w.date}", "callback_data": f"wbn:{w.tag}"}]
         for w in sorted(webinars, key=lambda item: item.at)
@@ -370,8 +409,8 @@ async def move_webinar(
     if webinar is None:
         return None
     if webinar.at <= moment:
-        # Старая кнопка на прошедший эфир — записываем на ближайший (бот скажет, что дата прошла).
-        webinar = next_webinar(webinars, moment)
+        # Старая кнопка на прошедший эфир — записываем на ближайший той же серии (бот скажет, что дата прошла).
+        webinar = next_webinar(series_webinars(webinars, webinar.series), moment)
         if webinar is None:
             return None
         tag = webinar.tag
@@ -380,16 +419,16 @@ async def move_webinar(
             conn,
             """
             update academy_ad_opens set webinar = %s
-            where tenant_id = %s and showcase_id = %s and telegram_user_id = %s
-            returning telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar
+            where tenant_id = %s and showcase_id = %s and telegram_user_id = %s and series = %s
+            returning telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar, series
             """,
-            (tag, tenant_id, showcase.showcase_id, int(telegram_user_id)),
+            (tag, tenant_id, showcase.showcase_id, int(telegram_user_id), webinar.series),
         )
     if not row:
         return None
     opened = Opened(
         int(row["telegram_user_id"]), row["telegram_username"], str(row["name"] or ""), row["lead_id"],
-        row["opened_at"], str(row["tag"] or ""), row["webinar"],
+        row["opened_at"], str(row["tag"] or ""), row["webinar"], str(row.get("series") or ""),
     )
     return webinar, opened
 
@@ -449,7 +488,7 @@ async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | Non
     bot_url: str | None = None
     for webinar in webinars:
         mine = [lead for lead in leads if lead_webinar(lead, webinars) == webinar.tag]
-        missing = [lead for lead in mine if opened_for(lead, opens) is None]
+        missing = [lead for lead in mine if opened_for(lead, opens, webinar.series) is None]
         if not missing:
             texts.append(f"Вебинар {webinar.date}: все {len(mine)} заявок — в боте.")
             continue
@@ -469,14 +508,16 @@ CONFIRM_FETCH_SEC = 60.0
 _last_confirm_fetch: dict[str, datetime] = {}
 
 
-def confirm_key(showcase_id: str, telegram_user_id: int) -> str:
+def confirm_key(showcase_id: str, telegram_user_id: int, series: str = "") -> str:
+    if series:
+        return f"webinar:{showcase_id}:{series}:confirm:{int(telegram_user_id)}"
     return f"webinar:{showcase_id}:confirm:{int(telegram_user_id)}"
 
 
 async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock: datetime | None = None) -> int:
     """Подтверждения даты, напоминания и списки для администратора, время которых пришло.
     Возвращает число новых сообщений."""
-    from app.academy.ad_leads import match_lead
+    from app.academy.ad_leads import BOT_TAG, match_lead
     from app.academy.showcases import load_showcases
     from app.db import fetch_all, tenant_connection
     from app.jobs.outbox import enqueue_outbox_event
@@ -538,10 +579,12 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     done = {
                         r["idempotency_key"] for r in await fetch_all(
                             conn, "select idempotency_key from platform_outbox where idempotency_key = any(%s)",
-                            ([confirm_key(showcase.showcase_id, o.telegram_user_id) for o in recent],),
+                            ([confirm_key(showcase.showcase_id, o.telegram_user_id, o.series) for o in recent],),
                         )
                     }
-                    recent = [o for o in recent if confirm_key(showcase.showcase_id, o.telegram_user_id) not in done]
+                    recent = [
+                        o for o in recent if confirm_key(showcase.showcase_id, o.telegram_user_id, o.series) not in done
+                    ]
                 fetch_key = f"{tenant_id}:{showcase.showcase_id}"
                 last = _last_confirm_fetch.get(fetch_key)
                 confirm_now = bool(recent) and (last is None or (now - last).total_seconds() >= CONFIRM_FETCH_SEC)
@@ -557,15 +600,17 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 if confirm_now:
                     _last_confirm_fetch[fetch_key] = now
                 leads_by_id = {lead.lead_id: lead for lead in leads}
+                lead_series = {lead.lead_id: webinar_series_of(lead, webinars) for lead in leads}
 
                 # Вошёл в бота, а строка не нашлась в первые 10 минут (форма позже; вход без метки до 19.10 —
                 # Павел Бацяновский, 20.10) — перед каждой рассылкой связываем по нику или имени с фамилией.
+                # Строка — только своей серии: композиция и анатомия — разные заявки (V40, 23.10.2026).
                 taken = {o.lead_id for o in opens if o.lead_id}
                 for i, opened in enumerate(opens):
                     if opened.lead_id or not leads:
                         continue
                     lead = match_lead(
-                        [x for x in leads if x.lead_id not in taken],
+                        [x for x in leads if x.lead_id not in taken and lead_series[x.lead_id] == opened.series],
                         username=opened.username, name=opened.name, opened_at=opened.opened_at,
                     )
                     if lead is None:
@@ -573,18 +618,48 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     async with conn.cursor() as cur:
                         await cur.execute(
                             "update academy_ad_opens set lead_id = %s where tenant_id = %s and showcase_id = %s"
-                            " and telegram_user_id = %s and lead_id is null",
-                            (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id),
+                            " and telegram_user_id = %s and series = %s and lead_id is null",
+                            (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id, opened.series),
                         )
                     opens[i] = replace(opened, lead_id=lead.lead_id)
                     taken.add(lead.lead_id)
+
+                # Человек уже в боте (запись другой серии), а заявку оставил и в этой — заводим ему запись серии,
+                # по нику или имени с фамилией: записан и на композицию, и на анатомию — получает обе ветки.
+                for series in sorted({w.series for w in webinars}):
+                    present = {o.telegram_user_id for o in opens if o.series == series}
+                    for lead in leads:
+                        if lead.lead_id in taken or lead_series[lead.lead_id] != series:
+                            continue
+                        other = next(
+                            (o for o in opens if o.telegram_user_id not in present
+                             and match_lead([lead], username=o.username, name=o.name) is not None),
+                            None,
+                        )
+                        if other is None:
+                            continue
+                        async with conn.cursor() as cur:
+                            await cur.execute(
+                                "insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username,"
+                                " name, tag, lead_id, opened_at, series) values (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                                " on conflict do nothing",
+                                (tenant_id, showcase.showcase_id, other.telegram_user_id, other.username, other.name,
+                                 BOT_TAG, lead.lead_id, other.opened_at, series),
+                            )
+                        opens.append(Opened(
+                            other.telegram_user_id, other.username, other.name, lead.lead_id, other.opened_at,
+                            BOT_TAG, None, series,
+                        ))
+                        present.add(other.telegram_user_id)
+                        taken.add(lead.lead_id)
 
                 # Подтверждение даты: строка заявки нашлась — «Вы записаны на …» с кнопкой переноса.
                 for opened in recent if confirm_now else []:
                     if opened.webinar:
                         continue  # уже выбрал в боте
                     lead = leads_by_id.get(opened.lead_id or "") or match_lead(
-                        leads, username=opened.username, name=opened.name, opened_at=opened.opened_at,
+                        [x for x in leads if lead_series[x.lead_id] == opened.series],
+                        username=opened.username, name=opened.name, opened_at=opened.opened_at,
                     )
                     tag = lead_webinar(lead, webinars)
                     webinar = next((w for w in webinars if w.tag == tag), None)
@@ -594,12 +669,12 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                         async with conn.cursor() as cur:
                             await cur.execute(
                                 "update academy_ad_opens set lead_id = %s where tenant_id = %s and showcase_id = %s"
-                                " and telegram_user_id = %s and lead_id is null",
-                                (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id),
+                                " and telegram_user_id = %s and series = %s and lead_id is null",
+                                (lead.lead_id, tenant_id, showcase.showcase_id, opened.telegram_user_id, opened.series),
                             )
                     queued += await enqueue(
-                        conn, confirm_key(showcase.showcase_id, opened.telegram_user_id), opened.telegram_user_id,
-                        confirm_text(webinar), move_markup(webinars, webinar.tag, now),
+                        conn, confirm_key(showcase.showcase_id, opened.telegram_user_id, opened.series),
+                        opened.telegram_user_id, confirm_text(webinar), move_markup(webinars, webinar.tag, now),
                     )
 
                 # После эфира — одно приглашение на повтор записанным, кто не оплатил (колонка «Статус»).
@@ -609,7 +684,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                         continue
                     sent = 0
                     for opened in opens:
-                        if person_webinar(opened, leads_by_id, webinars) != webinar.tag:
+                        if opened.series != webinar.series or person_webinar(opened, leads_by_id, webinars) != webinar.tag:
                             continue
                         lead = leads_by_id.get(opened.lead_id or "")
                         if is_paid(lead):
@@ -632,7 +707,11 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 bot_url: str | None = None  # бот витрины для личных ссылок в списке — ищем раз и только по делу
                 for webinar, reminders, warn, calls in work:
                     prefix = f"webinar:{showcase.showcase_id}:{webinar.tag}"
-                    audience = [o for o in opens if person_webinar(o, leads_by_id, webinars) == webinar.tag]
+                    audience = [
+                        o for o in opens
+                        if o.series == webinar.series and person_webinar(o, leads_by_id, webinars) == webinar.tag
+                    ]
+                    same = {w.tag for w in webinars if w.series == webinar.series}
                     for kind, moment, text, markup, photos in reminders:
                         sent = 0
                         got: set[str] = set()
@@ -643,6 +722,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                     conn, "select idempotency_key from platform_outbox where idempotency_key like %s",
                                     (f"webinar:{showcase.showcase_id}:%:{kind}:%",),
                                 )
+                                if str(r["idempotency_key"]).split(":")[2] in same  # тот же прогрев той же серии
                             }
                         for opened in audience:
                             if opened.opened_at is not None and opened.opened_at > moment:
@@ -667,7 +747,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     if calls:
                         missing = [
                             lead for lead in leads
-                            if lead_webinar(lead, webinars) == webinar.tag and opened_for(lead, opens) is None
+                            if lead_webinar(lead, webinars) == webinar.tag
+                            and opened_for(lead, opens, webinar.series) is None
                         ]
                         if missing:
                             if bot_url is None:

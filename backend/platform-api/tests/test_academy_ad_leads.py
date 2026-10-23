@@ -253,3 +253,26 @@ def test_both_tabs_read_merged_by_id_and_course_interest_goes_to_the_form_date(m
     assert "по форме (Вебинар композиция 31.10)" in text and "🎯 Интерес: Курс «Игра формы»" in text
     assert "💡" not in alert_text(leads[0])  # вебинарная заявка — без подсказки
     assert ad_leads.sheet_url(config, olga.tab).endswith("gid=1990357724")
+
+
+def test_anatomy_alert_says_series_and_drawing_base():
+    from app.academy.ad_leads import lead_series, series_label, series_markers
+
+    support = {"webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября"},
+        "ig_an28": {"at": "2026-10-28T19:30:00+03:00", "date": "28 октября", "series": "anatomy", "form": "Анатом",
+                    "label": "анатомия"},
+    }}
+    markers = series_markers(support)
+    assert markers == [("анатом", "anatomy", "анатомия")]
+    head = (
+        "id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,form_name,is_organic,"
+        "platform,какой_эфир_удобнее?,есть_ли_у_вас_база_академического_рисунка?,полное_имя,номер_телефона,lead_status"
+    )
+    lead = parse_leads(head + "\nl:901,2026-10-23T10:00:00+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,"
+                              "\"вебинар_28_октября,_среда,_19:30\",немного,Анна Анатомова,p:+375291000901,CREATED")[0]
+    assert lead_series(lead, markers) == "anatomy" and lead_series(parse_leads(CSV)[0], markers) == ""
+    text = alert_text(lead, label=series_label("anatomy", markers))
+    assert text.startswith("🔔 Новая заявка · анатомия · вебинар 28 октября, среда, 19:30")
+    assert "✏️ База академического рисунка: Немного" in text
+    assert "✏️" not in alert_text(parse_leads(CSV)[0])

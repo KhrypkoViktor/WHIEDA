@@ -187,7 +187,7 @@ async def test_ad_lead_webinar_greets_without_date_buttons_and_notifies_admin(wh
     with p[0] as opened, p[1], p[2], p[3], p[4], p[5], p[6], p[7] as home:
         result = await process_core_telegram_update(whieda_tenant, _start(f"/start {tag}"), "t", binding=almira_binding)
     assert opened.await_args.kwargs == {
-        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": tag, "lead_id": None,
+        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": tag, "lead_id": None, "series": "",
     }
     assert (result["route"], result["tag"], result["admin_notified"]) == ("showcase_ad_lead", tag, True)
     home.assert_not_called()
@@ -253,7 +253,7 @@ async def test_personal_link_finds_the_row_by_id_with_one_sheet_fetch(whieda_ten
             whieda_tenant, _start("/start ig_web24_701234567"), "t", binding=almira_binding
         )
     assert opened.await_args.kwargs == {
-        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": "ig_web24", "lead_id": "701234567",
+        "telegram_user_id": 301, "username": "anna_p", "name": "Анна Петрова", "tag": "ig_web24", "lead_id": "701234567", "series": "",
     }
     assert (result["route"], result["tag"], result["admin_notified"]) == ("showcase_ad_lead", "ig_web24", True)
     fetch.assert_awaited_once()
@@ -415,3 +415,28 @@ def test_start_alias_only_to_an_ad_tag():
     assert start_alias(shop, "bad") is None
     assert start_alias(shop, "other") is None
     assert start_alias(ALMIRA, "kvk") is None
+
+
+@pytest.mark.asyncio
+async def test_anatomy_link_greets_with_its_own_text_and_records_the_series(whieda_tenant, almira_binding):
+    """/start ig_an28 (анатомия, 23.10.2026): своё приветствие из настройки, запись в серии anatomy; личная ссылка
+    ig_an28_<id> тоже узнаётся."""
+    from app.telegram.showcase_bot import split_ad_tag, webinar_tags
+
+    support = {"webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+        "ig_an28": {"at": "2026-10-28T19:30:00+03:00", "date": "28 октября", "url": "", "series": "anatomy",
+                    "form": "анатом", "greeting": "Здравствуйте! Спасибо, что записались на вебинар по анатомии."},
+    }}
+    anatomy = replace(ALMIRA, support=support)
+    assert split_ad_tag("ig_an28_123456789", webinar_tags(anatomy)) == ("ig_an28", "123456789")
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    p = _ad_patches(sent)
+    with p[0] as opened, p[1], patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=anatomy)), \
+            p[3], p[4], p[5], p[6], p[7]:
+        result = await process_core_telegram_update(whieda_tenant, _start("/start ig_an28"), "t", binding=almira_binding)
+    assert (result["route"], result["tag"]) == ("showcase_ad_lead", "ig_an28")
+    assert opened.await_args.kwargs["series"] == "anatomy" and opened.await_args.kwargs["tag"] == "ig_an28"
+    greeting = sent.await_args_list[0].kwargs["text"]
+    assert greeting.startswith("Здравствуйте! Спасибо, что записались на вебинар по анатомии.")
+    assert "по композиции" not in greeting

@@ -83,6 +83,7 @@ class Lead:
     tab: str = ""  # gid вкладки таблицы, откуда строка (кнопка «Открыть таблицу заявок» — на неё)
     # Колонка «Эфир» (Кирилл, 23.10.2026): 24 или 31 — на какой вебинар человек записан по факту звонка.
     webinar_mark: str = ""
+    base: str = ""  # анатомия: «Есть ли у вас база академического рисунка?» — Да / Немного / Нет
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class Opened:
     opened_at: datetime | None = None
     tag: str = ""  # метка /start: ig_web24 …
     webinar: str | None = None  # V38: дата, выбранная кнопкой в боте
+    series: str = ""  # V40: серия вебинаров ('' — композиция, 'anatomy' …): своя строка в каждой серии
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -165,6 +167,29 @@ def _column(row: dict[str, str], prefix: str) -> str:
     return ""
 
 
+def series_markers(support: dict[str, Any] | None) -> list[tuple[str, str, str]]:
+    """(слово в имени формы, серия, подпись) из ``support.webinars``: {"series": "anatomy", "form": "анатом",
+    "label": "анатомия"}. Композиция — серия '' без слова: всё, что не подошло к другим."""
+    raw = (support or {}).get("webinars")
+    out: list[tuple[str, str, str]] = []
+    for item in (raw.values() if isinstance(raw, dict) else []):
+        if not isinstance(item, dict):
+            continue
+        series, form = str(item.get("series") or "").strip(), str(item.get("form") or "").strip().casefold()
+        if series and form and (form, series) not in [(f, x) for f, x, _ in out]:
+            out.append((form, series, str(item.get("label") or "").strip()))
+    return out
+
+
+def lead_series(lead: Lead | None, markers: list[tuple[str, str, str]]) -> str:
+    form = (lead.form_name if lead else "").casefold()
+    return next((series for marker, series, _ in markers if marker in form), "")
+
+
+def series_label(series: str, markers: list[tuple[str, str, str]]) -> str:
+    return next((label for _, x, label in markers if x == series and label), "")
+
+
 FLAG_HEADER = "В боте"  # колонку пишет скрипт таблицы (lead-flags), это не пометка администратора
 WEBINAR_HEADER = "эфир"  # колонка «Эфир» администратора: 24 / 31 — важнее пункта формы и кнопки в боте
 
@@ -205,10 +230,11 @@ def parse_leads(csv_text: str) -> list[Lead]:
                 username=clean_username(nick),
                 nick_raw=nick,
                 studied=_studied(_column(row, "учились")),
-                interest=_interest(_column(row, "что_интересует")),
+                interest=_interest(_column(row, "что_интересует") or _column(row, "какой_эфир")),
                 source=_source(row.get("platform", ""), row.get("ad_name", ""), row.get("is_organic", "")),
                 form_name=str(row.get("form_name") or "").strip(),
                 status=notes,
+                base=_interest(next((str(v) for k, v in row.items() if "академическ" in k.casefold()), "")),
                 webinar_mark=next(
                     (str(value).strip() for key, value in row.items() if key.casefold() == WEBINAR_HEADER), ""
                 ),
@@ -245,10 +271,12 @@ def _contacts(phone: str) -> str:
     return f'💬 <a href="https://wa.me/{digits}">WhatsApp</a> · <a href="https://t.me/+{digits}">Telegram по номеру</a>'
 
 
-def alert_text(lead: Lead, opened: Opened | None = None) -> str:
-    """Алерт по строке таблицы; ``opened`` — человек уже в боте: имя — ссылка на его чат."""
+def alert_text(lead: Lead, opened: Opened | None = None, *, label: str = "") -> str:
+    """Алерт по строке таблицы; ``opened`` — человек уже в боте: имя — ссылка на его чат; ``label`` — серия
+    вебинаров («анатомия»), чтобы Кирилл не путал её с композицией."""
     what = _what(lead)
-    lines = ["🔔 Новая заявка" + (f" · {what}" if what else "")]
+    head = " · ".join(x for x in (label, what) if x)
+    lines = ["🔔 Новая заявка" + (f" · {head}" if head else "")]
     if wants_course(lead):
         lines.append(f"💡 Выбран курс, а не дата эфира. На вебинар бот запишет по форме ({lead.form_name}) — предложите и курс.")
     name = _plain(lead.name) or (_plain(opened.name) if opened else "")
@@ -276,6 +304,8 @@ def alert_text(lead: Lead, opened: Opened | None = None) -> str:
         lines.append("🎓 Впервые в ALMIRA")
     if lead.interest:
         lines.append(f"🎯 Интерес: {lead.interest}")
+    if lead.base:
+        lines.append(f"✏️ База академического рисунка: {lead.base}")
     if lead.source:
         lines.append(f"📣 {lead.source}")
     if lead.created:
@@ -335,7 +365,7 @@ def match_lead(
     return min(timed, key=lambda item: item[0])[1] if timed else None
 
 
-def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
+def opened_for(lead: Lead, opens: list[Opened], series: str = "") -> Opened | None:
     """Открыл ли бота человек этой заявки: по строке, сопоставленной при открытии, по нику, по имени."""
     for opened in opens:
         if opened.lead_id and opened.lead_id == lead.lead_id:
@@ -345,13 +375,16 @@ def opened_for(lead: Lead, opens: list[Opened]) -> Opened | None:
         for opened in opens:
             if opened.username and opened.username.lstrip("@").casefold() == wanted:
                 return opened
+    def free(opened: Opened) -> bool:
+        return not opened.lead_id or opened.series != series
+
     for opened in opens:
-        if not opened.lead_id and _same_name(lead.name, opened.name):
+        if free(opened) and _same_name(lead.name, opened.name):
             return opened
     # Строка при открытии ещё не дошла до таблицы — ближайшее по времени открытие без своей строки.
     timed = [
         (gap, opened) for opened in opens
-        if not opened.lead_id
+        if free(opened)
         and (not _nicks_clash(lead.username, opened.username) or _tight(lead.created, opened.opened_at))
         and (gap := _near(lead.created, opened.opened_at)) is not None
     ]
@@ -425,7 +458,7 @@ async def fetch_leads(config: dict[str, Any]) -> list[Lead]:
 
 async def record_open(
     tenant_id: str, showcase_id: str, *, telegram_user_id: int, username: str | None, name: str, tag: str,
-    lead_id: str | None, overwrite: bool = True,
+    lead_id: str | None, overwrite: bool = True, series: str = "",
 ) -> None:
     """Человек открыл бота витрины. /start ig_… — с меткой рекламы (повторное открытие обновляет ник, имя,
     строку); любой другой вход (``tag`` BOT_TAG, ``overwrite=False``) — только если записи ещё нет: вход
@@ -444,12 +477,12 @@ async def record_open(
         await fetch_one(
             conn,
             f"""
-            insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id)
-            values (%s, %s, %s, %s, %s, %s, %s)
-            on conflict (tenant_id, showcase_id, telegram_user_id) {on_conflict}
+            insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, lead_id, series)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (tenant_id, showcase_id, telegram_user_id, series) {on_conflict}
             returning telegram_user_id
             """,
-            (tenant_id, showcase_id, int(telegram_user_id), username, name, tag, lead_id),
+            (tenant_id, showcase_id, int(telegram_user_id), username, name, tag, lead_id, series),
         )
 
 
@@ -459,7 +492,7 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     rows = await fetch_all(
         conn,
         """
-        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar from academy_ad_opens
+        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar, series from academy_ad_opens
         where tenant_id = %s and showcase_id = %s order by opened_at desc
         """,
         (tenant_id, showcase_id),
@@ -467,7 +500,7 @@ async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened
     return [
         Opened(
             int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"],
-            str(r["tag"] or ""), r["webinar"],
+            str(r["tag"] or ""), r["webinar"], str(r.get("series") or ""),
         )
         for r in rows
     ]
@@ -525,7 +558,8 @@ async def lead_flags(tenant_id: str, showcase: Any) -> dict[str, Any]:
         raise SheetUnavailable(type(exc).__name__) from exc
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
-    in_bot = {lead.lead_id for lead in leads if opened_for(lead, opens) is not None}
+    markers = series_markers(showcase.support)
+    in_bot = {lead.lead_id for lead in leads if opened_for(lead, opens, lead_series(lead, markers)) is not None}
     not_in_bot = {lead.lead_id for lead in leads} - in_bot
     return {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -572,10 +606,12 @@ async def ad_leads_step(
             fresh = [lead for lead in leads if since is None or (lead.created is not None and lead.created >= since)]
             if not fresh:
                 continue
+            markers = series_markers(showcase.support)
             async with tenant_connection(tenant_id) as conn:
                 opens = await load_opens(conn, tenant_id, showcase.showcase_id)
                 for lead in fresh:
-                    opened = opened_for(lead, opens)
+                    series = lead_series(lead, markers)
+                    opened = opened_for(lead, opens, series)
                     if opened is None and lead.created is not None and wall - lead.created < OPEN_GRACE:
                         continue  # бота обычно открывают сразу после формы — ждём, чтобы отметка была верной
                     row = await enqueue_outbox_event(
@@ -585,7 +621,7 @@ async def ad_leads_step(
                         idempotency_key=f"ad_lead:{showcase.showcase_id}:{lead.lead_id}",
                         payload={
                             "chat_id": str(int(admin)),
-                            "text": alert_text(lead, opened),
+                            "text": alert_text(lead, opened, label=series_label(series, markers)),
                             "binding_id": binding_id,
                             "reply_markup": {"inline_keyboard": [[
                                 {"text": "Открыть таблицу заявок", "url": sheet_url(config, lead.tab)},

@@ -506,3 +506,77 @@ def test_entrant_without_row_is_linked_by_name_before_a_send(monkeypatch):
             assert linked["lead_id"] == "703"
 
         db.run_with_app(proof)
+
+
+AN_SUPPORT = {**NO_LINK, "webinars": {
+    **NO_LINK["webinars"],
+    "ig_an28": {"at": "2026-10-28T19:30:00+03:00", "date": "28 октября", "url": "", "series": "anatomy", "form": "анатом",
+                "subject": "по пластической анатомии", "label": "анатомия"},
+    "ig_an07": {"at": "2026-11-07T18:00:00+03:00", "date": "7 ноября", "url": "", "series": "anatomy", "form": "анатом",
+                "subject": "по пластической анатомии", "label": "анатомия"},
+}}
+AN_CSV = "\n".join([
+    "id,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,form_name,is_organic,"
+    "platform,какой_эфир_удобнее?,есть_ли_у_вас_база_академического_рисунка?,ваш_ник_в_telegram_(для_ссылки_на_эфир),"
+    "полное_имя,номер_телефона,lead_status",
+    'l:901,2026-10-25T10:00:00+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,"вебинар_28_октября,_среда,_19:30",'
+    "немного,anna_a,Анна Ли,p:+375291000001,CREATED",
+    'l:902,2026-10-27T18:59:30+03:00,,,,,,,f:9,Вебинар анатомия 28.10 и 7.11,false,ig,"вебинар_28_октября,_среда,_19:30",'
+    "нет,,Борис Анатомов,p:+375291000002,CREATED",
+])
+
+
+@pytest.mark.integration
+def test_both_series_get_both_branches_and_anatomy_confirms_with_its_own_move(monkeypatch):
+    """Анна записана на композицию 24.10 (бот открыт 22.10) и оставила заявку на анатомию 28.10 — ей заводится запись
+    серии «анатомия» по нику, и напоминание «за сутки» до анатомии приходит ей. Борис открыл бота по ссылке ig_an28 —
+    подтверждение анатомии со своим ключом и кнопкой «Перенести на 7 ноября»; запись композиции у него остаётся."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_series") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(AN_SUPPORT, ensure_ascii=False),))
+            conn.execute(
+                "insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag,"
+                " opened_at, series) values ('whieda', 'almira', %s, null, 'Борис', 'ig_an28', '2026-10-27T19:00:00+03:00',"
+                " 'anatomy')", (BORIS,),
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV) + parse_leads(AN_CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            bindings = {"almira-academy-bot": object()}
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(27, 19, 3)) == 1
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, bindings, clock=at(27, 19, 33)) == 2
+            async with tenant_connection("whieda") as conn:
+                out = await fetch_all(conn, "select idempotency_key, payload from platform_outbox order by idempotency_key")
+                rows = await fetch_all(conn, "select telegram_user_id, series, lead_id from academy_ad_opens"
+                                             " where telegram_user_id = any(%s) order by telegram_user_id, series", ([ANNA, BORIS],))
+            keys = [r["idempotency_key"] for r in out]
+            assert keys == [
+                f"webinar:almira:anatomy:confirm:{BORIS}",
+                f"webinar:almira:ig_an28:day:{ANNA}",
+                f"webinar:almira:ig_an28:day:{BORIS}",
+            ]
+            confirm = out[0]["payload"]
+            assert confirm["text"] == "Вы записаны на 28 октября, начало в 19:30 по Минску."
+            assert confirm["reply_markup"]["inline_keyboard"] == [[{"text": "Перенести на 7 ноября", "callback_data": "wbn:ig_an07"}]]
+            assert "по пластической анатомии" in out[1]["payload"]["text"]
+            assert [(r["telegram_user_id"], r["series"], r["lead_id"]) for r in rows] == [
+                (ANNA, "", "701"), (ANNA, "anatomy", "901"), (BORIS, "", "702"), (BORIS, "anatomy", "902"),
+            ]
+
+        db.run_with_app(proof)
