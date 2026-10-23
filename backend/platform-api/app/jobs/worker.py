@@ -46,6 +46,29 @@ CLUB_MEETINGS_INTERVAL_SEC = 60.0
 # Вход через Google/Max по коду (V34, 15.10.2026): просроченные pending/коды старше суток — раз в час.
 # /google/start пишет строку без аутентификации, без чистки таблицы растут.
 LOGIN_CLEANUP_INTERVAL_SEC = 3600.0
+# Сбой очереди (база ушла в read-only, моргнул пулер — 23.10.2026 это дало 14 перезапусков
+# контейнера подряд): цикл живёт, а пауза между проходами растёт 2 → 4 → 8 … ≤ 60 с,
+# чтобы не молотить базу. Удачный проход сбрасывает паузу.
+OUTBOX_BACKOFF_START_SEC = 2.0
+OUTBOX_BACKOFF_MAX_SEC = 60.0
+
+
+class FailureBackoff:
+    """Пауза после подряд идущих сбоев шага: start, 2·start, 4·start … не больше cap."""
+
+    def __init__(self, start: float = OUTBOX_BACKOFF_START_SEC, cap: float = OUTBOX_BACKOFF_MAX_SEC) -> None:
+        self._start = start
+        self._cap = cap
+        self._next = start
+
+    def failed(self) -> float:
+        """Пауза для этого сбоя; следующий сбой подряд получит вдвое длиннее."""
+        delay = min(self._next, self._cap)
+        self._next = min(self._next * 2, self._cap)
+        return delay
+
+    def succeeded(self) -> None:
+        self._next = self._start
 
 
 async def process_pending_outbox(batch_size: int = 20) -> int:
@@ -500,8 +523,18 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
     last_cleanup = last_club = last_login_cleanup = float("-inf")
+    outbox_backoff = FailureBackoff()
     while True:
-        await process_pending_outbox()
+        pause = poll_interval_sec
+        try:
+            await process_pending_outbox()
+        except Exception:
+            # Падать нельзя: контейнер перезапускается, и со всем циклом встают
+            # напоминания, мосты чатов и CRM-дайджест. Остальные шаги идут своим чередом.
+            logger.exception("outbox_step_failed")
+            pause = max(pause, outbox_backoff.failed())
+        else:
+            outbox_backoff.succeeded()
         try:
             await transcode.step()
         except Exception:
@@ -540,7 +573,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await login_cleanup_step()
             except Exception:
                 logger.exception("login_cleanup_failed")
-        await asyncio.sleep(poll_interval_sec)
+        await asyncio.sleep(pause)
 
 
 async def init_pool_for_worker() -> None:
