@@ -126,17 +126,22 @@ _MAX_LINK_ERRORS = {
 }
 
 
-def _success_message(tenant_id: str) -> str:
-    """Подтверждение входа + строка «Входя, вы принимаете оферту и политику» со ссылками."""
-    line = site_login_consent_line(tenant_id)
+def _success_message(binding: Any) -> str:
+    """Подтверждение входа + строка «Входя, вы принимаете оферту и политику» со ссылками.
+
+    Строки об оферте нет у бота витрины автора Академии (ALMIRA и др.): у витрины свой
+    оператор и своя политика, её согласие пишет процессор витрины (showcase:<id>:<дата>)."""
+    line = None if binding.showcase_id else site_login_consent_line(binding.tenant.tenant_id)
     return f"{_SUCCESS_MESSAGE}\n\n{line}" if line else _SUCCESS_MESSAGE
 
 
-async def _record_login_consent(tenant_id: str, msg: Any, *, trace_id: str | None) -> None:
+async def _record_login_consent(binding: Any, msg: Any, *, trace_id: str | None) -> None:
     """Вход подтверждён — это и есть нажатие: пишем согласие с источником site_login.
 
-    Не блокирует вход: сбой записи — предупреждение в лог, человек уже вошёл."""
-    if not site_login_consent_line(tenant_id):
+    Не пишем для бота витрины: документы WWC — не её документы. Не блокирует вход:
+    сбой записи — предупреждение в лог, человек уже вошёл."""
+    tenant_id = binding.tenant.tenant_id
+    if binding.showcase_id or not site_login_consent_line(tenant_id):
         return
     try:
         await record_click_consent(
@@ -207,10 +212,10 @@ async def try_handle_content_access(
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
         )
-        await _record_login_consent(binding.tenant.tenant_id, msg, trace_id=trace_id)
+        await _record_login_consent(binding, msg, trace_id=trace_id)
         await deliver_text(
             msg.chat_id,
-            _success_message(binding.tenant.tenant_id),
+            _success_message(binding),
             _return_markup(open_in_browser_url(result.get("return_to"))),
         )
         return {

@@ -7,10 +7,14 @@
   оферту и политику» со ссылками в подтверждении; подтверждённый вход пишет согласие
   с источником ``site_login`` и сбоем записи не блокируется.
 * Старое «продолжая общение» (``policy_version`` — просто дата) этим не затронуто.
+* Бот витрины автора Академии (ALMIRA, ``binding.showcase_id``) документов WWC не показывает и
+  согласия с ними не пишет: у витрины свой оператор и своя политика (``showcase:<id>:<дата>``);
+  заказать сайт WWC в боте витрины нельзя вовсе.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -301,3 +305,83 @@ async def test_login_still_succeeds_when_the_consent_cannot_be_stored(whieda_ten
         )
     assert result["ok"] is True
     assert "Вход подтверждён" in deliver.await_args.args[1]
+
+
+# --- бот витрины автора Академии ----------------------------------------------
+
+
+@pytest.fixture
+def almira_binding(whieda_bot_binding):
+    return replace(
+        whieda_bot_binding, binding_id="almira-academy-bot", bot_username="ALMIRA_I_bot", showcase_id="almira"
+    )
+
+
+def _almira():
+    from app.academy.showcases import Showcase
+
+    return Showcase(
+        tenant_id="whieda", showcase_id="almira", is_default=False, hosts=("academy.almira.by",),
+        owner_actor_id="almira", brand_name="ALMIRA", academy_title="Онлайн-академия ALMIRA",
+        links={"privacy_url": "https://almira.by/privacy-policy/"}, telegram_binding_id="almira-academy-bot",
+    )
+
+
+@pytest.mark.asyncio
+async def test_showcase_bot_login_has_no_wwc_offer_line_and_no_site_login_consent(whieda_tenant, almira_binding):
+    from app.telegram.content_access import _SUCCESS_MESSAGE
+    from app.telegram.processor import process_core_telegram_update
+
+    confirm = AsyncMock(return_value={"ok": True, "status": "approved", "challenge_id": "c-a", "return_to": "/academy/"})
+    record = AsyncMock(return_value=True)
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=_almira())), patch(
+        "app.telegram.content_access.confirm_content_from_telegram", confirm
+    ), patch("app.telegram.content_access.record_click_consent", record), patch(
+        "app.telegram.content_access.deliver_text", AsyncMock()
+    ) as deliver, patch("app.telegram.showcase_bot._first_policy_notice", AsyncMock()) as showcase_policy, patch(
+        "app.telegram.showcase_bot._note_bot_open", AsyncMock()
+    ):
+        result = await process_core_telegram_update(
+            whieda_tenant, _login_update(), "t-almira", binding=almira_binding
+        )
+    assert result["route"] == "content_access" and result["ok"] is True
+    message = deliver.await_args.args[1]
+    assert message == _SUCCESS_MESSAGE
+    assert "оферт" not in message.lower() and OFFER not in message and POLICY not in message
+    record.assert_not_awaited()
+    # Своё согласие витрины пишется как раньше (политика витрины, не WWC).
+    showcase_policy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_login_message_and_record_depend_on_the_binding(whieda_bot_binding, almira_binding):
+    from app.telegram import content_access as ca
+
+    assert ca._success_message(whieda_bot_binding).endswith(site_login_consent_line("whieda"))
+    assert ca._success_message(almira_binding) == ca._SUCCESS_MESSAGE
+    with patch.object(ca, "record_click_consent", AsyncMock(return_value=True)) as record:
+        msg = SimpleNamespace(user_id=1, chat_id=2)
+        await ca._record_login_consent(almira_binding, msg, trace_id="t")
+        record.assert_not_awaited()
+        await ca._record_login_consent(whieda_bot_binding, msg, trace_id="t")
+        record.assert_awaited_once_with("whieda", telegram_user_id=1, telegram_chat_id=2, source=SOURCE_SITE_LOGIN)
+
+
+@pytest.mark.asyncio
+async def test_site_order_is_unreachable_from_the_showcase_bot(whieda_tenant, almira_binding):
+    """«Заказать сайт» в боте витрины не существует: callback site:create уходит в «проигнорирован»,
+    ни вопроса про оферту WWC, ни заявки."""
+    from app.telegram.processor import process_core_telegram_update
+
+    update = {"callback_query": {"id": "cb-s", "data": "site:create", "from": {"id": 300},
+                                 "message": {"message_id": 5, "chat": {"id": 300, "type": "private"}}}}
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=_almira())), patch(
+        "app.telegram.showcase_bot.answer_callback_query", AsyncMock(return_value={"ok": True})
+    ), patch("app.telegram.processor.try_handle_site_request_callback", AsyncMock()) as handler, patch(
+        "app.telegram.site_requests.begin_site_request", AsyncMock()
+    ) as begin, patch("app.telegram.site_requests._deliver", AsyncMock()) as deliver:
+        result = await process_core_telegram_update(whieda_tenant, update, "t-site", binding=almira_binding)
+    assert result["route"] == "showcase_ignored_callback"
+    handler.assert_not_awaited()
+    begin.assert_not_awaited()
+    deliver.assert_not_awaited()

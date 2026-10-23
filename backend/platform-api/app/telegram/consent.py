@@ -24,6 +24,11 @@ both recorded in ``telegram_consents`` with the source in ``policy_version``
   message carries the notice (app/telegram/content_access.py).
 
 The old «continuing the chat» rows keep their plain date as ``policy_version``.
+
+The bot of an Academy author's showcase (``binding.showcase_id``, e.g. ALMIRA) has its own
+operator and policy: it shows no WWC offer line and writes no ``site_login`` row; its own
+consent is ``showcase:<id>:<date>`` (app/telegram/showcase_bot.py). «Заказать сайт» does not
+exist in that bot.
 """
 
 from __future__ import annotations

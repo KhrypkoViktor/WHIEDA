@@ -8,7 +8,8 @@
     согласием по клику не считается: человек с ней спрашивается один раз;
   * повторный заказ того же человека не переспрашивает, строка остаётся первой (время клика);
   * человек с открытой анкетой (начата до правила) продолжает без вопроса;
-  * вход через бота пишет ``site_login:<дата>`` один раз на версию текста;
+  * вход через бота пишет ``site_login:<дата>`` один раз на версию текста; через бот витрины
+    автора Академии (ALMIRA) — ни строки об оферте, ни записи ``site_login`` (документы WWC не её);
   * чужой тенант этих строк не видит (RLS).
 """
 
@@ -27,6 +28,7 @@ BINDING = "whieda-advisor-bot"
 NEW = 72001  # ни разу не нажимал «Принимаю»; старая запись «продолжая общение»
 OPEN = 72002  # анкета открыта до правила
 BROKEN = 72003  # запись согласия падает
+STUDENT = 72004  # входит через бот витрины ALMIRA
 
 SEED = """
 insert into lead_actors (actor_id, tenant_id, display_name, telegram_user_id, telegram_chat_id) values
@@ -177,6 +179,26 @@ def test_click_consent_for_site_order_and_site_login():
                 rows = await consents(NEW)
                 assert rows[login_version]["consented_at"] == stamp
                 assert set(rows) == {CONSENT_POLICY_VERSION, order_version, login_version}
+
+                # 6а. Бот витрины ALMIRA: тот же вход, но документы WWC не показываем и не записываем.
+                from dataclasses import replace
+
+                from app.academy.showcases import Showcase
+
+                almira = Showcase(
+                    tenant_id="whieda", showcase_id="almira", is_default=False, hosts=("academy.almira.by",),
+                    owner_actor_id="almira", brand_name="ALMIRA", academy_title="Онлайн-академия ALMIRA",
+                    links={"privacy_url": "https://almira.by/privacy-policy/"},
+                    telegram_binding_id="almira-academy-bot",
+                )
+                almira_binding = replace(binding, binding_id="almira-academy-bot", showcase_id="almira")
+                with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=almira)), patch(
+                    "app.telegram.showcase_bot._first_policy_notice", AsyncMock()
+                ), patch("app.telegram.showcase_bot._note_bot_open", AsyncMock()):
+                    await process_core_telegram_update(tenant, _login(STUDENT, "tokC"), "login", binding=almira_binding)
+                message = deliver_login.await_args.args[1]
+                assert "Вход подтверждён" in message and "оферт" not in message.lower()
+                assert await consents(STUDENT) == {}
 
                 # 7. RLS: другой тенант этих строк не видит.
                 async with tenant_connection("other-tenant") as conn:

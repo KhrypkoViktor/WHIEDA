@@ -21,12 +21,14 @@
      подтверждённый вход пишет согласие; сбой записи вход не блокирует. Новых шагов нет.
    - Хранение: `telegram_consents`, источник и версия текста в `policy_version`: `site_order:2026-10-23`, `site_login:2026-10-23`.
      Старые строки «продолжая общение» (голая дата `2026-09-18`) не тронуты.
-   Тесты: `tests/test_click_consent.py` (17), `tests/test_click_consent_postgres.py` (цепочка на настоящей базе),
+   Бот витрины автора Академии (`binding.showcase_id`, ALMIRA): строки об оферте нет, `site_login` не пишется (свой оператор и политика,
+   согласие витрины — `showcase:<id>:<дата>`); «Заказать сайт» в боте витрины недостижим (процессор витрины не вызывает `site:*`), тест это держит.
+   Тесты: `tests/test_click_consent.py` (20), `tests/test_click_consent_postgres.py` (цепочка на настоящей базе),
    `tests/test_site_request_quick_postgres.py` (добавлен шаг «Принимаю»).
 
 ## Проверено
 
-- Unit (весь `tests`): 24 failed / 2731 passed / 75 skipped / 4 errors; на чистой базе b51d968: 24 / 2707 / 74 / 4,
+- Unit (весь `tests`): 24 failed / 2734 passed / 75 skipped / 4 errors; на чистой базе b51d968: 24 / 2707 / 74 / 4,
   набор упавших тестов идентичен (golden corpus, product discovery map, shared staging harness и др. — были красными до правок).
 - Postgres (`scripts/run_postgres_integration_tests.ps1`, весь `*_postgres`): 74 passed; на чистой базе 73 passed.
 - Мутация: при выключенном гейте тесты «без клика заявка не создаётся» падают.
