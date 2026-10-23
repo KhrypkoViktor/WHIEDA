@@ -16,7 +16,8 @@ import pytest
 
 from tests.postgres_testkit import MIGRATIONS, temporary_database
 
-SITE_MIGRATIONS = (*MIGRATIONS, "platform_service_sales_v10.sql")
+# telegram_consents: «Принимаю» перед анкетой (23.10.2026) пишет согласие в эту таблицу.
+SITE_MIGRATIONS = (*MIGRATIONS, "platform_service_sales_v10.sql", "platform_telegram_consent_v1.sql")
 BINDING = "whieda-advisor-bot"
 OWNER = 688931415
 NATA = 71001
@@ -105,8 +106,11 @@ def test_site_request_needs_only_name_and_address(monkeypatch: pytest.MonkeyPatc
                 return [b["callback_data"] for row in markup for b in row] == ["site:skip"]
 
             try:
-                # Страну не спрашиваем (09.10.2026): «Заказать сайт» — сразу имя.
+                # Страну не спрашиваем (09.10.2026): «Заказать сайт» — оферта и «Принимаю», затем имя
+                # (согласие по нажатию, 23.10.2026; сама проверка — в test_click_consent_postgres.py).
                 _, to_user, _ = await step(_callback(NATA, "site:create"))
+                assert "Оформляя заказ" in to_user[-1]["text"]
+                _, to_user, _ = await step(_callback(NATA, "site:accept"))
                 assert "имя и фамилию" in to_user[-1]["text"]
 
                 # Одно слово — не имя для сайта; два — да, и сразу адрес.

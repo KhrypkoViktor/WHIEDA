@@ -12,6 +12,7 @@ from app.content_access.service import CONTENT_START_PREFIX, confirm_content_fro
 from app.cookie_domain import shared_cookie_domains
 from app.max.webapp import MAXLINK_PREFIX, redeem_link_request
 from app.telegram.bindings import current_bot_binding
+from app.telegram.consent import SOURCE_SITE_LOGIN, record_click_consent, site_login_consent_line
 from app.telegram.delivery import send_telegram_text
 from app.telegram.update_parser import parse_start_token, parse_telegram_message
 
@@ -125,6 +126,29 @@ _MAX_LINK_ERRORS = {
 }
 
 
+def _success_message(tenant_id: str) -> str:
+    """Подтверждение входа + строка «Входя, вы принимаете оферту и политику» со ссылками."""
+    line = site_login_consent_line(tenant_id)
+    return f"{_SUCCESS_MESSAGE}\n\n{line}" if line else _SUCCESS_MESSAGE
+
+
+async def _record_login_consent(tenant_id: str, msg: Any, *, trace_id: str | None) -> None:
+    """Вход подтверждён — это и есть нажатие: пишем согласие с источником site_login.
+
+    Не блокирует вход: сбой записи — предупреждение в лог, человек уже вошёл."""
+    if not site_login_consent_line(tenant_id):
+        return
+    try:
+        await record_click_consent(
+            tenant_id,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+            source=SOURCE_SITE_LOGIN,
+        )
+    except Exception:
+        logger.warning("site_login_consent_record_failed", extra={"trace_id": trace_id}, exc_info=True)
+
+
 async def _link_max(msg: Any, code: str, *, update_id: int | None, trace_id: str | None) -> dict[str, Any]:
     """/start maxlink_<код> — кнопка из мини-приложения Max (app/max/webapp.py, V31)."""
     binding = current_bot_binding()
@@ -183,7 +207,12 @@ async def try_handle_content_access(
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
         )
-        await deliver_text(msg.chat_id, _SUCCESS_MESSAGE, _return_markup(open_in_browser_url(result.get("return_to"))))
+        await _record_login_consent(binding.tenant.tenant_id, msg, trace_id=trace_id)
+        await deliver_text(
+            msg.chat_id,
+            _success_message(binding.tenant.tenant_id),
+            _return_markup(open_in_browser_url(result.get("return_to"))),
+        )
         return {
             **base,
             "ok": True,

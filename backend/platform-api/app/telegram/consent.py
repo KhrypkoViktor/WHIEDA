@@ -10,6 +10,20 @@ the person answers once (yes or no, both are recorded in
 ``telegram_marketing_consents``), plus ``/news``, ``/news_on``, ``/news_off``.
 Broadcasts (n8n «WHIEDA Broadcast Delivery Worker») read ``opted_in`` only; a
 consultant's personal reply to a lead is not a broadcast and needs no opt-in.
+
+Click consent for the offer and the privacy policy (owner's decision 23.10.2026,
+audit «legal»: «продолжая общение» is no proof). Two entry points, both by a tap,
+both recorded in ``telegram_consents`` with the source in ``policy_version``
+(``site_order:<date>``, ``site_login:<date>`` — the same encoding as
+``showcase:<id>:<date>``, no schema change):
+
+* ``site_order`` — «Заказать сайт»: the request is not created until «Принимаю»
+  (app/telegram/site_requests.py);
+* ``site_login`` — the person follows the site's «Войти через Telegram» link
+  (``/start content_access_…``): confirming the login is the tap, the confirmation
+  message carries the notice (app/telegram/content_access.py).
+
+The old «continuing the chat» rows keep their plain date as ``policy_version``.
 """
 
 from __future__ import annotations
@@ -29,11 +43,26 @@ logger = logging.getLogger("platform.telegram.consent")
 
 CONSENT_POLICY_VERSION = "2026-09-18"
 MARKETING_CONSENT_VERSION = "2026-09-26"
+# Text of the click consent (offer + privacy policy as of this date). A new date asks again.
+CLICK_CONSENT_VERSION = "2026-10-23"
+SOURCE_SITE_ORDER = "site_order"
+SOURCE_SITE_LOGIN = "site_login"
 
 # Tenants without a published policy get no notice, no marketing question, no record.
 PRIVACY_POLICY_URLS: dict[str, str] = {
     "whieda": "https://wwc.best/privacy-policy/",
 }
+
+# The offer exists for the same tenants that have a published privacy policy.
+OFFER_URLS: dict[str, str] = {
+    "whieda": "https://wwc.best/offer/",
+}
+
+SITE_ORDER_ACCEPT_CALLBACK = "site:accept"
+SITE_ORDER_ACCEPT_BUTTON = "Принимаю"
+SITE_ORDER_CONSENT_STORAGE_FAILED_TEXT = (
+    "Не получилось сохранить согласие, заявка не создана. Нажмите «Принимаю» ещё раз чуть позже."
+)
 
 MARKETING_CALLBACK_PREFIX = "consent:news:"
 MARKETING_YES = MARKETING_CALLBACK_PREFIX + "yes"
@@ -152,6 +181,81 @@ async def first_start_consent_notice(
         )
         return None
     return notice if is_new else None
+
+
+# --- click consent: offer + privacy policy -----------------------------------
+
+_CLICK_STATE_SQL = """
+select consented_at
+from telegram_consents
+where tenant_id = %(tenant_id)s and telegram_user_id = %(user_id)s and policy_version = %(version)s
+"""
+
+
+def click_consent_version(source: str) -> str:
+    """``site_order:2026-10-23`` — the source travels in ``policy_version`` (no schema change)."""
+    return f"{source}:{CLICK_CONSENT_VERSION}"
+
+
+def click_consent_urls(tenant_id: str) -> tuple[str, str] | None:
+    """(offer, privacy policy) of the tenant; None — nothing published, nothing to accept."""
+    offer = OFFER_URLS.get(tenant_id)
+    policy = PRIVACY_POLICY_URLS.get(tenant_id)
+    return (offer, policy) if offer and policy else None
+
+
+def site_order_consent_text(tenant_id: str) -> str | None:
+    urls = click_consent_urls(tenant_id)
+    if not urls:
+        return None
+    offer, policy = urls
+    return (
+        "Оформляя заказ, вы принимаете оферту и политику обработки персональных данных.\n\n"
+        f"Оферта: {offer}\n"
+        f"Политика: {policy}\n\n"
+        f"Нажмите «{SITE_ORDER_ACCEPT_BUTTON}», чтобы продолжить."
+    )
+
+
+def site_order_consent_keyboard() -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": SITE_ORDER_ACCEPT_BUTTON, "callback_data": SITE_ORDER_ACCEPT_CALLBACK}]]}
+
+
+def site_login_consent_line(tenant_id: str) -> str | None:
+    """The last line of the «Вход подтверждён» message; None for tenants without published documents."""
+    urls = click_consent_urls(tenant_id)
+    if not urls:
+        return None
+    offer, policy = urls
+    return f"Входя, вы принимаете оферту ({offer}) и политику ({policy})."
+
+
+async def has_click_consent(tenant_id: str, telegram_user_id: int, source: str) -> bool:
+    """True when the person has already accepted the current text from this source."""
+    params = {
+        "tenant_id": tenant_id,
+        "user_id": int(telegram_user_id),
+        "version": click_consent_version(source),
+    }
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(conn, _CLICK_STATE_SQL, params)
+    return row is not None
+
+
+async def record_click_consent(
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    telegram_chat_id: int,
+    source: str,
+) -> bool:
+    """Record the tap (first time per person, source and text version). True — first record."""
+    return await record_telegram_consent(
+        tenant_id,
+        telegram_user_id=telegram_user_id,
+        telegram_chat_id=telegram_chat_id,
+        policy_version=click_consent_version(source),
+    )
 
 
 # --- marketing opt-in --------------------------------------------------------

@@ -35,6 +35,15 @@ from app.site_requests.contacts import contacts_summary
 from app.support.service import FORUM_KIND_SITE, get_forum, set_site_orders_thread
 from app.telegram.club_group import NEWS_CHANNEL_TEXT, invite_to_club
 from app.telegram.bindings import current_bot_binding
+from app.telegram.consent import (
+    SITE_ORDER_CONSENT_STORAGE_FAILED_TEXT,
+    SOURCE_SITE_ORDER,
+    click_consent_urls,
+    has_click_consent,
+    record_click_consent,
+    site_order_consent_keyboard,
+    site_order_consent_text,
+)
 from app.telegram.money import PAYMENT_RU, both, money, wwc, wwc_signed
 from app.telegram.delivery import (
     answer_callback_query,
@@ -64,7 +73,7 @@ def _callback_as_message(callback: TelegramCallbackQuery) -> TelegramMessage:
     )
 
 _CALLBACK_RE = re.compile(
-    r"^site:(create|skip|country:(?:BY|RU)|lang:(?:ru|en|de)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^site:(create|accept|skip|country:(?:BY|RU)|lang:(?:ru|en|de)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -359,6 +368,46 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
         await _deliver(chat_id, "Оплата подтверждена. Данные приняты в работу; сообщим, когда сайт будет готов.")
 
 
+async def _order_consent_needed(tenant_id: str, actor_id: str, telegram_user_id: int) -> bool:
+    """«Заказать сайт» спрашивает согласие с офертой и политикой, пока нет клика на этот текст.
+
+    Не спрашиваем: у тенанта нет опубликованных документов; у человека уже есть открытая
+    анкета (начата до этого правила или после клика — она продолжается); он уже нажал
+    «Принимаю» на нынешний текст (повторный заказ). Сбой базы — исключение: заявку без
+    записи согласия не создаём."""
+    if click_consent_urls(tenant_id) is None:
+        return False
+    if await get_open_site_request(tenant_id, actor_id):
+        return False
+    return not await has_click_consent(tenant_id, telegram_user_id, SOURCE_SITE_ORDER)
+
+
+async def _accept_order_consent(
+    tenant: TenantContext, callback: TelegramCallbackQuery, actor_id: str, *, trace_id: str
+) -> dict[str, Any]:
+    """«Принимаю»: записать согласие (источник site_order), затем создать анкету."""
+    if click_consent_urls(tenant.tenant_id) is not None:
+        try:
+            await record_click_consent(
+                tenant.tenant_id,
+                telegram_user_id=callback.user_id,
+                telegram_chat_id=callback.chat_id,
+                source=SOURCE_SITE_ORDER,
+            )
+        except Exception:
+            logger.warning("site_order_consent_record_failed", extra={"trace_id": trace_id}, exc_info=True)
+            await _deliver(
+                callback.chat_id, SITE_ORDER_CONSENT_STORAGE_FAILED_TEXT, reply_markup=site_order_consent_keyboard()
+            )
+            return {"ok": False, "route": "site_request", "status": "consent_storage_failed", "trace_id": trace_id}
+    request = await begin_site_request(tenant.tenant_id, actor_id)
+    await _prompt_for_request(callback.chat_id, request)
+    return {
+        "ok": True, "route": "site_request", "status": request["status"], "consent": SOURCE_SITE_ORDER,
+        "trace_id": trace_id,
+    }
+
+
 async def try_handle_site_request_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
@@ -408,12 +457,22 @@ async def try_handle_site_request_callback(
             return {"ok": True, "route": "site_request_confirm", "trace_id": trace_id}
 
         actor_id = await _actor(tenant, callback)
+        if action == "accept":
+            return await _accept_order_consent(tenant, callback, actor_id, trace_id=trace_id)
         if action == "skip":
             request, skipped = await skip_site_request_step(tenant.tenant_id, actor_id)
             await _notify_owner_step(tenant.tenant_id, _callback_as_message(callback), request, done=skipped, skipped=True)
             await _prompt_for_request(callback.chat_id, request)
             return {"ok": True, "route": "site_request", "status": request["status"], "skipped": skipped, "trace_id": trace_id}
         if action == "create":
+            if await _order_consent_needed(tenant.tenant_id, actor_id, callback.user_id):
+                # Без нажатия «Принимаю» заявка не создаётся (владелец, 23.10.2026).
+                await _deliver(
+                    callback.chat_id,
+                    site_order_consent_text(tenant.tenant_id) or "",
+                    reply_markup=site_order_consent_keyboard(),
+                )
+                return {"ok": True, "route": "site_request", "status": "consent_required", "trace_id": trace_id}
             request = await begin_site_request(tenant.tenant_id, actor_id)
         elif action.startswith("plan:"):
             request = await set_site_request_plan(tenant.tenant_id, actor_id, action.rsplit(":", 1)[1])
