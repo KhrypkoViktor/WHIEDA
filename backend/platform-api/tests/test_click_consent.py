@@ -385,3 +385,34 @@ async def test_site_order_is_unreachable_from_the_showcase_bot(whieda_tenant, al
     handler.assert_not_awaited()
     begin.assert_not_awaited()
     deliver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_showcase_bot_login_shows_showcase_documents_and_records_showcase_consent(whieda_tenant, almira_binding):
+    """Решение владельца 23.10.2026: вход через @ALMIRA_I_bot — оферта и политика ALMIRA (showcase.links),
+    согласие с источником витрины ``showcase_login:almira``; документов WWC нет."""
+    from dataclasses import replace as dc_replace
+
+    from app.telegram.content_access import _SUCCESS_MESSAGE
+    from app.telegram.processor import process_core_telegram_update
+
+    almira = _almira()
+    almira = dc_replace(almira, links={**almira.links, "offer_url": "https://almira.by/public-offer/"})
+    confirm = AsyncMock(return_value={"ok": True, "status": "approved", "challenge_id": "c-a", "return_to": "/academy/"})
+    record = AsyncMock(return_value=True)
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=almira)), patch(
+        "app.telegram.content_access.showcase_for_binding", AsyncMock(return_value=almira)
+    ), patch("app.telegram.content_access.confirm_content_from_telegram", confirm), patch(
+        "app.telegram.content_access.record_click_consent", record
+    ), patch("app.telegram.content_access.deliver_text", AsyncMock()) as deliver, patch(
+        "app.telegram.showcase_bot._first_policy_notice", AsyncMock()
+    ), patch("app.telegram.showcase_bot._note_bot_open", AsyncMock()):
+        result = await process_core_telegram_update(whieda_tenant, _login_update(), "t-almira", binding=almira_binding)
+    assert result["ok"] is True
+    message = deliver.await_args.args[1]
+    assert message == (
+        f"{_SUCCESS_MESSAGE}\n\nВходя, вы принимаете оферту ALMIRA (https://almira.by/public-offer/) "
+        "и политику обработки персональных данных (https://almira.by/privacy-policy/)."
+    )
+    assert OFFER not in message and POLICY not in message
+    assert record.await_args.kwargs["source"] == "showcase_login:almira"

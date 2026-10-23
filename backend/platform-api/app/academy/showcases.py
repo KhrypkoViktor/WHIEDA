@@ -39,7 +39,7 @@ _ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _TOKEN_RE = re.compile(r"^--[a-z0-9-]{1,40}$")
 _TOKEN_VALUE_RE = re.compile(r"^[#a-zA-Z0-9(),.%\s/-]{1,80}$")
 _ASSET_KEYS = ("logo_url", "logo_alt", "favicon_url", "icon_url", "theme_color")
-_LINK_KEYS = ("home_url", "contact_url", "contact_label", "contact_telegram", "privacy_url", "support_url")
+_LINK_KEYS = ("home_url", "contact_url", "contact_label", "contact_telegram", "privacy_url", "support_url", "offer_url")
 
 
 @dataclass(frozen=True)

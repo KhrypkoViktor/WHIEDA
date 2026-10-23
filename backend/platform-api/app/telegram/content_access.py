@@ -12,6 +12,7 @@ from app.content_access.service import CONTENT_START_PREFIX, confirm_content_fro
 from app.cookie_domain import shared_cookie_domains
 from app.max.webapp import MAXLINK_PREFIX, redeem_link_request
 from app.telegram.bindings import current_bot_binding
+from app.academy.showcases import showcase_for_binding
 from app.telegram.consent import SOURCE_SITE_LOGIN, record_click_consent, site_login_consent_line
 from app.telegram.delivery import send_telegram_text
 from app.telegram.update_parser import parse_start_token, parse_telegram_message
@@ -126,29 +127,58 @@ _MAX_LINK_ERRORS = {
 }
 
 
-def _success_message(binding: Any) -> str:
+def _success_message(binding: Any, docs: tuple[str, str, str] | None = None) -> str:
     """Подтверждение входа + строка «Входя, вы принимаете оферту и политику» со ссылками.
 
-    Строки об оферте нет у бота витрины автора Академии (ALMIRA и др.): у витрины свой
-    оператор и своя политика, её согласие пишет процессор витрины (showcase:<id>:<дата>)."""
-    line = None if binding.showcase_id else site_login_consent_line(binding.tenant.tenant_id)
+    У бота витрины автора Академии (ALMIRA и др.) — документы витрины, не WWC: ``docs`` = (бренд, оферта,
+    политика) из ``showcase.links`` (решение владельца 23.10.2026); нет ссылки на оферту — строки нет."""
+    if binding.showcase_id:
+        line = (
+            f"Входя, вы принимаете оферту {docs[0]} ({docs[1]}) и политику обработки персональных данных ({docs[2]})."
+            if docs else None
+        )
+    else:
+        line = site_login_consent_line(binding.tenant.tenant_id)
     return f"{_SUCCESS_MESSAGE}\n\n{line}" if line else _SUCCESS_MESSAGE
 
 
-async def _record_login_consent(binding: Any, msg: Any, *, trace_id: str | None) -> None:
-    """Вход подтверждён — это и есть нажатие: пишем согласие с источником site_login.
+async def _showcase_docs(binding: Any) -> tuple[str, str, str] | None:
+    """(бренд, оферта, политика) витрины этого бота; None — не витрина, нет ссылок или витрина не нашлась."""
+    if not binding.showcase_id:
+        return None
+    try:
+        showcase = await showcase_for_binding(binding.tenant.tenant_id, binding.binding_id)
+    except Exception:
+        logger.warning("showcase_login_docs_failed", exc_info=True)
+        return None
+    links = showcase.links if showcase else {}
+    offer, policy = str(links.get("offer_url") or ""), str(links.get("privacy_url") or "")
+    if not (offer.startswith("https://") and policy.startswith("https://")):
+        return None
+    return showcase.brand_name, offer, policy
 
-    Не пишем для бота витрины: документы WWC — не её документы. Не блокирует вход:
-    сбой записи — предупреждение в лог, человек уже вошёл."""
+
+async def _record_login_consent(
+    binding: Any, msg: Any, *, trace_id: str | None, docs: tuple[str, str, str] | None = None,
+) -> None:
+    """Вход подтверждён — это и есть нажатие: пишем согласие. WWC — источник site_login; бот витрины —
+    ``showcase_login:<витрина>`` и только когда строка с её документами показана (``docs``).
+    Не блокирует вход: сбой записи — предупреждение в лог, человек уже вошёл."""
     tenant_id = binding.tenant.tenant_id
-    if binding.showcase_id or not site_login_consent_line(tenant_id):
+    if binding.showcase_id:
+        if not docs:
+            return
+        source = f"showcase_login:{binding.showcase_id}"
+    elif site_login_consent_line(tenant_id):
+        source = SOURCE_SITE_LOGIN
+    else:
         return
     try:
         await record_click_consent(
             tenant_id,
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
-            source=SOURCE_SITE_LOGIN,
+            source=source,
         )
     except Exception:
         logger.warning("site_login_consent_record_failed", extra={"trace_id": trace_id}, exc_info=True)
@@ -212,10 +242,11 @@ async def try_handle_content_access(
             telegram_user_id=msg.user_id,
             telegram_chat_id=msg.chat_id,
         )
-        await _record_login_consent(binding, msg, trace_id=trace_id)
+        docs = await _showcase_docs(binding)
+        await _record_login_consent(binding, msg, trace_id=trace_id, docs=docs)
         await deliver_text(
             msg.chat_id,
-            _success_message(binding),
+            _success_message(binding, docs),
             _return_markup(open_in_browser_url(result.get("return_to"))),
         )
         return {
