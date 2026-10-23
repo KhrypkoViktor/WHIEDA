@@ -39,6 +39,7 @@ from app.academy.ad_leads import (
     _plain,
     fetch_leads,
     load_opens,
+    match_lead,
     opened_for,
     sheet_config,
 )
@@ -261,6 +262,54 @@ def person_webinar(opened: Opened, leads_by_id: dict[str, Lead], webinars: list[
     if opened.webinar and any(w.tag == opened.webinar for w in webinars):
         return opened.webinar
     return lead_webinar(leads_by_id.get(opened.lead_id or ""), webinars) or opened.tag
+
+
+def card_text(
+    opened: Opened | None, leads: list[Lead], webinars: list[Webinar], *, username: str | None, name: str,
+) -> str:
+    """Кто это в таблице заявок — для темы обращения администратору: Кирилл не понимал, кто «Svetik»
+    (#A-47, это Светлана Самохвал; 22.10.2026). Имя из формы, прямые контакты, вебинар, пометки."""
+    by_id = {lead.lead_id: lead for lead in leads}
+    lead = (by_id.get(opened.lead_id or "") if opened else None) or match_lead(
+        leads,
+        username=(opened.username if opened else None) or username,
+        name=(opened.name if opened else "") or name,
+        opened_at=opened.opened_at if opened else None,
+    )
+    if opened is not None:
+        tag = person_webinar(replace(opened, lead_id=lead.lead_id) if lead else opened, by_id, webinars)
+    else:
+        tag = lead_webinar(lead, webinars)
+    webinar = next((w for w in webinars if w.tag == tag), None)
+    when = f" · вебинар {webinar.date}" if webinar else ""
+    if lead is None:
+        return f"📋 В таблице заявок не найдено{when}"
+    lines = [f"📋 В таблице: <b>{_plain(lead.name) or 'без имени'}</b>{when}"]
+    if lead.phone:
+        lines.append(f"📞 {lead.phone}")
+        if contacts := _contacts(lead.phone):
+            lines.append(contacts)
+    if lead.status:
+        lines.append(f"📝 {_plain(lead.status)}")
+    return "\n".join(lines)
+
+
+async def lead_card(tenant_id: str, showcase: Any, *, telegram_user_id: int, username: str | None, name: str) -> str:
+    """``card_text`` по таблице и записям «открыл бота»; таблицы нет — пусто, не открылась — одна строка."""
+    from app.db import tenant_connection
+
+    config = sheet_config(showcase.support)
+    if config is None:
+        return ""
+    try:
+        leads = await fetch_leads(config)
+    except Exception as exc:
+        logger.warning("lead_card_sheet_failed", extra={"showcase": showcase.showcase_id, "error": type(exc).__name__})
+        return "📋 Таблица заявок сейчас не открылась — найдите человека в ней вручную."
+    async with tenant_connection(tenant_id) as conn:
+        opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+    opened = next((o for o in opens if o.telegram_user_id == int(telegram_user_id)), None)
+    return card_text(opened, leads, webinars_config(showcase.support), username=username, name=name)
 
 
 # ---- подтверждение и перенос даты (Виктор, 18.10.2026) ------------------------------------------

@@ -156,10 +156,29 @@ def _topic_name(ticket: dict[str, Any], *, closed: bool = False) -> str:
     return (("✅ " if closed else "") + f"{_label(ticket)} · {display} · {WHO[_kind(ticket)]}")[:128]
 
 
-def _header(ticket: dict[str, Any]) -> str:
+def _header(ticket: dict[str, Any], card: str = "") -> str:
     display = str(ticket.get("user_display") or "").strip() or f"Telegram {ticket['user_telegram_user_id']}"
     lines = [f"{_label(ticket)} · {display} · {WHO[_kind(ticket)]}", f"tg://user?id={int(ticket['user_telegram_user_id'])}"]
+    if card:
+        lines += ["", card]
     return "\n".join(lines)
+
+
+async def _card(tenant_id: str, showcase: Showcase, source: TelegramMessage | TelegramCallbackQuery) -> str:
+    """Строка таблицы заявок человека — в шапку темы: кто это, прямые контакты, вебинар (22.10.2026)."""
+    from app.academy.webinars import lead_card
+
+    raw = source.raw or {}
+    user = (raw.get("message") or raw.get("callback_query") or {}).get("from") or {}
+    name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
+    try:
+        return await lead_card(
+            tenant_id, showcase, telegram_user_id=int(source.user_id),
+            username=str(user.get("username") or "").strip() or None, name=name,
+        )
+    except Exception:
+        logger.warning("showcase_support_card_failed", exc_info=True)
+        return ""
 
 
 def _close_keyboard(ticket: dict[str, Any]) -> dict[str, Any]:
@@ -236,11 +255,12 @@ async def open_ticket(
             if _in_forum(ticket)
             else "Ответьте на это сообщение (Reply) — ответ уйдёт человеку. Кнопка ниже закрывает обращение."
         )
-        delivered = await _send_to_admin(ticket, _header(ticket) + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
+        header = _header(ticket, await _card(tenant_id, showcase, source))
+        delivered = await _send_to_admin(ticket, header + "\n\n" + hint, reply_markup=_close_keyboard(ticket))
         if not delivered.get("ok"):
             logger.warning("showcase_support_target_unreachable", extra={"ticket": label, "kind": kind})
         await record_relayed_message(
-            tenant_id, ticket_id=str(ticket["ticket_id"]), direction="system", text=_header(ticket),
+            tenant_id, ticket_id=str(ticket["ticket_id"]), direction="system", text=header,
             delivered_chat_id=int(ticket["forum_chat_id"]) if _in_forum(ticket) else admin,
             delivered_message_id=delivered.get("message_id"),
         )

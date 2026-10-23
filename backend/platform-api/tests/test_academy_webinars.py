@@ -253,3 +253,34 @@ async def test_due_notification_sends_photos_then_text():
     with patch.object(worker, "send_telegram_photo", broken), patch.object(worker, "send_telegram_text", text):
         await worker._send_due_notification(binding, {"chat_id": "1", "text": "Пост 3", "photos": ["d" * 25]})
     assert calls == [("text", "Пост 3")]
+
+
+def test_ticket_card_says_who_it_is_in_the_sheet():
+    """Шапка обращения администратору (22.10.2026): «Svetik» — это Светлана Самохвал из таблицы, контакты, вебинар."""
+    from app.academy.ad_leads import Opened, parse_leads
+    from app.academy.webinars import card_text, webinars_config
+
+    webinars = webinars_config({"webinars": {
+        "ig_web24": {"at": "2026-10-24T17:30:00+03:00", "date": "24 октября", "url": ""},
+        "ig_web31": {"at": "2026-10-31T17:30:00+03:00", "date": "31 октября", "url": ""},
+    }})
+    leads = parse_leads("\n".join([
+        HEADER,
+        "l:701,2026-10-17T10:00:00+03:00,,,,,,,f:4,Вебинар композиция 24.10,false,ig,бесплатный_вебинар_24_октября,нет,,"
+        "Светлана Самохвал,p:+375291000001,CREATED,написал,перенесла на 31",
+    ]))
+    svetik = Opened(1068389443, None, "Svetik", "701", datetime(2026, 10, 17, 7, 5, tzinfo=timezone.utc), "ig_web24", "ig_web31")
+    text = card_text(svetik, leads, webinars, username=None, name="Svetik")
+    assert text.splitlines() == [
+        "📋 В таблице: <b>Светлана Самохвал</b> · вебинар 31 октября",
+        "📞 +375291000001",
+        '💬 <a href="https://wa.me/375291000001">WhatsApp</a> · <a href="https://t.me/+375291000001">Telegram по номеру</a>',
+        "📝 написал | перенесла на 31",
+    ]
+    # Бота открыл не по ссылке и в таблице не нашёлся — так и пишем, вебинар по метке.
+    stranger = Opened(5, "nobody", "Кто-то", None, datetime(2026, 10, 22, 7, 5, tzinfo=timezone.utc), "ig_web24")
+    assert card_text(stranger, leads, webinars, username="nobody", name="Кто-то") == "📋 В таблице заявок не найдено · вебинар 24 октября"
+    # Записи «открыл бота» нет, но имя и фамилия совпали — строка находится, вебинар по форме.
+    assert card_text(None, leads, webinars, username=None, name="Самохвал Светлана").startswith(
+        "📋 В таблице: <b>Светлана Самохвал</b> · вебинар 24 октября"
+    )
