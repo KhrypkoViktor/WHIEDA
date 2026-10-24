@@ -95,9 +95,34 @@ class Warmup:
     photos: tuple[str, ...] = ()  # file_id бота витрины: одна — фото, несколько — альбом; текст — следом
     button: dict[str, str] | None = None  # {text, url} — кнопка-ссылка под текстом
     series: str = ""  # серия вебинаров, к которой относится прогрев ('' — композиция)
+    # После эфира (О1, 24.10.2026): after_min вместо before_min — через столько минут после начала; оплатившим
+    # не уходит. buttons — ряды кнопок: {text, url} или {text, action: admin | signup | move:<метка>}.
+    after: bool = False
+    buttons: tuple[tuple[tuple[str, str, str], ...], ...] = ()  # ((текст, "url"|"action", значение), …)
 
 
 _PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
+_ACTION_RE = re.compile(r"^(admin|signup|move:[A-Za-z0-9_-]{1,40})$")
+
+
+def _warmup_markup(item: "Warmup", webinar: "Webinar") -> dict[str, Any] | None:
+    """Кнопки сообщения: ссылка; «Написать администратору» (обращение); «Записаться на курс» — алерт
+    администратору (``wsign:<метка>``); «Записаться на повтор» — перенос (``wbn:<метка>``)."""
+    rows: list[list[dict[str, str]]] = [[item.button]] if item.button else []
+    for row in item.buttons:
+        out = []
+        for label, kind, value in row:
+            if kind == "url":
+                out.append({"text": label, "url": value})
+            elif value == "admin":
+                out.append({"text": label, "callback_data": "shs:open:admin"})
+            elif value == "signup":
+                out.append({"text": label, "callback_data": f"wsign:{webinar.tag}"})
+            elif value.startswith("move:"):
+                out.append({"text": label, "callback_data": f"wbn:{value[5:]}"})
+        if out:
+            rows.append(out)
+    return {"inline_keyboard": rows} if rows else None
 
 
 # Копия рассылок (Виктор, 20.10.2026): support.broadcast_copy = [telegram id] — каждую рассылку
@@ -112,7 +137,12 @@ def copy_recipients(support: dict[str, Any] | None) -> list[int]:
 
 
 def copy_header(webinar: Webinar, kind: str, sent: int) -> str:
-    label = f"прогрев {kind[5:].upper().replace('P', 'П')}" if kind.startswith("warm_") else _COPY_LABELS.get(kind, kind)
+    if kind.startswith("warm_"):
+        label = f"прогрев {kind[5:].upper().replace('P', 'П')}"
+    elif kind.startswith("post_"):
+        label = f"после эфира {kind[5:].upper()}"
+    else:
+        label = _COPY_LABELS.get(kind, kind)
     return f"<i>📋 Копия рассылки · вебинар {webinar.date} · {label} · получили {sent}</i>\n\n"
 
 
@@ -123,8 +153,9 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
         if not isinstance(item, dict):
             continue
         key, text = str(item.get("key") or ""), str(item.get("text") or "").strip()
+        after = item.get("after_min") is not None
         try:
-            minutes = int(item.get("before_min"))
+            minutes = int(item.get("after_min") if after else item.get("before_min"))
         except (TypeError, ValueError):
             continue
         photos = tuple(
@@ -136,8 +167,23 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
             {"text": str(raw_button["text"])[:64], "url": str(raw_button["url"])}
             if raw_button.get("text") and str(raw_button.get("url") or "").startswith("https://") else None
         )
+        rows: list[tuple[tuple[str, str, str], ...]] = []
+        for raw_row in item.get("buttons") if isinstance(item.get("buttons"), list) else []:
+            row = []
+            for b in raw_row if isinstance(raw_row, list) else []:
+                label = str((b or {}).get("text") or "").strip()[:64] if isinstance(b, dict) else ""
+                url, action = str(b.get("url") or "") if label else "", str(b.get("action") or "") if label else ""
+                if label and url.startswith("https://"):
+                    row.append((label, "url", url))
+                elif label and _ACTION_RE.fullmatch(action):
+                    row.append((label, "action", action))
+            if row:
+                rows.append(tuple(row))
         if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
-            out.append(Warmup(key, timedelta(minutes=minutes), text, photos, button, str(item.get("series") or "").strip()))
+            out.append(Warmup(
+                key, timedelta(minutes=minutes), text, photos, button, str(item.get("series") or "").strip(),
+                after, tuple(rows),
+            ))
     return out
 
 
@@ -238,10 +284,14 @@ def due_messages(
     for item in warmups:
         if item.series != webinar.series:
             continue
+        if item.after:
+            moment = webinar.at + item.before
+            if moment <= now < moment + WARMUP_WINDOW:
+                out.append((f"post_{item.key}", moment, warmup_text(item, webinar), _warmup_markup(item, webinar), item.photos))
+            continue
         moment = webinar.at - item.before
         if moment <= now < min(moment + WARMUP_WINDOW, webinar.at):
-            markup = {"inline_keyboard": [[item.button]]} if item.button else None
-            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), markup, item.photos))
+            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), _warmup_markup(item, webinar), item.photos))
     for kind, moment in due_reminders(webinar, now):
         markup = _link_markup(webinar) if kind in ("hour", "five") else None
         out.append((kind, moment, reminder_text(kind, webinar), markup, ()))
@@ -729,6 +779,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                 continue  # открыл бота позже — это сообщение ему уже не нужно
                             if str(opened.telegram_user_id) in got:
                                 continue
+                            if kind.startswith("post_") and is_paid(leads_by_id.get(opened.lead_id or "")):
+                                continue  # предложение после эфира оплатившим не шлём
                             sent += await enqueue(
                                 conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id, text, markup,
                                 photos,

@@ -365,3 +365,30 @@ def test_anatomy_series_dates_texts_and_moves_stay_inside_the_series():
     # Прогрев композиции к анатомии не уходит.
     warm = [Warmup("p1", timedelta(minutes=60), "Прогрев {date}")]
     assert due_messages(an28, warm, an28.at - timedelta(minutes=59)) == []
+
+
+def test_post_webinar_offer_goes_after_the_start_with_action_buttons():
+    """О1 (24.10.2026): after_min — через 2 часа после начала, окно 2 часа; кнопки «Записаться на курс»,
+    «Написать администратору», «Записаться на повтор 31.10»."""
+    from app.academy.webinars import copy_header, due_messages, warmup_config
+
+    webinars = webinars_config({"webinars": ANATOMY})
+    w24 = next(w for w in webinars if w.tag == "ig_web24")
+    items = warmup_config({"webinar_warmup": [{
+        "key": "o1", "after_min": 120, "text": "Эфир {date} завершился.",
+        "buttons": [[{"text": "Записаться на курс", "action": "signup"}],
+                    [{"text": "Написать администратору", "action": "admin"}],
+                    [{"text": "Записаться на повтор 31.10", "action": "move:ig_web31"}],
+                    [{"text": "плохая", "action": "rm -rf"}]],
+    }]})
+    assert items[0].after is True
+    assert due_messages(w24, items, w24.at + timedelta(minutes=119)) == []
+    (kind, moment, text, markup, photos), = due_messages(w24, items, w24.at + timedelta(minutes=121))
+    assert (kind, moment, text) == ("post_o1", w24.at + timedelta(minutes=120), "Эфир 24 октября завершился.")
+    assert markup["inline_keyboard"] == [
+        [{"text": "Записаться на курс", "callback_data": "wsign:ig_web24"}],
+        [{"text": "Написать администратору", "callback_data": "shs:open:admin"}],
+        [{"text": "Записаться на повтор 31.10", "callback_data": "wbn:ig_web31"}],
+    ]
+    assert due_messages(w24, items, w24.at + timedelta(minutes=241)) == []
+    assert "после эфира O1" in copy_header(w24, "post_o1", 5)

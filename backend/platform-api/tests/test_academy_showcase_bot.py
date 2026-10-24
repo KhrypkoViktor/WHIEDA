@@ -440,3 +440,36 @@ async def test_anatomy_link_greets_with_its_own_text_and_records_the_series(whie
     greeting = sent.await_args_list[0].kwargs["text"]
     assert greeting.startswith("Здравствуйте! Спасибо, что записались на вебинар по анатомии.")
     assert "по композиции" not in greeting
+
+
+@pytest.mark.asyncio
+async def test_course_signup_button_answers_and_alerts_admin_once(whieda_tenant, almira_binding):
+    """«Записаться на курс» под О1: человеку — «администратор свяжется», Кириллу — алерт с карточкой из таблицы,
+    ключ outbox — один на человека и эфир."""
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    enqueue = AsyncMock(return_value={"created": True})
+    update = {"callback_query": {"id": "cb1", "data": "wsign:ig_web24", "from": {"id": 301, "first_name": "Анна", "username": "anna_p"},
+                                 "message": {"message_id": 9, "chat": {"id": 301, "type": "private"}}}}
+
+    class _Conn:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *a):
+            return False
+
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.send_telegram_text", sent
+    ), patch("app.telegram.showcase_bot.answer_callback_query", AsyncMock(return_value={"ok": True})), patch(
+        "app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"author": 739736805, "admin": 5035800725})
+    ), patch("app.academy.webinars.lead_card", AsyncMock(return_value="📋 В таблице: <b>Анна Петрова</b>")), patch(
+        "app.db.tenant_connection", lambda tenant_id: _Conn()
+    ), patch("app.jobs.outbox.enqueue_outbox_event", enqueue):
+        result = await process_core_telegram_update(whieda_tenant, update, "t", binding=almira_binding)
+    assert (result["route"], result["admin_alert"]) == ("showcase_signup", True)
+    assert sent.await_args.kwargs["text"].startswith("Спасибо! Администратор свяжется с вами здесь")
+    kwargs = enqueue.await_args.kwargs
+    assert kwargs["idempotency_key"] == "wsign:almira:ig_web24:301"
+    assert kwargs["payload"]["chat_id"] == "5035800725"
+    assert kwargs["payload"]["text"].startswith('🎓 <b>Хочет на курс</b>: <b><a href="tg://user?id=301">Анна</a></b> (@anna_p)')
+    assert "📋 В таблице: <b>Анна Петрова</b>" in kwargs["payload"]["text"]

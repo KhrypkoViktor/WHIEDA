@@ -580,3 +580,44 @@ def test_both_series_get_both_branches_and_anatomy_confirms_with_its_own_move(mo
             ]
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_post_webinar_offer_skips_paid_and_moved(monkeypatch):
+    """О1 через 2 часа после эфира 24.10: Анна оплатила — ей нет; Светлана записана на 31.10 — ей нет; Борису — да."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    post = {**NO_LINK, "webinar_warmup": [{"key": "o1", "after_min": 120, "text": "Эфир {date} завершился.",
+                                            "buttons": [[{"text": "Записаться на курс", "action": "signup"}]]}]}
+    paid_csv = CSV.replace(
+        "Анна Ли,p:+375291000001,CREATED,,", "Анна Ли,p:+375291000001,CREATED,оплатила 10к,"
+    )
+    assert paid_csv != CSV
+    with temporary_database("whieda_post") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(post, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(paid_csv)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            webinars._last_confirm_fetch.clear()
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, {"almira-academy-bot": object()}, clock=at(24, 19, 31)) == 1
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(conn, "select idempotency_key, payload from platform_outbox")
+            assert [r["idempotency_key"] for r in rows] == [f"webinar:almira:ig_web24:post_o1:{BORIS}"]
+            assert rows[0]["payload"]["reply_markup"]["inline_keyboard"] == [
+                [{"text": "Записаться на курс", "callback_data": "wsign:ig_web24"}]
+            ]
+
+        db.run_with_app(proof)

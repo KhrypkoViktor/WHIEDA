@@ -270,6 +270,56 @@ async def _try_webinar_callback(
     return {"ok": True, "route": "showcase_webinar_move", "moved": True, "webinar": webinar.tag, "trace_id": trace_id}
 
 
+SIGNUP_REPLY = "Спасибо! Администратор свяжется с вами здесь, в этом чате, и поможет с записью и оплатой."
+
+
+async def _try_signup_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«Записаться на курс» под сообщением после эфира (О1, 24.10.2026): человеку — ответ, администратору —
+    один алерт на человека и эфир: кто, контакты и строка таблицы (``lead_card``)."""
+    from app.academy.webinars import EVENT, lead_card
+    from app.db import tenant_connection
+    from app.jobs.outbox import enqueue_outbox_event
+
+    data = str(callback.data or "")
+    if not data.startswith("wsign:") or callback.chat_type != "private":
+        return None
+    tag = data[6:]
+    token = current_bot_binding().bot_token
+    await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
+    await _send(callback.chat_id, SIGNUP_REPLY)
+    queued = False
+    try:
+        admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+        if admin is not None:
+            user = ((callback.raw or {}).get("callback_query") or {}).get("from") or {}
+            name = _plain_name(" ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip())
+            username = str(user.get("username") or "").strip() or None
+            webinar = next((w for w in webinars_config(showcase.support) if w.tag == tag), None)
+            card = await lead_card(
+                tenant.tenant_id, showcase, telegram_user_id=int(callback.user_id), username=username, name=name,
+            )
+            text = (
+                f'🎓 <b>Хочет на курс</b>: <b><a href="tg://user?id={int(callback.user_id)}">{name or "Без имени"}</a></b>'
+                + (f" (@{username})" if username else "")
+                + (f" · после вебинара {webinar.date}" if webinar else "")
+                + (f"\n\n{card}" if card else "")
+            )
+            async with tenant_connection(tenant.tenant_id) as conn:
+                row = await enqueue_outbox_event(
+                    conn, tenant_id=tenant.tenant_id, event_type=EVENT,
+                    idempotency_key=f"wsign:{showcase.showcase_id}:{tag}:{int(callback.user_id)}",
+                    payload={"chat_id": str(int(admin)), "text": text, "binding_id": showcase.telegram_binding_id},
+                    due_at=datetime.now(timezone.utc),
+                )
+            queued = bool(row and row.get("created"))
+    except Exception:
+        logger.warning("showcase_signup_notify_failed", extra={"trace_id": trace_id}, exc_info=True)
+    logger.info("showcase_signup", extra={"trace_id": trace_id, "webinar": tag, "admin_alert": queued})
+    return {"ok": True, "route": "showcase_signup", "webinar": tag, "admin_alert": queued, "trace_id": trace_id}
+
+
 NOT_IN_BOT_COMMANDS = {"не в боте", "/nebot", "кто не в боте"}
 
 
@@ -391,6 +441,9 @@ async def process_showcase_bot_update(
 
     callback = parse_telegram_callback(update)
     if callback:
+        signed = await _try_signup_callback(tenant, callback, showcase, trace_id=trace_id)
+        if signed is not None:
+            return signed
         moved = await _try_webinar_callback(tenant, callback, showcase, trace_id=trace_id)
         if moved is not None:
             return moved
