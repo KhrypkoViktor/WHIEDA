@@ -17,6 +17,8 @@ up to 300 people and the old ``contacts`` key too).
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Annotated, Any, Callable
@@ -57,10 +59,11 @@ from app.crm.service import (
     viewer_display_name,
 )
 from app.crm.templates import create_template, delete_template, list_templates, update_template
+from app.db import tenant_connection
 from app.errors import http_exception_handler
 from app.internal_auth import InternalSecretHeader, require_internal_secret
 from app.settings import get_settings
-from app.tenancy import get_request_tenant, require_entitlement
+from app.tenancy import TenantContext, get_request_tenant, require_entitlement
 
 PREFIX = "/api/v1/content-access/crm"
 NO_STORE = "private, no-store"
@@ -134,29 +137,56 @@ def _raise(exc: CrmError) -> None:
     raise HTTPException(status_code=exc.status, detail={"error": exc.code, **exc.extra}) from exc
 
 
-async def _context(request: Request) -> CrmContext:
+async def _caller(request: Request) -> tuple[TenantContext, int]:
+    """Tenant with the ``crm`` entitlement and the signed-in person; no DB beyond the session."""
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "crm")
     session = await _current_session(request)
     telegram_user_id = session.get("telegram_user_id")
     if telegram_user_id is None:
         raise HTTPException(status_code=401, detail={"error": "telegram_session_required"})
-    viewer = await load_viewer(tenant.tenant_id, int(telegram_user_id))
+    return tenant, int(telegram_user_id)
+
+
+async def _context_for(tenant: TenantContext, telegram_user_id: int, conn: Any = None) -> CrmContext:
+    """PRO check and the CRM account. ``conn`` — the request's open ``tenant_connection``;
+    without it each read opens its own, as before."""
+    viewer = await load_viewer(tenant.tenant_id, telegram_user_id, conn=conn)
     reason = lock_reason(viewer)
     if reason == "pro_required":
         raise HTTPException(status_code=402, detail={"error": "pro_required"})
     if reason is not None:
         raise HTTPException(status_code=403, detail={"error": reason})
     try:
-        account = await get_or_create_account(tenant.tenant_id, int(telegram_user_id))
+        account = await get_or_create_account(tenant.tenant_id, telegram_user_id, conn=conn)
     except CrmError as exc:
         _raise(exc)
     return CrmContext(
         tenant_id=tenant.tenant_id,
         account=account,
-        telegram_user_id=int(telegram_user_id),
+        telegram_user_id=telegram_user_id,
         my_name=viewer_display_name(viewer),
     )
+
+
+async def _context(request: Request) -> CrmContext:
+    tenant, telegram_user_id = await _caller(request)
+    return await _context_for(tenant, telegram_user_id)
+
+
+@asynccontextmanager
+async def _scoped(request: Request) -> AsyncIterator[tuple[CrmContext, Any]]:
+    """``_context`` and the handler's own reads on ONE ``tenant_connection``.
+
+    For read-only handlers: viewer, account and the handler's query share the transaction
+    (BEGIN, set_config and COMMIT once instead of once per read). The session check stays
+    outside: its UPDATE of last_seen_at would hold a row lock until the end of the request
+    and serialise the parallel requests of one session (the 30 s cache makes it free anyway).
+    When the handler refuses (402/403/404) the transaction rolls back, an account created by this
+    very request included; the next request creates it again."""
+    tenant, telegram_user_id = await _caller(request)
+    async with tenant_connection(tenant.tenant_id) as conn:
+        yield await _context_for(tenant, telegram_user_id, conn), conn
 
 
 Tag = Annotated[str, Field(max_length=200)]
@@ -251,7 +281,8 @@ def _me(ctx: CrmContext) -> dict[str, Any]:
 
 @router.get(f"{PREFIX}/me")
 async def crm_me(request: Request) -> dict[str, Any]:
-    return _me(await _context(request))
+    async with _scoped(request) as (ctx, _conn):
+        return _me(ctx)
 
 
 @router.patch(f"{PREFIX}/me")
@@ -275,8 +306,8 @@ async def crm_me_update(body: MeBody, request: Request) -> dict[str, Any]:
 
 @router.get(f"{PREFIX}/today")
 async def crm_today(request: Request) -> dict[str, Any]:
-    ctx = await _context(request)
-    return {"ok": True, **await today_view(ctx.tenant_id, ctx.account)}
+    async with _scoped(request) as (ctx, conn):
+        return {"ok": True, **await today_view(ctx.tenant_id, ctx.account, conn=conn)}
 
 
 @router.get(f"{PREFIX}/contacts")
@@ -384,8 +415,8 @@ async def crm_export(request: Request) -> Response:
 @router.get(f"{PREFIX}/pipeline")
 async def crm_pipeline(request: Request, tag: str | None = None) -> dict[str, Any]:
     """Columns by status: count + the first 20 cards each; ``tag`` — only cards with it."""
-    ctx = await _context(request)
-    return {"ok": True, **await pipeline(ctx.tenant_id, ctx.account, tag=tag)}
+    async with _scoped(request) as (ctx, conn):
+        return {"ok": True, **await pipeline(ctx.tenant_id, ctx.account, tag=tag, conn=conn)}
 
 
 @router.get(f"{PREFIX}/pipeline/{{status}}")
@@ -408,11 +439,11 @@ async def crm_tags(request: Request) -> dict[str, Any]:
 
 @router.get(f"{PREFIX}/contacts/{{contact_id}}")
 async def crm_contact_get(contact_id: str, request: Request) -> dict[str, Any]:
-    ctx = await _context(request)
-    try:
-        contact = await get_contact(ctx.tenant_id, ctx.account, contact_id)
-    except CrmError as exc:
-        _raise(exc)
+    async with _scoped(request) as (ctx, conn):
+        try:
+            contact = await get_contact(ctx.tenant_id, ctx.account, contact_id, conn=conn)
+        except CrmError as exc:
+            _raise(exc)
     return {"ok": True, "contact": contact}
 
 

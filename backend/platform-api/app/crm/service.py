@@ -19,6 +19,7 @@ import io
 import json
 import logging
 import uuid
+from contextlib import nullcontext
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -101,9 +102,12 @@ def _rule(exc: CrmRuleError) -> CrmError:
 # ---- who is looking -----------------------------------------------------------
 
 
-async def load_viewer(tenant_id: str, telegram_user_id: int) -> CrmViewer:
+async def load_viewer(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> CrmViewer:
+    """``conn`` (here and in ``get_or_create_account``, ``today_view``, ``get_contact``) — an open
+    ``tenant_connection`` of the same tenant: a site request reads in one transaction; without it
+    each function opens its own, as before."""
     subscription = await resolve_partner_subscription_by_telegram_user_id(
-        tenant_id, int(telegram_user_id), on_ambiguous="best"
+        tenant_id, int(telegram_user_id), on_ambiguous="best", conn=conn
     )
     return CrmViewer(
         telegram_user_id=int(telegram_user_id),
@@ -189,8 +193,8 @@ async def _select_account(conn: Any, tenant_id: str, telegram_user_id: int) -> d
     )
 
 
-async def get_or_create_account(tenant_id: str, telegram_user_id: int) -> dict[str, Any]:
-    async with tenant_connection(tenant_id) as conn:
+async def get_or_create_account(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> dict[str, Any]:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await _select_account(conn, tenant_id, telegram_user_id)
         if row is None:
             async with conn.cursor() as cur:
@@ -390,13 +394,13 @@ async def _duplicate_of(
     return row["contact_id"] if row else None
 
 
-async def today_view(tenant_id: str, account: dict[str, Any]) -> dict[str, Any]:
+async def today_view(tenant_id: str, account: dict[str, Any], *, conn: Any = None) -> dict[str, Any]:
     """«Сегодня»: ``groups`` by step (v1 site) and ``sections`` by meaning —
     meetings today, call, remind, overdue (v2 app, the same split as the bot's
     morning message), plus the counters ``done_today`` and ``planned_tomorrow``.
     Starred cards first."""
     today = account["today"]
-    async with tenant_connection(tenant_id) as conn:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         rows = await fetch_all(
             conn,
             f"""
@@ -619,8 +623,8 @@ async def bulk_create_contacts(
     return {"created": len(created), "skipped": skipped}
 
 
-async def get_contact(tenant_id: str, account: dict[str, Any], contact_id: str) -> dict[str, Any]:
-    async with tenant_connection(tenant_id) as conn:
+async def get_contact(tenant_id: str, account: dict[str, Any], contact_id: str, *, conn: Any = None) -> dict[str, Any]:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await load_contact(conn, tenant_id, account["account_id"], contact_id)
         notes = await fetch_all(
             conn,

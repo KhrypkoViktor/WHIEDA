@@ -10,6 +10,7 @@ cards are never listed.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 from app.crm.paging import (
@@ -184,11 +185,15 @@ def _tag_filter(tag: str | None) -> str | None:
     return clean_tag(tag) or None
 
 
-async def pipeline(tenant_id: str, account: dict[str, Any], *, tag: str | None = None) -> dict[str, Any]:
+async def pipeline(
+    tenant_id: str, account: dict[str, Any], *, tag: str | None = None, conn: Any = None
+) -> dict[str, Any]:
     """Every status column: its count and the first PIPELINE_FIRST_PAGE cards
     (starred first, then recently changed) — one query. ``tag`` narrows every
-    column and its count to the cards with that tag."""
-    async with tenant_connection(tenant_id) as conn:
+    column and its count to the cards with that tag. ``conn`` — an open
+    ``tenant_connection`` of the same tenant (the request reads in one transaction);
+    without it the function opens its own, as before."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         rows = await fetch_all(
             conn,
             f"""
