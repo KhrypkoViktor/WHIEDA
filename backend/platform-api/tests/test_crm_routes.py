@@ -18,6 +18,7 @@ from app.crm.service import CrmError
 from app.main import create_app
 from app.settings import get_settings
 from app.tenancy import TenantContext
+from tests.fake_db import FakeDb
 
 HOST = {"host": "wwc.best"}
 NO_CRM_HOST = {"host": "nocrm.test"}
@@ -71,6 +72,8 @@ def _signed_in(viewer: CrmViewer = PAID):
         patch("app.content_access.routes.validate_content_session", AsyncMock(return_value=_session(viewer.telegram_user_id))),
         patch("app.crm.routes.load_viewer", AsyncMock(return_value=viewer)),
         patch("app.crm.routes.get_or_create_account", AsyncMock(return_value=ACCOUNT)),
+        # Чтения /me, /today, /pipeline и /contacts/{id} идут одной транзакцией: базы в тесте нет.
+        patch("app.crm.routes.tenant_connection", FakeDb().tenant_connection),
     )
 
 

@@ -120,9 +120,10 @@ async def test_pipeline_and_column(crm_app):
     board_call = AsyncMock(return_value=board)
     response = await _call(crm_app, "GET", "/pipeline", extra=[patch("app.crm.routes.pipeline", board_call)])
     assert response.status_code == 200 and response.json()["columns"][0]["count"] == 1
-    assert board_call.await_args.kwargs == {"tag": None}
+    assert board_call.await_args.kwargs["tag"] is None
+    assert board_call.await_args.kwargs["conn"] is not None  # транзакция запроса, общая с контекстом
     await _call(crm_app, "GET", "/pipeline?tag=vip", extra=[patch("app.crm.routes.pipeline", board_call)])
-    assert board_call.await_args.kwargs == {"tag": "vip"}
+    assert board_call.await_args.kwargs["tag"] == "vip"
     column = AsyncMock(return_value={"status": "new", "title": "Новый контакт", **PAGE})
     response = await _call(crm_app, "GET", "/pipeline/new?cursor=abc&limit=20&tag=vip",
                            extra=[patch("app.crm.routes.pipeline_column", column)])
