@@ -8,6 +8,15 @@ from httpx import ASGITransport, AsyncClient
 from app.main import create_app
 from app.telegram.bindings import BotBindingContext
 from app.tenancy import TenantContext
+from app.ttl_cache import clear_all_caches
+
+
+@pytest.fixture(autouse=True)
+def _fresh_inprocess_caches():
+    """Кэши процесса (арендатор по хосту, сессии, публичные ответы) не переходят из теста в тест."""
+    clear_all_caches()
+    yield
+    clear_all_caches()
 
 
 @pytest.fixture
