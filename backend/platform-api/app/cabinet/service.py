@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.academy.service import AcademyViewer, academy_visible, course_lock_reason, preview_admin_ids
 from app.cabinet.journey import JourneyFacts, cabinet_locks, cabinet_tier, journey_steps
+from app.public_cache import forget_public_profiles
 from app.cabinet.profile import (
     ADDRESS_MAX,
     BIO_MAX,
@@ -877,6 +878,8 @@ async def apply_profile_request(tenant_id: str, request_id: str, *, reviewer_id:
         )
         await _prune_media(conn, tenant_id, request["ref_code"], _referenced_media(base, profile.get("photo_url")))
     logger.info("cabinet_profile_request_applied", extra={"request_id": request_uuid, "ref_code": request["ref_code"]})
+    # Публичный профиль сменился: /public/ref этого процесса прочитает базу заново, а не через минуту.
+    forget_public_profiles()
     return {
         "applied": True,
         "status": "applied",
