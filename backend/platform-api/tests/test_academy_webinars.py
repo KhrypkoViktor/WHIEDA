@@ -7,9 +7,11 @@ from datetime import datetime, timedelta, timezone
 from app.academy.ad_leads import parse_leads
 from app.academy.webinars import (
     Webinar,
+    _link_markup,
     call_list_texts,
     due_reminders,
     lead_webinar,
+    open_markup,
     reminder_text,
     webinars_config,
 )
@@ -43,8 +45,14 @@ def test_texts_carry_date_time_and_link_without_promises():
     assert reminder_text("two_hours", w) == (
         "Сегодня в 17:30 по Минску — вебинар по композиции с Александрой Пармон. Ссылку пришлём за час до начала."
     )
-    assert "https://meet.google.com/abc" in reminder_text("hour", w) and "Начало в 17:30 по Минску." in reminder_text("hour", w)
-    assert reminder_text("five", w) == "Начинаем через 5 минут. Заходите: https://meet.google.com/abc"
+    # Ссылки в тексте нет — кнопка «Присоединиться к вебинару» (нажатие пишется, 24.10.2026).
+    assert reminder_text("hour", w) == (
+        "Через час начинаем, в 17:30 по Минску.\n\nВойти в эфир — кнопкой «Присоединиться к вебинару» ниже."
+    )
+    assert reminder_text("five", w) == "Начинаем через 5 минут. Заходите — кнопка «Присоединиться к вебинару» ниже."
+    assert "meet.google.com" not in reminder_text("hour", w) + reminder_text("five", w)
+    assert _link_markup(w) == {"inline_keyboard": [[{"text": "Присоединиться к вебинару", "callback_data": "wjoin:ig_web24"}]]}
+    assert open_markup(w)["inline_keyboard"][0][0]["url"] == "https://meet.google.com/abc"
     for kind in ("day", "two_hours", "hour", "five"):
         assert "подар" not in reminder_text(kind, w).lower()
 

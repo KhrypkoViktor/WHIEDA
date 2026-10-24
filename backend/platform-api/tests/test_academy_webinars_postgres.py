@@ -111,8 +111,19 @@ def test_webinar_day_reminders_link_gate_dedupe_and_call_list(monkeypatch):
 
             payloads = await sent()
             hour = payloads[f"webinar:almira:ig_web24:hour:{BORIS}"]
-            assert hour["chat_id"] == str(BORIS) and "https://meet.google.com/abc-defg-hij" in hour["text"]
-            assert hour["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://meet.google.com/abc-defg-hij"
+            assert hour["chat_id"] == str(BORIS) and "meet.google.com" not in hour["text"]
+            assert hour["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "wjoin:ig_web24"
+            # Нажал «Присоединиться к вебинару» — время пишется один раз; копия администратору (без строки) — нет.
+            from app.academy.ad_leads import joined_text, load_opens
+
+            web24 = next(w for w in webinars.webinars_config(with_link) if w.tag == "ig_web24")
+            assert await webinars.record_join("whieda", "almira", telegram_user_id=BORIS, webinar=web24) is True
+            assert await webinars.record_join("whieda", "almira", telegram_user_id=BORIS, webinar=web24) is False
+            assert await webinars.record_join("whieda", "almira", telegram_user_id=ADMIN, webinar=web24) is False
+            async with tenant_connection("whieda") as conn:
+                opens = {o.telegram_user_id: o for o in await load_opens(conn, "whieda", "almira")}
+            assert [tag for tag, _ in opens[BORIS].joined] == ["ig_web24"] and joined_text(opens[BORIS]).startswith("✅ ")
+            assert opens[ANNA].joined == () and joined_text(opens[ANNA]) == ""
             assert payloads["webinar:almira:ig_web24:no_link"]["chat_id"] == str(ADMIN)
             calls = payloads["webinar:almira:ig_web24:calls:0"]
             assert calls["chat_id"] == str(ADMIN) and "(1 чел.)" in calls["text"]

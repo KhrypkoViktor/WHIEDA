@@ -42,10 +42,14 @@ from app.academy.notify import course_page_url
 from app.academy.service import preview_admin_ids
 from app.academy.webinar_gift import GIFT_BUTTON, gift_closed_text, gift_config, gift_text, gift_webinar, grant_gift, is_code_word
 from app.academy.webinars import (
+    JOIN_PREFIX,
+    OPEN_BUTTON,
     move_markup,
     move_webinar,
     moved_text,
     not_in_bot_texts,
+    open_markup,
+    record_join,
     series_webinars,
     unlinked_prompts,
     webinar_series_of,
@@ -362,6 +366,51 @@ async def _try_link_callback(
     return {"ok": True, "route": "showcase_link", "linked": True, "trace_id": trace_id}
 
 
+async def _try_join_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«Присоединиться к вебинару» в напоминании (Виктор, 24.10.2026): первое нажатие пишется (V41) —
+    по нему колонка «На эфире» в таблице заявок; кнопка становится ссылкой на эфир."""
+    data = str(callback.data or "")
+    if not data.startswith(JOIN_PREFIX):
+        return None
+    token = current_bot_binding().bot_token
+    tag = data[len(JOIN_PREFIX):]
+    webinar = next((w for w in webinars_config(showcase.support) if w.tag == tag), None)
+    if webinar is None or not webinar.url:
+        await answer_callback_query(
+            callback_query_id=callback.callback_query_id, bot_token=token, show_alert=True,
+            text="Ссылки на эфир пока нет — пришлём её сюда.",
+        )
+        return {"ok": True, "route": "showcase_join", "joined": False, "trace_id": trace_id}
+    first = False
+    try:
+        first = await record_join(
+            tenant.tenant_id, showcase.showcase_id, telegram_user_id=int(callback.user_id), webinar=webinar,
+        )
+    except Exception:
+        logger.warning("showcase_join_record_failed", extra={"trace_id": trace_id}, exc_info=True)
+    await answer_callback_query(
+        callback_query_id=callback.callback_query_id, bot_token=token, text=f"Нажмите «{OPEN_BUTTON}»",
+    )
+    message = ((callback.raw or {}).get("callback_query") or {}).get("message") or {}
+    edited = False
+    if message.get("message_id"):
+        try:
+            await _call_telegram(
+                "editMessageReplyMarkup",
+                {"chat_id": callback.chat_id, "message_id": message["message_id"], "reply_markup": open_markup(webinar)},
+                bot_token=token,
+            )
+            edited = True
+        except Exception:
+            logger.warning("showcase_join_edit_failed", extra={"trace_id": trace_id}, exc_info=True)
+    if not edited:
+        await _send(callback.chat_id, "Эфир — по кнопке ниже.", open_markup(webinar))
+    logger.info("showcase_join", extra={"trace_id": trace_id, "webinar": tag, "first": first})
+    return {"ok": True, "route": "showcase_join", "joined": first, "trace_id": trace_id}
+
+
 SIGNUP_REPLY = "Спасибо! Администратор свяжется с вами здесь, в этом чате, и поможет с записью и оплатой."
 
 
@@ -547,6 +596,9 @@ async def process_showcase_bot_update(
         linked = await _try_link_callback(tenant, callback, showcase, trace_id=trace_id)
         if linked is not None:
             return linked
+        joined = await _try_join_callback(tenant, callback, showcase, trace_id=trace_id)
+        if joined is not None:
+            return joined
         moved = await _try_webinar_callback(tenant, callback, showcase, trace_id=trace_id)
         if moved is not None:
             return moved

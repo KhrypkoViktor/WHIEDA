@@ -9,7 +9,9 @@
 Кому: людям, открывшим бота по ссылке с рекламы (``academy_ad_opens``, V37). Вебинар человека —
 по его строке таблицы заявок (интерес «…24 октября»), а без строки — по метке /start.
 
-* за сутки, за 2 часа — без ссылки; за час и за 5 минут — только со ссылкой;
+* за сутки, за 2 часа — без ссылки; за час и за 5 минут — только со ссылкой: кнопка «Присоединиться
+  к вебинару» (24.10.2026), первое нажатие пишется (``academy_ad_opens.joined``, V41), кнопка
+  становится ссылкой на эфир; по нажатиям — колонка «На эфире» в таблице заявок;
 * открыл бота после времени напоминания — получает только оставшиеся;
 * каждое — одному человеку один раз (ключ outbox), у каждого своё окно отправки (``REMINDERS``);
 * администратору витрины: за 1,5 часа нет ссылки — одна строка; за 30 минут — список заявок
@@ -274,12 +276,41 @@ def reminder_text(kind: str, webinar: Webinar) -> str:
     if kind == "two_hours":
         return f"Сегодня в {time} по Минску — вебинар {webinar.subject} с Александрой Пармон. Ссылку пришлём за час до начала."
     if kind == "hour":
-        return f"Через час начинаем. Ссылка на эфир: {webinar.url}\n\nНачало в {time} по Минску."
-    return f"Начинаем через 5 минут. Заходите: {webinar.url}"
+        return f"Через час начинаем, в {time} по Минску.\n\nВойти в эфир — кнопкой «{JOIN_BUTTON}» ниже."
+    return f"Начинаем через 5 минут. Заходите — кнопка «{JOIN_BUTTON}» ниже."
+
+
+JOIN_PREFIX = "wjoin:"
+JOIN_BUTTON = "Присоединиться к вебинару"
+OPEN_BUTTON = "▶️ Открыть эфир"
 
 
 def _link_markup(webinar: Webinar) -> dict[str, Any]:
-    return {"inline_keyboard": [[{"text": "Перейти к эфиру", "url": webinar.url}]]}
+    """Не ссылка, а кнопка: нажатие видно (Виктор, 24.10.2026) — бот пишет его и даёт ссылку."""
+    return {"inline_keyboard": [[{"text": JOIN_BUTTON, "callback_data": f"{JOIN_PREFIX}{webinar.tag}"}]]}
+
+
+def open_markup(webinar: Webinar) -> dict[str, Any]:
+    return {"inline_keyboard": [[{"text": OPEN_BUTTON, "url": webinar.url}]]}
+
+
+async def record_join(tenant_id: str, showcase_id: str, *, telegram_user_id: int, webinar: Webinar) -> bool:
+    """Первое нажатие «Присоединиться к вебинару» — {метка: время} в строке человека этой серии (V41).
+    Повторное нажатие и человек без строки (копия администратору) — False, время не меняется."""
+    from app.db import fetch_one, tenant_connection
+
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            update academy_ad_opens set joined = joined || jsonb_build_object(%s::text, now())
+            where tenant_id = %s and showcase_id = %s and telegram_user_id = %s and series = %s
+              and joined -> %s is null
+            returning telegram_user_id
+            """,
+            (webinar.tag, tenant_id, showcase_id, int(telegram_user_id), webinar.series, webinar.tag),
+        )
+    return row is not None
 
 
 def due_messages(

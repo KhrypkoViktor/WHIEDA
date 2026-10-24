@@ -538,3 +538,34 @@ async def test_admin_links_the_person_to_a_row_and_buttons_go_away(whieda_tenant
     assert sent.await_args.kwargs["text"] == (
         '🔗 <b><a href="tg://user?id=1330521862">Виктория Манчи</a></b> — в боте. В таблице «да» появится в течение 5 минут.'
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["https://meet.google.com/abc", ""])
+async def test_join_button_records_the_tap_and_turns_into_the_link(whieda_tenant, almira_binding, url):
+    """«Присоединиться к вебинару» (Виктор, 24.10.2026): нажатие пишется, кнопка становится ссылкой на эфир."""
+    from app.academy.webinars import Webinar
+
+    web24 = Webinar("ig_web24", datetime(2026, 10, 24, 14, 30, tzinfo=timezone.utc), "24 октября", url)
+    record = AsyncMock(return_value=True)
+    call = AsyncMock(return_value={"ok": True})
+    answer = AsyncMock(return_value={"ok": True})
+    tap = {"callback_query": {"id": "cb1", "data": "wjoin:ig_web24", "from": {"id": 301, "first_name": "Анна"},
+                              "message": {"message_id": 9, "chat": {"id": 301, "type": "private"}}}}
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.webinars_config", lambda support: [web24]
+    ), patch("app.telegram.showcase_bot.answer_callback_query", answer), patch(
+        "app.telegram.showcase_bot.record_join", record
+    ), patch("app.telegram.showcase_bot._call_telegram", call):
+        result = await process_core_telegram_update(whieda_tenant, tap, "t", binding=almira_binding)
+    assert result["route"] == "showcase_join"
+    if not url:
+        record.assert_not_called()
+        call.assert_not_called()
+        assert answer.await_args.kwargs["show_alert"] is True
+        return
+    assert result["joined"] is True
+    assert record.await_args.kwargs == {"telegram_user_id": 301, "webinar": web24}
+    method, payload = call.await_args.args[0], call.await_args.args[1]
+    assert method == "editMessageReplyMarkup" and payload["message_id"] == 9
+    assert payload["reply_markup"] == {"inline_keyboard": [[{"text": "▶️ Открыть эфир", "url": url}]]}

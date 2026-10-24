@@ -83,6 +83,7 @@ APPLY_ORDER = [
     "platform_academy_ad_opens_webinar_v38.sql",
     "platform_academy_unlock_v39.sql",
     "platform_academy_ad_opens_series_v40.sql",
+    "platform_academy_ad_opens_joined_v41.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

@@ -100,6 +100,7 @@ class Opened:
     tag: str = ""  # метка /start: ig_web24 …
     webinar: str | None = None  # V38: дата, выбранная кнопкой в боте
     series: str = ""  # V40: серия вебинаров ('' — композиция, 'anatomy' …): своя строка в каждой серии
+    joined: tuple[tuple[str, datetime], ...] = ()  # V41: (метка, первое нажатие «Присоединиться к вебинару»)
 
 
 # ---- разбор строк таблицы -----------------------------------------------------------------------
@@ -542,21 +543,38 @@ async def record_open(
         )
 
 
+def _joined(raw: Any) -> tuple[tuple[str, datetime], ...]:
+    out = []
+    for tag, at in (raw if isinstance(raw, dict) else {}).items():
+        try:
+            out.append((str(tag), datetime.fromisoformat(str(at))))
+        except ValueError:
+            continue
+    return tuple(sorted(out, key=lambda x: x[1]))
+
+
+def joined_text(opened: Opened | None) -> str:
+    """Колонка «На эфире»: «✅ 24.10 17:26» — первое нажатие кнопки эфира, по каждому вебинару."""
+    if opened is None or not opened.joined:
+        return ""
+    return "✅ " + ", ".join(at.astimezone(MINSK).strftime("%d.%m %H:%M") for _, at in opened.joined)
+
+
 async def load_opens(conn: Any, tenant_id: str, showcase_id: str) -> list[Opened]:
     from app.db import fetch_all
 
     rows = await fetch_all(
         conn,
         """
-        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar, series from academy_ad_opens
-        where tenant_id = %s and showcase_id = %s order by opened_at desc
+        select telegram_user_id, telegram_username, name, lead_id, opened_at, tag, webinar, series, joined
+        from academy_ad_opens where tenant_id = %s and showcase_id = %s order by opened_at desc
         """,
         (tenant_id, showcase_id),
     )
     return [
         Opened(
             int(r["telegram_user_id"]), r["telegram_username"], str(r["name"] or ""), r["lead_id"], r["opened_at"],
-            str(r["tag"] or ""), r["webinar"], str(r.get("series") or ""),
+            str(r["tag"] or ""), r["webinar"], str(r.get("series") or ""), _joined(r.get("joined")),
         )
         for r in rows
     ]
@@ -615,12 +633,20 @@ async def lead_flags(tenant_id: str, showcase: Any) -> dict[str, Any]:
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
     markers = series_markers(showcase.support)
-    in_bot = {lead.lead_id for lead in leads if opened_for(lead, opens, lead_series(lead, markers)) is not None}
+    in_bot: set[str] = set()
+    joined: dict[str, str] = {}  # «На эфире» (24.10.2026): id → «✅ 24.10 17:26»
+    for lead in leads:
+        opened = opened_for(lead, opens, lead_series(lead, markers))
+        if opened is not None:
+            in_bot.add(lead.lead_id)
+            if opened.joined:
+                joined[lead.lead_id] = joined_text(opened)
     not_in_bot = {lead.lead_id for lead in leads} - in_bot
     return {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "in_bot": sorted(in_bot),
         "not_in_bot": sorted(not_in_bot),
+        "joined": joined,
     }
 
 
