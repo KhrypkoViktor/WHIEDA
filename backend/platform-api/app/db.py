@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, pq
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -63,6 +63,15 @@ async def tenant_connection(tenant_id: str) -> AsyncIterator[AsyncConnection]:
                     (tenant_id,),
                 )
             yield conn
+
+
+def transaction_failed(conn: Any) -> bool:
+    """Транзакция подключения оборвана ошибкой запроса: до конца она принимает только откат,
+    а COMMIT в ней тихо становится ROLLBACK. Нужна коду, который ловит ошибку чтения в общей
+    транзакции и потому обязан проверить, не пропали ли записи. У подмены подключения в тестах
+    ``info`` нет — тогда оборванной она не считается."""
+    status = getattr(getattr(conn, "info", None), "transaction_status", None)
+    return status == pq.TransactionStatus.INERROR
 
 
 async def fetch_one(

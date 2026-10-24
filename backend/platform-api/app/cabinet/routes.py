@@ -45,6 +45,7 @@ from app.cabinet.service import (
     update_settings,
 )
 from app.content_access.routes import _current_session
+from app.db import tenant_connection, transaction_failed
 from app.errors import http_exception_handler
 from app.referral_bonus.service import (
     InvalidPageCursorError,
@@ -115,14 +116,20 @@ def _raise(exc: Exception) -> None:
     raise exc
 
 
-async def _context(request: Request) -> tuple[TenantContext, CabinetPerson]:
+async def _caller(request: Request) -> tuple[TenantContext, int]:
+    """Арендатор и вошедший человек; в базу, кроме проверки сессии, не ходит."""
     tenant = get_request_tenant(request)
     session = await _current_session(request)
     telegram_user_id = session.get("telegram_user_id")
     if telegram_user_id is None:
         raise HTTPException(status_code=401, detail={"error": "telegram_session_required"})
+    return tenant, int(telegram_user_id)
+
+
+async def _context(request: Request) -> tuple[TenantContext, CabinetPerson]:
+    tenant, telegram_user_id = await _caller(request)
     try:
-        person = await load_person(tenant.tenant_id, int(telegram_user_id))
+        person = await load_person(tenant.tenant_id, telegram_user_id)
     except CabinetError as exc:
         _raise(exc)
     return tenant, person
@@ -142,13 +149,34 @@ def _iso(value: Any) -> Any:
 @router.get(f"{API}/overview")
 @router.get(f"{V1}/overview")
 async def cabinet_overview(request: Request) -> dict[str, Any]:
-    tenant, person = await _context(request)
-    return await load_overview(
-        tenant.tenant_id,
-        person,
-        bot_username=_bot_username(),
-        crm_entitled=bool(tenant.entitlements.get("crm")),
-    )
+    """Главная кабинета — самый частый запрос сайта. Человек, факты, счётчики CRM, код
+    приглашения, часовой пояс и согласие читаются одной транзакцией, а не десятком.
+
+    Проверка сессии остаётся отдельной: её UPDATE last_seen_at держал бы блокировку строки
+    до конца запроса, и параллельные запросы одной сессии ждали бы друг друга (кэш на 30 с
+    и так делает её почти бесплатной). Необязательные чтения (CRM, часовой пояс, согласие)
+    при сбое оборвали бы общую транзакцию вместе с записью актора и кода приглашения: тогда
+    ответ собирается заново по-старому, отдельными транзакциями."""
+    tenant, telegram_user_id = await _caller(request)
+    bot_username = _bot_username()
+    crm_entitled = bool(tenant.entitlements.get("crm"))
+
+    async def build(conn: Any) -> dict[str, Any]:
+        try:
+            person = await load_person(tenant.tenant_id, telegram_user_id, conn=conn)
+        except CabinetError as exc:
+            _raise(exc)
+        return await load_overview(
+            tenant.tenant_id, person, bot_username=bot_username, crm_entitled=crm_entitled, conn=conn
+        )
+
+    async with tenant_connection(tenant.tenant_id) as conn:
+        overview = await build(conn)
+        broken = transaction_failed(conn)
+    if not broken:
+        return overview
+    logger.warning("cabinet_overview_shared_transaction_failed")
+    return await build(None)
 
 
 @router.get(f"{API}/journey")

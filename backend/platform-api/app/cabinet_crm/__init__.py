@@ -9,13 +9,19 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from typing import Any
+
 from app.db import fetch_one, tenant_connection
 
 
-async def crm_account(tenant_id: str, telegram_user_id: int) -> dict | None:
+async def crm_account(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> dict | None:
     """Аккаунт WWC CRM в форме app.crm.service (account_id, timezone, today) — без
-    создания: кабинет не заводит CRM тому, кто её не открывал."""
-    async with tenant_connection(tenant_id) as conn:
+    создания: кабинет не заводит CRM тому, кто её не открывал.
+
+    ``conn`` (здесь и ниже) — открытое ``tenant_connection`` того же арендатора: кабинет
+    читает всё одной транзакцией; без него каждая функция открывает свою, как раньше."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await fetch_one(
             conn,
             """
@@ -29,8 +35,8 @@ async def crm_account(tenant_id: str, telegram_user_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-async def crm_contacts_count(tenant_id: str, telegram_user_id: int) -> int:
-    async with tenant_connection(tenant_id) as conn:
+async def crm_contacts_count(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> int:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await fetch_one(
             conn,
             """
@@ -45,9 +51,9 @@ async def crm_contacts_count(tenant_id: str, telegram_user_id: int) -> int:
     return int((row or {}).get("contacts") or 0)
 
 
-async def account_timezone(tenant_id: str, telegram_user_id: int) -> str | None:
+async def account_timezone(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> str | None:
     """Таймзона из аккаунта WWC CRM (общая с кабинетом); нет аккаунта — None."""
-    async with tenant_connection(tenant_id) as conn:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await fetch_one(
             conn,
             "select timezone from platform_accounts where tenant_id = %s and telegram_user_id = %s",
