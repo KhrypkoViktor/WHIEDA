@@ -19,7 +19,24 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app.academy.ad_leads import BOT_TAG, MINSK, Lead, alert_pending, fetch_leads, match_lead, opened_text, record_open, sheet_config
+from app.academy.ad_leads import (
+    BOT_TAG,
+    LINK_HINT,
+    LINK_PREFIX,
+    MINSK,
+    Lead,
+    alert_pending,
+    fetch_leads,
+    link_candidates,
+    link_markup,
+    link_open,
+    load_opens,
+    match_lead,
+    opened_text,
+    parse_link,
+    record_open,
+    sheet_config,
+)
 from app.academy.keys import parse_course_start_token
 from app.academy.notify import course_page_url
 from app.academy.service import preview_admin_ids
@@ -30,6 +47,7 @@ from app.academy.webinars import (
     moved_text,
     not_in_bot_texts,
     series_webinars,
+    unlinked_prompts,
     webinar_series_of,
     webinars_config,
 )
@@ -39,7 +57,7 @@ from app.telegram.academy import handle_course_start_token, show_academy_home, t
 from app.telegram.bindings import current_bot_binding
 from app.telegram.consent import record_telegram_consent
 from app.telegram.content_access import try_handle_content_access
-from app.telegram.delivery import answer_callback_query, send_telegram_text
+from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
 from app.telegram.site_login import with_site_login
 from app.telegram.showcase_support import KIND_ADMIN, support_buttons, support_targets, try_handle_callback as try_handle_support_callback, try_handle_forum_message, try_handle_private_message
 from app.telegram.update_parser import parse_start_token, parse_telegram_callback, parse_telegram_message
@@ -142,13 +160,13 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
 
 async def _sheet_match(
     msg: Any, showcase: Showcase, lead_id: str | None = None, series: str = "",
-) -> tuple[Lead | None, str, str | None]:
-    """Строка таблицы заявок этого человека и его имя и ник в Telegram. Пришёл по личной ссылке —
-    строка с этим id (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
+) -> tuple[Lead | None, str, str | None, list[Lead]]:
+    """Строка таблицы заявок этого человека, его имя и ник в Telegram и заявки серии. Пришёл по личной
+    ссылке — строка с этим id (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
     tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     tg_username = str(user.get("username") or "").strip() or None
-    lead = None
+    lead, leads = None, []
     config = sheet_config(showcase.support)
     if config:
         try:
@@ -159,7 +177,23 @@ async def _sheet_match(
                 lead = match_lead(leads, username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc))
         except Exception as exc:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
-    return lead, tg_name, tg_username
+    return lead, tg_name, tg_username, leads
+
+
+async def _link_buttons(tenant_id: str, showcase: Showcase, user_id: int, leads: list[Lead], series: str) -> dict[str, Any] | None:
+    """Строка не нашлась — кнопки «Это …» по свежим заявкам серии без бота; сбой — без кнопок."""
+    now = datetime.now(timezone.utc)
+    if not link_candidates(leads, [], series, now=now):
+        return None  # свежих заявок нет — базу не читаем
+    try:
+        from app.db import tenant_connection
+
+        async with tenant_connection(tenant_id) as conn:
+            opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+        return link_markup(user_id, link_candidates(leads, opens, series, now=now))
+    except Exception:
+        logger.warning("showcase_link_buttons_failed", exc_info=True)
+        return None
 
 
 def _opened_line(msg: Any, lead: Lead | None, tg_name: str, tg_username: str | None, *, webinar: bool) -> str:
@@ -184,7 +218,7 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     if notice:
         lines += ["", notice]
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": support_buttons()})
-    lead, tg_name, tg_username = await _sheet_match(msg, showcase, link_lead_id, series)
+    lead, tg_name, tg_username, leads = await _sheet_match(msg, showcase, link_lead_id, series)
     # Отметка «бот открыт» в алерте по заявке (V37, 17.10.2026).
     try:
         await record_open(
@@ -206,10 +240,14 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
         logger.info("showcase_ad_lead_flag_in_alert", extra={"trace_id": trace_id, "tag": tag})
     else:
         try:
+            text = _opened_line(msg, lead, tg_name, tg_username, webinar=tag in tags)
+            markup = None if lead else await _link_buttons(tenant_id, showcase, int(msg.user_id), leads, series)
+            extra = {"reply_markup": markup} if markup else {}
             sent = await send_telegram_text(
                 chat_id=str(admin),
-                text=_opened_line(msg, lead, tg_name, tg_username, webinar=tag in tags),
+                text=f"{text}\n\n{LINK_HINT}" if markup else text,
                 bot_token=current_bot_binding().bot_token,
+                **extra,
             )
             notified = bool(sent.get("ok"))
         except Exception:
@@ -268,6 +306,60 @@ async def _try_webinar_callback(
         logger.warning("showcase_webinar_move_notify_failed", extra={"trace_id": trace_id}, exc_info=True)
     logger.info("showcase_webinar_moved", extra={"trace_id": trace_id, "webinar": webinar.tag})
     return {"ok": True, "route": "showcase_webinar_move", "moved": True, "webinar": webinar.tag, "trace_id": trace_id}
+
+
+async def _try_link_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«Это …» под строкой «в таблице не найдена»: администратор витрины связывает человека в боте со
+    строкой таблицы; кнопки с сообщения снимаются, в таблице «да» — при следующем запуске скрипта."""
+    data = str(callback.data or "")
+    if not data.startswith(LINK_PREFIX):
+        return None
+    token = current_bot_binding().bot_token
+    parsed = parse_link(data)
+    try:
+        admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+    except Exception:
+        logger.warning("showcase_link_admin_lookup_failed", extra={"trace_id": trace_id}, exc_info=True)
+        admin = None
+    if parsed is None or admin is None or int(admin) != int(callback.user_id):
+        await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
+        return {"ok": True, "route": "showcase_link", "linked": False, "trace_id": trace_id}
+    user_id, lead_id = parsed
+    lead, linked = None, False
+    try:
+        webinars = webinars_config(showcase.support)
+        config = sheet_config(showcase.support)
+        lead = next((x for x in await fetch_leads(config) if x.lead_id == lead_id), None) if config else None
+        if lead is not None:
+            linked = await link_open(
+                tenant.tenant_id, showcase.showcase_id, telegram_user_id=user_id, lead_id=lead_id,
+                series=webinar_series_of(lead, webinars),
+            )
+    except Exception:
+        logger.warning("showcase_link_failed", extra={"trace_id": trace_id}, exc_info=True)
+    if not linked or lead is None:
+        await answer_callback_query(
+            callback_query_id=callback.callback_query_id, bot_token=token, show_alert=True,
+            text="Не получилось: человек уже связан с заявкой или строки нет в таблице.",
+        )
+        return {"ok": True, "route": "showcase_link", "linked": False, "trace_id": trace_id}
+    await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token, text="Связано")
+    message = ((callback.raw or {}).get("callback_query") or {}).get("message") or {}
+    if message.get("message_id"):
+        await _call_telegram(
+            "editMessageReplyMarkup",
+            {"chat_id": callback.chat_id, "message_id": message["message_id"], "reply_markup": {"inline_keyboard": []}},
+            bot_token=token,
+        )
+    await _send(
+        callback.chat_id,
+        f'🔗 <b><a href="tg://user?id={user_id}">{_plain_name(lead.name) or "Без имени"}</a></b> — в боте.'
+        " В таблице «да» появится в течение 5 минут.",
+    )
+    logger.info("showcase_linked", extra={"trace_id": trace_id})
+    return {"ok": True, "route": "showcase_link", "linked": True, "trace_id": trace_id}
 
 
 SIGNUP_REPLY = "Спасибо! Администратор свяжется с вами здесь, в этом чате, и поможет с записью и оплатой."
@@ -337,7 +429,15 @@ async def _try_not_in_bot(tenant: TenantContext, msg: Any, showcase: Showcase, *
         texts = ["Не получилось прочитать таблицу заявок — попробуйте через минуту."]
     for text in texts:
         await _send(msg.chat_id, text)
-    return {"ok": True, "route": "showcase_not_in_bot", "messages": len(texts), "trace_id": trace_id}
+    # В боте, а строки нет — кнопки «Это …» (24.10.2026).
+    try:
+        prompts = await unlinked_prompts(tenant.tenant_id, showcase)
+    except Exception:
+        logger.warning("showcase_unlinked_failed", extra={"trace_id": trace_id}, exc_info=True)
+        prompts = []
+    for text, markup in prompts:
+        await _send(msg.chat_id, text, markup)
+    return {"ok": True, "route": "showcase_not_in_bot", "messages": len(texts) + len(prompts), "trace_id": trace_id}
 
 
 async def _try_code_word(tenant: TenantContext, msg: Any, showcase: Showcase, *, trace_id: str) -> dict[str, Any] | None:
@@ -444,6 +544,9 @@ async def process_showcase_bot_update(
         signed = await _try_signup_callback(tenant, callback, showcase, trace_id=trace_id)
         if signed is not None:
             return signed
+        linked = await _try_link_callback(tenant, callback, showcase, trace_id=trace_id)
+        if linked is not None:
+            return linked
         moved = await _try_webinar_callback(tenant, callback, showcase, trace_id=trace_id)
         if moved is not None:
             return moved

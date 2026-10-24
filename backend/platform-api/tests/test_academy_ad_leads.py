@@ -276,3 +276,21 @@ def test_anatomy_alert_says_series_and_drawing_base():
     assert text.startswith("🔔 Новая заявка · анатомия · вебинар 28 октября, среда, 19:30")
     assert "✏️ База академического рисунка: Немного" in text
     assert "✏️" not in alert_text(parse_leads(CSV)[0])
+
+
+def test_link_buttons_offer_fresh_rows_without_bot_newest_first():
+    """Кирилл, 24.10.2026: «-» без ника открыл бота через 44 мин после формы — администратор сам выбирает строку."""
+    from app.academy.ad_leads import link_candidates, link_markup, parse_link
+
+    first, second, organic = parse_leads(CSV)
+    now = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+    opened = Opened(telegram_user_id=5373318757, username="maria_i", name="Мария", lead_id="222")
+    old = replace(organic, lead_id="444", created=now - timedelta(hours=49))
+    assert [lead.lead_id for lead in link_candidates([first, second, organic, old], [opened], "", now=now)] == ["333", "111"]
+    markup = link_markup(1330521862, [first])
+    assert markup == {"inline_keyboard": [[
+        {"text": "Это Анна Петрова · 16.10 16:40 · …2233", "callback_data": "alink:1330521862:111"},
+    ]]}
+    assert parse_link("alink:1330521862:111") == (1330521862, "111")
+    assert parse_link("alink:x:111") is None and parse_link("wsign:ig_web24") is None
+    assert link_markup(1, []) is None

@@ -16,6 +16,8 @@ Meta пишет каждую заявку моментальной формы в
 * ``opened_text`` — короткая строка, когда человек с формы открыл бота (``/start ig_…``):
   имя и ник из строки таблицы (по нику, иначе по имени), иначе из Telegram; имя — ссылка
   в личный чат, чтобы администратор открыл человека без публичного ника.
+* Строка не нашлась — под этой строкой кнопки «Это …» по свежим заявкам без бота (``link_markup``):
+  администратор сам связывает человека со строкой (``link_open``), в таблице — «да» (24.10.2026).
 
 * ``lead_flags`` — «в боте / нет» по каждой строке таблицы для скрипта таблицы (Apps Script, раз в
   5 минут): только id заявок, без имён, телефонов и ников. Ключ — ``leads_sheet.flags_key`` (18.10.2026).
@@ -403,6 +405,60 @@ def opened_text(*, name: str, username: str | None, user_id: int | None, webinar
     if not found:
         text += " В таблице заявок не найдена — отправьте человеку личную ссылку из списка «не в боте»."
     return text
+
+
+# ---- «Это …»: администратор связывает человека в боте со строкой таблицы -------------------------
+# Кирилл, 24.10.2026: «-» без ника открыл бота по ссылке из WhatsApp через 44 мин после формы — ни ник, ни имя,
+# ни время (``OPEN_AFTER_FORM``) не сошлись, в таблице «нет», хотя человек в боте. Кто это, знает администратор.
+LINK_WITHIN = timedelta(hours=48)
+LINK_MAX = 6
+LINK_PREFIX = "alink:"
+LINK_HINT = "Знаете, кто это? Нажмите на заявку — в таблице будет «да»."
+
+
+def link_candidates(
+    leads: list[Lead], opens: list[Opened], series: str, *, now: datetime, within: timedelta = LINK_WITHIN,
+) -> list[Lead]:
+    """Свежие заявки серии (за ``within``), чей человек бота не открыл, — новые сверху, не больше ``LINK_MAX``."""
+    fresh = [
+        lead for lead in leads
+        if lead.created and timedelta(0) <= now - lead.created <= within and opened_for(lead, opens, series) is None
+    ]
+    return sorted(fresh, key=lambda lead: lead.created, reverse=True)[:LINK_MAX]
+
+
+def link_markup(telegram_user_id: int, candidates: list[Lead]) -> dict[str, Any] | None:
+    """По кнопке на заявку: «Это Имя · 24.10 11:01 · …2233» → ``alink:<id в Telegram>:<id заявки>``."""
+    rows = []
+    for lead in candidates:
+        data = f"{LINK_PREFIX}{int(telegram_user_id)}:{lead.lead_id}"
+        if len(data.encode()) > 64:
+            continue
+        digits = re.sub(r"\D", "", lead.phone or "")
+        label = f"Это {(_plain(lead.name) or 'Без имени')[:28]} · {_when(lead.created).replace(' в ', ' ')}"
+        if len(digits) >= 4:
+            label += f" · …{digits[-4:]}"
+        rows.append([{"text": label[:64], "callback_data": data}])
+    return {"inline_keyboard": rows} if rows else None
+
+
+def parse_link(data: str) -> tuple[int, str] | None:
+    match = re.fullmatch(rf"{LINK_PREFIX}(\d{{1,15}}):([A-Za-z0-9_-]{{1,40}})", str(data or ""))
+    return (int(match.group(1)), match.group(2)) if match else None
+
+
+async def link_open(tenant_id: str, showcase_id: str, *, telegram_user_id: int, lead_id: str, series: str) -> bool:
+    """Строка таблицы для открытия бота без своей строки; уже связанное не трогаем. True — связали."""
+    from app.db import fetch_one, tenant_connection
+
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            "update academy_ad_opens set lead_id = %s where tenant_id = %s and showcase_id = %s"
+            " and telegram_user_id = %s and series = %s and lead_id is null returning telegram_user_id",
+            (lead_id, tenant_id, showcase_id, int(telegram_user_id), series),
+        )
+    return row is not None
 
 
 # ---- таблица ------------------------------------------------------------------------------------

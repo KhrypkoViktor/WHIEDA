@@ -621,3 +621,44 @@ def test_post_webinar_offer_skips_paid_and_moved(monkeypatch):
             ]
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_admin_links_an_entrant_without_row_and_the_sheet_says_yes(monkeypatch):
+    """Кирилл, 24.10.2026: «-» без ника открыл бота в 11:45 через 44 мин после формы Виктории — по времени не сошлось.
+    «Не в боте» показывает его с кнопками «Это …» (Виктория, Дарья); после нажатия строка связана, флаг — «да»."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    nameless = 3006
+    csv = CSV + "\nl:705,2026-10-24T11:01:00+03:00,,,,,,,f:4,Вебинар 24.10,false,ig,бесплатный_вебинар_24_октября,нет,Vvviiikk,Виктория Манчи,p:+375291000005,CREATED,,"
+    with temporary_database("whieda_link") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute(
+                "insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram_username, name, tag, opened_at)"
+                " values ('whieda', 'almira', %s, null, '-', 'ig_web24', '2026-10-24T11:45:00+03:00')", (nameless,)
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import ad_leads, webinars
+            from app.academy import showcases as sc
+
+            async def fake_fetch(config):
+                return ad_leads.parse_leads(csv)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            monkeypatch.setattr(ad_leads, "fetch_leads", fake_fetch)
+            sc._reset_cache()
+            [showcase] = [s for s in await sc.load_showcases("whieda") if s.showcase_id == "almira"]
+            [(text, markup)] = await webinars.unlinked_prompts("whieda", showcase, now=at(24, 12, 30))
+            assert text.startswith('👤 <b><a href="tg://user?id=3006">-</a></b> (без @) открыл бота 24.10 в 11:45, строки в таблице нет.')
+            assert [row[0]["callback_data"] for row in markup["inline_keyboard"]] == ["alink:3006:705", "alink:3006:703"]
+            assert "705" in (await ad_leads.lead_flags("whieda", showcase))["not_in_bot"]
+            link = dict(telegram_user_id=nameless, lead_id="705", series="")
+            assert await ad_leads.link_open("whieda", "almira", **link) is True
+            assert await ad_leads.link_open("whieda", "almira", **{**link, "lead_id": "703"}) is False
+            assert "705" in (await ad_leads.lead_flags("whieda", showcase))["in_bot"]
+            assert await webinars.unlinked_prompts("whieda", showcase, now=at(24, 12, 30)) == []
+
+        db.run_with_app(proof)

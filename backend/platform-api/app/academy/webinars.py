@@ -32,12 +32,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.academy.ad_leads import (
+    LINK_HINT,
+    LINK_WITHIN,
     MINSK,
     Lead,
     Opened,
     _contacts,
     _plain,
     fetch_leads,
+    link_candidates,
+    link_markup,
     load_opens,
     match_lead,
     opened_for,
@@ -552,6 +556,46 @@ async def not_in_bot_texts(tenant_id: str, showcase: Any, *, now: datetime | Non
             bot_url = await showcase_bot_url(showcase)
         texts.extend(call_list_texts(webinar, missing, head, bot_url=bot_url))
     return texts
+
+
+async def unlinked_prompts(tenant_id: str, showcase: Any, *, now: datetime | None = None) -> list[tuple[str, dict[str, Any]]]:
+    """К списку «не в боте»: кто открыл бота по ссылке с рекламы за ``LINK_WITHIN``, а строки в таблице нет, —
+    по человеку сообщение с кнопками «Это …» (24.10.2026)."""
+    from app.academy.ad_leads import BOT_TAG
+    from app.db import tenant_connection
+
+    moment = now or datetime.now(timezone.utc)
+    config = sheet_config(showcase.support)
+    if not config:
+        return []
+    leads = await fetch_leads(config)
+    async with tenant_connection(tenant_id) as conn:
+        opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+    webinars = webinars_config(showcase.support)
+    out: list[tuple[str, dict[str, Any]]] = []
+    for series in sorted({opened.series for opened in opens}):
+        mine = [lead for lead in leads if webinar_series_of(lead, webinars) == series]
+        # Строку без id открытия находят и по нику, имени, времени (``opened_for``) — такой человек уже «в боте».
+        claimed = {found.telegram_user_id for lead in mine if (found := opened_for(lead, opens, series))}
+        free = [
+            opened for opened in opens
+            if opened.series == series and not opened.lead_id and opened.tag != BOT_TAG
+            and opened.opened_at and moment - opened.opened_at <= LINK_WITHIN
+            and opened.telegram_user_id not in claimed
+        ]
+        candidates = link_candidates(mine, opens, series, now=moment) if free else []
+        for opened in free:
+            markup = link_markup(opened.telegram_user_id, candidates)
+            if markup is None:
+                continue
+            nick = f" (@{opened.username})" if opened.username else " (без @)"
+            when = opened.opened_at.astimezone(MINSK).strftime("%d.%m в %H:%M")
+            out.append((
+                f'👤 <b><a href="tg://user?id={int(opened.telegram_user_id)}">{_plain(opened.name) or "Без имени"}</a></b>'
+                f"{nick} открыл бота {when}, строки в таблице нет. {LINK_HINT}",
+                markup,
+            ))
+    return out
 
 
 # Таблица для подтверждений читается не чаще раза в минуту (шаг воркера идёт раз в 30 с).

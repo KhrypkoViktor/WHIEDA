@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -473,3 +474,67 @@ async def test_course_signup_button_answers_and_alerts_admin_once(whieda_tenant,
     assert kwargs["payload"]["chat_id"] == "5035800725"
     assert kwargs["payload"]["text"].startswith('🎓 <b>Хочет на курс</b>: <b><a href="tg://user?id=301">Анна</a></b> (@anna_p)')
     assert "📋 В таблице: <b>Анна Петрова</b>" in kwargs["payload"]["text"]
+
+
+class _NoConn:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *a):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_row_not_found_alert_offers_fresh_rows_as_buttons(whieda_tenant, almira_binding):
+    """Кирилл, 24.10.2026: человек в боте, а в таблице «нет» — ни ник, ни имя, ни время не сошлись.
+    Под строкой «не найдена» — «Это …» по свежим заявкам без бота."""
+    from datetime import timedelta
+
+    from app.academy.ad_leads import Lead
+
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    fresh = Lead("701234567", datetime.now(timezone.utc) - timedelta(minutes=44), "Виктория Манчи", "+375291112233",
+                 None, "", None, "", "ig", "Вебинар")
+    fetch, sheet = _sheet_patches([fresh, _lead("700000001", "Дарья Звонкова", None)])
+    p = _ad_patches(sent)
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], sheet[0], sheet[1], patch(
+        "app.telegram.showcase_bot.load_opens", AsyncMock(return_value=[])
+    ), patch("app.db.tenant_connection", lambda tenant_id: _NoConn()):
+        await process_core_telegram_update(whieda_tenant, _start("/start ig_web24"), "t", binding=almira_binding)
+    fetch.assert_awaited_once()
+    admin = sent.await_args_list[-1]
+    assert admin.kwargs["chat_id"] == "5035800725"
+    assert admin.kwargs["text"].endswith("«не в боте».\n\nЗнаете, кто это? Нажмите на заявку — в таблице будет «да».")
+    [[button]] = admin.kwargs["reply_markup"]["inline_keyboard"]
+    assert button["callback_data"] == "alink:301:701234567"
+    assert button["text"].startswith("Это Виктория Манчи · ") and button["text"].endswith(" · …2233")
+
+
+def _link_tap(user_id: int) -> dict:
+    return {"callback_query": {"id": "cb1", "data": "alink:1330521862:701234567", "from": {"id": user_id, "first_name": "Кирилл"},
+                               "message": {"message_id": 9, "chat": {"id": user_id, "type": "private"}}}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "linked"), [(5035800725, True), (301, False)])
+async def test_admin_links_the_person_to_a_row_and_buttons_go_away(whieda_tenant, almira_binding, user_id, linked):
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    link = AsyncMock(return_value=True)
+    call = AsyncMock(return_value={"ok": True})
+    fetch, sheet = _sheet_patches([_lead("701234567", "Виктория Манчи", None)])
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.send_telegram_text", sent
+    ), patch("app.telegram.showcase_bot.answer_callback_query", AsyncMock(return_value={"ok": True})), patch(
+        "app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"author": 739736805, "admin": 5035800725})
+    ), patch("app.telegram.showcase_bot.link_open", link), patch("app.telegram.showcase_bot._call_telegram", call), sheet[0], sheet[1]:
+        result = await process_core_telegram_update(whieda_tenant, _link_tap(user_id), "t", binding=almira_binding)
+    assert (result["route"], result["linked"]) == ("showcase_link", linked)
+    if not linked:
+        link.assert_not_called()
+        sent.assert_not_called()
+        return
+    assert link.await_args.kwargs == {"telegram_user_id": 1330521862, "lead_id": "701234567", "series": ""}
+    assert call.await_args.args[0] == "editMessageReplyMarkup"
+    assert sent.await_args.kwargs["text"] == (
+        '🔗 <b><a href="tg://user?id=1330521862">Виктория Манчи</a></b> — в боте. В таблице «да» появится в течение 5 минут.'
+    )
