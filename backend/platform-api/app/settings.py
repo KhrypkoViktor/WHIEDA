@@ -274,6 +274,16 @@ class Settings(BaseSettings):
         default="", validation_alias="PLATFORM_RHYTHM_WEEK1_START",
         description="ISO date inside week 1 of the board. Empty: the week of the first check-in.",
     )
+    # Напоминание незаконченным заявкам на сайт (24.10.2026): app/site_requests/nudge.py.
+    platform_site_request_nudge_enabled: bool = Field(
+        default=True,
+        validation_alias="PLATFORM_SITE_REQUEST_NUDGE_ENABLED",
+        description=(
+            "Daily 10:00 (Moscow) letter to partners who stopped filling the site request "
+            "form, by the worker. On by default, but only ENVIRONMENT=production sends: "
+            "staging shares the database and the bot with production. Set to false to switch off."
+        ),
+    )
     # Ежедневник партнёра (CRM v1, 25.09.2026).
     platform_crm_pilot_telegram_ids: str = Field(
         default="",

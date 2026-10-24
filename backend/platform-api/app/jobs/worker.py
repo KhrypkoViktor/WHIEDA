@@ -46,6 +46,9 @@ CLUB_MEETINGS_INTERVAL_SEC = 60.0
 # Вход через Google/Max по коду (V34, 15.10.2026): просроченные pending/коды старше суток — раз в час.
 # /google/start пишет строку без аутентификации, без чистки таблицы растут.
 LOGIN_CLEANUP_INTERVAL_SEC = 3600.0
+# Напоминание незаконченным заявкам на сайт (24.10.2026): раз в сутки в 10:00 МСК, проверка раз в 5 минут
+# (app/site_requests/nudge.py: время, ключ дня в service_notice_log и «только бой» решает сам шаг).
+SITE_NUDGE_INTERVAL_SEC = 300.0
 # Сбой очереди (база ушла в read-only, моргнул пулер — 23.10.2026 это дало 14 перезапусков
 # контейнера подряд): цикл живёт, а пауза между проходами растёт 2 → 4 → 8 … ≤ 60 с,
 # чтобы не молотить базу. Удачный проход сбрасывает паузу.
@@ -522,7 +525,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     last_due = last_plan = float("-inf")
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
-    last_cleanup = last_club = last_login_cleanup = float("-inf")
+    last_cleanup = last_club = last_login_cleanup = last_site_nudge = float("-inf")
     outbox_backoff = FailureBackoff()
     while True:
         pause = poll_interval_sec
@@ -573,6 +576,14 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await login_cleanup_step()
             except Exception:
                 logger.exception("login_cleanup_failed")
+        if now - last_site_nudge >= SITE_NUDGE_INTERVAL_SEC:
+            last_site_nudge = now
+            try:
+                from app.site_requests.nudge import site_request_nudge_step
+
+                await site_request_nudge_step()
+            except Exception:
+                logger.exception("site_request_nudge_failed")
         await asyncio.sleep(pause)
 
 

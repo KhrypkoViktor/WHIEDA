@@ -67,6 +67,8 @@ class _Harness:
         monkeypatch.setattr(worker, "cleanup_abandoned_uploads", AsyncMock())
         monkeypatch.setattr(worker, "login_cleanup_step", AsyncMock())
         monkeypatch.setattr("app.telegram.club_meetings.club_meetings_step", AsyncMock())
+        self.site_nudge = AsyncMock(return_value=0)
+        monkeypatch.setattr("app.site_requests.nudge.site_request_nudge_step", self.site_nudge)
         # Only the module-level name is replaced: the real asyncio.sleep stays intact for the test runner.
         monkeypatch.setattr(worker, "asyncio", SimpleNamespace(sleep=sleep))
 
@@ -125,3 +127,15 @@ async def test_cancellation_still_stops_the_loop(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await worker.worker_loop(2.0)
     assert harness.outbox_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_site_request_nudge_runs_in_the_loop_and_its_failure_does_not_stop_it(monkeypatch, caplog):
+    harness = _Harness(monkeypatch, [0, 0, 0])
+    harness.site_nudge.side_effect = RuntimeError("telegram down")
+    with caplog.at_level(logging.ERROR, logger="app.jobs.worker"):
+        await harness.run()
+    # Первый проход сразу проверяет время (шаг сам решает «10:00 и только бой»); сбой в журнал, цикл жив.
+    assert harness.outbox_calls == 3
+    assert harness.site_nudge.await_count == 1
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == ["site_request_nudge_failed"]
