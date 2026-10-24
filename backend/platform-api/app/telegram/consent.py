@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import nullcontext
 from typing import Any
 
 from app.db import fetch_one, tenant_connection
@@ -288,10 +289,13 @@ def marketing_command(text: str | None) -> str | None:
     return None
 
 
-async def marketing_consent_state(tenant_id: str, telegram_user_id: int) -> bool | None:
-    """True/False — the person's current answer; None — never asked or never answered."""
+async def marketing_consent_state(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> bool | None:
+    """True/False — the person's current answer; None — never asked or never answered.
+
+    ``conn`` — an open ``tenant_connection`` of the same tenant (the site cabinet reads in one
+    transaction); without it the function opens its own, as before."""
     params = {"tenant_id": tenant_id, "user_id": int(telegram_user_id)}
-    async with tenant_connection(tenant_id) as conn:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         row = await fetch_one(conn, _MARKETING_STATE_SQL, params)
     if row is None:
         return None

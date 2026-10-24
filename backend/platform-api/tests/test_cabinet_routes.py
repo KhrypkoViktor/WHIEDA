@@ -12,6 +12,7 @@ from PIL import Image
 from app.cabinet.profile import ProfileValidationError
 from app.cabinet.service import CabinetError, CabinetPerson
 from app.referral_bonus.service import encode_page_cursor
+from tests.fake_db import FakeDb
 
 HOST = {"host": "wwc.best"}
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
@@ -49,6 +50,14 @@ def signed_in(monkeypatch):
     return sign_in
 
 
+@pytest.fixture
+def shared_transaction(monkeypatch):
+    """/me/overview читает одной транзакцией: подмена ``tenant_connection`` маршрута (базы в тесте нет)."""
+    db = FakeDb()
+    monkeypatch.setattr("app.cabinet.routes.tenant_connection", db.tenant_connection)
+    return db
+
+
 def _jpeg_bytes(size=(2000, 1500)) -> bytes:
     out = BytesIO()
     Image.new("RGB", size, (120, 80, 40)).save(out, format="JPEG")
@@ -70,8 +79,8 @@ async def test_without_session_every_cabinet_route_is_401_and_not_cached(client)
 
 
 @pytest.mark.asyncio
-async def test_overview_passes_bot_and_crm_entitlement(client, signed_in, monkeypatch):
-    signed_in()
+async def test_overview_passes_bot_and_crm_entitlement(client, signed_in, shared_transaction, monkeypatch):
+    loader = signed_in()
     overview = AsyncMock(return_value={"ok": True, "tier": "pro", "locks": {"team": "leader_required"}})
     monkeypatch.setattr("app.cabinet.routes.load_overview", overview)
     for prefix in ("/api/v1", "/v1"):
@@ -80,10 +89,14 @@ async def test_overview_passes_bot_and_crm_entitlement(client, signed_in, monkey
         assert response.headers["cache-control"] == "private, no-store"
     kwargs = overview.await_args.kwargs
     assert kwargs["crm_entitled"] is False  # у тестового тенанта нет права crm
+    # Один запрос — одна транзакция, и она же у загрузки человека и у главной.
+    assert shared_transaction.opened == 2  # два запроса (/api/v1 и /v1) — по одной транзакции
+    assert kwargs["conn"] is shared_transaction.conns[-1]
+    assert loader.await_args.kwargs["conn"] is shared_transaction.conns[-1]
 
 
 @pytest.mark.asyncio
-async def test_identity_conflict_is_409(client, monkeypatch):
+async def test_identity_conflict_is_409(client, shared_transaction, monkeypatch):
     monkeypatch.setattr("app.cabinet.routes._current_session", AsyncMock(return_value={"telegram_user_id": 1}))
     monkeypatch.setattr("app.cabinet.routes.load_person", AsyncMock(side_effect=CabinetError("identity_conflict", 409)))
     response = await client.get("/api/v1/content-access/me/overview", headers=HOST)

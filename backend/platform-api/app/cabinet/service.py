@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -134,23 +135,28 @@ class CabinetPerson:
         return raw
 
 
-async def load_person(tenant_id: str, telegram_user_id: int) -> CabinetPerson:
-    """Аккаунт человека в боте; нет строки — заводим (вход на сайт был через бота)."""
+async def load_person(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> CabinetPerson:
+    """Аккаунт человека в боте; нет строки — заводим (вход на сайт был через бота).
+
+    ``conn`` (здесь и в помощниках ниже) — открытое ``tenant_connection`` того же арендатора:
+    /me/overview читает всё в одной транзакции; без него каждое чтение открывает свою, как раньше."""
     user_id = int(telegram_user_id)
     try:
         # В личном чате id чата совпадает с id пользователя.
         actor_id = await ensure_telegram_actor(
-            tenant_id, telegram_user_id=user_id, telegram_chat_id=user_id, raw_update={}
+            tenant_id, telegram_user_id=user_id, telegram_chat_id=user_id, raw_update={}, conn=conn
         )
     except TelegramIdentityConflictError as exc:
         raise CabinetError("identity_conflict", 409) from exc
-    async with tenant_connection(tenant_id) as conn:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as db:
         actor = await fetch_one(
-            conn,
+            db,
             "select display_name, telegram_username from lead_actors where tenant_id = %s and actor_id = %s",
             (tenant_id, actor_id),
         )
-    subscription = await resolve_partner_subscription_by_telegram_user_id(tenant_id, user_id, on_ambiguous="best")
+    subscription = await resolve_partner_subscription_by_telegram_user_id(
+        tenant_id, user_id, on_ambiguous="best", conn=conn
+    )
     return CabinetPerson(
         telegram_user_id=user_id,
         actor_id=actor_id,
@@ -242,7 +248,9 @@ class CabinetFacts:
     crm_today: int | None
 
 
-async def _crm_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: bool) -> tuple[str | None, int | None, int | None]:
+async def _crm_facts(
+    tenant_id: str, person: CabinetPerson, *, crm_entitled: bool, conn: Any = None
+) -> tuple[str | None, int | None, int | None]:
     """(замок, людей в CRM, дел на сегодня). Закрыта — (причина, None, None)."""
     from app.cabinet_crm import crm_account, crm_contacts_count
     from app.crm.service import crm_feature_enabled, lock_reason, today_view, viewer_from_row
@@ -256,22 +264,26 @@ async def _crm_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: boo
     if reason is not None:
         return reason, None, None
     try:
-        account = await crm_account(tenant_id, person.telegram_user_id)
+        account = await crm_account(tenant_id, person.telegram_user_id, conn=conn)
         if account is None:  # CRM ещё не открывали: ни людей, ни дел, аккаунт не заводим
             return None, 0, 0
-        view = await today_view(tenant_id, account)
+        view = await today_view(tenant_id, account, conn=conn)
         today = sum(len(group.get("contacts") or []) for group in view.get("groups") or [])
-        contacts = await crm_contacts_count(tenant_id, person.telegram_user_id)
+        contacts = await crm_contacts_count(tenant_id, person.telegram_user_id, conn=conn)
     except Exception as exc:  # счётчик не должен ронять кабинет
         logger.warning("cabinet_crm_counters_failed", extra=safe_error(exc))
         return None, 0, None
     return None, contacts, today
 
 
-async def collect_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: bool) -> CabinetFacts:
-    async with tenant_connection(tenant_id) as conn:
+async def collect_facts(
+    tenant_id: str, person: CabinetPerson, *, crm_entitled: bool, conn: Any = None
+) -> CabinetFacts:
+    """Факты о человеке. При общем ``conn`` необязательное (CRM) читается последним: упавший
+    запрос обрывает общую транзакцию, и обязательное после него уже не прочитать."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as db:
         marks = await fetch_all(
-            conn,
+            db,
             "select step, done_at from partner_journey_marks where tenant_id = %s and telegram_user_id = %s",
             (tenant_id, person.telegram_user_id),
         )
@@ -279,7 +291,7 @@ async def collect_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: 
         leader_product = False
         if person.ref_code:
             requests = await fetch_all(
-                conn,
+                db,
                 """
                 select request_id::text as request_id, status, changes, previous, reject_reason,
                        created_at, reviewed_at
@@ -291,7 +303,7 @@ async def collect_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: 
                 (tenant_id, person.ref_code, REQUESTS_SHOWN),
             )
             leader = await fetch_one(
-                conn,
+                db,
                 """
                 select exists (
                   select 1 from partner_product_access
@@ -303,13 +315,13 @@ async def collect_facts(tenant_id: str, person: CabinetPerson, *, crm_entitled: 
             )
             leader_product = bool((leader or {}).get("active"))
         courses = await fetch_all(
-            conn,
+            db,
             _ACADEMY_SQL,
             {"tenant_id": tenant_id, "user_id": person.telegram_user_id, "launch": LAUNCH_COURSE_SLUG},
         )
-    counts = await referral_counts(tenant_id, person.actor_id)
-    account = await load_site_account(tenant_id, person.telegram_user_id)
-    crm_lock, crm_contacts, crm_today = await _crm_facts(tenant_id, person, crm_entitled=crm_entitled)
+    counts = await referral_counts(tenant_id, person.actor_id, conn=conn)
+    account = await load_site_account(tenant_id, person.telegram_user_id, conn=conn)
+    crm_lock, crm_contacts, crm_today = await _crm_facts(tenant_id, person, crm_entitled=crm_entitled, conn=conn)
     return CabinetFacts(
         marks={str(row["step"]): row["done_at"] for row in marks},
         requests=[dict(row) for row in requests],
@@ -436,7 +448,7 @@ def account_out(account: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-async def settings_block(tenant_id: str, person: CabinetPerson) -> dict[str, Any]:
+async def settings_block(tenant_id: str, person: CabinetPerson, *, conn: Any = None) -> dict[str, Any]:
     from app.cabinet_crm import account_timezone
     from app.crm.service import crm_feature_enabled
     from app.telegram.consent import marketing_consent_state
@@ -444,32 +456,42 @@ async def settings_block(tenant_id: str, person: CabinetPerson) -> dict[str, Any
     tz = None
     if crm_feature_enabled():
         try:
-            tz = await account_timezone(tenant_id, person.telegram_user_id)
+            tz = await account_timezone(tenant_id, person.telegram_user_id, conn=conn)
         except Exception as exc:
             logger.warning("cabinet_timezone_read_failed", extra=safe_error(exc))
     try:
-        opted_in = await marketing_consent_state(tenant_id, person.telegram_user_id)
+        opted_in = await marketing_consent_state(tenant_id, person.telegram_user_id, conn=conn)
     except Exception as exc:
         logger.warning("cabinet_consent_read_failed", extra=safe_error(exc))
         opted_in = None
     return {"timezone": tz, "timezone_default": "Europe/Moscow", "marketing_opt_in": opted_in}
 
 
-async def invite_block(tenant_id: str, person: CabinetPerson, *, bot_username: str | None) -> dict[str, Any]:
+async def invite_block(
+    tenant_id: str, person: CabinetPerson, *, bot_username: str | None, conn: Any = None
+) -> dict[str, Any]:
     from app.telegram.referral_bonus import invitation_text
 
     name = str(bot_username or "").lstrip("@").strip()
     if not name:
         return {"link": None, "text": None}
-    code = await get_or_create_invite_code(tenant_id, person.actor_id)
+    code = await get_or_create_invite_code(tenant_id, person.actor_id, conn=conn)
     link = f"https://t.me/{name}?start=ref_{code}"
     return {"link": link, "text": invitation_text(link)}
 
 
 async def load_overview(
-    tenant_id: str, person: CabinetPerson, *, bot_username: str | None, crm_entitled: bool
+    tenant_id: str, person: CabinetPerson, *, bot_username: str | None, crm_entitled: bool, conn: Any = None
 ) -> dict[str, Any]:
-    facts = await collect_facts(tenant_id, person, crm_entitled=crm_entitled)
+    """Главная кабинета. ``conn`` — одна транзакция на весь ответ (маршрут /me/overview).
+
+    Порядок чтений при общем ``conn`` важен: сначала обязательные (и запись кода приглашения),
+    потом необязательные — CRM, часовой пояс, согласие. Их сбой не должен ронять кабинет, но
+    упавший запрос обрывает общую транзакцию до конца (COMMIT в ней тихо становится ROLLBACK, а с ним
+    пропали бы запись актора и кода); маршрут видит это по ``transaction_failed`` и повторяет
+    запрос по-старому, отдельными транзакциями."""
+    invite = await invite_block(tenant_id, person, bot_username=bot_username, conn=conn)
+    facts = await collect_facts(tenant_id, person, crm_entitled=crm_entitled, conn=conn)
     tier = cabinet_tier(partner_paid=person.partner_paid, leader_right=leader_right(person, facts))
     journey = journey_steps(journey_facts(person, facts, tier))
     academy = academy_block(person, facts)
@@ -498,7 +520,7 @@ async def load_overview(
             "crm_contacts": facts.crm_contacts,
             "academy": academy,
         },
-        "invite": await invite_block(tenant_id, person, bot_username=bot_username),
+        "invite": invite,
         "links": {
             "cabinet": "/me/",
             "academy": "/academy/",
@@ -512,7 +534,7 @@ async def load_overview(
             "club_group": get_settings().platform_club_group_url if is_club else None,
             "news_channel": NEWS_CHANNEL_URL,
         },
-        "settings": await settings_block(tenant_id, person),
+        "settings": await settings_block(tenant_id, person, conn=conn),
     }
 
 

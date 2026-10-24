@@ -9,6 +9,7 @@ import math
 import re
 import secrets
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -120,9 +121,12 @@ def _display_name(raw: dict[str, Any], telegram_user_id: int) -> str:
     return (full_name or f"Telegram user {telegram_user_id}")[:240]
 
 
-async def get_or_create_invite_code(tenant_id: str, inviter_actor_id: str) -> str:
-    """Return one active opaque code for the actor, creating it race-safely."""
-    async with tenant_connection(tenant_id) as conn:
+async def get_or_create_invite_code(tenant_id: str, inviter_actor_id: str, *, conn: Any = None) -> str:
+    """Return one active opaque code for the actor, creating it race-safely.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора (кабинет /me/overview читает
+    всё в одной транзакции); без него функция открывает свою, как раньше."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         existing = await fetch_one(
             conn,
             """
@@ -269,9 +273,13 @@ async def ensure_telegram_actor(
     telegram_user_id: int,
     telegram_chat_id: int,
     raw_update: dict[str, Any],
+    conn: Any = None,
 ) -> str:
-    """Register a bot user as an actor without assigning an inviter."""
-    async with tenant_connection(tenant_id) as conn:
+    """Register a bot user as an actor without assigning an inviter.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора (кабинет /me/overview читает
+    всё в одной транзакции); без него функция открывает свою, как раньше."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         existing = await _find_telegram_actor(
             conn, tenant_id, telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id
         )
@@ -535,8 +543,8 @@ async def _ledger_page(
     return items, cursor
 
 
-async def referral_counts(tenant_id: str, actor_id: str) -> dict[str, int]:
-    async with tenant_connection(tenant_id) as conn:
+async def referral_counts(tenant_id: str, actor_id: str, *, conn: Any = None) -> dict[str, int]:
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         return await _referral_counts(conn, tenant_id, actor_id)
 
 
