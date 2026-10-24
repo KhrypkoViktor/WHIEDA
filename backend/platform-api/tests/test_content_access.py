@@ -21,6 +21,7 @@ from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.main import create_app
 from app.settings import get_settings
 from app.tenancy import TenantContext
+from tests.fake_db import FakeDb
 
 HOST = {"host": "wwc.best"}
 NONCE = "browser-nonce-0123456789ab"
@@ -357,7 +358,10 @@ async def test_me_computes_live_partner_access(
         "paid_until": datetime(2026, 9, 22, tzinfo=timezone.utc),
         "grace_until": datetime(2026, 9, 25, tzinfo=timezone.utc),
     }
-    with patch("app.content_access.routes.read_session_cookie", return_value="raw-session-token"), patch(
+    # «/me» читает всё в одной транзакции: пул не нужен, транзакцию подменяет счётчик.
+    with patch("app.content_access.routes.tenant_connection", FakeDb().tenant_connection), patch(
+        "app.content_access.routes.read_session_cookie", return_value="raw-session-token"
+    ), patch(
         "app.content_access.routes.validate_content_session", AsyncMock(return_value=session)
     ), patch(
         "app.content_access.routes.resolve_partner_subscription_by_telegram_user_id",

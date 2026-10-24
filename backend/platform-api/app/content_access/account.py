@@ -95,13 +95,21 @@ async def _club_column(conn: Any) -> str:
     return _CLUB_COLUMN if _club_table_present else "null::timestamptz"
 
 
+async def _account_row(conn: Any, tenant_id: str, telegram_user_id: int) -> dict[str, Any] | None:
+    sql = _ACCOUNT_SQL.format(club_column=await _club_column(conn))
+    return await fetch_one(conn, sql, (tenant_id, int(telegram_user_id)))
+
+
 async def load_site_account(
-    tenant_id: str, telegram_user_id: int, *, at: datetime | None = None
+    tenant_id: str, telegram_user_id: int, *, at: datetime | None = None, conn: Any = None
 ) -> dict[str, Any] | None:
+    """``conn`` — открытое ``tenant_connection`` того же арендатора (кабинет /me читает всё в одной транзакции)."""
     current = (at or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    async with tenant_connection(tenant_id) as conn:
-        sql = _ACCOUNT_SQL.format(club_column=await _club_column(conn))
-        row = await fetch_one(conn, sql, (tenant_id, int(telegram_user_id)))
+    if conn is not None:
+        row = await _account_row(conn, tenant_id, telegram_user_id)
+    else:
+        async with tenant_connection(tenant_id) as own:
+            row = await _account_row(own, tenant_id, telegram_user_id)
     if not row:
         return None
     return build_site_account(

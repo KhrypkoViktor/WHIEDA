@@ -22,6 +22,7 @@ from app.content_access.service import (
     validate_content_session,
 )
 from app.content_access.webapp_login import webapp_login_url
+from app.db import tenant_connection
 from app.lead_email.service import lead_email_of
 from app.login_identities.rules import login_methods_payload
 from app.login_identities.service import list_login_methods
@@ -138,30 +139,44 @@ async def _me(request: Request, response: Response) -> dict:
     telegram_user_id = session.get("telegram_user_id")
     subscription = None
     account = None
-    if telegram_user_id is not None:
-        subscription = await resolve_partner_subscription_by_telegram_user_id(
-            tenant.tenant_id,
-            int(telegram_user_id),
-            on_ambiguous="best",
-        )
-        account = await load_site_account(tenant.tenant_id, int(telegram_user_id))
-    payload = format_me_payload(session, partner_subscription=subscription, account=account)
     # Способы входа (V34, 15.10.2026): Telegram всегда; Google (e-mail) и Max (имя) — если привязаны.
     # Кабинет не ломается из-за этого списка: сбой → только Telegram и предупреждение в логе.
-    payload["login_methods"] = login_methods_payload([])
-    if telegram_user_id is not None:
-        try:
-            payload["login_methods"] = await list_login_methods(tenant.tenant_id, int(telegram_user_id))
-        except Exception:
-            logger.warning("login_methods_unavailable", exc_info=True)
+    login_methods = login_methods_payload([])
     # Почта для заявок (17.10.2026): адрес, куда сайт шлёт заявки вместе с Telegram; null — не задан или сайта нет.
     # Только чтение — задаётся командой в боте. Сбой поиска кабинет не ломает.
-    payload["lead_email"] = None
+    lead_email = None
     if telegram_user_id is not None:
-        try:
-            payload["lead_email"] = await lead_email_of(tenant.tenant_id, int(telegram_user_id))
-        except Exception:
-            logger.warning("lead_email_unavailable", exc_info=True)
+        user_id = int(telegram_user_id)
+        lead_email_read = False
+        # Четыре независимых чтения по одному telegram_user_id — одна транзакция, а не четыре:
+        # каждая лишняя это BEGIN, set_config и COMMIT по сети до базы.
+        async with tenant_connection(tenant.tenant_id) as conn:
+            subscription = await resolve_partner_subscription_by_telegram_user_id(
+                tenant.tenant_id,
+                user_id,
+                on_ambiguous="best",
+                conn=conn,
+            )
+            account = await load_site_account(tenant.tenant_id, user_id, conn=conn)
+            try:
+                login_methods = await list_login_methods(tenant.tenant_id, user_id, conn=conn)
+            except Exception:
+                # Упавший запрос обрывает транзакцию до конца: почту прочитаем отдельно, ниже.
+                logger.warning("login_methods_unavailable", exc_info=True)
+            else:
+                lead_email_read = True
+                try:
+                    lead_email = await lead_email_of(tenant.tenant_id, user_id, conn=conn)
+                except Exception:
+                    logger.warning("lead_email_unavailable", exc_info=True)
+        if not lead_email_read:
+            try:
+                lead_email = await lead_email_of(tenant.tenant_id, user_id)
+            except Exception:
+                logger.warning("lead_email_unavailable", exc_info=True)
+    payload = format_me_payload(session, partner_subscription=subscription, account=account)
+    payload["login_methods"] = login_methods
+    payload["lead_email"] = lead_email
     return payload
 
 

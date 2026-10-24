@@ -178,9 +178,14 @@ async def sites_of_telegram(tenant_id: str, telegram_user_id: int) -> list[Site]
         return await _sites_of_telegram_on(conn, tenant_id, telegram_user_id)
 
 
-async def lead_email_of(tenant_id: str, telegram_user_id: int) -> str | None:
-    """Для кабинета /me: заданный адрес или None."""
-    sites = await sites_of_telegram(tenant_id, telegram_user_id)
+async def lead_email_of(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> str | None:
+    """Для кабинета /me: заданный адрес или None.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора; без него открывается своё."""
+    if conn is not None:
+        sites = await _sites_of_telegram_on(conn, tenant_id, telegram_user_id)
+    else:
+        sites = await sites_of_telegram(tenant_id, telegram_user_id)
     return next((site.lead_email for site in sites if site.lead_email), None)
 
 

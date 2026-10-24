@@ -20,6 +20,7 @@ from app.settings import get_settings
 from app.telegram import processor
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.update_parser import TelegramMessage
+from tests.fake_db import FakeDb as TxCountingDb
 
 HOST = {"host": "wwc.best"}
 OWNER = 2
@@ -501,6 +502,7 @@ SESSION = {
 
 
 def _me_patches(stack: ExitStack, *, session: dict, lead_email) -> AsyncMock:
+    stack.enter_context(patch("app.content_access.routes.tenant_connection", TxCountingDb().tenant_connection))
     stack.enter_context(patch("app.content_access.routes.read_session_cookie", return_value="raw"))
     stack.enter_context(patch("app.content_access.routes.validate_content_session", AsyncMock(return_value=session)))
     stack.enter_context(patch("app.content_access.routes.resolve_partner_subscription_by_telegram_user_id", AsyncMock(return_value=None)))
@@ -516,7 +518,8 @@ async def test_me_returns_the_lead_email_next_to_login_methods(client):
         response = await client.get("/api/v1/content-access/me", headers=HOST)
     body = response.json()
     assert response.status_code == 200 and body["lead_email"] == "ivan@gmail.com" and "login_methods" in body
-    lookup.assert_awaited_once_with("whieda", VOLKOVA)
+    lookup.assert_awaited_once()
+    assert lookup.await_args.args == ("whieda", VOLKOVA)  # и открытая «/me» транзакция в conn
 
 
 @pytest.mark.asyncio

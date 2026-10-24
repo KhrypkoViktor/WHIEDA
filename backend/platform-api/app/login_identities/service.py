@@ -446,10 +446,15 @@ async def list_identities(conn: Any, tenant_id: str, telegram_user_id: int) -> l
     return [dict(r) for r in rows]
 
 
-async def list_login_methods(tenant_id: str, telegram_user_id: int) -> list[dict[str, Any]]:
-    """Для кабинета /me: [{provider, label, linked_at}] — Telegram всегда первый."""
-    async with tenant_connection(tenant_id) as conn:
+async def list_login_methods(tenant_id: str, telegram_user_id: int, *, conn: Any = None) -> list[dict[str, Any]]:
+    """Для кабинета /me: [{provider, label, linked_at}] — Telegram всегда первый.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора; без него открывается своё."""
+    if conn is not None:
         identities = await list_identities(conn, tenant_id, telegram_user_id)
+    else:
+        async with tenant_connection(tenant_id) as own:
+            identities = await list_identities(own, tenant_id, telegram_user_id)
     return login_methods_payload(identities)
 
 

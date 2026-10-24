@@ -21,6 +21,7 @@ from app.login_identities.rules import OAUTH_COOKIE_NAME, LoginIdentityError
 from app.settings import get_settings
 from app.telegram.processor import process_core_telegram_update
 from app.telegram.update_parser import TelegramMessage
+from tests.fake_db import FakeDb
 
 HOST = {"host": "wwc.best"}
 OWNER = 2
@@ -592,19 +593,22 @@ SESSION = {"session_id": "s1", "tenant_id": "whieda", "scope": "telegram_verifie
 @pytest.mark.asyncio
 async def test_me_lists_login_methods(client):
     methods = [{"provider": "telegram", "label": "Telegram", "linked_at": None}, {"provider": "google", "label": "e@x.com", "linked_at": "2026-10-15T10:00:00+00:00"}]
-    with patch("app.content_access.routes.read_session_cookie", return_value="raw"), \
+    with patch("app.content_access.routes.tenant_connection", FakeDb().tenant_connection), \
+         patch("app.content_access.routes.read_session_cookie", return_value="raw"), \
          patch("app.content_access.routes.validate_content_session", AsyncMock(return_value=SESSION)), \
          patch("app.content_access.routes.resolve_partner_subscription_by_telegram_user_id", AsyncMock(return_value=None)), \
          patch("app.content_access.routes.load_site_account", AsyncMock(return_value=None)), \
          patch("app.content_access.routes.list_login_methods", AsyncMock(return_value=methods)) as listing:
         response = await client.get("/api/v1/content-access/me", headers=HOST)
     assert response.status_code == 200 and response.json()["login_methods"] == methods
-    listing.assert_awaited_once_with("whieda", 700)
+    listing.assert_awaited_once()
+    assert listing.await_args.args == ("whieda", 700)  # и открытая «/me» транзакция в conn
 
 
 @pytest.mark.asyncio
 async def test_me_survives_a_broken_methods_lookup_with_telegram_only(client):
-    with patch("app.content_access.routes.read_session_cookie", return_value="raw"), \
+    with patch("app.content_access.routes.tenant_connection", FakeDb().tenant_connection), \
+         patch("app.content_access.routes.read_session_cookie", return_value="raw"), \
          patch("app.content_access.routes.validate_content_session", AsyncMock(return_value=SESSION)), \
          patch("app.content_access.routes.resolve_partner_subscription_by_telegram_user_id", AsyncMock(return_value=None)), \
          patch("app.content_access.routes.load_site_account", AsyncMock(return_value=None)), \

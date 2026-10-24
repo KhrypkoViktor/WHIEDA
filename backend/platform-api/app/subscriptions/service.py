@@ -713,6 +713,7 @@ async def resolve_partner_subscription_by_telegram_user_id(
     *,
     at: datetime | None = None,
     on_ambiguous: str = "raise",
+    conn: Any = None,
 ) -> dict[str, Any] | None:
     """One Telegram user → one partner subscription.
 
@@ -720,35 +721,45 @@ async def resolve_partner_subscription_by_telegram_user_id(
     callers keep ``on_ambiguous="raise"`` and ask which one; read-only status
     callers (site «/me», PRO gate) pass ``"best"`` and get the profile with the
     latest paid_until — a 500 on the site status card is never the answer.
+
+    ``conn`` — уже открытое ``tenant_connection`` того же арендатора: «/me» читает
+    четыре вещи в одной транзакции. Без него функция открывает свою, как раньше.
     """
     current = _as_utc(at or datetime.now(timezone.utc))
-    async with tenant_connection(tenant_id) as conn:
-        rows = await fetch_all(
-            conn,
-            """
-            select la.actor_id, la.telegram_user_id, rp.ref_code, rp.public_profile,
-                   ps.paid_until
-            from lead_actors la
-            join referral_profiles rp
-              on rp.tenant_id = la.tenant_id
-             and rp.owner_id = la.actor_id
-             and rp.enabled = true
-            left join partner_subscriptions ps
-              on ps.tenant_id = rp.tenant_id
-             and ps.ref_code = rp.ref_code
-            where la.tenant_id = %s
-              and la.telegram_user_id = %s
-              and la.active = true
-            order by ps.paid_until desc nulls last, rp.ref_code
-            limit 2
-            """,
-            (tenant_id, telegram_user_id),
-        )
+    if conn is not None:
+        rows = await _subscription_rows_by_telegram(conn, tenant_id, telegram_user_id)
+    else:
+        async with tenant_connection(tenant_id) as own:
+            rows = await _subscription_rows_by_telegram(own, tenant_id, telegram_user_id)
     if not rows:
         return None
     if len(rows) > 1 and on_ambiguous != "best":
         raise PartnerIdentityAmbiguousError("telegram user owns multiple referral profiles")
     return _normalize_subscription(rows[0], at=current)
+
+
+async def _subscription_rows_by_telegram(conn: Any, tenant_id: str, telegram_user_id: int) -> list[dict[str, Any]]:
+    return await fetch_all(
+        conn,
+        """
+        select la.actor_id, la.telegram_user_id, rp.ref_code, rp.public_profile,
+               ps.paid_until
+        from lead_actors la
+        join referral_profiles rp
+          on rp.tenant_id = la.tenant_id
+         and rp.owner_id = la.actor_id
+         and rp.enabled = true
+        left join partner_subscriptions ps
+          on ps.tenant_id = rp.tenant_id
+         and ps.ref_code = rp.ref_code
+        where la.tenant_id = %s
+          and la.telegram_user_id = %s
+          and la.active = true
+        order by ps.paid_until desc nulls last, rp.ref_code
+        limit 2
+        """,
+        (tenant_id, telegram_user_id),
+    )
 
 
 async def resolve_paid_partner_by_telegram_user_id(
