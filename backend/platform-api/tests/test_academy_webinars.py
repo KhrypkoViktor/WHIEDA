@@ -392,3 +392,13 @@ def test_post_webinar_offer_goes_after_the_start_with_action_buttons():
     ]
     assert due_messages(w24, items, w24.at + timedelta(minutes=241)) == []
     assert "после эфира O1" in copy_header(w24, "post_o1", 5)
+
+
+def test_message_can_be_limited_to_some_webinars():
+    from app.academy.webinars import due_messages, warmup_config
+
+    webinars = webinars_config({"webinars": ANATOMY})
+    w24, w31 = (next(w for w in webinars if w.tag == t) for t in ("ig_web24", "ig_web31"))
+    items = warmup_config({"webinar_warmup": [{"key": "o1", "after_min": 120, "text": "О1", "tags": ["ig_web24"]}]})
+    assert [m[0] for m in due_messages(w24, items, w24.at + timedelta(minutes=121))] == ["post_o1"]
+    assert due_messages(w31, items, w31.at + timedelta(minutes=121)) == []

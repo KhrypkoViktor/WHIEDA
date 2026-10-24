@@ -99,6 +99,7 @@ class Warmup:
     # не уходит. buttons — ряды кнопок: {text, url} или {text, action: admin | signup | move:<метка>}.
     after: bool = False
     buttons: tuple[tuple[tuple[str, str, str], ...], ...] = ()  # ((текст, "url"|"action", значение), …)
+    tags: tuple[str, ...] = ()  # только для этих вебинаров (О1 для 24.10 — с повтором 31.10); пусто — для всех серии
 
 
 _PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
@@ -183,6 +184,7 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
             out.append(Warmup(
                 key, timedelta(minutes=minutes), text, photos, button, str(item.get("series") or "").strip(),
                 after, tuple(rows),
+                tuple(str(t) for t in item.get("tags") or [] if isinstance(t, str)) if isinstance(item.get("tags"), list) else (),
             ))
     return out
 
@@ -282,7 +284,7 @@ def due_messages(
     """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки, фото)."""
     out: list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]] = []
     for item in warmups:
-        if item.series != webinar.series:
+        if item.series != webinar.series or (item.tags and webinar.tag not in item.tags):
             continue
         if item.after:
             moment = webinar.at + item.before
