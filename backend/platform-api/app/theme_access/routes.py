@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from app.content_access.cookies import read_session_cookie
 from app.content_access.service import validate_content_session
+from app.public_cache import PUBLIC_CACHE_TTL_SEC, mark_public, no_store_error, theme_site_cache
 from app.settings import get_settings
 from app.tenancy import get_request_tenant, normalize_host, require_entitlement
 from app.theme_access.service import (
@@ -43,14 +44,28 @@ def site_id_from_request_host(request: Request) -> str:
     return normalize_site_id(site_id)
 
 
-async def _theme_site(request: Request, requested_site_id: str) -> tuple[str, dict]:
+async def _load_site(tenant_id: str, site_id: str, *, cached: bool) -> dict | None:
+    """Сайт для темы. ``cached`` — только публичное чтение: минута в памяти, найденные сайты; ненайденный
+    не запоминается. Запись темы и чтение для владельца всегда идут в базу."""
+    if not cached:
+        return await load_theme_site(tenant_id, site_id)
+    key = (tenant_id, site_id)
+    site = theme_site_cache.get(key)
+    if site is None:
+        site = await load_theme_site(tenant_id, site_id)
+        if site:
+            theme_site_cache.set(key, site, ttl=PUBLIC_CACHE_TTL_SEC)
+    return site
+
+
+async def _theme_site(request: Request, requested_site_id: str, *, cached: bool = False) -> tuple[str, dict]:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     host_site_id = site_id_from_request_host(request)
     site_id = normalize_site_id(requested_site_id)
-    site = await load_theme_site(tenant.tenant_id, site_id)
+    site = await _load_site(tenant.tenant_id, site_id, cached=cached)
     if not site:
-        site = await load_theme_site(tenant.tenant_id, host_site_id)
+        site = await _load_site(tenant.tenant_id, host_site_id, cached=cached)
     if not site:
         raise HTTPException(status_code=404, detail={"error": "site_not_found"})
     aliases = site_identity_aliases(site)
@@ -73,10 +88,21 @@ async def _current_telegram_user_id(request: Request) -> str:
 @router.get("/api/v1/theme-access/public")
 async def get_public_theme(
     request: Request,
+    response: Response,
     site_id: str = Query(..., min_length=1, max_length=64),
 ) -> dict:
-    _, site = await _theme_site(request, site_id)
-    return public_theme_payload(site)
+    """Тема сайта для всех посетителей. Тело ответа определяет только ``site_id`` (и арендатор по хосту);
+    заголовки хоста (``X-WWC-Personal-Host``, ``X-Forwarded-Host``) решают лишь, пустить ли запрос (403), но
+    не меняют тело, поэтому ``public, max-age=120`` безопасен; ошибки уходят с ``no-store``."""
+    try:
+        _, site = await _theme_site(request, site_id, cached=True)
+        payload = public_theme_payload(site)
+    except HTTPException as exc:
+        return await no_store_error(request, exc)
+    mark_public(response)
+    # Разные заголовки хоста — разные решения 403/200, кэш-прокси их различает.
+    response.headers["Vary"] = "X-WWC-Personal-Host, X-Forwarded-Host"
+    return payload
 
 
 @router.get("/api/v1/theme-access/entitlement")

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.db import fetch_one, tenant_connection
 from app.observability import log_event
+from app.public_cache import forget_public_profiles
 
 ALLOWED_THEME_IDS = ("whieda-bright", "sankofa")
 _SITE_ID_RE = re.compile(r"^[a-z0-9-]{1,64}$")
@@ -162,6 +163,8 @@ async def save_selected_theme(
         )
     if not row:
         raise HTTPException(status_code=404, detail={"error": "site_not_found"})
+    # Публичный /theme-access/public и /public/ref держат профиль в памяти минуту: этому процессу сообщаем сразу.
+    forget_public_profiles()
 
     # Audit the server-side theme decision: who saved, which site, which
     # theme, when (the log record carries the timestamp).

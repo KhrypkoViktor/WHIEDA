@@ -27,6 +27,7 @@ from app.lead_email.service import lead_email_of
 from app.login_identities.rules import login_methods_payload
 from app.login_identities.service import list_login_methods
 from app.max.webapp import max_webapp
+from app.public_cache import no_store_error
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
 from app.content_access.account import load_site_account
 from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
@@ -98,15 +99,21 @@ async def _poll(
     request: Request,
     x_browser_nonce: str | None,
 ) -> dict:
-    tenant = get_request_tenant(request)
-    require_entitlement(tenant, "structure_basic")
-    if not x_browser_nonce:
-        raise HTTPException(status_code=400, detail={"error": "browser_nonce_required"})
-    payload, raw_session = await poll_content_challenge(
-        tenant.tenant_id,
-        challenge_id=challenge_id,
-        browser_nonce=x_browser_nonce,
-    )
+    # Опрос статуса входа: ответ у каждого свой и меняется (ждём подтверждения в боте, затем кука) —
+    # ни браузер, ни прокси его не запоминают, в том числе при ошибке.
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        tenant = get_request_tenant(request)
+        require_entitlement(tenant, "structure_basic")
+        if not x_browser_nonce:
+            raise HTTPException(status_code=400, detail={"error": "browser_nonce_required"})
+        payload, raw_session = await poll_content_challenge(
+            tenant.tenant_id,
+            challenge_id=challenge_id,
+            browser_nonce=x_browser_nonce,
+        )
+    except HTTPException as exc:
+        return await no_store_error(request, exc)
     if raw_session:
         set_session_cookie(response, raw_session, request)
     return payload
