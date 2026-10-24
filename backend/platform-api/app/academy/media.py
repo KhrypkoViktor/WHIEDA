@@ -15,7 +15,9 @@ to the transcoding queue (``app.academy.transcode``).
 Links: nginx ``secure_link`` format, so nginx checks them without Core:
 ``/academy-media/<key>?u=<telegram_user_id>&e=<expires>&s=<md5>`` with
 ``s = base64url(md5("<e>/academy-media/<key><u> <secret>"))``. The link is bound to
-the viewer (u) and lives ``PLATFORM_ACADEMY_MEDIA_URL_TTL_SECONDS`` (1 hour). Until
+the viewer (u) and lives at least ``PLATFORM_ACADEMY_MEDIA_URL_TTL_SECONDS`` (1 hour); ``e`` is
+rounded up to a 15-minute boundary, so the link for one file and viewer is the same within
+the window and the browser cache hits on the next course or lesson response. Until
 nginx serves the directory (``PLATFORM_ACADEMY_MEDIA_VIA_API=true``) the same
 signature points to the Core API, which streams the file with Range support.
 This is protection on the level of basic video hosting plans, not DRM.
@@ -77,6 +79,10 @@ _IMAGE_SIGNATURES = {
 PUBLIC_PREFIX = "/academy-media/"
 API_FILES_PREFIX = "/api/v1/content-access/academy/media/files/"
 MIN_SECRET_CHARS = 32
+# Срок ссылки округляется вверх до границы четверти часа: один файл — одна и та же ссылка
+# в течение окна, поэтому ответ курса/урока не выдаёт новую ссылку на каждый запрос и кэш
+# браузера (private, max-age) срабатывает. Ссылка живёт не меньше TTL, не больше TTL + окно.
+URL_WINDOW_SECONDS = 15 * 60
 
 
 class MediaError(Exception):
@@ -151,10 +157,17 @@ def sign(storage_key: str, telegram_user_id: int | str, expires: int, secret: st
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+def link_expiry(now: float | None, ttl: int) -> int:
+    """Конец ближайшего окна в четверть часа плюс TTL: срок один для всех запросов внутри окна."""
+    current = int(now if now is not None else time.time())
+    window_end = (current // URL_WINDOW_SECONDS + 1) * URL_WINDOW_SECONDS
+    return window_end + int(ttl)
+
+
 def signed_url(storage_key: str, telegram_user_id: int, *, now: float | None = None) -> str:
     settings = get_settings()
     secret = _secret()
-    expires = int(now if now is not None else time.time()) + int(settings.platform_academy_media_url_ttl_seconds)
+    expires = link_expiry(now, int(settings.platform_academy_media_url_ttl_seconds))
     key = validate_storage_key(storage_key)
     prefix = API_FILES_PREFIX if settings.platform_academy_media_via_api else PUBLIC_PREFIX
     signature = sign(key, int(telegram_user_id), expires, secret)
