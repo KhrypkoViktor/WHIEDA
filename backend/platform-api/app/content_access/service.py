@@ -17,6 +17,7 @@ from app.academy.showcases import is_showcase_host, warm_hosts
 from app.cookie_domain import shared_cookie_domains
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
+from app.ttl_cache import TtlCache
 
 CONTENT_START_PREFIX = "content_access_"
 ALLOWED_SCOPES = frozenset({"telegram_verified"})
@@ -560,35 +561,66 @@ async def create_session_for_user(
     return {"ok": True, "status": "authenticated", "expires_at": session_expires.isoformat()}, raw_session
 
 
+# Проверка сессии идёт на каждый запрос кабинета, Академии, CRM и меню сайта. Запись
+# last_seen_at и проверка срока/отзыва — один UPDATE … RETURNING; проверенная сессия
+# 30 секунд держится в памяти процесса, чтобы повторные запросы не ходили в базу вовсе.
+# Выход (revoke_content_session) выбрасывает запись из кэша в этом процессе; отзыв из
+# другого процесса или контейнера (если их несколько) вступает в силу не позже чем через
+# SESSION_CACHE_TTL_SEC. last_seen_at из-за кэша обновляется не чаще раза в 30 секунд.
+SESSION_CACHE_TTL_SEC = 30.0
+SESSION_CACHE_MAX_ENTRIES = 2048
+
+_session_cache: TtlCache[dict[str, Any]] = TtlCache(max_entries=SESSION_CACHE_MAX_ENTRIES)
+# Растёт при каждом выходе: проверка, начатая до выхода, не должна положить в кэш уже отозванную сессию.
+_session_evictions = 0
+
+
+def clear_session_cache() -> None:
+    """Тесты и всё, что отзывает сессии не через revoke_content_session."""
+    global _session_evictions
+    _session_evictions += 1
+    _session_cache.clear()
+
+
+def _evict_cached_session(tenant_id: str, session_hash: str) -> None:
+    global _session_evictions
+    _session_evictions += 1
+    _session_cache.pop((tenant_id, session_hash))
+
+
 async def validate_content_session(tenant_id: str, raw_session: str) -> dict[str, Any] | None:
     session_hash = _hash_value(raw_session.strip())
+    cache_key = (tenant_id, session_hash)
+    cached = _session_cache.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+
+    evictions_before = _session_evictions
+    now = _utcnow()
     async with tenant_connection(tenant_id) as conn:
+        # Условия те же, что были у SELECT + проверок в коде: арендатор, не отозвана, не истекла.
         row = await fetch_one(
             conn,
             """
-            select session_id, tenant_id, visitor_session_id, telegram_user_id,
-                   scope, expires_at, revoked_at
-            from content_access_sessions
+            update content_access_sessions
+            set last_seen_at = now()
             where session_hash = %s
-            limit 1
+              and tenant_id = %s
+              and revoked_at is null
+              and expires_at >= %s
+            returning session_id, tenant_id, visitor_session_id, telegram_user_id,
+                      scope, expires_at, revoked_at
             """,
-            (session_hash,),
+            (session_hash, tenant_id, now),
         )
-        if not row or row.get("revoked_at"):
-            return None
-        if str(row.get("tenant_id")) != tenant_id:
-            return None
-        if row.get("expires_at") and row["expires_at"] < _utcnow():
-            return None
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                update content_access_sessions
-                set last_seen_at = now()
-                where session_id = %s::uuid
-                """,
-                (row["session_id"],),
-            )
+    if not row:
+        return None
+    # Выход, случившийся пока шла проверка, — повод не запоминать результат.
+    if evictions_before == _session_evictions:
+        remaining = (row["expires_at"] - now).total_seconds() if row.get("expires_at") else SESSION_CACHE_TTL_SEC
+        ttl = min(SESSION_CACHE_TTL_SEC, remaining)
+        if ttl > 0:
+            _session_cache.set(cache_key, dict(row), ttl=ttl)
     return row
 
 
@@ -628,6 +660,15 @@ def format_me_payload(
 
 async def revoke_content_session(tenant_id: str, raw_session: str) -> bool:
     session_hash = _hash_value(raw_session.strip())
+    # До базы и после: проверка, начатая между ними, не должна оставить сессию в кэше.
+    _evict_cached_session(tenant_id, session_hash)
+    try:
+        return await _revoke_in_database(tenant_id, session_hash)
+    finally:
+        _evict_cached_session(tenant_id, session_hash)
+
+
+async def _revoke_in_database(tenant_id: str, session_hash: str) -> bool:
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(
             conn,
