@@ -262,8 +262,10 @@ def followup_markup(repeat: Webinar) -> dict[str, Any]:
 
 
 def is_paid(lead: Lead | None) -> bool:
-    """Кирилл отмечает оплативших в колонке «Статус» таблицы («оплатил», «оплата»…)."""
-    return bool(lead and "оплат" in lead.status.casefold())
+    """Кирилл отмечает оплативших в колонке «Статус» таблицы («оплатил», «оплата»…). Бронь 50 BYN —
+    цена закреплена, предложения после эфира ей тоже не шлём (Виктор, 24.10.2026)."""
+    status = lead.status.casefold() if lead else ""
+    return "оплат" in status or "брон" in status
 
 
 def reminder_text(kind: str, webinar: Webinar) -> str:

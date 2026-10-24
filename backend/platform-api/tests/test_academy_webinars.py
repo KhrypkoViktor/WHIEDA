@@ -195,6 +195,7 @@ def test_followup_text_paid_mark_and_past_date_in_form():
     assert followup_markup(w31) == {"inline_keyboard": [[{"text": "Записаться на 31 октября", "callback_data": "wbn:ig_web31"}]]}
     dasha, _ = parse_leads(CSV)
     assert not is_paid(dasha) and is_paid(replace(dasha, status="Оплатил 10к")) and not is_paid(None)
+    assert is_paid(replace(dasha, status="написал | Бронь 50"))  # бронь — предложения после эфира не идут
     # Форма всё ещё предлагает 24 октября: выбрал его после начала эфира — это 31-е.
     late = replace(dasha, created=datetime(2026, 10, 24, 18, 0, tzinfo=MINSK))
     assert lead_webinar(late, webinars) == "ig_web31"
