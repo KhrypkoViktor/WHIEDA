@@ -339,11 +339,34 @@ def _nicks_clash(a: str | None, b: str | None) -> bool:
     return bool(a and b and a.lstrip("@").casefold() != b.lstrip("@").casefold())
 
 
+_LATIN = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ж": "zh", "з": "z", "и": "i", "й": "i",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e",
+    "ю": "yu", "я": "ya", "і": "i", "ў": "u",
+})
+
+
+def _latin_key(value: str) -> str:
+    """«Валентина Чижикова» и «Valentina Chizhikova» — одно имя (26.10.2026): кириллица в латиницу и грубое
+    выравнивание написаний (kh/h, ts/c, x/ks, й/j/y/i, двойные буквы: Natallia = Наталья)."""
+    text = _norm_name(value).translate(_LATIN).replace("kh", "h").replace("x", "ks")
+    text = re.sub(r"ts|tz", "c", text)
+    text = re.sub(r"[jyi]+", "i", text)
+    return re.sub(r"(.)\1+", r"\1", text)
+
+
 def _same_name(a: str, b: str) -> bool:
-    """Имя и фамилия совпали (в любом порядке). Одно имя — не признак: «Наталья» @Lliiss12345 открыла
-    бота без заявки, а сопоставилась с другой Натальей, и та выпала бы из «Не в боте» (18.10.2026)."""
+    """Имя и фамилия совпали (в любом порядке, кириллицей или латиницей). Одно имя — не признак: «Наталья»
+    @Lliiss12345 открыла бота без заявки, а сопоставилась с другой Натальей, и та выпала бы из «Не в боте»
+    (18.10.2026)."""
     x, y = _norm_name(a), _norm_name(b)
-    return len(x.split()) >= 2 and x in (y, " ".join(reversed(y.split())))
+    if len(x.split()) < 2:
+        return False
+    if x in (y, " ".join(reversed(y.split()))):
+        return True
+    lx, ly = _latin_key(a), _latin_key(b)
+    return lx in (ly, " ".join(reversed(ly.split())))
 
 
 def match_lead(
@@ -441,6 +464,33 @@ def link_markup(telegram_user_id: int, candidates: list[Lead]) -> dict[str, Any]
             label += f" · …{digits[-4:]}"
         rows.append([{"text": label[:64], "callback_data": data}])
     return {"inline_keyboard": rows} if rows else None
+
+
+UNLINK_PREFIX = "aunlink:"
+
+
+def unlink_markup(telegram_user_id: int, lead_id: str) -> dict[str, Any]:
+    """Под «🔗 … — в боте»: нажал не на ту строку — одна кнопка отмены (Кирилл, 25.10.2026)."""
+    return {"inline_keyboard": [[{"text": "↩️ Отменить", "callback_data": f"{UNLINK_PREFIX}{int(telegram_user_id)}:{lead_id}"}]]}
+
+
+def parse_unlink(data: str) -> tuple[int, str] | None:
+    found = re.fullmatch(rf"{UNLINK_PREFIX}(\d{{1,15}}):([A-Za-z0-9_-]{{1,40}})", str(data or ""))
+    return (int(found.group(1)), found.group(2)) if found else None
+
+
+async def unlink_open(tenant_id: str, showcase_id: str, *, telegram_user_id: int, lead_id: str) -> bool:
+    """Снять связь человека со строкой, если она всё ещё эта; False — уже снята или другая."""
+    from app.db import fetch_one, tenant_connection
+
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            "update academy_ad_opens set lead_id = null where tenant_id = %s and showcase_id = %s"
+            " and telegram_user_id = %s and lead_id = %s returning telegram_user_id",
+            (tenant_id, showcase_id, int(telegram_user_id), lead_id),
+        )
+    return row is not None
 
 
 def parse_link(data: str) -> tuple[int, str] | None:
@@ -632,21 +682,31 @@ async def lead_flags(tenant_id: str, showcase: Any) -> dict[str, Any]:
         raise SheetUnavailable(type(exc).__name__) from exc
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
+    from app.academy.webinars import lead_webinar, person_webinar, webinars_config  # webinars импортирует нас
+
     markers = series_markers(showcase.support)
+    webinars = webinars_config(showcase.support)
+    dates = {w.tag: w.at.astimezone(MINSK).strftime("%d.%m") for w in webinars}
     in_bot: set[str] = set()
     joined: dict[str, str] = {}  # «На эфире» (24.10.2026): id → «✅ 24.10 17:26»
+    booked: dict[str, str] = {}  # «Записан на» (26.10.2026): дата, на которую бот шлёт напоминания
     for lead in leads:
         opened = opened_for(lead, opens, lead_series(lead, markers))
+        tag = lead_webinar(lead, webinars)
         if opened is not None:
             in_bot.add(lead.lead_id)
+            tag = person_webinar(replace(opened, lead_id=lead.lead_id), {lead.lead_id: lead}, webinars)
             if opened.joined:
                 joined[lead.lead_id] = joined_text(opened)
+        if tag in dates:
+            booked[lead.lead_id] = dates[tag]
     not_in_bot = {lead.lead_id for lead in leads} - in_bot
     return {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "in_bot": sorted(in_bot),
         "not_in_bot": sorted(not_in_bot),
         "joined": joined,
+        "booked": booked,
     }
 
 

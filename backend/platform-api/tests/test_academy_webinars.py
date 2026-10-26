@@ -411,3 +411,19 @@ def test_message_can_be_limited_to_some_webinars():
     items = warmup_config({"webinar_warmup": [{"key": "o1", "after_min": 120, "text": "О1", "tags": ["ig_web24"]}]})
     assert [m[0] for m in due_messages(w24, items, w24.at + timedelta(minutes=121))] == ["post_o1"]
     assert due_messages(w31, items, w31.at + timedelta(minutes=121)) == []
+
+
+def test_moved_webinar_keeps_old_form_date():
+    """Анатомию 28.10 перенесли на 4.11 (26.10.2026): форма ещё предлагает «28 октября» — это 4 ноября."""
+    from app.academy.ad_leads import Lead
+
+    support = {"webinars": {
+        "ig_an28": {"at": "2026-11-04T19:30:00+03:00", "date": "4 ноября", "series": "anatomy", "form": "анатом",
+                    "was": ["28 октября", "28.10"]},
+        "ig_an07": {"at": "2026-11-07T18:00:00+03:00", "date": "7 ноября", "series": "anatomy", "form": "анатом"},
+    }}
+    webinars = webinars_config(support)
+    lead = Lead("901", datetime(2026, 10, 26, 10, 0, tzinfo=MINSK), "Ирина", "+375291112233", None, "", None,
+                "бесплатный_вебинар_28_октября", "ig", "Вебинар анатомия 28.10")
+    assert lead_webinar(lead, webinars) == "ig_an28"
+    assert webinars_config(support)[0].was == ("28 октября", "28.10")

@@ -336,18 +336,50 @@ async def test_move_button_moves_date_confirms_and_tells_admin(whieda_tenant, al
     answered = AsyncMock(return_value={"ok": True})
     update = {"callback_query": {"id": "cb1", "data": "wbn:ig_web24", "from": {"id": 301},
                                  "message": {"message_id": 9, "chat": {"id": 301, "type": "private"}}}}
+    _, sheet = _sheet_patches([_lead("702", "Анна Петрова-Соколова", None)])
     with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
         "app.telegram.showcase_bot.move_webinar", AsyncMock(return_value=(w24, opened))
     ) as moved, patch("app.telegram.showcase_bot.send_telegram_text", sent), patch(
         "app.telegram.showcase_bot.answer_callback_query", answered
-    ), patch("app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"admin": 5035800725})):
+    ), patch("app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"admin": 5035800725})), sheet[0], sheet[1]:
         result = await process_core_telegram_update(whieda_tenant, update, "t", binding=almira_binding)
     assert (result["route"], result["moved"], result["webinar"]) == ("showcase_webinar_move", True, "ig_web24")
     assert moved.await_args.args[2:] == (301, "ig_web24")
     person, admin = sent.await_args_list
     assert person.kwargs["chat_id"] == "301" and person.kwargs["text"] == "Готово: вы записаны на 24 октября, начало в 17:30 по Минску."
     assert admin.kwargs["chat_id"] == "5035800725"
-    assert admin.kwargs["text"] == '🔁 <b><a href="tg://user?id=301">Анна Петрова</a></b>: запись перенесена на 24 октября'
+    # Кто это — не только ссылка-имя (кликается не у всех): ник, строка таблицы, телефон, WhatsApp (26.10.2026).
+    assert admin.kwargs["text"].split("\n") == [
+        '🔁 <b><a href="tg://user?id=301">Анна Петрова</a></b>: запись перенесена на 24 октября',
+        "Telegram: @anna_p",
+        "📋 В таблице: Анна Петрова-Соколова, +375291112233",
+        '💬 <a href="https://wa.me/375291112233">WhatsApp</a> · <a href="https://t.me/+375291112233">Telegram по номеру</a>',
+        "Дата в таблице — столбец «Записан на», обновится в течение 5 минут.",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "done"), [(5035800725, True), (301, False)])
+async def test_admin_undoes_a_wrong_link_with_one_button(whieda_tenant, almira_binding, user_id, done):
+    """Кирилл случайно нажал «Это Янина…» под чужим человеком (25.10.2026) — «↩️ Отменить» снимает связь."""
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    unlink = AsyncMock(return_value=True)
+    call = AsyncMock(return_value={"ok": True})
+    tap = {"callback_query": {"id": "cb1", "data": "aunlink:1263417215:1117241111172158", "from": {"id": user_id},
+                              "message": {"message_id": 9, "chat": {"id": user_id, "type": "private"}}}}
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=ALMIRA)), patch(
+        "app.telegram.showcase_bot.send_telegram_text", sent
+    ), patch("app.telegram.showcase_bot.answer_callback_query", AsyncMock(return_value={"ok": True})), patch(
+        "app.telegram.showcase_bot.support_targets", AsyncMock(return_value={"admin": 5035800725})
+    ), patch("app.telegram.showcase_bot.unlink_open", unlink), patch("app.telegram.showcase_bot._call_telegram", call):
+        result = await process_core_telegram_update(whieda_tenant, tap, "t", binding=almira_binding)
+    assert (result["route"], result["unlinked"]) == ("showcase_unlink", done)
+    if not done:
+        unlink.assert_not_called()
+        return
+    assert unlink.await_args.kwargs == {"telegram_user_id": 1263417215, "lead_id": "1117241111172158"}
+    assert call.await_args.args[0] == "editMessageReplyMarkup"
+    assert sent.await_args.kwargs["text"].startswith("↩️ Связь отменена")
 
 
 def _text(text: str, user_id: int) -> dict:
@@ -537,7 +569,9 @@ async def test_admin_links_the_person_to_a_row_and_buttons_go_away(whieda_tenant
     assert call.await_args.args[0] == "editMessageReplyMarkup"
     assert sent.await_args.kwargs["text"] == (
         '🔗 <b><a href="tg://user?id=1330521862">Виктория Манчи</a></b> — в боте. В таблице «да» появится в течение 5 минут.'
+        " Нажали не на ту строку — «Отменить»."
     )
+    assert sent.await_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "aunlink:1330521862:701234567"
 
 
 @pytest.mark.asyncio

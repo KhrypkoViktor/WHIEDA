@@ -294,3 +294,16 @@ def test_link_buttons_offer_fresh_rows_without_bot_newest_first():
     assert parse_link("alink:1330521862:111") == (1330521862, "111")
     assert parse_link("alink:x:111") is None and parse_link("wsign:ig_web24") is None
     assert link_markup(1, []) is None
+
+
+def test_latin_and_cyrillic_full_names_match():
+    """«Valentina Chizhikova» в Telegram = «Валентина Чижикова» в таблице (26.10.2026); одно имя — по-прежнему нет."""
+    from app.academy.ad_leads import _same_name
+
+    assert _same_name("Valentina Chizhikova", "Валентина Чижикова")
+    assert _same_name("Chizhikova Valentina", "Валентина Чижикова")
+    assert _same_name("Natallia Leuchankou", "Наталья Левченко") is False  # фамилии разные по сути
+    assert _same_name("Iulia Kuchinskaya", "Юлия Кучинская")
+    assert _same_name("Olga Misyurina", "Ольга Мисюрина")
+    assert not _same_name("Valentina", "Валентина")
+    assert not _same_name("Valentina Chizhikova", "Валентина Петрова")

@@ -91,7 +91,8 @@ async def test_flags_split_lead_ids_into_in_bot_and_not_in_bot(client):
 @pytest.mark.asyncio
 async def test_flags_carry_only_lead_ids_no_names_phones_or_nicks(client):
     response, *_ = await _get(client)
-    assert set(response.json()) == {"ok", "updated_at", "in_bot", "not_in_bot"}
+    # «На эфире» (24.10) и «Записан на» (26.10) — тоже только id и даты.
+    assert set(response.json()) == {"ok", "updated_at", "in_bot", "not_in_bot", "joined", "booked"}
     for private in ("Анна", "Петрова", "Мария", "Ольга", "+375", "375291112233", "kvetka_space", "olga_k", "anna_p"):
         assert private not in response.text
 

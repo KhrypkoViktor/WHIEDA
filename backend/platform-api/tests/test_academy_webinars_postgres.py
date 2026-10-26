@@ -669,7 +669,15 @@ def test_admin_links_an_entrant_without_row_and_the_sheet_says_yes(monkeypatch):
             link = dict(telegram_user_id=nameless, lead_id="705", series="")
             assert await ad_leads.link_open("whieda", "almira", **link) is True
             assert await ad_leads.link_open("whieda", "almira", **{**link, "lead_id": "703"}) is False
-            assert "705" in (await ad_leads.lead_flags("whieda", showcase))["in_bot"]
+            flags = await ad_leads.lead_flags("whieda", showcase)
+            assert "705" in flags["in_bot"]
+            # «Записан на» (26.10.2026): дата, на которую бот шлёт напоминания этой строке.
+            assert flags["booked"]["705"] in ("24.10", "31.10")
             assert await webinars.unlinked_prompts("whieda", showcase, now=at(24, 12, 30)) == []
+            # «↩️ Отменить»: связь снимается, только если она всё ещё та же.
+            unlink = dict(telegram_user_id=nameless, lead_id="705")
+            assert await ad_leads.unlink_open("whieda", "almira", **unlink) is True
+            assert await ad_leads.unlink_open("whieda", "almira", **unlink) is False
+            assert "705" in (await ad_leads.lead_flags("whieda", showcase))["not_in_bot"]
 
         db.run_with_app(proof)

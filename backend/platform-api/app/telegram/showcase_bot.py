@@ -23,6 +23,8 @@ from app.academy.ad_leads import (
     BOT_TAG,
     LINK_HINT,
     LINK_PREFIX,
+    UNLINK_PREFIX,
+    _contacts,
     MINSK,
     Lead,
     alert_pending,
@@ -34,8 +36,11 @@ from app.academy.ad_leads import (
     match_lead,
     opened_text,
     parse_link,
+    parse_unlink,
     record_open,
     sheet_config,
+    unlink_markup,
+    unlink_open,
 )
 from app.academy.keys import parse_course_start_token
 from app.academy.notify import course_page_url
@@ -300,16 +305,40 @@ async def _try_webinar_callback(
     try:
         admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
         if admin is not None:
-            name = _plain_name(opened.name) or (f"@{opened.username}" if opened.username else "Без имени")
             await send_telegram_text(
-                chat_id=str(admin), bot_token=token,
-                text=f'🔁 <b><a href="tg://user?id={int(opened.telegram_user_id)}">{name}</a></b>: '
-                + (f"запись на повтор — {webinar.date}" if repeat else f"запись перенесена на {webinar.date}"),
+                chat_id=str(admin), bot_token=token, text=await _move_notice(opened, webinar, repeat, showcase),
             )
     except Exception:
         logger.warning("showcase_webinar_move_notify_failed", extra={"trace_id": trace_id}, exc_info=True)
     logger.info("showcase_webinar_moved", extra={"trace_id": trace_id, "webinar": webinar.tag})
     return {"ok": True, "route": "showcase_webinar_move", "moved": True, "webinar": webinar.tag, "trace_id": trace_id}
+
+
+async def _move_notice(opened: Any, webinar: Any, repeat: bool, showcase: Showcase) -> str:
+    """Кто записался на повтор или перенёс дату: ссылка-имя кликается не у всех (Кирилл, 25.10.2026) —
+    ещё ник, имя из таблицы, телефон и WhatsApp, чтобы позвонить и подтвердить."""
+    name = _plain_name(opened.name) or (f"@{opened.username}" if opened.username else "Без имени")
+    lines = [
+        f'🔁 <b><a href="tg://user?id={int(opened.telegram_user_id)}">{name}</a></b>: '
+        + (f"запись на повтор — {webinar.date}" if repeat else f"запись перенесена на {webinar.date}")
+    ]
+    if opened.username:
+        lines.append(f"Telegram: @{_plain_name(opened.username)}")
+    lead = None
+    config = sheet_config(showcase.support)
+    if config and opened.lead_id:
+        try:
+            lead = next((x for x in await fetch_leads(config) if x.lead_id == opened.lead_id), None)
+        except Exception:
+            logger.warning("showcase_move_notice_sheet_failed", exc_info=True)
+    if lead is not None:
+        lines.append(f"📋 В таблице: {_plain_name(lead.name) or 'без имени'}" + (f", {lead.phone}" if lead.phone else ""))
+        if contacts := _contacts(lead.phone or ""):
+            lines.append(contacts)
+        lines.append("Дата в таблице — столбец «Записан на», обновится в течение 5 минут.")
+    else:
+        lines.append("📋 Строки в таблице не нашлось — напишите боту «не в боте», там можно связать.")
+    return "\n".join(lines)
 
 
 async def _try_link_callback(
@@ -360,7 +389,8 @@ async def _try_link_callback(
     await _send(
         callback.chat_id,
         f'🔗 <b><a href="tg://user?id={user_id}">{_plain_name(lead.name) or "Без имени"}</a></b> — в боте.'
-        " В таблице «да» появится в течение 5 минут.",
+        " В таблице «да» появится в течение 5 минут. Нажали не на ту строку — «Отменить».",
+        unlink_markup(user_id, lead_id),
     )
     logger.info("showcase_linked", extra={"trace_id": trace_id})
     return {"ok": True, "route": "showcase_link", "linked": True, "trace_id": trace_id}
@@ -409,6 +439,49 @@ async def _try_join_callback(
         await _send(callback.chat_id, "Эфир — по кнопке ниже.", open_markup(webinar))
     logger.info("showcase_join", extra={"trace_id": trace_id, "webinar": tag, "first": first})
     return {"ok": True, "route": "showcase_join", "joined": first, "trace_id": trace_id}
+
+
+async def _try_unlink_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«↩️ Отменить» под «🔗 … — в боте»: случайное нажатие «Это …» снимается одной кнопкой (26.10.2026)."""
+    data = str(callback.data or "")
+    if not data.startswith(UNLINK_PREFIX):
+        return None
+    token = current_bot_binding().bot_token
+    parsed = parse_unlink(data)
+    try:
+        admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+    except Exception:
+        admin = None
+    if parsed is None or admin is None or int(admin) != int(callback.user_id):
+        await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
+        return {"ok": True, "route": "showcase_unlink", "unlinked": False, "trace_id": trace_id}
+    user_id, lead_id = parsed
+    done = False
+    try:
+        done = await unlink_open(tenant.tenant_id, showcase.showcase_id, telegram_user_id=user_id, lead_id=lead_id)
+    except Exception:
+        logger.warning("showcase_unlink_failed", extra={"trace_id": trace_id}, exc_info=True)
+    await answer_callback_query(
+        callback_query_id=callback.callback_query_id, bot_token=token,
+        text="Отменено" if done else "Уже отменено", show_alert=not done,
+    )
+    message = ((callback.raw or {}).get("callback_query") or {}).get("message") or {}
+    if message.get("message_id"):
+        await _call_telegram(
+            "editMessageReplyMarkup",
+            {"chat_id": callback.chat_id, "message_id": message["message_id"], "reply_markup": {"inline_keyboard": []}},
+            bot_token=token,
+        )
+    if done:
+        await _send(
+            callback.chat_id,
+            f'↩️ Связь отменена: <a href="tg://user?id={user_id}">человек</a> снова «не найден».'
+            " Чтобы выбрать нужную строку — напишите боту «не в боте».",
+        )
+    logger.info("showcase_unlinked", extra={"trace_id": trace_id, "done": done})
+    return {"ok": True, "route": "showcase_unlink", "unlinked": done, "trace_id": trace_id}
 
 
 SIGNUP_REPLY = "Спасибо! Администратор свяжется с вами здесь, в этом чате, и поможет с записью и оплатой."
@@ -596,6 +669,9 @@ async def process_showcase_bot_update(
         linked = await _try_link_callback(tenant, callback, showcase, trace_id=trace_id)
         if linked is not None:
             return linked
+        unlinked = await _try_unlink_callback(tenant, callback, showcase, trace_id=trace_id)
+        if unlinked is not None:
+            return unlinked
         joined = await _try_join_callback(tenant, callback, showcase, trace_id=trace_id)
         if joined is not None:
             return joined

@@ -73,6 +73,8 @@ class Webinar:
     subject: str = "по композиции"  # «вебинар … по композиции» в напоминаниях
     greeting: str = ""  # приветствие на /start с меткой этого вебинара; пусто — приветствие композиции
     label: str = ""  # подпись серии в алертах администратору («анатомия»)
+    # Перенос (26.10.2026): прежние даты в пункте формы («28 октября») тоже означают этот вебинар.
+    was: tuple[str, ...] = ()
 
 
 def series_webinars(webinars: list["Webinar"], series: str) -> list["Webinar"]:
@@ -239,6 +241,7 @@ def webinars_config(support: dict[str, Any] | None) -> list[Webinar]:
             subject=str(item.get("subject") or "").strip() or "по композиции",
             greeting=str(item.get("greeting") or "").strip(),
             label=str(item.get("label") or "").strip(),
+            was=tuple(str(x).strip().casefold() for x in item.get("was") or [] if str(x).strip()),
         ))
     return out
 
@@ -373,7 +376,7 @@ def lead_webinar(lead: Lead | None, webinars: list[Webinar]) -> str | None:
         text = str(source or "").casefold()
         for webinar in webinars:
             short = webinar.at.astimezone(MINSK).strftime("%d.%m")
-            if (webinar.date and webinar.date.casefold() in text) or short in text:
+            if (webinar.date and webinar.date.casefold() in text) or short in text or any(old in text for old in webinar.was):
                 # Форма ещё предлагает прошедшую дату: выбрал её после начала эфира — это ближайший.
                 if lead.created is not None and webinar.at <= lead.created:
                     later = next_webinar(webinars, lead.created)
