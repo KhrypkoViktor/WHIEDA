@@ -608,6 +608,9 @@ async def unlinked_prompts(tenant_id: str, showcase: Any, *, now: datetime | Non
     async with tenant_connection(tenant_id) as conn:
         opens = await load_opens(conn, tenant_id, showcase.showcase_id)
     webinars = webinars_config(showcase.support)
+    # Связан со строкой хоть в одной серии — не «строки нет» (Ольга Туровец: зашла по ссылке композиции,
+    # заявка — на анатомию, 26.10.2026).
+    linked = {opened.telegram_user_id for opened in opens if opened.lead_id}
     out: list[tuple[str, dict[str, Any]]] = []
     for series in sorted({opened.series for opened in opens}):
         mine = [lead for lead in leads if webinar_series_of(lead, webinars) == series]
@@ -617,7 +620,7 @@ async def unlinked_prompts(tenant_id: str, showcase: Any, *, now: datetime | Non
             opened for opened in opens
             if opened.series == series and not opened.lead_id and opened.tag != BOT_TAG
             and opened.opened_at and moment - opened.opened_at <= LINK_WITHIN
-            and opened.telegram_user_id not in claimed
+            and opened.telegram_user_id not in claimed and opened.telegram_user_id not in linked
         ]
         candidates = link_candidates(mine, opens, series, now=moment) if free else []
         for opened in free:

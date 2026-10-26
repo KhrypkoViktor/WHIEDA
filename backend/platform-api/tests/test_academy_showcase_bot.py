@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -603,3 +603,32 @@ async def test_join_button_records_the_tap_and_turns_into_the_link(whieda_tenant
     method, payload = call.await_args.args[0], call.await_args.args[1]
     assert method == "editMessageReplyMarkup" and payload["message_id"] == 9
     assert payload["reply_markup"] == {"inline_keyboard": [[{"text": "▶️ Открыть эфир", "url": url}]]}
+
+
+@pytest.mark.asyncio
+async def test_row_of_another_course_is_named_not_reported_missing(whieda_tenant, almira_binding):
+    """Ольга Туровец (26.10.2026): зашла по ссылке композиции, а заявка — на анатомию. Не «не найдена»
+    и без кнопок «Это …» — заявка есть, напоминания придут по ней."""
+    from app.academy.ad_leads import Lead
+    from app.academy.webinars import Webinar
+
+    sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+    msk = timezone(timedelta(hours=3))
+    webinars = [
+        Webinar("ig_web24", datetime(2099, 10, 24, 17, 30, tzinfo=msk), "24 октября", ""),
+        Webinar("ig_an28", datetime(2099, 11, 4, 19, 30, tzinfo=msk), "4 ноября", "", series="anatomy",
+                form="анатом", label="анатомия"),
+    ]
+    anatomy = Lead("28924617227202297", None, "Анна Петрова", "+375291112233", "anna_p", "@anna_p", None,
+                   "Вебинар 28 октября, среда, 19:30", "ig", "Вебинар анатомия 28.10 и 7.11")
+    fetch, sheet = _sheet_patches([anatomy])
+    p = _ad_patches(sent)
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], sheet[0], sheet[1], patch(
+        "app.telegram.showcase_bot.webinars_config", lambda support: webinars
+    ), patch("app.telegram.showcase_bot.load_opens", AsyncMock(return_value=[])), patch(
+        "app.db.tenant_connection", lambda tenant_id: _NoConn()
+    ):
+        await process_core_telegram_update(whieda_tenant, _start("/start ig_web24"), "t", binding=almira_binding)
+    admin = sent.await_args_list[-1]
+    assert admin.kwargs["text"].endswith("— в боте, ссылку на эфир получит здесь. В таблице — заявка (анатомия), напоминания придут по ней.")
+    assert "reply_markup" not in admin.kwargs

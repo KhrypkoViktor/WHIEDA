@@ -169,24 +169,34 @@ def ad_lead_text(showcase: Showcase, tag: str) -> str:
 
 async def _sheet_match(
     msg: Any, showcase: Showcase, lead_id: str | None = None, series: str = "",
-) -> tuple[Lead | None, str, str | None, list[Lead]]:
-    """Строка таблицы заявок этого человека, его имя и ник в Telegram и заявки серии. Пришёл по личной
-    ссылке — строка с этим id (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
+) -> tuple[Lead | None, str, str | None, list[Lead], str]:
+    """Строка таблицы заявок этого человека, его имя и ник в Telegram, заявки серии и — если строки в серии нет —
+    курс, на который у него заявка в другой серии (по нику или имени). Пришёл по личной ссылке — строка с этим id
+    (19.10.2026), нет такой — по нику, иначе по имени. Таблица читается один раз."""
     user = ((msg.raw or {}).get("message") or {}).get("from") or {}
     tg_name = " ".join(str(user.get(key) or "").strip() for key in ("first_name", "last_name")).strip()
     tg_username = str(user.get("username") or "").strip() or None
-    lead, leads = None, []
+    lead, leads, elsewhere = None, [], ""
     config = sheet_config(showcase.support)
     if config:
         try:
             webinars = webinars_config(showcase.support)
-            leads = [x for x in await fetch_leads(config) if webinar_series_of(x, webinars) == series]
+            every = await fetch_leads(config)
+            leads = [x for x in every if webinar_series_of(x, webinars) == series]
             lead = next((item for item in leads if item.lead_id == lead_id), None) if lead_id else None
             if lead is None:
                 lead = match_lead(leads, username=tg_username, name=tg_name, opened_at=datetime.now(timezone.utc))
+            if lead is None:
+                # Только ник или имя: время чужой серии ничего не значит.
+                other = match_lead([x for x in every if x not in leads], username=tg_username, name=tg_name)
+                if other is not None:
+                    other_series = webinar_series_of(other, webinars)
+                    elsewhere = next(
+                        (w.label for w in webinars if w.series == other_series and w.label), ""
+                    ) or ("композиция" if other_series == "" else other_series)
         except Exception as exc:
             logger.warning("showcase_ad_lead_sheet_failed", extra={"error": type(exc).__name__})
-    return lead, tg_name, tg_username, leads
+    return lead, tg_name, tg_username, leads, elsewhere
 
 
 async def _link_buttons(tenant_id: str, showcase: Showcase, user_id: int, leads: list[Lead], series: str) -> dict[str, Any] | None:
@@ -205,13 +215,17 @@ async def _link_buttons(tenant_id: str, showcase: Showcase, user_id: int, leads:
         return None
 
 
-def _opened_line(msg: Any, lead: Lead | None, tg_name: str, tg_username: str | None, *, webinar: bool) -> str:
+def _opened_line(
+    msg: Any, lead: Lead | None, tg_name: str, tg_username: str | None, *, webinar: bool, elsewhere: str = "",
+) -> str:
     """«✅ Имя (@ник) — в боте»: имя и ник из строки таблицы, не нашлась — из Telegram.
     Имя — ссылка в чат с человеком."""
     name = (lead.name if lead and lead.name else tg_name) or "Без имени"
     username = tg_username or (lead.username if lead else None)
     user_id = int(msg.user_id) if str(msg.user_id or "").isdigit() else None
-    return opened_text(name=name, username=username, user_id=user_id, webinar=webinar, found=lead is not None)
+    return opened_text(
+        name=name, username=username, user_id=user_id, webinar=webinar, found=lead is not None, elsewhere=elsewhere,
+    )
 
 
 async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, tag: str, *, trace_id: str) -> dict[str, Any]:
@@ -227,7 +241,7 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
     if notice:
         lines += ["", notice]
     await _send(msg.chat_id, "\n".join(lines), {"inline_keyboard": support_buttons()})
-    lead, tg_name, tg_username, leads = await _sheet_match(msg, showcase, link_lead_id, series)
+    lead, tg_name, tg_username, leads, elsewhere = await _sheet_match(msg, showcase, link_lead_id, series)
     # Отметка «бот открыт» в алерте по заявке (V37, 17.10.2026).
     try:
         await record_open(
@@ -249,8 +263,8 @@ async def handle_ad_lead(tenant: TenantContext, msg: Any, showcase: Showcase, ta
         logger.info("showcase_ad_lead_flag_in_alert", extra={"trace_id": trace_id, "tag": tag})
     else:
         try:
-            text = _opened_line(msg, lead, tg_name, tg_username, webinar=tag in tags)
-            markup = None if lead else await _link_buttons(tenant_id, showcase, int(msg.user_id), leads, series)
+            text = _opened_line(msg, lead, tg_name, tg_username, webinar=tag in tags, elsewhere=elsewhere)
+            markup = None if lead or elsewhere else await _link_buttons(tenant_id, showcase, int(msg.user_id), leads, series)
             extra = {"reply_markup": markup} if markup else {}
             sent = await send_telegram_text(
                 chat_id=str(admin),

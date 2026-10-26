@@ -417,7 +417,9 @@ def opened_for(lead: Lead, opens: list[Opened], series: str = "") -> Opened | No
     return min(timed, key=lambda item: item[0])[1] if timed else None
 
 
-def opened_text(*, name: str, username: str | None, user_id: int | None, webinar: bool, found: bool = True) -> str:
+def opened_text(
+    *, name: str, username: str | None, user_id: int | None, webinar: bool, found: bool = True, elsewhere: str = "",
+) -> str:
     """Имя — ссылка в личный чат (``tg://user?id=…``, ``format_telegram_html`` её сохраняет):
     у человека без публичного ника администратор открывает чат нажатием на имя (16.10.2026).
     Строка таблицы не нашлась (``found=False``) — подсказка про личную ссылку (19.10.2026)."""
@@ -426,7 +428,10 @@ def opened_text(*, name: str, username: str | None, user_id: int | None, webinar
         who = f'<a href="tg://user?id={int(user_id)}">{who}</a>'
     nick = f" (@{username})" if username else " (без @ — чат по имени)"
     text = f"✅ <b>{who}</b>{nick} — в боте" + (", ссылку на эфир получит здесь." if webinar else ".")
-    if not found:
+    if not found and elsewhere:
+        # Зашёл по ссылке одного курса, а заявка — на другой (26.10.2026): строка есть, бот её уже связал.
+        text += f" В таблице — заявка ({elsewhere}), напоминания придут по ней."
+    elif not found:
         text += " В таблице заявок не найдена — отправьте человеку личную ссылку из списка «не в боте»."
     return text
 
