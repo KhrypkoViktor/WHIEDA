@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -80,8 +81,16 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_MAX_BOT_USERNAME",
         description="Имя бота в Max для ссылок https://max.ru/<name>?start=… (без @).",
     )
-    # platform-api2.max.ru из документации отвечает пустым ответом; рабочий — platform-api (06.10.2026).
-    max_api_base: str = Field(default="https://platform-api.max.ru", validation_alias="PLATFORM_MAX_API_BASE")
+    # С 19.07.2026 Max переводит запросы бота на platform-api2.max.ru (changelog dev.max.ru): адрес с
+    # сертификатом Минцифры. Старый platform-api.max.ru (06.10.2026 был рабочим) — только через env.
+    max_api_base: str = Field(default="https://platform-api2.max.ru", validation_alias="PLATFORM_MAX_API_BASE")
+    # Цепочка Минцифры (корень + промежуточный, PEM): доверяем ей только вызовам к API Max
+    # (app/max/client.py), общий trust store процесса и других клиентов не меняется.
+    max_ca_file: str = Field(
+        default=str(Path(__file__).resolve().parents[1] / "certs" / "russian_trusted_ca_bundle.pem"),
+        validation_alias="PLATFORM_MAX_CA_FILE",
+        description="PEM-файл с корневым и промежуточным сертификатами Минцифры для API Max.",
+    )
     # Telegram-канал, посты которого бот повторяет в чатах Max (V24): «WWC Official channel».
     crosspost_telegram_channel_id: int | None = Field(
         default=-1002885760214, validation_alias="PLATFORM_CROSSPOST_TELEGRAM_CHANNEL_ID"

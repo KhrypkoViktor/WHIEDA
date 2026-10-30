@@ -10,6 +10,8 @@ COPY pyproject.toml /app/
 RUN pip install --no-cache-dir -e ".[dev]"
 
 COPY app /app/app
+# Цепочка Минцифры для API Max (PLATFORM_MAX_CA_FILE по умолчанию -> /app/certs/...).
+COPY certs /app/certs
 COPY scripts/partner_library_s3.py /app/scripts/partner_library_s3.py
 COPY scripts/configure_telegram_menu.py /app/scripts/configure_telegram_menu.py
 COPY scripts/check_telegram_webhook_health.py /app/scripts/check_telegram_webhook_health.py
