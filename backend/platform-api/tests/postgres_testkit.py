@@ -77,6 +77,7 @@ MIGRATIONS = (
     "platform_bot_start_sources_v42.sql",  # метка источника в ссылке в бота (30.10.2026)
     "platform_meetings_v43.sql",  # таблица встреч: живые и консультации (30.10.2026)
     "platform_website_leads_meeting_v44.sql",  # заявка на Живую встречу: поля website_leads (30.10.2026)
+    "platform_bot_media_v45.sql",  # хранилище медиа бота: видео-тур, голосовые, кружки (30.10.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

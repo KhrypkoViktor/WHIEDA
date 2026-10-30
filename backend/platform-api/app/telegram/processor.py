@@ -87,6 +87,8 @@ from app.telegram.referral_admin import (
 )
 from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.meetings_admin import try_handle_meetings_admin_message
+from app.telegram.bot_media_admin import try_handle_bot_media_message
+from app.funnel.system_word import try_handle_funnel_callback, try_handle_system_word
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.showcase_bot import process_showcase_bot_update
@@ -581,6 +583,10 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
+        # «Живая встреча» / «Личный разбор» под видео-туром слова СИСТЕМА (воронка, 30.10.2026).
+        funnel_callback_result = await try_handle_funnel_callback(tenant, callback, trace_id=trace_id)
+        if funnel_callback_result is not None:
+            return funnel_callback_result
         # Заявка на изменение сайта из кабинета /me/: кнопки владельца (на любом профиле).
         profile_callback_result = await try_handle_profile_callback(tenant, callback, trace_id=trace_id)
         if profile_callback_result is not None:
@@ -669,6 +675,12 @@ async def _process_core_telegram_update_scoped(
             )
             if marketing_result is not None:
                 return marketing_result
+
+    # Владелец: файл с подписью «медиа <ключ>», «медиа», «медиа удалить <ключ>» — хранилище медиа бота (V45,
+    # 30.10.2026). Раньше разбора вложений: иначе файл с подписью ушёл бы в поддержку. У остальных — сразу дальше.
+    bot_media_result = await try_handle_bot_media_message(tenant, msg, trace_id=trace_id)
+    if bot_media_result is not None:
+        return bot_media_result
 
     # Services card, the support administrator's replies, and attachments from
     # a subscriber inside an open support ticket.
@@ -848,6 +860,12 @@ async def _process_core_telegram_update_scoped(
     relay_result = await try_relay_user_message(tenant, msg, trace_id=trace_id)
     if relay_result is not None:
         return relay_result
+
+    # Слово «система» → видео-тур с кнопками «Живая встреча» и «Личный разбор» (воронка, 30.10.2026).
+    # После служебных команд и открытого обращения в поддержку, до помощника.
+    system_word_result = await try_handle_system_word(tenant, msg, trace_id=trace_id)
+    if system_word_result is not None:
+        return system_word_result
 
     # Our own offer («закажу сайт», «сколько стоит подписка») — the advisor knows
     # the WHIEDA catalogue, not what WWC sells (owner, 22.09.2026).

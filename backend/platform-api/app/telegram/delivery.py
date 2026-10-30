@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 import httpx
 
-from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url
+from app.telegram.api_base import TelegramApiBaseError, telegram_bot_api_url, telegram_file_url
 from app.telegram.log_safe import chat_ref
 from app.telegram.tenant_media import resolve_delivery_photo_url, sanitize_delivery_text
 
@@ -205,6 +205,110 @@ async def send_telegram_photo(
             raise TelegramDeliveryError(f"telegram_photo_failed:{status_code}")
         return result
     return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
+# Вид файла бота (таблица bot_media, V45) → метод Bot API и поле с файлом.
+MEDIA_METHODS: dict[str, tuple[str, str]] = {
+    "video": ("sendVideo", "video"),
+    "voice": ("sendVoice", "voice"),
+    "video_note": ("sendVideoNote", "video_note"),
+    "photo": ("sendPhoto", "photo"),
+    "audio": ("sendAudio", "audio"),
+    "document": ("sendDocument", "document"),
+}
+MEDIA_CAPTION_LIMIT = 1024  # у подписи к медиа предел Telegram — 1024 знака (у текста сообщения — 4096)
+
+
+def telegram_caption_fits(kind: str, caption: str | None) -> bool:
+    """Подпись можно отправить вместе с файлом: у кружка подписи нет, у остальных — не больше 1024 знаков
+    уже после разметки (экранирование лишних знаков тоже считается)."""
+    text = (caption or "").strip()
+    if not text:
+        return True
+    return kind != "video_note" and len(format_telegram_html(text)) <= MEDIA_CAPTION_LIMIT
+
+
+async def send_telegram_media(
+    chat_id: int | str,
+    kind: str,
+    file_id: str,
+    *,
+    bot_token: str,
+    caption: str | None = None,
+    reply_markup: dict | None = None,
+    timeout_sec: float = 30.0,
+) -> dict[str, Any]:
+    """Видео, голосовое, кружок, фото, аудио или файл по ``file_id`` — без повторной загрузки.
+
+    Метод по виду: video → sendVideo, voice → sendVoice, video_note → sendVideoNote, photo → sendPhoto,
+    audio → sendAudio, document → sendDocument. Подпись — в том же формате разметки, что и у текста бота;
+    у кружка подписи в Telegram нет (подпись, если передана, игнорируется: длинную подпись и подпись
+    к кружку шлёт вызывающий код отдельным сообщением, см. ``telegram_caption_fits``).
+    Слишком длинная подпись — ``ValueError``, молча обрезать нельзя: оборвётся тег разметки.
+
+    В очередь durable inbox медиа не встаёт (там только text и photo, ограничение таблицы): уходит сразу."""
+    spec = MEDIA_METHODS.get(str(kind))
+    if spec is None:
+        raise ValueError(f"telegram_media_kind_unknown:{kind}")
+    file_id = str(file_id or "").strip()
+    if not file_id:
+        return {"ok": False, "skipped": True}
+    text = (caption or "").strip()
+    if text and kind != "video_note" and not telegram_caption_fits(kind, text):
+        raise ValueError("telegram_caption_too_long")
+    _assert_outbound_token(bot_token)
+    method, field = spec
+    payload: dict[str, Any] = {"chat_id": str(chat_id), field: file_id}
+    if text and kind != "video_note":
+        payload["caption"] = format_telegram_html(text)
+        payload["parse_mode"] = "HTML"
+    if kind == "video":
+        payload["supports_streaming"] = True
+    if isinstance(reply_markup, dict) and reply_markup:
+        payload["reply_markup"] = reply_markup
+    data, status_code = await _post_telegram(_bot_api_url(bot_token, method), payload, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
+        logger.warning(
+            "telegram_media_failed",
+            extra={"method": method, "status": status_code, "chat_id": chat_ref(chat_id),
+                   "description": str(data.get("description") or "")[:200]},
+        )
+        result = {"ok": False, "status_code": status_code, "detail": data}
+        if _allowed_bot_token.get() is not None:
+            raise TelegramDeliveryError(f"telegram_media_failed:{status_code}")
+        return result
+    return {"ok": True, "message_id": (data.get("result") or {}).get("message_id")}
+
+
+class TelegramFileUnavailable(RuntimeError):
+    """Файл не скачать: Telegram не отдал путь (файл больше 20 МБ, чужой бот, устаревший file_id) или он слишком велик."""
+
+
+async def download_telegram_file(
+    file_id: str, *, bot_token: str, max_bytes: int = 50 * 1024 * 1024, timeout_sec: float = 120.0
+) -> tuple[bytes, str]:
+    """getFile → скачать → (содержимое, имя файла). Токен бота стоит в адресе скачивания, поэтому адрес
+    и тело ответа не логируются и в тексты ошибок не попадают."""
+    _assert_outbound_token(bot_token)
+    info, status_code = await _post_telegram(_bot_api_url(bot_token, "getFile"), {"file_id": str(file_id)}, 15.0)
+    path = str(((info.get("result") or {}) if info.get("ok") else {}).get("file_path") or "").strip()
+    if status_code >= 400 or not path:
+        raise TelegramFileUnavailable(f"telegram_get_file_failed:{status_code}")
+    try:
+        url = telegram_file_url(bot_token, path)
+    except TelegramApiBaseError as exc:
+        raise TelegramDeliveryError(str(exc)) from exc
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec) as client:
+            response = await client.get(url)
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        raise TelegramFileUnavailable("telegram_download_failed:transport") from exc
+    if response.status_code >= 400:
+        raise TelegramFileUnavailable(f"telegram_download_failed:{response.status_code}")
+    body = response.content
+    if len(body) > max_bytes:
+        raise TelegramFileUnavailable("telegram_download_too_large")
+    return body, path.rsplit("/", 1)[-1] or "file.bin"
 
 
 async def send_telegram_media_group(*, chat_id: str, photos: list[str], bot_token: str) -> dict[str, Any]:
