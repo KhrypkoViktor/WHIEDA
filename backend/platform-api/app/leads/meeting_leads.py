@@ -62,6 +62,12 @@ TAG_IN_BOT = "в боте"
 PARTNER_EVENT = "lead_meeting_created"
 BOT_NOTE = "Открыл(а) бота WWC в {channel}."
 
+# Запись, перенос и отмена из бота (срез 4 бот-воронки, V46): метка и заметка в карточке CRM.
+TAG_REGISTERED_PREFIX = "записан "
+REGISTRATION_NOTE = "Записался(ась) на Живую встречу: {when}."
+MOVE_NOTE = "Перенёс(ла) запись на Живую встречу: {old} → {new}."
+CANCEL_NOTE = "Отменил(а) запись на Живую встречу: {when}."
+
 # Страницы тестовых стендов не пишут партнёрам: стенд делит базу с боем (как в crm-card).
 _TEST_HOST_PREFIXES = ("staging.", "admin", "cabinet.")
 
@@ -392,12 +398,15 @@ class MeetingLead:
     telegram_user_id: int | None
     max_user_id: int | None
     bot_opened_at: datetime | None
+    # Карточка CRM, заведённая при заявке (metadata.crm_card); None — карточки нет (у владельца не открыт ежедневник).
+    crm_card: str | None = None
 
 
 _LEAD_COLUMNS = """
     lead_id::text as lead_id, public_id, name, phone_e164, messenger_pref, meeting_id,
     assigned_owner_id, first_ref_code, active_ref_code, utm, source_tag,
-    telegram_user_id, max_user_id, bot_opened_at
+    telegram_user_id, max_user_id, bot_opened_at,
+    coalesce(metadata, '{}'::jsonb) ->> 'crm_card' as crm_card
 """
 
 
@@ -418,6 +427,7 @@ def _lead_from_row(row: dict[str, Any]) -> MeetingLead:
         telegram_user_id=int(row["telegram_user_id"]) if row.get("telegram_user_id") is not None else None,
         max_user_id=int(row["max_user_id"]) if row.get("max_user_id") is not None else None,
         bot_opened_at=row.get("bot_opened_at"),
+        crm_card=row.get("crm_card") or None,
     )
 
 
@@ -438,6 +448,45 @@ async def load_lead_by_public_id(conn: Any, tenant_id: str, public_id: str) -> M
         (tenant_id, key),
     )
     return _lead_from_row(row) if row else None
+
+
+async def load_lead_by_channel_user(
+    conn: Any, tenant_id: str, channel: Literal["telegram", "max"], channel_user_id: int
+) -> MeetingLead | None:
+    """Последняя заявка на встречу человека, который открыл бота по её ссылке: по его id в мессенджере
+    (``telegram_user_id`` / ``max_user_id`` ставит ``mark_bot_opened``). Нет такой заявки — None.
+    Режим гостя (``app/funnel/guest.py``) узнаёт по ней, что перед ним не партнёр, а гость встречи."""
+    if channel not in MESSENGERS:
+        raise ValueError("channel must be telegram or max")
+    column = "telegram_user_id" if channel == "telegram" else "max_user_id"
+    row = await fetch_one(
+        conn,
+        f"""
+        select {_LEAD_COLUMNS}
+        from website_leads
+        where tenant_id = %s and {column} = %s and lead_kind = 'meeting' and deleted_at is null
+        order by created_at desc, lead_id
+        limit 1
+        """,
+        (tenant_id, int(channel_user_id)),
+    )
+    return _lead_from_row(row) if row else None
+
+
+async def load_lead_card_id(conn: Any, tenant_id: str, lead_id: str | None) -> str | None:
+    """Карточка CRM заявки (``metadata.crm_card``) по ``lead_id``; None — заявки нет или карточка не заводилась."""
+    if not lead_id:
+        return None
+    row = await fetch_one(
+        conn,
+        """
+        select coalesce(metadata, '{}'::jsonb) ->> 'crm_card' as crm_card
+        from website_leads
+        where tenant_id = %s and lead_id = %s::uuid and deleted_at is null
+        """,
+        (tenant_id, lead_id),
+    )
+    return (row or {}).get("crm_card") or None
 
 
 async def mark_bot_opened(
@@ -503,3 +552,60 @@ async def _mark_card_in_bot(conn: Any, tenant_id: str, contact_id: str, channel:
             )
     except Exception as exc:
         logger.warning("meeting_lead_card_bot_mark_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+
+
+# ---- запись на встречу из бота: метка и заметка в карточке --------------------------------------
+
+
+def registered_tag(starts_at: datetime) -> str:
+    """``записан 05.11`` — метка карточки; та же, что ставится при заявке с выбранной встречей."""
+    return f"{TAG_REGISTERED_PREFIX}{as_msk(starts_at):%d.%m}"
+
+
+def registration_card_change(
+    kind: Literal["registered", "moved", "cancelled"],
+    *,
+    starts_at: datetime,
+    old_starts_at: datetime | None = None,
+    now: datetime | None = None,
+) -> tuple[str, list[str], list[str]]:
+    """``(заметка, добавить метки, снять метки)`` для карточки CRM: запись — метка новой встречи;
+    перенос — старая метка снимается, новая ставится; отмена — метка снимается."""
+    when = meeting_when(starts_at, now=now)
+    if kind == "registered":
+        return REGISTRATION_NOTE.format(when=when), [registered_tag(starts_at)], []
+    if kind == "moved":
+        if old_starts_at is None:
+            raise ValueError("old_starts_at is required for a move")
+        note = MOVE_NOTE.format(old=meeting_when(old_starts_at, now=now), new=when)
+        return note, [registered_tag(starts_at)], [registered_tag(old_starts_at)]
+    if kind == "cancelled":
+        return CANCEL_NOTE.format(when=when), [], [registered_tag(starts_at)]
+    raise ValueError("kind must be registered, moved or cancelled")
+
+
+async def card_registration_event(
+    conn: Any,
+    tenant_id: str,
+    contact_id: str | None,
+    kind: Literal["registered", "moved", "cancelled"],
+    *,
+    starts_at: datetime,
+    old_starts_at: datetime | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Запись, перенос или отмена: метки и заметка в карточке CRM заявки. Нет карточки (``contact_id``
+    пуст) — ничего не делает. Меняется под savepoint: сбой карточки не отменяет запись. True — карточка обновлена."""
+    if not contact_id:
+        return False
+    note, add_tags, remove_tags = registration_card_change(
+        kind, starts_at=starts_at, old_starts_at=old_starts_at, now=now
+    )
+    try:
+        async with conn.transaction():
+            return await record_card_event(
+                conn, tenant_id=tenant_id, contact_id=contact_id, note=note, add_tags=add_tags, remove_tags=remove_tags
+            )
+    except Exception as exc:
+        logger.warning("meeting_lead_card_registration_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+        return False

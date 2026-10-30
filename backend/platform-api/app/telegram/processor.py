@@ -89,6 +89,13 @@ from app.telegram.admin_login import try_handle_admin_login
 from app.telegram.meetings_admin import try_handle_meetings_admin_message
 from app.telegram.bot_media_admin import try_handle_bot_media_message
 from app.funnel.system_word import try_handle_funnel_callback, try_handle_system_word
+# Гость встречи (срез 4 бот-воронки, 30.10.2026): /start lead_<id>, меню гостя, кнопки записи.
+from app.funnel.guest_bot import (
+    handle_lead_start_telegram,
+    try_handle_guest_callback,
+    try_handle_guest_menu_text,
+)
+from app.funnel.lead_start import parse_lead_start_token
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.showcase_bot import process_showcase_bot_update
@@ -583,7 +590,12 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
-        # «Живая встреча» / «Личный разбор» под видео-туром слова СИСТЕМА (воронка, 30.10.2026).
+        # Кнопки гостя встречи: «Записаться», «Перенести», «Отменить запись», «Живая встреча» (список встреч),
+        # «Показ системы», «Задать вопрос» (воронка, срез 4, 30.10.2026). До «Личного разбора» ниже.
+        guest_callback_result = await try_handle_guest_callback(tenant, callback, trace_id=trace_id)
+        if guest_callback_result is not None:
+            return guest_callback_result
+        # «Личный разбор» под видео-туром слова СИСТЕМА (воронка, 30.10.2026): пока заглушка.
         funnel_callback_result = await try_handle_funnel_callback(tenant, callback, trace_id=trace_id)
         if funnel_callback_result is not None:
             return funnel_callback_result
@@ -808,6 +820,13 @@ async def _process_core_telegram_update_scoped(
                 await _manual_operation_notice(msg.chat_id)
                 return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
             return await handle_pro_start(tenant, msg, trace_id)
+        lead_public_id = parse_lead_start_token(start_token)
+        if lead_public_id is not None:
+            # Ссылка из заявки на Живую встречу: /start lead_<id> — запись и меню гостя (срез 4 воронки, 30.10.2026).
+            # Заявки нет или сбой — идём дальше: параметр обработается как незнакомый, человек получит обычный /start.
+            lead_start_result = await handle_lead_start_telegram(tenant, msg, lead_public_id, trace_id=trace_id)
+            if lead_start_result is not None:
+                return lead_start_result
         source_start = parse_source_start_token(start_token)
         if source_start is not None:
             # Ссылка с меткой источника (V42): запомнили метку, дальше — обычный /start.
@@ -841,6 +860,11 @@ async def _process_core_telegram_update_scoped(
     # lives behind the «WWC Bot» button (owner, 19.09.2026).
     if is_wwc_bot_request(msg.text):
         return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
+    # Гость встречи (есть заявка на встречу или запись, не партнёр): голый /start, «меню» и приветствие открывают
+    # меню гостя вместо кабинета партнёра. Партнёрам и всем остальным — без изменений (обработчик вернёт None).
+    guest_menu_result = await try_handle_guest_menu_text(tenant, msg, trace_id=trace_id)
+    if guest_menu_result is not None:
+        return guest_menu_result
     if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
         await _remove_legacy_reply_keyboard(msg.chat_id)
         return await show_referral_dashboard(

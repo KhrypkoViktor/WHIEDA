@@ -15,6 +15,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.funnel.guest import is_guest_menu_word
+from app.funnel.guest_bot import (
+    GUEST_MAX_PREFIXES,
+    handle_lead_start_max,
+    max_guest_callback,
+    try_handle_guest_menu_max,
+)
+from app.funnel.lead_start import parse_lead_start_token
 from app.funnel.system_word import CALLBACK_PREFIX as FUNNEL_CALLBACK_PREFIX
 from app.funnel.system_word import handle_system_word_max, is_system_word, max_funnel_callback
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
@@ -95,6 +103,14 @@ async def _handle_max_source_start(tenant: TenantContext, event: MaxEvent, sourc
 
 async def handle_max_start(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
     payload = event.text
+    lead_public_id = parse_lead_start_token(payload)
+    if lead_public_id is not None:
+        # Ссылка из заявки на Живую встречу: ?start=lead_<id> — запись и меню гостя (срез 4 воронки, 30.10.2026).
+        # Заявки нет или сбой — параметр обрабатывается как незнакомый: обычный старт со строкой 'unknown'.
+        lead_start = await handle_lead_start_max(tenant, event, lead_public_id, trace_id)
+        if lead_start is not None:
+            return lead_start
+        return await _handle_max_source_start(tenant, event, unknown_source_start(), trace_id)
     invite_code = parse_referral_start_token(payload)
     if invite_code is None:
         invite_code = parse_site_start_token(payload)
@@ -109,6 +125,10 @@ async def handle_max_start(tenant: TenantContext, event: MaxEvent, trace_id: str
             tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id, channel_chat_id=event.chat_id,
             username=event.username, display_name=event.display_name,
         )
+        # Гость встречи видит своё меню вместо общего приветствия; остальные — как прежде.
+        guest_menu = await try_handle_guest_menu_max(tenant, event, trace_id)
+        if guest_menu is not None:
+            return guest_menu
         await _reply(event, WELCOME_PLAIN)
         return {"ok": True, "route": "max_start", "status": "plain", "trace_id": trace_id}
     result = await accept_channel_referral_start(
@@ -135,6 +155,11 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     wish = await _try_max_wish(tenant, event, trace_id)
     if wish is not None:
         return wish
+    # «меню» у гостя встречи — его меню (воронка, срез 4, 30.10.2026); у остальных слово идёт дальше, как раньше.
+    if is_guest_menu_word(event.text):
+        guest_menu = await try_handle_guest_menu_max(tenant, event, trace_id)
+        if guest_menu is not None:
+            return guest_menu
     # Слово «система» → видео-тур с кнопками (воронка, 30.10.2026): после служебных слов, до советника.
     if is_system_word(event.text):
         return await handle_system_word_max(tenant, event, trace_id)
@@ -334,3 +359,8 @@ async def handle_max_callback(tenant: TenantContext, event: MaxCallbackEvent, tr
 
 # Кнопки воронки («Живая встреча», «Личный разбор» под туром слова СИСТЕМА): payload funnel:meet | funnel:consult.
 register_max_callback(FUNNEL_CALLBACK_PREFIX, max_funnel_callback)
+# Кнопки гостя встречи (срез 4): «Записаться», «Перенести», «Отменить запись», «Живая встреча» (список встреч),
+# «Показ системы», «Задать вопрос». Префиксы funnel:meet|tour|ask длиннее общего funnel: — берут своё, funnel:consult
+# остаётся за max_funnel_callback.
+for _guest_prefix in GUEST_MAX_PREFIXES:
+    register_max_callback(_guest_prefix, max_guest_callback)

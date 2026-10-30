@@ -5,9 +5,10 @@
 Тур ещё не загружен (или канал не принял файл) → текст ``SYSTEM_TOUR_PENDING`` с теми же кнопками: человек
 не остаётся без ответа.
 
-Кнопки (callback ``funnel:meet`` и ``funnel:consult``) пока отвечают текстами-заглушками: запись на встречу
-и на разбор — следующие срезы воронки. В Max обработчик ``funnel:`` регистрируется в app/max/processor.py,
-в Telegram — в цепочке callback процессора.
+Кнопка «Живая встреча» (``funnel:meet``) открывает список встреч для записи — это обработчик гостя
+(app/funnel/guest_bot.py); «Личный разбор» (``funnel:consult``) пока отвечает текстом-заглушкой: запись на разбор —
+отдельный срез воронки. В Max обработчик ``funnel:`` регистрируется в app/max/processor.py, в Telegram —
+в цепочке callback процессора.
 
 Слово работает только в личном чате бота WWC (тенант ``whieda``): боты других тенантов и витрин отвечают
 на «система» как раньше.
@@ -33,8 +34,9 @@ FUNNEL_TENANT_ID = "whieda"
 CALLBACK_PREFIX = "funnel:"
 SYSTEM_WORD_RE = re.compile(r"^\s*система\s*[!.]?\s*$", re.IGNORECASE)
 
+# «Живая встреча» (funnel:meet) с 30.10.2026 открывает список встреч для записи (app/funnel/guest_bot.py);
+# «Личный разбор» пока отвечает заглушкой — запись на разбор — отдельный срез воронки.
 _PLACEHOLDERS = {
-    texts.FUNNEL_MEET_CALLBACK: texts.FUNNEL_MEET_PLACEHOLDER,
     texts.FUNNEL_CONSULT_CALLBACK: texts.FUNNEL_CONSULT_PLACEHOLDER,
 }
 
@@ -70,10 +72,16 @@ async def try_handle_system_word(
     """«система» в личном чате бота WWC. Не то слово, чужой тенант или группа — ``None``: текст идёт дальше."""
     if tenant.tenant_id != FUNNEL_TENANT_ID or msg.chat_type != "private" or not is_system_word(msg.text):
         return None
+    return await send_tour_telegram(tenant, msg.chat_id, trace_id=trace_id)
+
+
+async def send_tour_telegram(tenant: TenantContext, chat_id: int, *, trace_id: str | None = None) -> dict[str, Any]:
+    """Видео-тур в личный чат Telegram с кнопками «Живая встреча» и «Личный разбор» (или текст-заглушка, если тура нет).
+    Им пользуются слово СИСТЕМА и кнопка «Показ системы» в меню гостя."""
     base: dict[str, Any] = {"ok": True, "route": "funnel_system", "trace_id": trace_id}
     try:
         result = await send_media(
-            None, tenant.tenant_id, texts.SYSTEM_TOUR_KEY, channel="telegram", chat_id=msg.chat_id,
+            None, tenant.tenant_id, texts.SYSTEM_TOUR_KEY, channel="telegram", chat_id=chat_id,
             caption=texts.SYSTEM_TOUR_CAPTION, reply_markup=telegram_markup(),
         )
     except Exception:  # noqa: BLE001 — человек не должен остаться без ответа из-за базы или сети
@@ -82,7 +90,7 @@ async def try_handle_system_word(
     if result.get("ok"):
         return {**base, "status": "tour", "kind": result.get("kind")}
     await send_telegram_text(
-        chat_id=str(msg.chat_id), text=texts.SYSTEM_TOUR_PENDING,
+        chat_id=str(chat_id), text=texts.SYSTEM_TOUR_PENDING,
         bot_token=current_bot_binding().bot_token, reply_markup=telegram_markup(),
     )
     return {**base, "status": "pending", "reason": result.get("status")}
@@ -108,11 +116,18 @@ async def try_handle_funnel_callback(
 
 async def handle_system_word_max(tenant: TenantContext, event: Any, trace_id: str) -> dict[str, Any]:
     """«система» в личке Max: тур по токену Max (при первой отправке файл уедет из Telegram в Max) или заглушка."""
+    return await send_tour_max(tenant, chat_id=event.chat_id or None, user_id=event.user_id, trace_id=trace_id)
+
+
+async def send_tour_max(
+    tenant: TenantContext, *, chat_id: int | None, user_id: int, trace_id: str
+) -> dict[str, Any]:
+    """Видео-тур в личку Max с теми же кнопками (слово СИСТЕМА и кнопка «Показ системы» в меню гостя)."""
     base: dict[str, Any] = {"ok": True, "route": "max_funnel_system", "trace_id": trace_id}
     try:
         result = await send_media(
             None, tenant.tenant_id, texts.SYSTEM_TOUR_KEY, channel="max",
-            chat_id=event.chat_id or None, user_id=event.user_id,
+            chat_id=chat_id, user_id=user_id,
             caption=texts.SYSTEM_TOUR_CAPTION, buttons=max_buttons(),
         )
     except Exception:  # noqa: BLE001
@@ -120,9 +135,7 @@ async def handle_system_word_max(tenant: TenantContext, event: Any, trace_id: st
         result = {"ok": False, "status": "error"}
     if result.get("ok"):
         return {**base, "status": "tour", "kind": result.get("kind")}
-    await send_max_text(
-        chat_id=event.chat_id or None, user_id=event.user_id, text=texts.SYSTEM_TOUR_PENDING, buttons=max_buttons(),
-    )
+    await send_max_text(chat_id=chat_id, user_id=user_id, text=texts.SYSTEM_TOUR_PENDING, buttons=max_buttons())
     return {**base, "status": "pending", "reason": result.get("status")}
 
 

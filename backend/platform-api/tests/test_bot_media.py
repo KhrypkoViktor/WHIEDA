@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.bot_media import service
-from app.funnel import system_word, texts
+from app.funnel import guest_bot, system_word, texts
 from app.max import processor as max_processor
 from app.max.client import MaxKeyboardError, max_button_callback
 from app.max.update_parser import MaxCallbackEvent, MaxEvent
@@ -821,7 +821,7 @@ def _cb(data: str, chat_type: str = "private") -> TelegramCallbackQuery:
 
 
 @pytest.mark.parametrize(("data", "placeholder"), [
-    ("funnel:meet", texts.FUNNEL_MEET_PLACEHOLDER), ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
+    ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
 ])
 async def test_telegram_buttons_answer_with_the_placeholder_texts(tg_bot, data, placeholder):
     result = await system_word.try_handle_funnel_callback(TENANT, _cb(data), trace_id="t1")
@@ -830,7 +830,10 @@ async def test_telegram_buttons_answer_with_the_placeholder_texts(tg_bot, data, 
     tg_bot.text.assert_awaited_once_with(chat_id="42", text=placeholder, bot_token=BOT_TOKEN)
 
 
-@pytest.mark.parametrize(("tenant", "data"), [(TENANT, "funnel:other"), (TENANT, "consent:news:yes"), (OTHER_TENANT, "funnel:meet")])
+# «Живая встреча» (funnel:meet) с 30.10.2026 — кнопка гостя (app/funnel/guest_bot.py), а не заглушка этого модуля.
+@pytest.mark.parametrize(("tenant", "data"), [
+    (TENANT, "funnel:other"), (TENANT, "consent:news:yes"), (OTHER_TENANT, "funnel:consult"), (TENANT, "funnel:meet"),
+])
 async def test_telegram_callback_is_not_ours(tg_bot, tenant, data):
     assert await system_word.try_handle_funnel_callback(tenant, _cb(data), trace_id="t1") is None
     tg_bot.answer.assert_not_awaited()
@@ -909,9 +912,11 @@ async def test_max_existing_words_are_answered_as_before(max_bot, monkeypatch):
 
 
 def test_the_funnel_prefix_is_registered_in_the_max_dispatcher():
-    found = max_processor.resolve_max_callback("funnel:meet")
+    # «Личный разбор» остаётся за системным словом; «Живая встреча» — за обработчиком гостя (префикс длиннее общего)
+    found = max_processor.resolve_max_callback("funnel:consult")
     assert found is not None and found[0] == "funnel:" and found[1] is system_word.max_funnel_callback
-    assert max_processor.resolve_max_callback("funnel:consult") is not None
+    meet = max_processor.resolve_max_callback("funnel:meet")
+    assert meet is not None and meet[0] == "funnel:meet" and meet[1] is guest_bot.max_guest_callback
     assert max_processor.resolve_max_callback("menu:open") is None
 
 
@@ -923,7 +928,7 @@ def _max_callback(payload: str) -> MaxCallbackEvent:
 
 
 @pytest.mark.parametrize(("payload", "placeholder"), [
-    ("funnel:meet", texts.FUNNEL_MEET_PLACEHOLDER), ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
+    ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
 ])
 async def test_max_buttons_send_the_placeholder_as_a_new_message_and_acknowledge(max_bot, monkeypatch, payload, placeholder):
     answered = AsyncMock(return_value={"ok": True})
