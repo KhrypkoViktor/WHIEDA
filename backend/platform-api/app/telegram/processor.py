@@ -86,6 +86,7 @@ from app.telegram.referral_admin import (
     try_handle_referral_admin_message,
 )
 from app.telegram.admin_login import try_handle_admin_login
+from app.telegram.meetings_admin import try_handle_meetings_admin_message
 from app.telegram.billing import try_handle_billing_callback, try_handle_billing_message
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.showcase_bot import process_showcase_bot_update
@@ -740,6 +741,12 @@ async def _process_core_telegram_update_scoped(
     )
     if referral_admin_result is not None:
         return referral_admin_result
+
+    # Владелец: «встречи», «встреча 05.11 19:30 …», «встречи создать 4», «ссылка встречи 12 …»,
+    # «отменить встречу 12», «встреча прошла 12» (V43, 30.10.2026). У остальных текст идёт дальше.
+    meetings_admin_result = await try_handle_meetings_admin_message(tenant, msg, trace_id=trace_id)
+    if meetings_admin_result is not None:
+        return meetings_admin_result
 
     # Владелец: «код входа <кто>», «способы входа <кто>», «отвязать google|max <кто>» (V34, 15.10.2026).
     login_identity_result = await try_handle_login_identity_message(tenant, msg, trace_id=trace_id)

@@ -24,6 +24,7 @@ from app.journey.routes import router as journey_router
 from app.leads.routes import router as leads_router
 from app.login_identities.routes import router as login_identities_router
 from app.markets.routes import router as markets_router
+from app.meetings.routes import router as meetings_router
 from app.partner_library.routes import router as partner_library_router
 from app.subscriptions.edge_routes import router as subscription_edge_router
 from app.memory.routes import router as memory_router
@@ -133,6 +134,8 @@ def create_app() -> FastAPI:
     app.include_router(cabinet_media_router)
     # Мастерская WWC (03.10.2026): /api/v1/public/shop, покупки /me/purchases, админка каталога.
     app.include_router(shop_router)
+    # Встречи (V43, 30.10.2026): публичный список ближайших /api/v1/public/meetings.
+    app.include_router(meetings_router)
     app.include_router(subscription_edge_router)
     app.include_router(theme_access_router)
     app.include_router(admin_router)
