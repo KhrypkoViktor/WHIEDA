@@ -346,7 +346,7 @@ async def answer_max_callback(
     if notification:
         body["notification"] = str(notification)
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.post(f"{base}/answers", params={"callback_id": callback_id}, headers=_headers(), json=body)
     try:
         result = resp.json() if resp.content else {}
