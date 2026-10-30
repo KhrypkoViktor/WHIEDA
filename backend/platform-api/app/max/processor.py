@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.funnel.system_word import CALLBACK_PREFIX as FUNNEL_CALLBACK_PREFIX
+from app.funnel.system_word import handle_system_word_max, is_system_word, max_funnel_callback
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
 from app.leads.start_sources import parse_source_start_token, register_start_source, unknown_source_start
 from app.max.client import answer_max_callback, send_max_text
@@ -133,6 +135,9 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     wish = await _try_max_wish(tenant, event, trace_id)
     if wish is not None:
         return wish
+    # Слово «система» → видео-тур с кнопками (воронка, 30.10.2026): после служебных слов, до советника.
+    if is_system_word(event.text):
+        return await handle_system_word_max(tenant, event, trace_id)
     body = {
         "session": f"max:{event.chat_id or event.user_id}",
         "question": event.text,
@@ -325,3 +330,7 @@ async def handle_max_callback(tenant: TenantContext, event: MaxCallbackEvent, tr
         extra={"trace_id": trace_id, "status": status, "prefix": prefix, "answered": answered, "user_ref": str(event.user_id)[-4:]},
     )
     return {"ok": status != "handler_failed", "route": "max_callback", "status": status, "prefix": prefix, "answered": answered, "trace_id": trace_id}
+
+
+# Кнопки воронки («Живая встреча», «Личный разбор» под туром слова СИСТЕМА): payload funnel:meet | funnel:consult.
+register_max_callback(FUNNEL_CALLBACK_PREFIX, max_funnel_callback)

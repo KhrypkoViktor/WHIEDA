@@ -36,6 +36,16 @@ def resolve_telegram_api_base(raw: str | None) -> str:
     return text
 
 
+def telegram_file_url(bot_token: str, file_path: str, *, base_url: str | None = None) -> str:
+    """Адрес скачивания файла по ``file_path`` из getFile (токен внутри адреса — наружу не логировать)."""
+    from app.settings import get_settings
+
+    origin = resolve_telegram_api_base(
+        base_url if base_url is not None else get_settings().telegram_api_base_url
+    )
+    return f"{origin}/file/bot{bot_token}/{str(file_path).lstrip('/')}"
+
+
 def telegram_bot_api_url(bot_token: str, method: str, *, base_url: str | None = None) -> str:
     from app.settings import get_settings
 
