@@ -33,7 +33,8 @@ async def public_meetings(
     try:
         tenant = get_request_tenant(request)
         require_entitlement(tenant, "structure_basic")
-        if kind not in KINDS:
+        # Публично — только живые встречи; консультации (kind=consult) на сайте не показываем (лид, 30.10.2026).
+        if kind not in KINDS or kind != "live":
             raise HTTPException(status_code=422, detail={"ok": False, "error": "bad_kind"})
         meetings = await load_public_meetings(tenant.tenant_id, kind)
     except HTTPException as exc:

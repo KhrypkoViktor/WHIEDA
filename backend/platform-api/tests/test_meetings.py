@@ -704,13 +704,14 @@ async def test_public_limit_that_is_not_a_number_is_refused(owner_env, fake, cli
 
 
 @pytest.mark.asyncio
-async def test_public_list_filters_by_kind_and_defaults_to_live(owner_env, fake, client):
+async def test_public_list_shows_only_live_and_refuses_consult(owner_env, fake, client):
     fake.add(title="Живая")
     fake.add(kind="consult", title="Консультация эксперта", starts_at=msk(2026, 11, 4))
     live = await client.get("/api/v1/public/meetings", headers=HOST)
     consult = await client.get("/api/v1/public/meetings?kind=consult", headers=HOST)
     assert [m["title"] for m in live.json()["meetings"]] == ["Живая"]
-    assert [m["title"] for m in consult.json()["meetings"]] == ["Консультация эксперта"]
+    # Консультации публично не отдаются (решение лида 30.10.2026): тот же ответ, что на неизвестный kind.
+    assert consult.status_code == 422 and consult.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio
