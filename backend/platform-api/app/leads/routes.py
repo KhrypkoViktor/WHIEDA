@@ -5,6 +5,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request, Response
 from starlette import status
 
+from app.leads.meeting_leads import KIND_MEETING
 from app.leads.service import parse_lead_body, save_lead, validate_lead_shadow
 from app.settings import get_settings
 from app.tenancy import get_request_tenant, require_entitlement
@@ -40,6 +41,12 @@ async def _create_lead(request: Request) -> dict:
         body = {}
 
     lead = parse_lead_body(body, tenant.tenant_id)
+
+    if lead.kind == KIND_MEETING:
+        # Запись на Живую встречу всегда сохраняет Core: у n8n (legacy) и у тени такого вида
+        # заявки нет. Ответ несёт public_id: по нему страница строит ссылки в бота.
+        saved = await save_lead(lead)
+        return {"ok": True, "public_id": saved["public_id"]}
 
     if settings.core_route_leads == "shadow":
         shadow = await validate_lead_shadow(lead)

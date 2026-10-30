@@ -1,0 +1,505 @@
+"""Заявка на Живую встречу (``kind = "meeting"`` в POST /api/v1/leads, V44, 30.10.2026).
+
+Страница «Живая встреча» шлёт имя, телефон, мессенджер и выбранную встречу; Core
+сохраняет заявку в ``website_leads`` (``lead_kind = 'meeting'``), закрепляет человека за
+первым партнёром, заводит карточку в WWC CRM и сам, без n8n, пишет партнёру в Telegram.
+Дальше человек идёт в бота по ссылке ``?start=lead_<public_id>``: следующие срезы находят
+заявку (``load_lead_by_public_id``) и отмечают открытие бота (``mark_bot_opened``).
+
+Здесь:
+  * чистые разборщики полей (телефон, метки рекламы, метка площадки, id встречи);
+  * выбор владельца «первый партнёр навсегда» (``pick_person_anchor``);
+  * тексты: заметка и метки карточки, сообщение партнёру (чистые функции);
+  * работа с базой: встреча, привязка человека к первой заявке, уведомление партнёру,
+    поиск заявки и отметка «открыл бота».
+
+Имена и телефоны — только в ``platform_outbox.payload`` и в Telegram, в логи они не
+попадают (как в ``app/crm/messages.py``): логируются класс ошибки и SQLSTATE.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal
+from urllib.parse import urlsplit
+
+from app.crm.messages import OPEN_CARD_LABEL, plain
+from app.crm.rules import E164_RE, NOTE_MAX
+from app.crm.service import (
+    crm_contact_url,
+    load_viewer,
+    lock_reason,
+    record_card_event,
+    safe_error,
+)
+from app.db import fetch_all, fetch_one
+from app.jobs.outbox import enqueue_outbox_event
+from app.meetings.service import as_msk, format_msk, utcnow
+from app.settings import get_settings
+from app.site_requests.contacts import normalize_phone
+
+logger = logging.getLogger(__name__)
+
+KIND_MEETING = "meeting"
+MEETING_PRODUCT_NAME = "Живая встреча"
+MESSENGERS = ("telegram", "max")
+MESSENGER_TITLES = {"telegram": "Telegram", "max": "Max", "whatsapp": "WhatsApp"}
+
+UTM_KEYS = ("source", "medium", "campaign", "content", "term")
+UTM_VALUE_MAX = 200
+SOURCE_TAG_MAX = 64
+NAME_MAX = 160
+URL_MAX = 1000
+
+CARD_SOURCE = "встреча"
+TAG_BOT_NOT_OPENED = "бот не открыл"
+TAG_IN_BOT = "в боте"
+
+PARTNER_EVENT = "lead_meeting_created"
+BOT_NOTE = "Открыл(а) бота WWC в {channel}."
+
+# Страницы тестовых стендов не пишут партнёрам: стенд делит базу с боем (как в crm-card).
+_TEST_HOST_PREFIXES = ("staging.", "admin", "cabinet.")
+
+_PHONE_CHARS_RE = re.compile(r"[\d\s()+\-.]{7,32}")
+_SOURCE_TAG_RE = re.compile(r"[a-z0-9_-]{1,64}")
+_INT64_MAX = 2**63 - 1
+# Сколько прежних заявок по телефону смотреть: человек редко записывается больше пары раз.
+_ANCHOR_ROWS_MAX = 100
+
+
+# ---- разбор полей (чистые функции) -------------------------------------------------------------
+
+
+def normalize_meeting_phone(raw: Any) -> str | None:
+    """«+7 (999) 123-45-67» → «+79991234567». Не телефон — None.
+
+    Кроме разбора ``normalize_phone`` строка должна состоять только из знаков телефона:
+    «звоните на 8999… после шести» телефоном не считается."""
+    text = unicodedata.normalize("NFKC", str(raw or "")).strip()
+    if not text or not _PHONE_CHARS_RE.fullmatch(text):
+        return None
+    e164 = normalize_phone(text)
+    return e164 if e164 and E164_RE.fullmatch(e164) else None
+
+
+def clean_messenger(value: Any) -> str | None:
+    text = " ".join(str(value or "").split()).lower()
+    return text if text in MESSENGERS else None
+
+
+def clean_utm(value: Any) -> dict[str, str]:
+    """Только пять меток (source, medium, campaign, content, term), каждая — строка до 200
+    знаков; пустые и лишние ключи отбрасываются. Принимает и ``utm_source``-имена."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in UTM_KEYS:
+        raw = value.get(key)
+        if raw in (None, ""):
+            raw = value.get(f"utm_{key}")
+        if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+            continue
+        text = " ".join(str(raw).split())[:UTM_VALUE_MAX]
+        if text:
+            out[key] = text
+    return out
+
+
+def clean_source_tag(value: Any) -> str | None:
+    """Метка площадки: до 64 знаков из [a-z0-9_-] (регистр не важен). Иначе None."""
+    text = str(value or "").strip().lower()
+    return text if _SOURCE_TAG_RE.fullmatch(text) else None
+
+
+def parse_meeting_id(value: Any) -> int | None:
+    """id встречи из тела запроса: целое число или строка из цифр, 1…2^63-1. Иначе None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str) and value.strip().isascii() and value.strip().isdecimal():
+        number = int(value.strip())
+    else:
+        return None
+    return number if 0 < number <= _INT64_MAX else None
+
+
+def meeting_problem(row: dict[str, Any] | None, now: datetime) -> str | None:
+    """Почему встречу нельзя привязать к заявке: not_found, not_live, not_planned, in_past.
+    None — встреча подходит (живая, запланированная, в будущем)."""
+    if row is None:
+        return "not_found"
+    if row.get("kind") != "live":
+        return "not_live"
+    if row.get("status") != "planned":
+        return "not_planned"
+    starts_at = row.get("starts_at")
+    if not isinstance(starts_at, datetime) or starts_at <= now:
+        return "in_past"
+    return None
+
+
+def pick_person_anchor(rows: list[dict[str, Any]], organic_owner_id: str) -> tuple[str | None, str | None]:
+    """«Первый партнёр навсегда»: ``(person_lead_id, locked_owner_id)``.
+
+    ``rows`` — прежние заявки этого арендатора с тем же телефоном, от старой к новой
+    (``lead_id``, ``assigned_owner_id``). ``person_lead_id`` — первая заявка человека
+    (у самой первой заявки поля нет). ``locked_owner_id`` — владелец первой заявки,
+    у которой был партнёр: владелец «по умолчанию» (organic) человека не закрепляет,
+    иначе заявка, пришедшая по ссылке партнёра, навсегда осталась бы у владельца WWC.
+    Нет прежних заявок или партнёра — ``(None, None)`` / ``(первая, None)``."""
+    if not rows:
+        return None, None
+    first = str(rows[0]["lead_id"])
+    for row in rows:
+        owner = row.get("assigned_owner_id")
+        if owner and owner != organic_owner_id:
+            return first, str(owner)
+    return first, None
+
+
+def is_test_page(page_url: str | None) -> bool:
+    host = (urlsplit(str(page_url or "")).hostname or "").lower()
+    return host.startswith(_TEST_HOST_PREFIXES)
+
+
+# ---- тексты (чистые функции) -----------------------------------------------------------------
+
+
+def origin_text(*, ref_code: Any = None, source_tag: Any = None, utm_source: Any = None) -> str:
+    """«партнёр elena, метка reels_oct, источник instagram»; ничего не известно — «сайт»."""
+    parts = []
+    if ref_code:
+        parts.append(f"партнёр {plain(ref_code, 64)}")
+    if source_tag:
+        parts.append(f"метка {plain(source_tag, SOURCE_TAG_MAX)}")
+    if utm_source:
+        parts.append(f"источник {plain(utm_source, UTM_VALUE_MAX)}")
+    return ", ".join(parts) or "сайт"
+
+
+def meeting_when(starts_at: datetime | None, *, now: datetime | None = None) -> str:
+    """«чт 05.11 19:30 МСК» или пустая строка, когда встреча не выбрана."""
+    return format_msk(starts_at, now=now) if isinstance(starts_at, datetime) else ""
+
+
+def card_note(
+    *,
+    phone_e164: str,
+    messenger: str | None,
+    starts_at: datetime | None,
+    origin: str,
+    now: datetime | None = None,
+) -> str:
+    lines = ["Запись на Живую встречу.", f"Телефон: {phone_e164}"]
+    if messenger:
+        lines.append(f"Мессенджер: {MESSENGER_TITLES.get(messenger, messenger)}")
+    when = meeting_when(starts_at, now=now)
+    if when:
+        lines.append(f"Встреча: {when}")
+    lines.append(f"Откуда: {origin}")
+    return "\n".join(lines)[:NOTE_MAX]
+
+
+def card_tags(starts_at: datetime | None) -> list[str]:
+    """``записан 05.11`` (если встреча выбрана) и ``бот не открыл`` — пока не пришёл в бота."""
+    tags = []
+    if isinstance(starts_at, datetime):
+        tags.append(f"записан {as_msk(starts_at):%d.%m}")
+    tags.append(TAG_BOT_NOT_OPENED)
+    return tags
+
+
+def partner_message_text(
+    *,
+    name: Any,
+    phone_e164: str,
+    messenger: str | None,
+    starts_at: datetime | None,
+    origin: str,
+    now: datetime | None = None,
+) -> str:
+    """Сообщение партнёру о новой записи. Имя и метки проходят через ``plain``: ``<`` и ``>``
+    становятся ‹ ›, а остальное экранирует отправка (``format_telegram_html``)."""
+    when = meeting_when(starts_at, now=now)
+    lines = [f"Новая запись на Живую встречу {when}".rstrip(), f"Имя: {plain(name, NAME_MAX)}", f"Телефон: {phone_e164}"]
+    if messenger:
+        lines.append(f"Мессенджер: {MESSENGER_TITLES.get(messenger, messenger)}")
+    lines.append(f"Откуда: {origin}")
+    return "\n".join(lines)
+
+
+# ---- база: встреча, человек, уведомление -------------------------------------------------------
+
+
+async def lookup_meeting(
+    conn: Any, tenant_id: str, meeting_id: int | None, *, now: datetime | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """``(встреча, причина отказа)``. Нет id — ``(None, None)``. Подходящая встреча —
+    ``(строка, None)``; иначе ``(None, причина)`` из ``meeting_problem`` или ``lookup_failed``
+    (сбой чтения не должен терять заявку). Колонка join_url не читается."""
+    if meeting_id is None:
+        return None, None
+    current = now or utcnow()
+    try:
+        async with conn.transaction():
+            row = await fetch_one(
+                conn,
+                "select meeting_id, kind, status, starts_at from meetings where tenant_id = %s and meeting_id = %s",
+                (tenant_id, int(meeting_id)),
+            )
+    except Exception as exc:
+        logger.warning("meeting_lead_lookup_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+        return None, "lookup_failed"
+    problem = meeting_problem(row, current)
+    return (row, None) if problem is None else (None, problem)
+
+
+async def find_person_anchor(
+    conn: Any, tenant_id: str, phone_e164: str, organic_owner_id: str
+) -> tuple[str | None, str | None]:
+    """Первая заявка человека и закреплённый партнёр (``pick_person_anchor``) по телефону.
+
+    Блокировка на (арендатор, телефон) до конца транзакции: две одновременные первые заявки
+    одного человека идут по очереди, и вторая видит первую."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"website_leads_phone:{tenant_id}:{phone_e164}",),
+        )
+    rows = await fetch_all(
+        conn,
+        """
+        select lead_id::text as lead_id, assigned_owner_id
+        from website_leads
+        where tenant_id = %s and phone_e164 = %s and assigned_owner_id is not null
+        order by created_at, lead_id
+        limit %s
+        """,
+        (tenant_id, phone_e164, _ANCHOR_ROWS_MAX),
+    )
+    return pick_person_anchor(rows, organic_owner_id)
+
+
+async def _notify_binding_id(conn: Any, tenant_id: str) -> str | None:
+    """Бот, которым этот процесс шлёт плановые уведомления, из PLATFORM_SCHEDULED_NOTIFY_BINDINGS:
+    первый активный binding этого арендатора. Процесс без переменной (стенд) — None."""
+    wanted = list(get_settings().parsed_scheduled_notify_bindings())
+    if not wanted:
+        return None
+    row = await fetch_one(
+        conn,
+        """
+        select binding_id from tenant_bot_bindings
+        where tenant_id = %s and binding_id = any(%s) and status = 'active'
+        order by array_position(%s::text[], binding_id)
+        limit 1
+        """,
+        (tenant_id, wanted, wanted),
+    )
+    return str(row["binding_id"]) if row else None
+
+
+async def notify_partner(
+    conn: Any,
+    *,
+    tenant_id: str,
+    lead_id: str,
+    owner_actor_id: str | None,
+    name: str,
+    phone_e164: str,
+    messenger: str | None,
+    starts_at: datetime | None,
+    origin: str,
+    page_url: str | None,
+    card_id: str | None,
+) -> bool:
+    """Ставит в ``platform_outbox`` сообщение партнёру в Telegram: «Новая запись на Живую
+    встречу…» и кнопка «Открыть карточку» (если карточка есть и CRM партнёру открыта, как в
+    напоминании «через час встреча»). Отправляет боевой воркер. Ключ ``lead_meeting:<lead_id>``:
+    повтор заявки второго сообщения не даёт. Любой сбой — в лог, заявка уже сохранена.
+    True — сообщение поставлено."""
+    if not owner_actor_id or is_test_page(page_url):
+        return False
+    try:
+        async with conn.transaction():
+            actor = await fetch_one(
+                conn,
+                """
+                select telegram_chat_id, telegram_user_id from lead_actors
+                where tenant_id = %s and actor_id = %s
+                limit 1
+                """,
+                (tenant_id, owner_actor_id),
+            )
+            telegram_user_id = actor.get("telegram_user_id") if actor else None
+            chat_id = str((actor or {}).get("telegram_chat_id") or telegram_user_id or "").strip()
+            if not chat_id:
+                return False
+            binding_id = await _notify_binding_id(conn, tenant_id)
+            if not binding_id:
+                return False
+            payload: dict[str, Any] = {
+                "chat_id": chat_id,
+                "text": partner_message_text(
+                    name=name, phone_e164=phone_e164, messenger=messenger, starts_at=starts_at, origin=origin
+                ),
+                "binding_id": binding_id,
+                "lead_id": lead_id,
+            }
+            if card_id and telegram_user_id:
+                viewer = await load_viewer(tenant_id, int(telegram_user_id), conn=conn)
+                if lock_reason(viewer) is None:
+                    payload["reply_markup"] = {
+                        "inline_keyboard": [[{"text": OPEN_CARD_LABEL, "url": crm_contact_url(viewer, card_id)}]]
+                    }
+                    payload["site_login_user_id"] = int(telegram_user_id)
+            row = await enqueue_outbox_event(
+                conn,
+                tenant_id=tenant_id,
+                event_type=PARTNER_EVENT,
+                idempotency_key=f"lead_meeting:{lead_id}",
+                payload=payload,
+                due_at=datetime.now(timezone.utc),
+            )
+            return bool(row and row.get("created"))
+    except Exception as exc:
+        logger.warning("meeting_lead_notify_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+        return False
+
+
+# ---- заявка для следующих срезов ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MeetingLead:
+    lead_id: str
+    public_id: str
+    name: str
+    phone_e164: str | None
+    messenger_pref: str | None
+    meeting_id: int | None
+    assigned_owner_id: str | None
+    first_ref_code: str | None
+    active_ref_code: str | None
+    utm: dict[str, Any]
+    source_tag: str | None
+    telegram_user_id: int | None
+    max_user_id: int | None
+    bot_opened_at: datetime | None
+
+
+_LEAD_COLUMNS = """
+    lead_id::text as lead_id, public_id, name, phone_e164, messenger_pref, meeting_id,
+    assigned_owner_id, first_ref_code, active_ref_code, utm, source_tag,
+    telegram_user_id, max_user_id, bot_opened_at
+"""
+
+
+def _lead_from_row(row: dict[str, Any]) -> MeetingLead:
+    utm = row.get("utm")
+    return MeetingLead(
+        lead_id=row["lead_id"],
+        public_id=row["public_id"],
+        name=row["name"],
+        phone_e164=row.get("phone_e164"),
+        messenger_pref=row.get("messenger_pref"),
+        meeting_id=int(row["meeting_id"]) if row.get("meeting_id") is not None else None,
+        assigned_owner_id=row.get("assigned_owner_id"),
+        first_ref_code=row.get("first_ref_code"),
+        active_ref_code=row.get("active_ref_code"),
+        utm=dict(utm) if isinstance(utm, dict) else {},
+        source_tag=row.get("source_tag"),
+        telegram_user_id=int(row["telegram_user_id"]) if row.get("telegram_user_id") is not None else None,
+        max_user_id=int(row["max_user_id"]) if row.get("max_user_id") is not None else None,
+        bot_opened_at=row.get("bot_opened_at"),
+    )
+
+
+async def load_lead_by_public_id(conn: Any, tenant_id: str, public_id: str) -> MeetingLead | None:
+    """Заявка на встречу по её public_id (из ``?start=lead_<public_id>``). Заявки других видов,
+    удалённые и чужого арендатора — None."""
+    key = " ".join(str(public_id or "").split())[:64]
+    if not key:
+        return None
+    row = await fetch_one(
+        conn,
+        f"""
+        select {_LEAD_COLUMNS}
+        from website_leads
+        where tenant_id = %s and public_id = %s and lead_kind = 'meeting' and deleted_at is null
+        limit 1
+        """,
+        (tenant_id, key),
+    )
+    return _lead_from_row(row) if row else None
+
+
+async def mark_bot_opened(
+    conn: Any,
+    tenant_id: str,
+    public_id: str,
+    *,
+    channel: Literal["telegram", "max"],
+    channel_user_id: int,
+) -> MeetingLead | None:
+    """Человек открыл бота по ссылке заявки. Ставит ``bot_opened_at`` (только если пусто) и
+    ``telegram_user_id`` / ``max_user_id`` канала (первый открывший остаётся). При первом
+    открытии в карточке CRM снимается метка «бот не открыл», ставится «в боте», пишется заметка
+    «Открыл(а) бота…» и строка истории. Повтор ничего не дублирует. Нет такой заявки — None.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора. Карточка меняется под
+    savepoint: её сбой не отменяет отметку на заявке."""
+    if channel not in MESSENGERS:
+        raise ValueError("channel must be telegram or max")
+    key = " ".join(str(public_id or "").split())[:64]
+    if not key:
+        return None
+    lead = await fetch_one(
+        conn,
+        """
+        select lead_id::text as lead_id, bot_opened_at is null as first_open,
+               coalesce(metadata, '{}'::jsonb) ->> 'crm_card' as crm_card
+        from website_leads
+        where tenant_id = %s and public_id = %s and lead_kind = 'meeting' and deleted_at is null
+        for update
+        """,
+        (tenant_id, key),
+    )
+    if lead is None:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update website_leads
+            set bot_opened_at = coalesce(bot_opened_at, now()),
+                telegram_user_id = case when %s = 'telegram' then coalesce(telegram_user_id, %s) else telegram_user_id end,
+                max_user_id = case when %s = 'max' then coalesce(max_user_id, %s) else max_user_id end,
+                updated_at = now()
+            where tenant_id = %s and lead_id = %s::uuid
+            """,
+            (channel, int(channel_user_id), channel, int(channel_user_id), tenant_id, lead["lead_id"]),
+        )
+    if lead["first_open"] and lead["crm_card"]:
+        await _mark_card_in_bot(conn, tenant_id, lead["crm_card"], channel)
+    return await load_lead_by_public_id(conn, tenant_id, key)
+
+
+async def _mark_card_in_bot(conn: Any, tenant_id: str, contact_id: str, channel: str) -> None:
+    try:
+        async with conn.transaction():
+            await record_card_event(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact_id,
+                note=BOT_NOTE.format(channel=MESSENGER_TITLES[channel]),
+                add_tags=[TAG_IN_BOT],
+                remove_tags=[TAG_BOT_NOT_OPENED],
+            )
+    except Exception as exc:
+        logger.warning("meeting_lead_card_bot_mark_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})

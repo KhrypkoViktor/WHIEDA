@@ -19,6 +19,7 @@ import io
 import json
 import logging
 import uuid
+from collections.abc import Sequence
 from contextlib import nullcontext
 from datetime import date, datetime
 from typing import Any
@@ -1115,6 +1116,71 @@ def _lead_card_name(name: Any, contact: Any) -> str:
     return "Заявка с сайта"  # pragma: no cover
 
 
+CARD_TAGS_DB_MAX = 20  # CHECK crm_contacts_tags_check (V20); the API rule TAGS_MAX is stricter
+
+
+async def change_card_tags(
+    conn: Any, *, tenant_id: str, contact_id: str, add: Sequence[str] = (), remove: Sequence[str] = ()
+) -> str | None:
+    """Меняет метки живой карточки одной записью: убирает ``remove``, добавляет ``add``
+    (без дублей, регистр не важен, не больше CARD_TAGS_DB_MAX). Возвращает account_id
+    карточки или None, если карточки нет или она удалена. Для кода, которому метка нужна
+    не от человека, а по событию (запись на встречу, «открыл бота»)."""
+    row = await fetch_one(
+        conn,
+        """
+        select account_id::text as account_id, tags from crm_contacts
+        where tenant_id = %s and contact_id = %s::uuid and deleted_at is null
+        for update
+        """,
+        (tenant_id, contact_id),
+    )
+    if row is None:
+        return None
+    current = list(row["tags"] or [])
+    dropped = {str(tag).lower() for tag in remove}
+    tags = [tag for tag in current if str(tag).lower() not in dropped]
+    seen = {str(tag).lower() for tag in tags}
+    for tag in add:
+        if str(tag).lower() not in seen and len(tags) < CARD_TAGS_DB_MAX:
+            tags.append(tag)
+            seen.add(str(tag).lower())
+    if tags != current:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "update crm_contacts set tags = %s::text[], updated_at = now() where tenant_id = %s and contact_id = %s::uuid",
+                (tags, tenant_id, contact_id),
+            )
+    return row["account_id"]
+
+
+async def record_card_event(
+    conn: Any,
+    *,
+    tenant_id: str,
+    contact_id: str,
+    note: str,
+    add_tags: Sequence[str] = (),
+    remove_tags: Sequence[str] = (),
+) -> bool:
+    """Событие по карточке не от человека (например, «человек открыл бота»): меняет метки,
+    пишет заметку и строку истории «note» — как это делал бы партнёр. False — карточки нет
+    или она удалена. Вызывающий держит savepoint: сбой не должен ронять его транзакцию."""
+    account_id = await change_card_tags(conn, tenant_id=tenant_id, contact_id=contact_id, add=add_tags, remove=remove_tags)
+    if account_id is None:
+        return False
+    note_row = await fetch_one(
+        conn,
+        "insert into crm_notes (tenant_id, contact_id, body) values (%s, %s::uuid, %s) returning note_id::text as note_id",
+        (tenant_id, contact_id, clean_note(note)),
+    )
+    await add_activity(
+        conn, tenant_id=tenant_id, account_id=account_id, contact_id=contact_id,
+        kind="note", payload={"note_id": note_row["note_id"]},
+    )
+    return True
+
+
 async def add_lead_card(
     conn: Any,
     *,
@@ -1125,6 +1191,11 @@ async def add_lead_card(
     contact: Any,
     product_name: Any = None,
     comment: Any = None,
+    source: str = "сайт",
+    note: str | None = None,
+    tags: Sequence[str] = (),
+    phone_e164: str | None = None,
+    phone_raw: str | None = None,
 ) -> str | None:
     """A new site lead becomes a «Новый контакт» card of its owner — if the owner
     has already opened the diary (has a platform_accounts row). Runs inside the
@@ -1133,6 +1204,10 @@ async def add_lead_card(
 
     History: a new card gets «created» {source: site}, a repeat request on an
     existing card — «lead»; the note of the request — «note».
+
+    Запись на Живую встречу (V44) передаёт свои ``source`` («встреча»), ``note``,
+    ``tags`` и готовый телефон: остальное — как у заявки с сайта. Без этих
+    параметров поведение прежнее.
 
     Off unless PLATFORM_CRM_LEAD_CARDS is on (production API only): staging
     shares the database, and its test leads must not reach a live diary."""
@@ -1168,10 +1243,12 @@ async def add_lead_card(
             )
             if seen is not None:
                 return None
-            phone_e164, phone_raw = phone_from_lead_contact(contact)
-            note = lead_note_text(
-                contact=contact, product_name=product_name, comment=comment, phone_known=phone_e164 is not None
-            )
+            if phone_e164 is None:
+                phone_e164, phone_raw = phone_from_lead_contact(contact)
+            if note is None:
+                note = lead_note_text(
+                    contact=contact, product_name=product_name, comment=comment, phone_known=phone_e164 is not None
+                )
             existing = await _duplicate_of(conn, tenant_id, account["account_id"], phone_e164)
             if existing:
                 # Человек уже в ежедневнике — новая заявка становится заметкой, без дубля,
@@ -1198,7 +1275,7 @@ async def add_lead_card(
                       tenant_id, account_id, name, phone_e164, phone_raw, source,
                       status, next_step, next_at, lead_id
                     )
-                    values (%s, %s::uuid, %s, %s, %s, 'сайт', 'new', 'invite', %s, %s::uuid)
+                    values (%s, %s::uuid, %s, %s, %s, %s, 'new', 'invite', %s, %s::uuid)
                     on conflict (tenant_id, lead_id) do nothing
                     returning contact_id::text as contact_id
                     """,
@@ -1208,6 +1285,7 @@ async def add_lead_card(
                         _lead_card_name(name, contact),
                         phone_e164,
                         phone_raw,
+                        clean_source(source) or "сайт",
                         account["today"],
                         lead_id,
                     ),
@@ -1220,6 +1298,8 @@ async def add_lead_card(
                 conn, tenant_id=tenant_id, account_id=account["account_id"], contact_id=contact_id,
                 kind=event, payload=event_payload,
             )
+            if tags:
+                await change_card_tags(conn, tenant_id=tenant_id, contact_id=contact_id, add=tags)
             note_row = await fetch_one(
                 conn,
                 "insert into crm_notes (tenant_id, contact_id, body) values (%s, %s::uuid, %s) returning note_id::text as note_id",
