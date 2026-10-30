@@ -39,6 +39,7 @@ from app.funnel.guest import (
 from app.funnel.lead_start import start_from_lead
 from app.funnel.system_word import FUNNEL_TENANT_ID, send_tour_max, send_tour_telegram
 from app.leads.channels import accept_channel_referral_start
+from app.leads.meeting_leads import load_lead_by_channel_user, plain_no_links
 from app.max.client import send_max_text
 from app.referral_bonus.service import accept_referral_start
 from app.settings import get_settings
@@ -228,6 +229,20 @@ async def _clear_telegram_keyboard(callback: TelegramCallbackQuery, bot_token: s
         logger.warning("guest_clear_keyboard_failed", extra={"trace_id": trace_id, **safe_error(exc)})
 
 
+async def _guest_ask_header(tenant_id: str, user_id: int) -> str:
+    """Шапка обращения владельцу: «Гость Живой встречи» и, если у человека есть заявка с партнёром,
+    «, от партнёра <код>» (код — ссылка, по которой он записался). Сбой базы шапку не ломает."""
+    code = ""
+    try:
+        async with tenant_connection(tenant_id) as conn:
+            lead = await load_lead_by_channel_user(conn, tenant_id, "telegram", user_id)
+        if lead is not None:
+            code = plain_no_links(lead.active_ref_code or lead.first_ref_code, 64)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guest_ask_header_failed", extra={"channel": "telegram", **safe_error(exc)})
+    return texts.ASK_HEADER_GUEST_FROM_PARTNER.format(code=code) if code else texts.ASK_HEADER_GUEST
+
+
 async def try_handle_guest_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str | None = None
 ) -> dict[str, Any] | None:
@@ -248,7 +263,10 @@ async def try_handle_guest_callback(
         # личка владельца, шапка с именем человека); дальше любой текст гостя пересылается владельцу, пока
         # обращение открыто (try_relay_user_message в цепочке процессора). Приглашение — свой текст воронки.
         try:
-            support = await open_site_support(tenant, callback, trace_id=trace_id or "", user_text=texts.ASK_PROMPT)
+            support = await open_site_support(
+                tenant, callback, trace_id=trace_id or "", user_text=texts.ASK_PROMPT,
+                guest_header=await _guest_ask_header(tenant.tenant_id, callback.user_id),
+            )
         except Exception as exc:  # noqa: BLE001 — на кнопку надо ответить, даже если поддержка не отозвалась
             logger.warning("guest_ask_failed", extra={"channel": "telegram", "trace_id": trace_id, **safe_error(exc)})
             await send_telegram_text(chat_id=str(callback.chat_id), text=texts.GUEST_ERROR, bot_token=bot_token)

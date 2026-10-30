@@ -886,27 +886,57 @@ async def test_the_tour_button_sends_the_tour_the_same_way_as_the_word(tg):
 ASK_TEXT = "Напишите вопрос одним сообщением — передам Виктору"
 
 
-async def test_the_ask_button_opens_the_owner_support_ticket_with_the_funnel_invite(tg):
+def ask_lead(monkeypatch, lead: MeetingLead | None = None, *, fail: Exception | None = None) -> AsyncMock:
+    """Заявка гостя для шапки обращения: ``load_lead_by_channel_user`` на фейковом соединении."""
+    loader = AsyncMock(return_value=lead, side_effect=fail)
+    monkeypatch.setattr(guest_bot, "tenant_connection", fake_connection)
+    monkeypatch.setattr(guest_bot, "load_lead_by_channel_user", loader)
+    return loader
+
+
+async def test_the_ask_button_opens_the_owner_support_ticket_with_the_funnel_invite(tg, monkeypatch):
+    loader = ask_lead(monkeypatch, make_lead())
     support = AsyncMock(return_value={"ok": True, "route": "support", "status": "ticket_opened"})
     callback = tg_cb("funnel:ask")
     with patch.object(guest_bot, "open_site_support", support):
         result = await guest_bot.try_handle_guest_callback(TENANT, callback, trace_id="t1")
     assert result == {"ok": True, "route": "guest_callback", "trace_id": "t1", "status": "ask", "support": "ticket_opened"}
-    # то же обращение, что у кнопки «Поддержка»; приглашение человеку — текст воронки, а не стандартный
-    support.assert_awaited_once_with(TENANT, callback, trace_id="t1", user_text=ASK_TEXT)
+    # то же обращение, что у кнопки «Поддержка»; приглашение человеку — текст воронки, а не стандартный;
+    # шапка владельцу — «Гость Живой встречи, от партнёра <код>» вместо «Партнёр: …» и «Сайт: …»
+    support.assert_awaited_once_with(
+        TENANT, callback, trace_id="t1", user_text=ASK_TEXT, guest_header="Гость Живой встречи, от партнёра igor"
+    )
+    assert loader.await_args.args[1:] == ("whieda", "telegram", USER)
     assert texts.ASK_PROMPT == ASK_TEXT
     tg.text.assert_not_awaited()          # приглашение отправляет сама поддержка, второго сообщения нет
     tg.answer.assert_awaited_once_with(callback_query_id="cq-1", bot_token=BOT_TOKEN)
 
 
-async def test_the_ask_button_reports_a_support_that_is_not_connected(tg):
+@pytest.mark.parametrize(("lead", "fail", "expected"), [
+    (make_lead(first_ref_code="igor", active_ref_code="anna"), None, "Гость Живой встречи, от партнёра anna"),
+    (make_lead(first_ref_code="igor", active_ref_code=None), None, "Гость Живой встречи, от партнёра igor"),
+    (make_lead(first_ref_code="", active_ref_code=""), None, "Гость Живой встречи"),       # реклама без партнёра
+    (make_lead(first_ref_code=None, active_ref_code=None), None, "Гость Живой встречи"),
+    (None, None, "Гость Живой встречи"),                                                    # записался без заявки
+    (None, RuntimeError("db down"), "Гость Живой встречи"),                                 # сбой базы шапку не ломает
+    (make_lead(first_ref_code="https://evil.example/x @scammer", active_ref_code=None), None,
+     "Гость Живой встречи, от партнёра … …"),                                               # из кода вырезаны адрес и @
+])
+async def test_the_ask_header_names_the_guest_and_the_partner_of_his_lead(tg, monkeypatch, lead, fail, expected):
+    ask_lead(monkeypatch, lead, fail=fail)
+    assert await guest_bot._guest_ask_header("whieda", USER) == expected
+
+
+async def test_the_ask_button_reports_a_support_that_is_not_connected(tg, monkeypatch):
+    ask_lead(monkeypatch, None)
     support = AsyncMock(return_value={"ok": False, "route": "support", "status": "no_admin"})
     with patch.object(guest_bot, "open_site_support", support):
         result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:ask"), trace_id="t1")
     assert result["ok"] is False and result["status"] == "ask" and result["support"] == "no_admin"
 
 
-async def test_the_ask_button_survives_a_support_failure(tg):
+async def test_the_ask_button_survives_a_support_failure(tg, monkeypatch):
+    ask_lead(monkeypatch, None)
     with patch.object(guest_bot, "open_site_support", AsyncMock(side_effect=RuntimeError("db down"))):
         result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:ask"), trace_id="t1")
     assert result["ok"] is False and result["status"] == "error"
@@ -947,6 +977,33 @@ async def test_open_site_support_sends_the_custom_invite_instead_of_the_standard
     world.sent.assert_awaited_once_with(USER, ASK_TEXT)
     world.header.assert_awaited_once()                       # владельцу — обычная шапка обращения
     assert "Анна" in world.header.await_args.args[1]
+    # без своей шапки (путь партнёра «Поддержка» и любой другой) строки партнёра и сайта на месте
+    assert "Партнёр: " in world.header.await_args.args[1] and "Сайт: не найден" in world.header.await_args.args[1]
+
+
+async def test_a_guest_ticket_header_has_the_guest_line_instead_of_the_partner_and_the_site(monkeypatch):
+    world = TicketWorld(monkeypatch)
+    TENANT_SUPPORT = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+    await world.support.open_site_support(
+        TENANT_SUPPORT, tg_cb("funnel:ask"), trace_id="t1", user_text=ASK_TEXT,
+        guest_header="Гость Живой встречи, от партнёра igor",
+    )
+    header = world.header.await_args.args[1]
+    lines = header.split("\n")
+    assert lines[0].startswith("#S-12 · ") and "Анна" in lines[0]            # имя гостя — ссылкой в чат, как у партнёра
+    assert lines[1] == "Гость Живой встречи, от партнёра igor"
+    assert "Партнёр:" not in header and "Сайт:" not in header
+    world.sent.assert_awaited_once_with(USER, ASK_TEXT)                      # приглашение человеку не менялось
+
+
+async def test_a_guest_without_a_lead_gets_the_plain_guest_line(monkeypatch):
+    world = TicketWorld(monkeypatch)
+    TENANT_SUPPORT = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+    await world.support.open_site_support(
+        TENANT_SUPPORT, tg_cb("funnel:ask"), trace_id="t1", user_text=ASK_TEXT, guest_header="Гость Живой встречи",
+    )
+    header = world.header.await_args.args[1]
+    assert header.split("\n")[1] == "Гость Живой встречи" and "от партнёра" not in header and "Партнёр:" not in header
 
 
 async def test_open_site_support_without_a_custom_invite_is_unchanged(monkeypatch):

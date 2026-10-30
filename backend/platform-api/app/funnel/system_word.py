@@ -140,9 +140,13 @@ async def send_tour_max(
 
 
 async def max_funnel_callback(tenant: TenantContext, event: Any, trace_id: str) -> None:
-    """Нажатие кнопки воронки в Max: текст-заглушка новым сообщением (текст сообщения с туром не заменяем)."""
+    """Нажатие кнопки воронки в Max: текст-заглушка новым сообщением (текст сообщения с туром не заменяем).
+    Как и Telegram-двойник (``try_handle_funnel_callback``), отвечает только в боте WWC (тенант ``whieda``) и
+    в личном чате (``chat_type == "dialog"``); иначе тихо ``None``."""
     placeholder = _PLACEHOLDERS.get(str(event.payload))
-    if placeholder is None:
+    if placeholder is None or tenant.tenant_id != FUNNEL_TENANT_ID:
+        return None
+    if str(getattr(event, "chat_type", "dialog") or "dialog") != "dialog":
         return None
     await send_max_text(chat_id=event.chat_id or None, user_id=event.user_id, text=placeholder)
     return None

@@ -25,7 +25,8 @@ class MaxEvent:
     # Вложение contact в личном сообщении (кнопка request_contact или «поделиться контактом»):
     contact_phone: str | None = None  # нормализованный номер «+79990000000»
     contact_user_id: int | None = None  # чей это контакт в Max (max_info.user_id); у чужого контакта не равен user_id
-    contact_verified: bool = False  # hash == HMAC-SHA256(токен бота, vcf_info): номер привязан к аккаунту отправителя в Max
+    # Номер из vcf_info, hash == HMAC-SHA256(токен бота, vcf_info) и contact_user_id == user_id: номер привязан к аккаунту отправителя в Max
+    contact_verified: bool = False
 
 
 @dataclass
@@ -174,17 +175,31 @@ def verify_max_contact_hash(vcf_info: str | None, hash_value: str | None, *, bot
 
 
 def _attach_contact(event: MaxEvent, attachments: Any) -> None:
-    """Вложение contact: payload {vcf_info, hash, max_info{user_id…}} (в запросе на отправку — ещё vcf_phone / contact_id)."""
+    """Вложение contact: payload {vcf_info, hash, max_info{user_id…}} (в запросе на отправку — ещё vcf_phone / contact_id).
+
+    Вложение с payload или max_info не словарём пропускается целиком: сообщение разбирается дальше как обычное.
+    ``contact_verified`` — только если номер взят из ``vcf_info``, hash подходит к нему и контакт принадлежит
+    отправителю (``contact_user_id == user_id``): чужой контакт, пересланный отправителем, подтверждением не
+    считается. Номер из ``vcf_phone`` (его в присланном боту сообщении нет, подписи у него тоже нет) —
+    никогда не verified."""
     for item in attachments if isinstance(attachments, list) else []:
         if not isinstance(item, dict) or item.get("type") != "contact":
             continue
-        payload = item.get("payload") or {}
+        payload = item.get("payload")
+        max_info = payload.get("max_info") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or (max_info is not None and not isinstance(max_info, dict)):
+            continue
         vcf = payload.get("vcf_info")
         phone = contact_phone_from_vcf(vcf)
+        from_vcf = phone is not None
         if phone is None and payload.get("vcf_phone"):
             phone = contact_phone_from_vcf("TEL:" + str(payload["vcf_phone"]))
         event.contact_phone = phone
-        event.contact_user_id = _int_or_none((payload.get("max_info") or {}).get("user_id")) or _int_or_none(payload.get("contact_id"))
-        event.contact_verified = verify_max_contact_hash(vcf, payload.get("hash"))
+        event.contact_user_id = _int_or_none((max_info or {}).get("user_id")) or _int_or_none(payload.get("contact_id"))
+        event.contact_verified = (
+            from_vcf
+            and event.contact_user_id is not None
+            and event.contact_user_id == event.user_id
+            and verify_max_contact_hash(vcf, payload.get("hash"))
+        )
         return
-

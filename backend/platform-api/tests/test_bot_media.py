@@ -940,6 +940,36 @@ async def test_max_buttons_send_the_placeholder_as_a_new_message_and_acknowledge
     answered.assert_awaited_once_with("cb-1", notification=None, text=None, buttons=None)
 
 
+def _max_callback_in(chat_type: str, payload: str = "funnel:consult") -> MaxCallbackEvent:
+    return MaxCallbackEvent(
+        callback_id="cb-1", payload=payload, user_id=42, chat_id=555, message_id="mid-1", chat_type=chat_type,
+        username=None, display_name="Инна", raw={},
+    )
+
+
+async def test_max_funnel_callback_answers_only_in_the_wwc_bot_and_a_private_chat(max_bot):
+    # как Telegram-двойник (try_handle_funnel_callback): чужой тенант и не личный чат — тихо None, ни одного сообщения
+    assert await system_word.max_funnel_callback(OTHER_TENANT, _max_callback_in("dialog"), "t1") is None
+    for chat_type in ("chat", "channel"):
+        assert await system_word.max_funnel_callback(TENANT, _max_callback_in(chat_type), "t1") is None
+    max_bot.text.assert_not_awaited()
+    # свой тенант и личный чат — заглушка, как раньше; chat_type по умолчанию — dialog
+    assert await system_word.max_funnel_callback(TENANT, _max_callback_in("dialog"), "t1") is None
+    max_bot.text.assert_awaited_once_with(chat_id=555, user_id=42, text=texts.FUNNEL_CONSULT_PLACEHOLDER)
+    max_bot.text.reset_mock()
+    bare = SimpleNamespace(payload="funnel:consult", chat_id=555, user_id=42)   # без chat_type вообще
+    assert await system_word.max_funnel_callback(TENANT, bare, "t1") is None
+    max_bot.text.assert_awaited_once()
+
+
+async def test_max_funnel_callback_in_a_group_is_acknowledged_but_sends_nothing(max_bot, monkeypatch):
+    answered = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(max_processor, "answer_max_callback", answered)
+    result = await max_processor.process_max_event(TENANT, _max_callback_in("chat"), "t1")
+    assert result["status"] == "handled"
+    max_bot.text.assert_not_awaited()
+
+
 async def test_an_unknown_funnel_payload_is_a_quiet_answer(max_bot, monkeypatch):
     monkeypatch.setattr(max_processor, "answer_max_callback", AsyncMock(return_value={"ok": True}))
     result = await max_processor.process_max_event(TENANT, _max_callback("funnel:nope"), "t1")

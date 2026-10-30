@@ -41,6 +41,7 @@ SLOTS_MAX = 10
 USAGE_CREATE = "Не понял. Формат: встреча 05.11 19:30 [https://ссылка] [название]"
 USAGE_TIME = "Такой даты или времени нет. Формат: встреча 05.11 19:30 [https://ссылка] [название]"
 USAGE_LINK = "Не похоже на ссылку: нужна https://… без пробелов."
+USAGE_SCHEME = "Ссылка должна начинаться с https://, например: встреча 05.11 19:30 https://zoom.us/j/1 Название"
 USAGE_SLOTS = f"Формат: встречи создать 4 (число от 1 до {SLOTS_MAX})"
 USAGE_URL = "Формат: ссылка встречи 12 https://…"
 USAGE_CANCEL = "Формат: отменить встречу 12"
@@ -67,6 +68,9 @@ _ID_RE = re.compile(r"#?(\d{1,9})")
 _ID_PREFIX_RE = re.compile(r"#?\d")
 _WHEN_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})(?:\s+(?P<tail>.*))?")
 _COUNT_RE = re.compile(r"\d{1,3}")
+# Слово без схемы, похожее на адрес («zoom.us/j/1»): со «/» или с точкой между двумя буквенными частями.
+# Названием оно не становится: название встречи публично, а владелец хотел дать ссылку.
+_ADDRESS_LIKE_RE = re.compile(r"[^\W\d_]{2,}\.[^\W\d_]{2,}")
 
 
 @dataclass(frozen=True)
@@ -105,6 +109,8 @@ def _parse_create(rest: str) -> MeetingCommand:
             if normalized is None:
                 return _usage(USAGE_LINK)
             url = normalized
+        elif "/" in word or _ADDRESS_LIKE_RE.search(word):
+            return _usage(USAGE_SCHEME)
         else:
             words.append(word)
     return MeetingCommand(

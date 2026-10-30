@@ -29,7 +29,11 @@ def verify_max_secret(header_value: str) -> None:
 
 
 async def _process(update: dict[str, Any], trace_id: str) -> None:
-    event = parse_max_update(update)
+    try:
+        event = parse_max_update(update)
+    except Exception:  # noqa: BLE001 — странное вложение или поле не должно ронять webhook: логируем, ответ уже 200
+        logger.exception("max_update_parse_failed", extra={"trace_id": trace_id})
+        return
     if event is None:
         return
     try:

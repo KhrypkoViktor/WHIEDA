@@ -273,6 +273,48 @@ def test_forwarded_or_foreign_contact_is_not_verified(monkeypatch):
     assert tampered.contact_phone == "+79991112233" and tampered.contact_verified is False
 
 
+def test_contact_is_verified_only_for_the_senders_own_vcf_contact(monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_bot_token", BOT_TOKEN)
+    # подпись верна, но контакт другого человека (max_info.user_id != отправитель): не verified
+    other = parse_max_update(_contact_update({"vcf_info": VCF, "hash": _hash(VCF), "max_info": {"user_id": 555}}))
+    assert other.contact_phone == "+79990000000" and other.contact_user_id == 555 != other.user_id
+    assert other.contact_verified is False
+    # владелец контакта неизвестен (нет max_info и contact_id): не verified
+    unknown = parse_max_update(_contact_update({"vcf_info": VCF, "hash": _hash(VCF)}))
+    assert unknown.contact_phone == "+79990000000" and unknown.contact_user_id is None
+    assert unknown.contact_verified is False
+    # номер только из vcf_phone (подписи у него нет): не verified, хоть contact_id свой и hash чей-то верный
+    phone_only = parse_max_update(_contact_update({"vcf_phone": "89990000000", "contact_id": 42, "hash": _hash(VCF)}))
+    assert phone_only.contact_phone == "+79990000000" and phone_only.contact_user_id == 42 == phone_only.user_id
+    assert phone_only.contact_verified is False
+    # в vcf_info номера нет, он подставлен через vcf_phone, а hash верен для vcf_info: номер не из vcf_info — не verified
+    vcf_no_tel = "BEGIN:VCARD\r\nFN:Без номера\r\nEND:VCARD\r\n"
+    mixed = parse_max_update(_contact_update(
+        {"vcf_info": vcf_no_tel, "hash": _hash(vcf_no_tel), "vcf_phone": "89281112233", "max_info": {"user_id": 42}}
+    ))
+    assert mixed.contact_phone == "+79281112233" and mixed.contact_verified is False
+
+
+def test_contact_with_unexpected_types_is_ignored_and_the_message_is_parsed_further(monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_bot_token", BOT_TOKEN)
+    for payload in (None, "строка", ["список"], 5, True):
+        event = parse_max_update(_contact_update(payload, text="привет"))  # type: ignore[arg-type]
+        assert isinstance(event, MaxEvent) and event.kind == "message" and event.text == "привет", payload
+        assert (event.contact_phone, event.contact_user_id, event.contact_verified) == (None, None, False)
+    for max_info in ("42", [42], 42, "{}"):
+        event = parse_max_update(_contact_update({"vcf_info": VCF, "hash": _hash(VCF), "max_info": max_info}))
+        assert isinstance(event, MaxEvent) and event.kind == "message"
+        assert (event.contact_phone, event.contact_user_id, event.contact_verified) == (None, None, False), max_info
+    # непригодное вложение пропускается, следующий нормальный контакт разбирается
+    update = _contact_update({"vcf_info": VCF, "hash": _hash(VCF), "max_info": {"user_id": 42}})
+    update["message"]["body"]["attachments"][:0] = ["строка", {"type": "contact", "payload": "x"}, {"type": "contact", "payload": None}]
+    event = parse_max_update(update)
+    assert event.contact_phone == "+79990000000" and event.contact_verified is True
+    # и «сообщение» с вложениями не списком не роняет разбор
+    update["message"]["body"]["attachments"] = {"type": "contact"}
+    assert parse_max_update(update).contact_phone is None
+
+
 def test_contact_hash_variants_and_missing_token(monkeypatch):
     digest = hmac.new(BOT_TOKEN.encode(), VCF.encode(), hashlib.sha256).digest()
     assert verify_max_contact_hash(VCF, digest.hex(), bot_token=BOT_TOKEN)
@@ -413,6 +455,53 @@ async def test_webhook_pipeline_routes_callback_to_handler(callbacks, monkeypatc
     processor.register_max_callback("menu:", handler)
     await routes._process(_callback_update(), "trace-9")
     assert handled == [42] and [a["callback_id"] for a in callbacks] == ["cb-77"]
+
+
+async def test_a_parse_failure_is_logged_and_does_not_raise(monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+
+    process = AsyncMock()
+    monkeypatch.setattr(routes, "process_max_event", process)
+    monkeypatch.setattr(routes, "_load_tenant", AsyncMock(return_value=TENANT))
+
+    def broken(_update):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(routes, "parse_max_update", broken)
+    with caplog.at_level("ERROR", logger="whieda.max"):
+        await routes._process(_contact_update({}), "trace-1")   # не бросает
+    process.assert_not_awaited()
+    assert [r.getMessage() for r in caplog.records] == ["max_update_parse_failed"]
+
+
+def test_webhook_answers_200_for_a_weird_attachment_and_still_processes_the_message(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    monkeypatch.setattr(get_settings(), "max_webhook_secret", "s3cret")
+    process = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(routes, "process_max_event", process)
+    monkeypatch.setattr(routes, "_load_tenant", AsyncMock(return_value=TENANT))
+    update = _contact_update({"vcf_info": VCF, "max_info": ["не", "словарь"]}, text="привет")
+    update["message"]["body"]["attachments"].insert(0, {"type": "contact", "payload": "x"})
+    client = TestClient(create_app())
+    response = client.post(
+        "/v1/max/webhook", json=update, headers={"host": "127.0.0.1", "x-max-bot-api-secret": "s3cret"}
+    )
+    assert response.status_code == 200 and response.json() == {"ok": True}
+    process.assert_awaited_once()
+    event = process.await_args.args[1]
+    assert event.kind == "message" and event.text == "привет" and event.contact_phone is None
+    # тело-не-словарь тоже не роняет разбор: ответ 200, события нет
+    process.reset_mock()
+    response = client.post(
+        "/v1/max/webhook", json=["не", "словарь"], headers={"host": "127.0.0.1", "x-max-bot-api-secret": "s3cret"}
+    )
+    assert response.status_code == 200
+    process.assert_not_awaited()
 
 
 # --- отложенные сообщения в Max (outbox) -------------------------------------------------------

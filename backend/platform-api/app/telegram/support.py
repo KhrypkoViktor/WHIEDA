@@ -488,19 +488,25 @@ async def open_site_support(
     *,
     trace_id: str,
     user_text: str | None = None,
+    guest_header: str | None = None,
 ) -> dict[str, Any]:
     """«Поддержка» (menu, /support, the word, the cabinet button): a «site» ticket
     to the owner — site changes, contacts, photos, any question.
 
     ``user_text`` — своё приглашение человеку вместо «Обращение … открыто» + SUPPORT_INVITE_TEXT
-    (кнопка «Задать вопрос» гостя встречи, app/funnel/guest_bot.py): обращение, тема и шапка владельцу — те же.
+    (кнопка «Задать вопрос» гостя встречи, app/funnel/guest_bot.py): обращение и тема — те же.
+    ``guest_header`` — для того же пути: строка шапки владельцу вместо «Партнёр: …» и «Сайт: …»
+    («Гость Живой встречи, от партнёра elena»): гость — не партнёр, и сайта у него нет.
 
     Только у тенанта с правом ``site_support`` (seed в V16): иначе бот другой
     компании открывал бы обращение к владельцу WWC (ревью 26.09.2026)."""
     if not tenant.entitlements.get("site_support", False):
         await _send(source.chat_id, "Поддержка в этом боте не подключена.")
         return {"ok": False, "route": "support", "status": "feature_disabled", "trace_id": trace_id}
-    return await _open_tunnel(tenant, source, offer=None, trace_id=trace_id, channel=CHANNEL_SITE, invite_override=user_text)
+    return await _open_tunnel(
+        tenant, source, offer=None, trace_id=trace_id, channel=CHANNEL_SITE, invite_override=user_text,
+        guest_header=guest_header,
+    )
 
 
 def _closed_note(ticket: dict[str, Any]) -> str:
@@ -518,6 +524,7 @@ async def _open_tunnel(
     channel: str = CHANNEL_GEMINI,
     opened_by_attachment: str | None = None,
     invite_override: str | None = None,
+    guest_header: str | None = None,
 ) -> dict[str, Any]:
     kind = forum_kind_for_channel(channel)
     route = "support" if kind == FORUM_KIND_SITE else "services"
@@ -542,8 +549,9 @@ async def _open_tunnel(
     label = ticket_label(ticket)
     client = _client_label(ticket)
     if kind == FORUM_KIND_SITE:
-        # The owner sees who writes and which site it is about.
-        header = "\n".join(_site_header_lines(ticket, site))
+        # The owner sees who writes and which site it is about; a meeting guest (the «Задать вопрос»
+        # button) is neither a partner nor has a site: name link plus one «Гость …» line.
+        header = "\n".join([client, guest_header] if guest_header else _site_header_lines(ticket, site))
         user_text = f"Обращение {label} открыто.\n\n{SUPPORT_INVITE_TEXT}"
         if opened_by_attachment:
             user_text = attachment_opened_text(label, opened_by_attachment)

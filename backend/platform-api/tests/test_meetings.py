@@ -100,6 +100,34 @@ def test_recognised_command_with_a_wrong_format_gets_a_hint(text):
 
 
 @pytest.mark.parametrize("text", [
+    "встреча 05.11 19:30 zoom.us/j/1",                      # адрес без схемы
+    "встреча 05.11 19:30 us02web.zoom.us/j/81234567890",
+    "встреча 05.11 19:30 Разбор zoom.us/j/1 партнёров",     # и в середине названия
+    "встреча 05.11 19:30 zoom.us",                          # точка между буквами, слэша нет
+    "встреча 05.11 19:30 www.zoom.us",
+    "встреча 05.11 19:30 t.me/evil_channel",
+    "встреча 05.11 19:30 /j/1",                             # слэш без домена
+    "встреча 05.11 19:30 ftp://zoom.us/j/1",                # другая схема — тоже не ссылка встречи
+    "встреча 05.11 19:30 https://zoom.us/j/1 zoom.us/j/2",  # ссылка есть, но лишний адрес без схемы
+])
+def test_an_address_without_a_scheme_is_a_hint_not_a_public_title(text):
+    command = parse_command(text)
+    assert command == MeetingCommand("usage", hint=meetings_admin.USAGE_SCHEME)
+    assert meetings_admin.USAGE_SCHEME.startswith("Ссылка должна начинаться с https://")
+
+
+@pytest.mark.parametrize("text", [
+    "встреча 05.11 19:30 Разбор партнёров т.е. новичков",   # «т.е.» — не адрес: буквы по одной
+    "встреча 05.11 19:30 Живая встреча 2.0",                 # цифры вокруг точки
+    "встреча 05.11 19:30 Разбор. Вопросы",                   # точка в конце слова
+    "встреча 05.11 19:30 Q4 v2.1 итоги",
+])
+def test_ordinary_title_words_with_dots_are_still_titles(text):
+    command = parse_command(text)
+    assert command is not None and command.action == "create" and command.title and command.join_url is None
+
+
+@pytest.mark.parametrize("text", [
     "", "   ", "привет", "почта", "расскажи про встречи", "встречи в клубе по вторникам?", "встречи клуба",
     "встреча была отличной", "встречу перенесли", "встреча с партнёром завтра", "ссылка встречи нужна",
     "ссылка на встречу", "отменить встречу позже", "отменить подписку 12", "встречи?", "встречи создать-ка",
@@ -410,6 +438,15 @@ async def test_impossible_date_gets_a_hint_and_never_opens_the_database(owner_en
     assert result["status"] == "invalid_time" and result["ok"] is False
     assert sent == ["Такой даты или времени нет. Формат: встреча 05.11 19:30 [https://ссылка] [название]"]
     assert fake.connections == 0 and fake.rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_link_without_https_gets_the_scheme_hint_and_creates_nothing(owner_env, fake, sent):
+    result = await say("встреча 05.11 19:30 zoom.us/j/1")
+    assert result["status"] == "invalid_command" and result["ok"] is False
+    assert sent == [meetings_admin.USAGE_SCHEME]
+    assert "zoom.us" in meetings_admin.USAGE_SCHEME and "https://zoom.us/j/1" in meetings_admin.USAGE_SCHEME
+    assert fake.connections == 0 and fake.rows == []   # публично показываемое название не создано
 
 
 @pytest.mark.asyncio
