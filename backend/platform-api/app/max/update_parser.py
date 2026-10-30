@@ -1,7 +1,12 @@
-"""Разбор обновлений Max Bot API: bot_started (deep link ?start=payload) и message_created."""
+"""Разбор обновлений Max Bot API: bot_started (deep link ?start=payload), message_created
+и message_callback (нажатие кнопки inline-клавиатуры)."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +22,27 @@ class MaxEvent:
     username: str | None
     display_name: str
     raw: dict[str, Any]
+    # Вложение contact в личном сообщении (кнопка request_contact или «поделиться контактом»):
+    contact_phone: str | None = None  # нормализованный номер «+79990000000»
+    contact_user_id: int | None = None  # чей это контакт в Max (max_info.user_id); у чужого контакта не равен user_id
+    contact_verified: bool = False  # hash == HMAC-SHA256(токен бота, vcf_info): номер привязан к аккаунту отправителя в Max
+
+
+@dataclass
+class MaxCallbackEvent:
+    """Нажатие кнопки inline-клавиатуры (update_type message_callback)."""
+
+    callback_id: str  # идентификатор нажатия — для POST /answers
+    payload: str  # payload кнопки (callback), до 1024 символов
+    user_id: int  # кто нажал
+    chat_id: int | None  # чат сообщения с клавиатурой (None, если сообщение уже удалено)
+    message_id: str | None  # mid сообщения с клавиатурой
+    chat_type: str  # "dialog" | "chat" | "channel" (по умолчанию dialog)
+    username: str | None
+    display_name: str
+    raw: dict[str, Any]
+    kind: str = "callback"
+    text: str = ""  # для единообразия с MaxEvent (логи, общий разбор)
 
 
 def _user_name(user: dict[str, Any]) -> tuple[str | None, str]:
@@ -28,8 +54,23 @@ def _user_name(user: dict[str, Any]) -> tuple[str | None, str]:
     return None, name[:240]
 
 
-def parse_max_update(update: dict[str, Any]) -> MaxEvent | None:
+def parse_max_update(update: dict[str, Any]) -> MaxEvent | MaxCallbackEvent | None:
     kind = str((update or {}).get("update_type") or "")
+    if kind == "message_callback":
+        callback = update.get("callback") or {}
+        user = callback.get("user") or {}
+        callback_id = str(callback.get("callback_id") or "").strip()
+        if not callback_id or user.get("user_id") is None or user.get("is_bot"):
+            return None
+        message = update.get("message") or {}
+        recipient = message.get("recipient") or {}
+        username, display = _user_name(user)
+        mid = (message.get("body") or {}).get("mid")
+        return MaxCallbackEvent(
+            callback_id=callback_id, payload=str(callback.get("payload") or ""), user_id=int(user["user_id"]),
+            chat_id=_int_or_none(recipient.get("chat_id")), message_id=str(mid) if mid else None,
+            chat_type=str(recipient.get("chat_type") or "dialog"), username=username, display_name=display, raw=update,
+        )
     if kind in {"bot_added", "bot_removed"}:
         # Бота добавили в группу или канал Max (или убрали): только так узнаём чаты бота (V24).
         chat_id = _int_or_none(update.get("chat_id"))
@@ -80,6 +121,7 @@ def parse_max_update(update: dict[str, Any]) -> MaxEvent | None:
             kind="message", user_id=int(sender["user_id"]), chat_id=_int_or_none(recipient.get("chat_id")),
             text=text, username=username, display_name=display, raw=update,
         )
+        _attach_contact(event, (message.get("body") or {}).get("attachments"))
         # «/start ref_XXX», набранный руками, — тот же вход, что и deep link.
         lowered = text.lower()
         for prefix in START_PREFIXES:
@@ -96,3 +138,53 @@ def _int_or_none(value: Any) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+_TEL_RE = re.compile(r"^TEL[^:\r\n]*:(.+)$", re.IGNORECASE | re.MULTILINE)
+
+
+def _vcf_text(vcf: Any) -> str:
+    # Документация Max: перед хешированием «\r\n» в vcf_info — настоящие переносы строк.
+    return str(vcf or "").replace("\\r\\n", "\r\n")
+
+
+def contact_phone_from_vcf(vcf: str | None) -> str | None:
+    """Первая строка TEL из VCF («TEL;TYPE=cell:79990000000») → «+79990000000»; не телефон → None."""
+    from app.site_requests.contacts import normalize_phone
+
+    found = _TEL_RE.search(_vcf_text(vcf))
+    return normalize_phone(found.group(1).strip()) if found else None
+
+
+def verify_max_contact_hash(vcf_info: str | None, hash_value: str | None, *, bot_token: str | None = None) -> bool:
+    """Контакт прислан кнопкой request_contact, а не пересылкой: hash = HMAC-SHA256(токен бота, vcf_info)
+    (https://dev.max.ru/docs-api/use-cases/sending-messages/keyboard, «Кнопка request_contact»). Кодировку
+    документация не называет — принимаем hex и base64 (оба выводятся из секрета). Без токена — False."""
+    if not vcf_info or not hash_value:
+        return False
+    if bot_token is None:
+        from app.settings import get_settings
+
+        bot_token = get_settings().max_bot_token
+    if not bot_token:
+        return False
+    digest = hmac.new(bot_token.encode("utf-8"), _vcf_text(vcf_info).encode("utf-8"), hashlib.sha256).digest()
+    given = str(hash_value).strip()
+    return hmac.compare_digest(given.lower(), digest.hex()) or hmac.compare_digest(given, base64.b64encode(digest).decode())
+
+
+def _attach_contact(event: MaxEvent, attachments: Any) -> None:
+    """Вложение contact: payload {vcf_info, hash, max_info{user_id…}} (в запросе на отправку — ещё vcf_phone / contact_id)."""
+    for item in attachments if isinstance(attachments, list) else []:
+        if not isinstance(item, dict) or item.get("type") != "contact":
+            continue
+        payload = item.get("payload") or {}
+        vcf = payload.get("vcf_info")
+        phone = contact_phone_from_vcf(vcf)
+        if phone is None and payload.get("vcf_phone"):
+            phone = contact_phone_from_vcf("TEL:" + str(payload["vcf_phone"]))
+        event.contact_phone = phone
+        event.contact_user_id = _int_or_none((payload.get("max_info") or {}).get("user_id")) or _int_or_none(payload.get("contact_id"))
+        event.contact_verified = verify_max_contact_hash(vcf, payload.get("hash"))
+        return
+

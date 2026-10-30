@@ -11,6 +11,7 @@ from app.db import fetch_all, get_pool, tenant_connection
 from app.jobs.n8n_integration import trigger_lead_delivery
 from app.jobs.outbox import ensure_outbox_table
 from app.login_identities.service import login_cleanup_step
+from app.max.outbox import CHANNEL_MAX, payload_channel, send_max_outbox_payload
 from app.settings import get_settings
 from app.telegram.bindings import BotBindingContext, resolve_bot_binding_context
 from app.telegram.delivery import (
@@ -221,6 +222,10 @@ async def _signed_in_markup(markup: dict[str, Any], *, tenant_id: str, telegram_
 
 
 async def _send_due_notification(binding: BotBindingContext, payload: dict[str, Any]) -> None:
+    if payload_channel(payload) == CHANNEL_MAX:
+        # M3 (30.10.2026): payload.channel = "max" — то же расписание, статусы и попытки, отправка в Max.
+        await send_max_outbox_payload(payload)
+        return
     chat_id = str(payload.get("chat_id") or "").strip()
     text = str(payload.get("text") or "")
     if not chat_id or not text.strip():

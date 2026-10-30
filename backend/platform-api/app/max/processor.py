@@ -10,14 +10,16 @@ https://max.ru/<bot>?start=ref_<код>, закрепляется за приг�
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.service import handle_structured_query
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
 from app.leads.start_sources import parse_source_start_token, register_start_source, unknown_source_start
-from app.max.client import send_max_text
+from app.max.client import answer_max_callback, send_max_text
 from app.max.my_leads import is_my_leads_text, my_leads_answer
-from app.max.update_parser import MaxEvent
+from app.max.update_parser import MaxCallbackEvent, MaxEvent
 from app.referral_bonus.service import inviter_card, parse_referral_start_token, parse_site_start_token
 from app.telegram.modes import should_deliver_telegram_response
 from app.tenancy import TenantContext
@@ -232,7 +234,9 @@ async def handle_max_group_event(tenant: TenantContext, event: MaxEvent, trace_i
     return {"route": "max_group", "trace_id": trace_id, **result}
 
 
-async def process_max_event(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
+async def process_max_event(tenant: TenantContext, event: MaxEvent | MaxCallbackEvent, trace_id: str) -> dict[str, Any]:
+    if event.kind == "callback":
+        return await handle_max_callback(tenant, event, trace_id)
     if event.kind in {"chat_added", "chat_removed"}:
         return await handle_max_chat_membership(tenant, event, trace_id)
     if event.kind in {"group_message", "member_added"}:
@@ -240,3 +244,84 @@ async def process_max_event(tenant: TenantContext, event: MaxEvent, trace_id: st
     if event.kind == "start":
         return await handle_max_start(tenant, event, trace_id)
     return await handle_max_message(tenant, event, trace_id)
+
+
+# --- Нажатия кнопок (M2, 30.10.2026) ---------------------------------------------------------------
+# Сценарии подключают свои обработчики по префиксу payload кнопки: register_max_callback("menu:", handler).
+# Диспетчер находит обработчик (самый длинный подходящий префикс), вызывает его и в любом случае отвечает
+# на нажатие (POST /answers), чтобы у человека не крутился индикатор. Неизвестный payload — тихий ответ.
+
+
+@dataclass
+class MaxCallbackAnswer:
+    """Что обработчик просит показать в ответ на нажатие (всё необязательно)."""
+
+    notification: str | None = None  # одноразовое уведомление человеку
+    text: str | None = None  # заменить текст сообщения с кнопками
+    buttons: list[list[dict[str, Any]]] | None = None  # заменить клавиатуру сообщения (max_button_*)
+
+
+MaxCallbackHandler = Callable[[TenantContext, MaxCallbackEvent, str], Awaitable["MaxCallbackAnswer | dict[str, Any] | None"]]
+_CALLBACK_HANDLERS: dict[str, MaxCallbackHandler] = {}
+
+
+def register_max_callback(prefix: str, handler: MaxCallbackHandler) -> None:
+    """Обработчик нажатий для payload, начинающихся с prefix. handler(tenant, event, trace_id) возвращает
+    MaxCallbackAnswer, словарь с теми же полями или None (тихий ответ). Повторная регистрация того же префикса
+    другим обработчиком — ошибка (два сценария не должны молча перехватывать друг друга)."""
+    if not prefix or not prefix.strip():
+        raise ValueError("max_callback_prefix_required")
+    current = _CALLBACK_HANDLERS.get(prefix)
+    if current is not None and current is not handler:
+        raise ValueError(f"max_callback_prefix_taken:{prefix}")
+    _CALLBACK_HANDLERS[prefix] = handler
+
+
+def unregister_max_callback(prefix: str) -> None:
+    _CALLBACK_HANDLERS.pop(prefix, None)
+
+
+def resolve_max_callback(payload: str) -> tuple[str, MaxCallbackHandler] | None:
+    matches = [prefix for prefix in _CALLBACK_HANDLERS if payload.startswith(prefix)]
+    if not matches:
+        return None
+    prefix = max(matches, key=len)
+    return prefix, _CALLBACK_HANDLERS[prefix]
+
+
+def _as_callback_answer(result: Any) -> MaxCallbackAnswer:
+    if isinstance(result, MaxCallbackAnswer):
+        return result
+    if isinstance(result, dict):
+        return MaxCallbackAnswer(
+            notification=result.get("notification"), text=result.get("text"), buttons=result.get("buttons")
+        )
+    return MaxCallbackAnswer()
+
+
+async def handle_max_callback(tenant: TenantContext, event: MaxCallbackEvent, trace_id: str) -> dict[str, Any]:
+    found = resolve_max_callback(event.payload)
+    answer = MaxCallbackAnswer()
+    status = "unknown"
+    prefix = None
+    if found is not None:
+        prefix, handler = found
+        status = "handled"
+        try:
+            answer = _as_callback_answer(await handler(tenant, event, trace_id))
+        except Exception:  # noqa: BLE001 — человеку всё равно отвечаем, ошибку только логируем
+            logger.exception("max_callback_handler_failed", extra={"trace_id": trace_id, "prefix": prefix})
+            status = "handler_failed"
+    answered = False
+    try:
+        result = await answer_max_callback(
+            event.callback_id, notification=answer.notification, text=answer.text, buttons=answer.buttons
+        )
+        answered = bool((result or {}).get("ok"))
+    except Exception:  # noqa: BLE001 — сеть или не настроенный токен: webhook уже получил 200
+        logger.exception("max_callback_answer_failed", extra={"trace_id": trace_id})
+    logger.info(
+        "max_callback",
+        extra={"trace_id": trace_id, "status": status, "prefix": prefix, "answered": answered, "user_ref": str(event.user_id)[-4:]},
+    )
+    return {"ok": status != "handler_failed", "route": "max_callback", "status": status, "prefix": prefix, "answered": answered, "trace_id": trace_id}
