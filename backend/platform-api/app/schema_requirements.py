@@ -77,6 +77,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "academy_daily_checkins",
             # Кто открыл бота витрины по ссылке с рекламы (platform_academy_ad_opens_v37.sql, 17.10.2026).
             "academy_ad_opens",
+            # Метка источника в ссылке в бота: /start src_<метка> (platform_bot_start_sources_v42.sql, 30.10.2026).
+            "bot_start_sources",
             # Отметка «приложение WWC установлено» и сообщения об открытии мини-курса
             # (platform_academy_unlock_v39.sql, 19.10.2026).
             "academy_app_installs",

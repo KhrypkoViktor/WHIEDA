@@ -14,6 +14,7 @@ from typing import Any
 
 from app.advisor.service import handle_structured_query
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
+from app.leads.start_sources import parse_source_start_token, register_start_source, unknown_source_start
 from app.max.client import send_max_text
 from app.max.my_leads import is_my_leads_text, my_leads_answer
 from app.max.update_parser import MaxEvent
@@ -60,11 +61,44 @@ async def _reply(event: MaxEvent, text: str) -> None:
         await send_max_text(user_id=event.user_id, text=text)
 
 
+async def _handle_max_source_start(tenant: TenantContext, event: MaxEvent, source: Any, trace_id: str) -> dict[str, Any]:
+    """Метка источника (V42): ``?start=src_<метка>[_<код>]`` или незнакомый параметр — обычный старт плюс строка
+    в bot_start_sources; код партнёра после метки — первое касание партнёра, как у ref_<код>."""
+
+    async def accept_partner(invite_code: str) -> Any:
+        return await accept_channel_referral_start(
+            tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id, channel_chat_id=event.chat_id,
+            username=event.username, display_name=event.display_name, invite_code=invite_code,
+        )
+
+    async def ensure_actor() -> Any:
+        return await ensure_channel_actor(
+            tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id, channel_chat_id=event.chat_id,
+            username=event.username, display_name=event.display_name,
+        )
+
+    result = await register_start_source(
+        tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id,
+        source=source, accept_partner=accept_partner, ensure_actor=ensure_actor,
+    )
+    await _reply(event, WELCOME_PLAIN)
+    logger.info(
+        "max_start_source",
+        extra={"trace_id": trace_id, "tag": source.tag, "first_seen": result.first_seen, "recorded": result.recorded},
+    )
+    return {"ok": True, "route": "max_start", "status": "source", "tag": source.tag, "trace_id": trace_id}
+
+
 async def handle_max_start(tenant: TenantContext, event: MaxEvent, trace_id: str) -> dict[str, Any]:
     payload = event.text
     invite_code = parse_referral_start_token(payload)
     if invite_code is None:
         invite_code = parse_site_start_token(payload)
+    if invite_code is None and payload:
+        # Не ref_/site_: метка источника src_<метка>[_<код>] или незнакомый параметр — не ошибка и не «отбросили».
+        return await _handle_max_source_start(
+            tenant, event, parse_source_start_token(payload) or unknown_source_start(), trace_id
+        )
     if invite_code is None or not invite_code:
         # Старт без приглашения: человек есть, атрибуции нет.
         await ensure_channel_actor(

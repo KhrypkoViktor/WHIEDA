@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from typing import Any
+
+from fastapi import HTTPException
 
 from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
@@ -20,6 +23,11 @@ from app.leads.actor_link import (
     link_lead_actor_by_username,
     merge_anonymous_actor_into_partner,
     parse_bind_start_token,
+)
+from app.leads.start_sources import (
+    parse_source_start_token,
+    register_start_source,
+    unknown_source_start,
 )
 from app.onboarding.commands import parse_onboarding_command
 from app.onboarding.service import handle_onboarding_text
@@ -218,12 +226,20 @@ async def handle_start_token(
     token: str,
     trace_id: str,
 ) -> dict[str, Any]:
-    result = await exchange_telegram_link_token(
-        tenant.tenant_id,
-        token,
-        telegram_user_id=msg.user_id,
-        telegram_chat_id=msg.chat_id,
-    )
+    try:
+        result = await exchange_telegram_link_token(
+            tenant.tenant_id,
+            token,
+            telegram_user_id=msg.user_id,
+            telegram_chat_id=msg.chat_id,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if exc.status_code != 404 or detail.get("error") != "token_not_found":
+            raise
+        # Не токен связи с сайтом, а чужая или опечатанная метка: не ошибка, а обычный /start.
+        await record_source_start(tenant, msg, unknown_source_start(), trace_id=trace_id)
+        return {"ok": True, "route": UNKNOWN_START_ROUTE, "status": "token_not_found", "trace_id": trace_id}
     lines = ["Связь с сайтом установлена."]
     if result.mentor_display_name:
         lines.append(f"Ваш наставник: {result.mentor_display_name}.")
@@ -237,6 +253,34 @@ async def handle_start_token(
     lines.append("Напишите вопрос по товару или «начать обучение» для 7-дневного плана.")
     await deliver_text(msg.chat_id, "\n".join(lines))
     return {"ok": True, "route": "start_token", "link_id": result.link_id, "trace_id": trace_id}
+
+
+UNKNOWN_START_ROUTE = "start_unknown"
+
+
+async def record_source_start(
+    tenant: TenantContext, msg: TelegramMessage, source: Any, *, trace_id: str
+) -> None:
+    """Метка источника /start src_<метка>[_<код>] (V42): строка в bot_start_sources и, если после метки
+    годный код партнёра, первое касание партнёра. Приветствие и согласие — те же, что у голого /start:
+    вызывающий код продолжает разбор как для «/start». Сбой записи /start не ломает."""
+    if msg.chat_type != "private":
+        return
+
+    async def accept_partner(invite_code: str) -> Any:
+        return await accept_referral_start(
+            tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id,
+            invite_code=invite_code, raw_update=msg.raw,
+        )
+
+    result = await register_start_source(
+        tenant.tenant_id, channel="telegram", channel_user_id=msg.user_id,
+        source=source, accept_partner=accept_partner,
+    )
+    logger.info(
+        "telegram_start_source",
+        extra={"trace_id": trace_id, "tag": source.tag, "first_seen": result.first_seen, "recorded": result.recorded},
+    )
 
 
 async def handle_referral_start_token(
@@ -745,7 +789,17 @@ async def _process_core_telegram_update_scoped(
                 await _manual_operation_notice(msg.chat_id)
                 return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
             return await handle_pro_start(tenant, msg, trace_id)
-        return await handle_start_token(tenant, msg, start_token, trace_id)
+        source_start = parse_source_start_token(start_token)
+        if source_start is not None:
+            # Ссылка с меткой источника (V42): запомнили метку, дальше — обычный /start.
+            await record_source_start(tenant, msg, source_start, trace_id=trace_id)
+            msg = dataclasses.replace(msg, text="/start")
+        else:
+            start_result = await handle_start_token(tenant, msg, start_token, trace_id)
+            if not (isinstance(start_result, dict) and start_result.get("route") == UNKNOWN_START_ROUTE):
+                return start_result
+            # Незнакомый параметр: метка 'unknown' записана, человек получает обычный /start.
+            msg = dataclasses.replace(msg, text="/start")
 
     if msg.chat_type == "private":
         rhythm_result = await try_handle_rhythm_text(tenant, msg, trace_id=trace_id)
