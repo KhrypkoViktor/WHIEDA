@@ -41,9 +41,11 @@ from app.funnel.system_word import FUNNEL_TENANT_ID, send_tour_max, send_tour_te
 from app.leads.channels import accept_channel_referral_start
 from app.max.client import send_max_text
 from app.referral_bonus.service import accept_referral_start
+from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
 from app.telegram.navigation import is_newcomer_panel_request
+from app.telegram.support import open_site_support, try_relay_user_message
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
 
@@ -109,6 +111,16 @@ async def _run_db_action(tenant_id: str, channel: str, user_id: int, action: Gue
 
 def _user_ref(user_id: int) -> str:
     return str(user_id)[-4:]
+
+
+# Публичное имя Telegram-бота WWC, если PLATFORM_TELEGRAM_BOT_USERNAME не задано (на стенде оно задано своим ботом).
+DEFAULT_TELEGRAM_BOT = "WHIEDA_Advisor_bot"
+
+
+def telegram_bot_url() -> str:
+    """Ссылка на Telegram-бота WWC для людей из Max (там обращений в поддержку нет)."""
+    name = str(get_settings().telegram_bot_username or "").lstrip("@").strip() or DEFAULT_TELEGRAM_BOT
+    return f"https://t.me/{name}"
 
 
 async def _guest_menu(tenant_id: str, channel: str, user_id: int) -> Reply | None:
@@ -189,6 +201,12 @@ async def try_handle_guest_menu_text(
     reply = await _guest_menu(tenant.tenant_id, "telegram", msg.user_id)
     if reply is None:
         return None
+    if not (is_guest_menu_word(text) or is_newcomer_panel_request(text)):
+        # Начало вопроса с приветствия («Здравствуйте, как перенести встречу?») у гостя с открытым обращением
+        # («Задать вопрос») — это вопрос владельцу, а не просьба показать меню: пересылаем, как любой его текст.
+        relayed = await try_relay_user_message(tenant, msg, trace_id=trace_id)
+        if relayed is not None:
+            return relayed
     await _send_telegram(msg.chat_id, reply)
     logger.info("guest_menu", extra={"channel": "telegram", "user_ref": _user_ref(msg.user_id), "trace_id": trace_id})
     return {"ok": True, "route": "guest_menu", "status": "shown", "trace_id": trace_id}
@@ -226,8 +244,16 @@ async def try_handle_guest_callback(
         tour = await send_tour_telegram(tenant, callback.chat_id, trace_id=trace_id)
         return {**base, "status": "tour", "tour": tour.get("status")}
     if action.kind == "ask":
-        await send_telegram_text(chat_id=str(callback.chat_id), text=texts.ASK_PROMPT, bot_token=bot_token)
-        return {**base, "status": "ask"}
+        # «Задать вопрос» → обращение в поддержку у владельца: то же, что кнопка «Поддержка» (тема в форуме или
+        # личка владельца, шапка с именем человека); дальше любой текст гостя пересылается владельцу, пока
+        # обращение открыто (try_relay_user_message в цепочке процессора). Приглашение — свой текст воронки.
+        try:
+            support = await open_site_support(tenant, callback, trace_id=trace_id or "", user_text=texts.ASK_PROMPT)
+        except Exception as exc:  # noqa: BLE001 — на кнопку надо ответить, даже если поддержка не отозвалась
+            logger.warning("guest_ask_failed", extra={"channel": "telegram", "trace_id": trace_id, **safe_error(exc)})
+            await send_telegram_text(chat_id=str(callback.chat_id), text=texts.GUEST_ERROR, bot_token=bot_token)
+            return {**base, "ok": False, "status": "error"}
+        return {**base, "ok": bool(support.get("ok", True)), "status": "ask", "support": support.get("status")}
     try:
         result = await _run_db_action(tenant.tenant_id, "telegram", callback.user_id, action)
     except Exception as exc:  # noqa: BLE001 — на кнопку надо ответить, даже если база не отозвалась
@@ -309,7 +335,8 @@ async def max_guest_callback(tenant: TenantContext, event: Any, trace_id: str) -
         await send_tour_max(tenant, chat_id=chat_id, user_id=event.user_id, trace_id=trace_id)
         return None
     if action.kind == "ask":
-        await send_max_text(chat_id=chat_id, user_id=event.user_id, text=texts.ASK_PROMPT)
+        # Обращений в поддержку в Max нет (они живут на Telegram-id): ведём в Telegram-бота.
+        await send_max_text(chat_id=chat_id, user_id=event.user_id, text=texts.ASK_MAX_TEXT.format(url=telegram_bot_url()))
         return None
     try:
         result = await _run_db_action(tenant.tenant_id, "max", event.user_id, action)

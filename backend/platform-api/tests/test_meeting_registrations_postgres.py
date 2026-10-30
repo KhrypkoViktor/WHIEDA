@@ -14,6 +14,7 @@ Telegram и Max не вызываются: отправка — мок.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +23,7 @@ from unittest.mock import AsyncMock, patch
 import psycopg
 import pytest
 
-from tests.postgres_testkit import SQL_DIR, temporary_database
+from tests.postgres_testkit import MIGRATIONS, SQL_DIR, temporary_database
 from tests.test_crm_postgres import LEAD_TABLES, SEED, _binding
 
 V44 = "platform_website_leads_meeting_v44.sql"
@@ -97,7 +98,8 @@ def test_meeting_registrations_end_to_end(monkeypatch):
     with temporary_database("whieda_meeting_regs") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
             # В testkit website_leads ещё нет: V46 не падает без таблицы (do-блок с проверкой), и дважды подряд.
-            db.apply_migrations(conn, twice=True)
+            # platform_service_sales_v10 — колонки форума поддержки, которые читает «Задать вопрос» (open_site_support).
+            db.apply_migrations(conn, (*MIGRATIONS, "platform_service_sales_v10.sql"), twice=True)
             columns = dict(
                 conn.execute(
                     "select column_name, data_type from information_schema.columns where table_name = 'meeting_registrations'"
@@ -619,5 +621,61 @@ def test_meeting_registrations_end_to_end(monkeypatch):
             async with tenant_connection("other") as conn:
                 assert await resolve_guest(conn, "other", "telegram", 555001) is None
                 assert await load_lead_by_public_id(conn, "other", lead_a["public_id"]) is None
+
+            # ---- 15. «Задать вопрос»: обращение в поддержку у владельца (тот же механизм, что у «Поддержки») --------
+            import itertools
+
+            from app.settings import get_settings
+            from app.support.service import get_open_ticket_for_user
+            from app.telegram.support import try_relay_user_message
+
+            owner_id = 688931415
+            monkeypatch.setenv("PLATFORM_BILLING_OWNER_TELEGRAM_ID", str(owner_id))
+            get_settings.cache_clear()
+            support_tenant = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+            admin_ids = itertools.count(41)
+            to_guest = AsyncMock(return_value={"ok": True, "message_id": 1})
+            to_owner = AsyncMock(side_effect=lambda *a, **kw: {"ok": True, "message_id": next(admin_ids)})
+            header = AsyncMock(return_value={"ok": True, "message_id": 40})
+            with binding_context_scope(_binding()), patch.object(guest_bot, "answer_callback_query", AsyncMock()), \
+                    patch.object(guest_bot, "send_telegram_text", sent), \
+                    patch("app.telegram.support._send", to_guest), patch("app.telegram.support._send_to_admin", to_owner), \
+                    patch("app.telegram.support._send_site_header", header):
+                assert await get_open_ticket_for_user("whieda", user_telegram_user_id=555001) is None
+                asked = await guest_bot.try_handle_guest_callback(support_tenant, callback(555001, "funnel:ask"), trace_id="t")
+                assert asked == {"ok": True, "route": "guest_callback", "trace_id": "t", "status": "ask", "support": "ticket_opened"}
+                ticket = await get_open_ticket_for_user("whieda", user_telegram_user_id=555001)
+                assert ticket is not None and ticket["channel_code"] == "site" and int(ticket["admin_telegram_user_id"]) == owner_id
+                # человеку — текст воронки (одно сообщение), владельцу — обычная шапка обращения с именем
+                to_guest.assert_awaited_once_with(555001, "Напишите вопрос одним сообщением — передам Виктору")
+                assert f"#S-{ticket['ticket_no']}" in header.await_args.args[1]
+
+                # следующий обычный текст гостя — владельцу, тем же путём, что у любого обращения
+                relayed = await try_relay_user_message(support_tenant, message(555001, "Как попасть на встречу из другого города?"), trace_id="t")
+                assert relayed["route"] == "support_relay" and relayed["direction"] == "user_to_admin" and relayed["duplicate"] is False
+                assert "Как попасть на встречу из другого города?" in to_owner.await_args.args[1]
+                # вопрос с приветствия — тоже владельцу, а не меню гостя
+                second = dataclasses.replace(message(555001, "Привет! Можно перенести на вторник?"), message_id=2)  # другое сообщение Telegram
+                greeted = await guest_bot.try_handle_guest_menu_text(support_tenant, second, trace_id="t")
+                assert greeted["route"] == "support_relay"
+                assert "Можно перенести на вторник?" in to_owner.await_args.args[1]
+                # а слово «меню» по-прежнему открывает меню гостя, обращение остаётся открытым
+                menu = await guest_bot.try_handle_guest_menu_text(support_tenant, message(555001, "меню"), trace_id="t")
+                assert menu["route"] == "guest_menu"
+                assert (await get_open_ticket_for_user("whieda", user_telegram_user_id=555001))["ticket_id"] == ticket["ticket_id"]
+                # второе «Задать вопрос» — то же обращение, приглашение приходит снова
+                to_guest.reset_mock()
+                again_asked = await guest_bot.try_handle_guest_callback(support_tenant, callback(555001, "funnel:ask"), trace_id="t")
+                assert again_asked["support"] == "ticket_opened"
+                assert (await get_open_ticket_for_user("whieda", user_telegram_user_id=555001))["ticket_id"] == ticket["ticket_id"]
+                to_guest.assert_awaited_once_with(555001, "Напишите вопрос одним сообщением — передам Виктору")
+                assert len(await rows("select 1 from support_tickets where user_telegram_user_id = 555001")) == 1
+            conversation = await rows(
+                "select direction, text from support_messages where ticket_id = %s::uuid and direction = 'user_to_admin' order by created_at, message_id",
+                (str(ticket["ticket_id"]),),
+            )
+            assert sorted(r["text"] for r in conversation) == [
+                "Как попасть на встречу из другого города?", "Привет! Можно перенести на вторник?",
+            ]
 
         db.run_with_app(proof)

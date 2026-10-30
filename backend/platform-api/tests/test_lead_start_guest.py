@@ -883,10 +883,137 @@ async def test_the_tour_button_sends_the_tour_the_same_way_as_the_word(tg):
     tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1")
 
 
-async def test_the_ask_button_only_asks_for_the_question_and_the_next_text_goes_on_as_usual(tg):
-    result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:ask"), trace_id="t1")
-    assert result["status"] == "ask"
-    tg.text.assert_awaited_once_with(chat_id=str(USER), text="Напишите вопрос одним сообщением.", bot_token=BOT_TOKEN)
+ASK_TEXT = "Напишите вопрос одним сообщением — передам Виктору"
+
+
+async def test_the_ask_button_opens_the_owner_support_ticket_with_the_funnel_invite(tg):
+    support = AsyncMock(return_value={"ok": True, "route": "support", "status": "ticket_opened"})
+    callback = tg_cb("funnel:ask")
+    with patch.object(guest_bot, "open_site_support", support):
+        result = await guest_bot.try_handle_guest_callback(TENANT, callback, trace_id="t1")
+    assert result == {"ok": True, "route": "guest_callback", "trace_id": "t1", "status": "ask", "support": "ticket_opened"}
+    # то же обращение, что у кнопки «Поддержка»; приглашение человеку — текст воронки, а не стандартный
+    support.assert_awaited_once_with(TENANT, callback, trace_id="t1", user_text=ASK_TEXT)
+    assert texts.ASK_PROMPT == ASK_TEXT
+    tg.text.assert_not_awaited()          # приглашение отправляет сама поддержка, второго сообщения нет
+    tg.answer.assert_awaited_once_with(callback_query_id="cq-1", bot_token=BOT_TOKEN)
+
+
+async def test_the_ask_button_reports_a_support_that_is_not_connected(tg):
+    support = AsyncMock(return_value={"ok": False, "route": "support", "status": "no_admin"})
+    with patch.object(guest_bot, "open_site_support", support):
+        result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:ask"), trace_id="t1")
+    assert result["ok"] is False and result["status"] == "ask" and result["support"] == "no_admin"
+
+
+async def test_the_ask_button_survives_a_support_failure(tg):
+    with patch.object(guest_bot, "open_site_support", AsyncMock(side_effect=RuntimeError("db down"))):
+        result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:ask"), trace_id="t1")
+    assert result["ok"] is False and result["status"] == "error"
+    assert tg.text.await_args.kwargs["text"] == "Не получилось. Попробуйте ещё раз чуть позже."
+
+
+class TicketWorld:
+    """Фейки вокруг ``open_site_support``: тикет в памяти, отправка — моки."""
+
+    def __init__(self, monkeypatch, *, created: bool = True):
+        from app.telegram import support
+
+        self.ticket = {
+            "ticket_id": "t-1", "ticket_no": 12, "created": created, "channel_code": "site", "user_telegram_user_id": USER,
+            "user_chat_id": USER, "user_display": "Анна (@anna)", "admin_telegram_user_id": 7001, "forum_chat_id": None,
+            "forum_thread_id": None, "offer_title": None,
+        }
+        self.sent = AsyncMock(return_value={"ok": True, "message_id": 1})
+        self.to_admin = AsyncMock(return_value={"ok": True, "message_id": 2})
+        self.header = AsyncMock(return_value={"ok": True, "message_id": 3})
+        self.opened = AsyncMock(side_effect=lambda *a, **kw: self.ticket)
+        monkeypatch.setattr(support, "owner_id", lambda: 7001)
+        monkeypatch.setattr(support, "open_or_reuse_ticket", self.opened)
+        monkeypatch.setattr(support, "_site_card", AsyncMock(return_value=None))
+        monkeypatch.setattr(support, "_open_forum_topic", AsyncMock(side_effect=lambda tenant, ticket, **kw: ticket))
+        monkeypatch.setattr(support, "_send", self.sent)
+        monkeypatch.setattr(support, "_send_to_admin", self.to_admin)
+        monkeypatch.setattr(support, "_send_site_header", self.header)
+        monkeypatch.setattr(support, "record_relayed_message", AsyncMock(return_value={"duplicate": False}))
+        self.support = support
+
+
+async def test_open_site_support_sends_the_custom_invite_instead_of_the_standard_one(monkeypatch):
+    world = TicketWorld(monkeypatch)
+    TENANT_SUPPORT = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+    result = await world.support.open_site_support(TENANT_SUPPORT, tg_cb("funnel:ask"), trace_id="t1", user_text=ASK_TEXT)
+    assert result["status"] == "ticket_opened" and result["kind"] == "site" and result["ticket"] == "#S-12"
+    world.sent.assert_awaited_once_with(USER, ASK_TEXT)
+    world.header.assert_awaited_once()                       # владельцу — обычная шапка обращения
+    assert "Анна" in world.header.await_args.args[1]
+
+
+async def test_open_site_support_without_a_custom_invite_is_unchanged(monkeypatch):
+    world = TicketWorld(monkeypatch)
+    TENANT_SUPPORT = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+    await world.support.open_site_support(TENANT_SUPPORT, tg_cb("support"), trace_id="t1")
+    assert world.sent.await_args.args == (USER, f"Обращение #S-12 открыто.\n\n{world.support.SUPPORT_INVITE_TEXT}")
+
+
+async def test_a_second_ask_reuses_the_ticket_and_still_gets_the_invite(monkeypatch):
+    world = TicketWorld(monkeypatch, created=False)
+    TENANT_SUPPORT = TenantContext(tenant_id="whieda", status="active", display_name="WHIEDA", entitlements={"site_support": True})
+    await world.support.open_site_support(TENANT_SUPPORT, tg_cb("funnel:ask"), trace_id="t1", user_text=ASK_TEXT)
+    world.sent.assert_awaited_once_with(USER, ASK_TEXT)
+    world.header.assert_not_awaited()                         # шапка не дублируется
+    assert "снова нажал" in world.to_admin.await_args.args[1]
+
+
+async def test_a_guest_text_after_ask_is_relayed_to_the_owner_by_the_support_chain(tg, whieda_tenant, whieda_bot_binding, monkeypatch):
+    guest_world(monkeypatch, guest_context=GUEST)
+    relayed = {"ok": True, "route": "support_relay", "direction": "user_to_admin", "ticket": "#S-12"}
+    with ExitStack() as stack:
+        mocks = _processor_stack(stack)
+        mocks["try_relay_user_message"].return_value = relayed
+        result = await process_core_telegram_update(
+            whieda_tenant, _update({"text": "Как попасть на встречу, если я в другом городе?"}, user_id=USER), "t1", binding=whieda_bot_binding
+        )
+    assert result == relayed
+    mocks["try_relay_user_message"].assert_awaited_once()
+    tg.text.assert_not_awaited()
+
+
+@pytest.mark.parametrize("text", ["Привет, как перенести встречу?", "Добрый день! Я не смогу прийти", "hello, question"])
+async def test_a_question_that_starts_with_a_greeting_goes_to_the_owner_while_the_ticket_is_open(tg, monkeypatch, text):
+    guest_world(monkeypatch, guest_context=GUEST, view=(None, [TUE]))
+    relay = AsyncMock(return_value={"ok": True, "route": "support_relay"})
+    monkeypatch.setattr(guest_bot, "try_relay_user_message", relay)
+    result = await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg(text), trace_id="t1")
+    assert result == {"ok": True, "route": "support_relay"}
+    relay.assert_awaited_once()
+    tg.text.assert_not_awaited()                              # меню не показано
+
+
+async def test_a_greeting_without_a_ticket_still_shows_the_guest_menu(tg, monkeypatch):
+    guest_world(monkeypatch, guest_context=GUEST, view=(None, [TUE]))
+    monkeypatch.setattr(guest_bot, "try_relay_user_message", AsyncMock(return_value=None))
+    result = await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg("привет"), trace_id="t1")
+    assert result["route"] == "guest_menu"
+    tg.text.assert_awaited_once()
+
+
+@pytest.mark.parametrize("text", ["/start", "меню", "Меню!", "/menu", "с чего начать"])
+async def test_the_menu_words_show_the_menu_even_while_the_ticket_is_open(tg, monkeypatch, text):
+    guest_world(monkeypatch, guest_context=GUEST, view=(None, [TUE]))
+    relay = AsyncMock(return_value={"ok": True, "route": "support_relay"})
+    monkeypatch.setattr(guest_bot, "try_relay_user_message", relay)
+    result = await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg(text), trace_id="t1")
+    assert result["route"] == "guest_menu"
+    relay.assert_not_awaited()
+
+
+async def test_the_relay_is_never_tried_for_somebody_who_is_not_a_guest(tg, monkeypatch):
+    guest_world(monkeypatch, guest_context=None)
+    relay = AsyncMock()
+    monkeypatch.setattr(guest_bot, "try_relay_user_message", relay)
+    assert await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg("привет, как дела"), trace_id="t1") is None
+    relay.assert_not_awaited()
 
 
 @pytest.mark.parametrize(("tenant", "data"), [
@@ -1177,11 +1304,28 @@ async def test_each_max_button_calls_its_action(mx, monkeypatch, payload, name, 
     mx.text.assert_awaited_once()
 
 
-async def test_the_max_tour_and_ask_buttons(mx):
+async def test_the_max_tour_button(mx):
     await max_processor.process_max_event(TENANT, max_callback("funnel:tour"), "t1")
     mx.tour.assert_awaited_once_with(TENANT, chat_id=555, user_id=USER, trace_id="t1")
-    await max_processor.process_max_event(TENANT, max_callback("funnel:ask"), "t1")
-    mx.text.assert_awaited_once_with(chat_id=555, user_id=USER, text="Напишите вопрос одним сообщением.")
+    mx.text.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("username", "url"), [
+    (None, "https://t.me/WHIEDA_Advisor_bot"), ("", "https://t.me/WHIEDA_Advisor_bot"),
+    ("@wwc_stage_bot", "https://t.me/wwc_stage_bot"), ("wwc_stage_bot", "https://t.me/wwc_stage_bot"),
+])
+async def test_the_max_ask_button_points_to_the_telegram_bot_because_max_has_no_support_tickets(mx, username, url):
+    with patch.object(guest_bot, "get_settings", return_value=SimpleNamespace(telegram_bot_username=username)):
+        result = await max_processor.process_max_event(TENANT, max_callback("funnel:ask"), "t1")
+    assert result["status"] == "handled" and result["answered"] is True
+    text = mx.text.await_args.kwargs["text"]
+    assert mx.text.await_args.kwargs["chat_id"] == 555 and mx.text.await_args.kwargs["user_id"] == USER
+    assert text == (
+        f"Вопрос Виктору удобнее задать в Telegram-боте WWC: {url}\n"
+        "Нажмите «Старт», затем напишите «Поддержка» — обращение сразу попадёт к нему."
+    )
+    mx.text.assert_awaited_once()
+    assert "buttons" not in mx.text.await_args.kwargs
 
 
 async def test_the_max_consult_button_keeps_the_old_placeholder(mx, monkeypatch):
