@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +22,27 @@ logger = logging.getLogger("whieda.max")
 
 class MaxNotConfigured(RuntimeError):
     pass
+
+
+@lru_cache(maxsize=1)
+def max_ssl_context() -> ssl.SSLContext:
+    """TLS-контекст для вызовов к API Max: системные корни + цепочка Минцифры (PLATFORM_MAX_CA_FILE).
+
+    С 19.07.2026 platform-api2.max.ru отдаёт сертификат НУЦ Минцифры; httpx по умолчанию верит
+    только certifi, системное хранилище не читает. Цепочку добавляем лишь в этот контекст, а не в
+    общее хранилище процесса. Нет файла или он не читается — предупреждение в лог один раз
+    (результат кэшируется) и контекст по умолчанию; проверку сертификата не отключаем никогда.
+    """
+    context = ssl.create_default_context()
+    ca_file = get_settings().max_ca_file
+    if not ca_file or not Path(ca_file).is_file():
+        logger.warning("max_ca_file_missing", extra={"path": ca_file})
+        return context
+    try:
+        context.load_verify_locations(cafile=ca_file)
+    except (OSError, ssl.SSLError) as exc:
+        logger.warning("max_ca_file_unreadable", extra={"path": ca_file, "error": type(exc).__name__})
+    return context
 
 
 def _headers() -> dict[str, str]:
@@ -49,7 +73,7 @@ async def send_max_text(
     if disable_link_preview:
         params["disable_link_preview"] = "true"
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.post(f"{base}/messages", params=params, headers=_headers(), json={"text": text[:4000]})
     if resp.status_code >= 400:
         logger.warning("max_send_failed", extra={"status": resp.status_code, "body": resp.text[:300]})
@@ -81,7 +105,7 @@ async def send_max_message(
     if reply_to_mid:
         body["link"] = {"type": "reply", "mid": str(reply_to_mid)}
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=30.0, verify=max_ssl_context()) as client:
         for delay in (0, 1, 2, 4, 8):
             if delay:
                 await asyncio.sleep(delay)
@@ -105,7 +129,7 @@ async def upload_max_media(kind: str, body: bytes, *, filename: str | None = Non
     /uploads, у файла — в ответе загрузки; берём тот, что есть."""
     base = get_settings().max_api_base.rstrip("/")
     name = filename or DEFAULT_UPLOAD_NAMES.get(kind, "file.bin")
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=120.0, verify=max_ssl_context()) as client:
         slot = await client.post(f"{base}/uploads", params={"type": kind}, headers=_headers())
         slot.raise_for_status()
         info = slot.json()
@@ -128,7 +152,7 @@ async def upload_max_media(kind: str, body: bytes, *, filename: str | None = Non
 
 async def get_chat(chat_id: int | str) -> dict[str, Any]:
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.get(f"{base}/chats/{chat_id}", headers=_headers())
     return resp.json() if resp.status_code < 400 else {}
 
@@ -139,14 +163,14 @@ async def subscribe_webhook(url: str, *, secret: str | None, update_types: list[
     body: dict[str, Any] = {"url": url, "update_types": update_types or UPDATE_TYPES}
     if secret:
         body["secret"] = secret
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.post(f"{base}/subscriptions", headers=_headers(), json=body)
     return {"ok": resp.status_code < 400, "status": resp.status_code, "body": resp.text[:500]}
 
 
 async def get_me() -> dict[str, Any]:
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.get(f"{base}/me", headers=_headers())
     return {"ok": resp.status_code < 400, "status": resp.status_code, "body": resp.json() if resp.status_code < 400 else resp.text[:300]}
 
@@ -154,7 +178,7 @@ async def get_me() -> dict[str, Any]:
 async def get_max_video_url(token: str) -> str | None:
     """GET /videos/{token}: во входящем видео Max ссылки нет — только токен; берём лучшее качество."""
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.get(f"{base}/videos/{token}", headers=_headers())
     if resp.status_code >= 400:
         return None
@@ -168,7 +192,7 @@ async def get_max_video_url(token: str) -> str | None:
 async def remove_max_member(chat_id: int | str, user_id: int | str) -> dict[str, Any]:
     """DELETE /chats/{chat_id}/members?user_id=… — убрать участника из группы (бот — админ)."""
     base = get_settings().max_api_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, verify=max_ssl_context()) as client:
         resp = await client.delete(f"{base}/chats/{chat_id}/members", params={"user_id": str(user_id)}, headers=_headers())
     if resp.status_code >= 400:
         logger.warning("max_remove_member_failed", extra={"status": resp.status_code, "body": resp.text[:300]})
