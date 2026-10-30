@@ -139,3 +139,17 @@ async def test_site_request_nudge_runs_in_the_loop_and_its_failure_does_not_stop
     assert harness.outbox_calls == 3
     assert harness.site_nudge.await_count == 1
     assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == ["site_request_nudge_failed"]
+
+
+@pytest.mark.asyncio
+async def test_no_bot_alert_is_planned_once_a_minute_within_the_30_second_notification_pass(monkeypatch):
+    """Алерт «бот не открыл» (срез 9 бот-воронки): проход уведомлений идёт каждые 30 с, алерт — не чаще раза
+    в минуту (``plan_no_bot``), первый раз сразу."""
+    harness = _Harness(monkeypatch, [0, 0, 0, 0])
+    step = AsyncMock(return_value={})
+    monkeypatch.setattr(worker, "scheduled_notifications_step", step)
+    ticks = iter([0.0, 31.0, 62.0, 93.0])
+    monkeypatch.setattr(worker, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    await harness.run()
+    assert [call.kwargs["plan_no_bot"] for call in step.await_args_list] == [True, False, True, False]
+    assert [call.kwargs["plan_crm"] for call in step.await_args_list] == [True, False, False, False]

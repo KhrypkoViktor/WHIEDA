@@ -23,7 +23,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -34,6 +34,7 @@ from app.crm.service import (
     load_viewer,
     lock_reason,
     record_card_event,
+    restore_card_step,
     safe_error,
 )
 from app.db import fetch_all, fetch_one
@@ -61,6 +62,13 @@ TAG_IN_BOT = "в боте"
 
 PARTNER_EVENT = "lead_meeting_created"
 BOT_NOTE = "Открыл(а) бота WWC в {channel}."
+
+# Алерт «бот не открыл» (app/funnel/no_bot_alert.py) ставит новой карточке шаг «Напомнить о себе»
+# на сегодня и запоминает дату в metadata заявки: открытие бота возвращает шаг по умолчанию,
+# если партнёр шаг не трогал.
+ALERT_STEP_KEY = "no_bot_alert_step"
+ALERT_CARD_STATUS = "new"
+ALERT_CARD_STEP = "ping"
 
 # Страницы тестовых стендов не пишут партнёрам: стенд делит базу с боем (как в crm-card).
 _TEST_HOST_PREFIXES = ("staging.", "admin", "cabinet.")
@@ -305,6 +313,36 @@ async def _notify_binding_id(conn: Any, tenant_id: str) -> str | None:
     return str(row["binding_id"]) if row else None
 
 
+async def owner_chat(conn: Any, tenant_id: str, owner_actor_id: str | None) -> tuple[str, int | None] | None:
+    """Чат владельца заявки: ``(chat_id, telegram_user_id)`` из ``lead_actors`` (сначала
+    ``telegram_chat_id``, иначе ``telegram_user_id``). Нет владельца или чата — None."""
+    if not owner_actor_id:
+        return None
+    actor = await fetch_one(
+        conn,
+        """
+        select telegram_chat_id, telegram_user_id from lead_actors
+        where tenant_id = %s and actor_id = %s
+        limit 1
+        """,
+        (tenant_id, owner_actor_id),
+    )
+    telegram_user_id = actor.get("telegram_user_id") if actor else None
+    chat_id = str((actor or {}).get("telegram_chat_id") or telegram_user_id or "").strip()
+    if not chat_id:
+        return None
+    return chat_id, int(telegram_user_id) if telegram_user_id is not None else None
+
+
+async def card_button_url(conn: Any, tenant_id: str, telegram_user_id: int | None, card_id: str | None) -> str | None:
+    """Ссылка кнопки «Открыть карточку» (превращается во вход на сайт при отправке) — только если
+    карточка есть, владелец известен и CRM у него открыта (``lock_reason`` пуст)."""
+    if not card_id or telegram_user_id is None:
+        return None
+    viewer = await load_viewer(tenant_id, int(telegram_user_id), conn=conn)
+    return crm_contact_url(viewer, card_id) if lock_reason(viewer) is None else None
+
+
 async def notify_partner(
     conn: Any,
     *,
@@ -328,19 +366,10 @@ async def notify_partner(
         return False
     try:
         async with conn.transaction():
-            actor = await fetch_one(
-                conn,
-                """
-                select telegram_chat_id, telegram_user_id from lead_actors
-                where tenant_id = %s and actor_id = %s
-                limit 1
-                """,
-                (tenant_id, owner_actor_id),
-            )
-            telegram_user_id = actor.get("telegram_user_id") if actor else None
-            chat_id = str((actor or {}).get("telegram_chat_id") or telegram_user_id or "").strip()
-            if not chat_id:
+            chat = await owner_chat(conn, tenant_id, owner_actor_id)
+            if chat is None:
                 return False
+            chat_id, telegram_user_id = chat
             binding_id = await _notify_binding_id(conn, tenant_id)
             if not binding_id:
                 return False
@@ -352,13 +381,10 @@ async def notify_partner(
                 "binding_id": binding_id,
                 "lead_id": lead_id,
             }
-            if card_id and telegram_user_id:
-                viewer = await load_viewer(tenant_id, int(telegram_user_id), conn=conn)
-                if lock_reason(viewer) is None:
-                    payload["reply_markup"] = {
-                        "inline_keyboard": [[{"text": OPEN_CARD_LABEL, "url": crm_contact_url(viewer, card_id)}]]
-                    }
-                    payload["site_login_user_id"] = int(telegram_user_id)
+            card_url = await card_button_url(conn, tenant_id, telegram_user_id, card_id)
+            if card_url:
+                payload["reply_markup"] = {"inline_keyboard": [[{"text": OPEN_CARD_LABEL, "url": card_url}]]}
+                payload["site_login_user_id"] = telegram_user_id
             row = await enqueue_outbox_event(
                 conn,
                 tenant_id=tenant_id,
@@ -464,7 +490,8 @@ async def mark_bot_opened(
         conn,
         """
         select lead_id::text as lead_id, bot_opened_at is null as first_open,
-               coalesce(metadata, '{}'::jsonb) ->> 'crm_card' as crm_card
+               coalesce(metadata, '{}'::jsonb) ->> 'crm_card' as crm_card,
+               coalesce(metadata, '{}'::jsonb) ->> 'no_bot_alert_step' as alert_step
         from website_leads
         where tenant_id = %s and public_id = %s and lead_kind = 'meeting' and deleted_at is null
         for update
@@ -487,6 +514,8 @@ async def mark_bot_opened(
         )
     if lead["first_open"] and lead["crm_card"]:
         await _mark_card_in_bot(conn, tenant_id, lead["crm_card"], channel)
+        if lead["alert_step"]:
+            await _restore_alert_step(conn, tenant_id, lead["lead_id"], lead["crm_card"], lead["alert_step"])
     return await load_lead_by_public_id(conn, tenant_id, key)
 
 
@@ -503,3 +532,30 @@ async def _mark_card_in_bot(conn: Any, tenant_id: str, contact_id: str, channel:
             )
     except Exception as exc:
         logger.warning("meeting_lead_card_bot_mark_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+
+
+async def _restore_alert_step(conn: Any, tenant_id: str, lead_id: str, contact_id: str, alert_date: str) -> None:
+    """Человек открыл бота после алерта «бот не открыл»: шаг «Напомнить о себе», который поставил
+    алерт, снимается — возвращается шаг по умолчанию («Пригласить на сегодня»), если партнёр шаг
+    и дату не менял. Метка алерта в заявке убирается в любом случае. Свой savepoint: сбой не
+    отменяет отметку «открыл бота»."""
+    try:
+        async with conn.transaction():
+            await restore_card_step(
+                conn,
+                tenant_id=tenant_id,
+                contact_id=contact_id,
+                status=ALERT_CARD_STATUS,
+                from_step=ALERT_CARD_STEP,
+                from_next_at=date.fromisoformat(alert_date),
+            )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    update website_leads set metadata = coalesce(metadata, '{}'::jsonb) - %s
+                    where tenant_id = %s and lead_id = %s::uuid
+                    """,
+                    (ALERT_STEP_KEY, tenant_id, lead_id),
+                )
+    except Exception as exc:
+        logger.warning("meeting_lead_alert_step_restore_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})

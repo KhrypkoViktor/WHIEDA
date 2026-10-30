@@ -33,6 +33,8 @@ MAX_ATTEMPTS = 5
 # CRM v2 (V20) adds «Через час встреча» (app.crm.meetings).
 DUE_NOTIFY_INTERVAL_SEC = 30.0
 CRM_DIGEST_INTERVAL_SEC = 300.0
+# Алерт «бот не открыл» по заявкам на Живую встречу (app/funnel/no_bot_alert.py): раз в минуту.
+NO_BOT_ALERT_INTERVAL_SEC = 60.0
 DUE_BATCH_SIZE = 50
 DUE_MAX_ATTEMPTS = 3
 # One pass may not hold the ordinary queue longer than this (a slow Telegram:
@@ -406,8 +408,9 @@ async def process_due_notifications(
     return sent
 
 
-async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
-    """Plan the CRM mornings (every 5 minutes) and send what is due (every 30 s).
+async def scheduled_notifications_step(*, plan_crm: bool, plan_no_bot: bool = False) -> dict[str, int]:
+    """Plan the CRM mornings (every 5 minutes), the «бот не открыл» alerts of live-meeting leads
+    (every minute) and send what is due (every 30 s).
     Nothing happens in a process without PLATFORM_SCHEDULED_NOTIFY_BINDINGS."""
     if not get_settings().parsed_scheduled_notify_bindings():
         return {}
@@ -436,6 +439,15 @@ async def scheduled_notifications_step(*, plan_crm: bool) -> dict[str, int]:
             result.update(await rhythm_step(bindings))
         except Exception:
             logger.exception("rhythm_step_failed")
+    if plan_no_bot:
+        # Срез 9 бот-воронки (30.10.2026): записался на Живую встречу, а бота за 3 минуты не открыл —
+        # владельцу заявки сообщение с телефоном и кнопкой WhatsApp. Только тенант whieda (шаг сам смотрит).
+        try:
+            from app.funnel.no_bot_alert import no_bot_alert_step
+
+            result["no_bot_alerts"] = await no_bot_alert_step(bindings)
+        except Exception:
+            logger.exception("no_bot_alert_step_failed")
     result["due_sent"] = await process_due_notifications(bindings)
     return result
 
@@ -530,7 +542,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     last_due = last_plan = float("-inf")
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
-    last_cleanup = last_club = last_login_cleanup = last_site_nudge = float("-inf")
+    last_cleanup = last_club = last_login_cleanup = last_site_nudge = last_no_bot = float("-inf")
     outbox_backoff = FailureBackoff()
     while True:
         pause = poll_interval_sec
@@ -553,8 +565,11 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
             last_due = now
             if plan_crm:
                 last_plan = now
+            plan_no_bot = now - last_no_bot >= NO_BOT_ALERT_INTERVAL_SEC
+            if plan_no_bot:
+                last_no_bot = now
             try:
-                await scheduled_notifications_step(plan_crm=plan_crm)
+                await scheduled_notifications_step(plan_crm=plan_crm, plan_no_bot=plan_no_bot)
             except Exception:
                 logger.exception("scheduled_notifications_step_failed")
             try:
