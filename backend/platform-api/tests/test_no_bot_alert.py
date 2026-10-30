@@ -86,6 +86,25 @@ def test_alert_text_cannot_carry_html_from_the_name():
     assert "<b>" not in sent and "<a " not in sent and "<script" not in sent and "&amp;" in sent
 
 
+def test_alert_text_cuts_links_and_mentions_out_of_the_name():
+    text = alert.alert_text(
+        name="Анна https://evil.example/pay @scammer t.me/evil www.evil.example http://x.test",
+        phone_e164="+79991112233",
+        messenger="telegram",
+        starts_at=None,
+        now=NOW,
+    )
+    assert text.startswith("⚠️ Анна … … … … … записался(ась) на Живую встречу")
+    assert "http" not in text and "@" not in text and "t.me" not in text and "www." not in text
+    # имя из одних ссылок — не пустое «Без имени», а «…»: человек в алерте виден, но кликабельного ничего нет
+    only_link = alert.alert_text(name="https://evil.example", phone_e164=None, messenger=None, starts_at=None, now=NOW)
+    assert only_link.startswith("⚠️ … записался(ась)") and "evil" not in only_link
+    from app.telegram.delivery import format_telegram_html
+
+    sent = format_telegram_html(text)
+    assert "<a " not in sent and "evil" not in sent
+
+
 def test_whatsapp_url_is_digits_only():
     assert alert.whatsapp_url("+79991112233") == "https://wa.me/79991112233"
     assert alert.whatsapp_url("+375291234567") == "https://wa.me/375291234567"

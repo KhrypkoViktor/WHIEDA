@@ -45,6 +45,7 @@ from app.leads.meeting_leads import (
     is_test_page,
     meeting_when,
     owner_chat,
+    plain_no_links,
 )
 from app.settings import get_settings
 from app.telegram.bindings import BotBindingContext
@@ -132,10 +133,11 @@ def alert_text(
     now: datetime | None = None,
 ) -> str:
     """«⚠️ Анна записался(ась) на Живую встречу чт 05.11 19:30 МСК, но бота не открыл(а). Телефон: +7….
-    Мессенджер: Telegram. Напишите в WhatsApp или позвоните.» Имя проходит через ``plain``: ``<`` и ``>``
-    становятся ‹ ›, остальное (``&``) экранирует отправка (``format_telegram_html``), так что разметку
-    имя вставить не может. Встреча не выбрана / нет телефона / нет мессенджера — этих кусков нет."""
-    who = plain(name, NAME_MAX) or "Без имени"
+    Мессенджер: Telegram. Напишите в WhatsApp или позвоните.» Имя проходит через ``plain_no_links``: ``<`` и ``>``
+    становятся ‹ ›, адреса (``http(s)://``, ``www.``, ``t.me/``) и ``@упоминания`` заменяются на «…», остальное (``&``)
+    экранирует отправка (``format_telegram_html``), так что разметку и кликабельную ссылку имя вставить не может.
+    Встреча не выбрана / нет телефона / нет мессенджера — этих кусков нет."""
+    who = plain_no_links(name, NAME_MAX) or "Без имени"
     head = f"⚠️ {who} записался(ась) на Живую встречу"
     when = meeting_when(starts_at, now=now)
     if when:

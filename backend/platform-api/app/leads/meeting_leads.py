@@ -2,7 +2,8 @@
 
 Страница «Живая встреча» шлёт имя, телефон, мессенджер и выбранную встречу; Core
 сохраняет заявку в ``website_leads`` (``lead_kind = 'meeting'``), закрепляет человека за
-первым партнёром, заводит карточку в WWC CRM и сам, без n8n, пишет партнёру в Telegram.
+первым партнёром, подтвердившим его в боте, заводит карточку в WWC CRM и сам, без n8n, пишет партнёру в Telegram
+(о заявках с одним телефоном тому же партнёру — не чаще раза в сутки).
 Дальше человек идёт в бота по ссылке ``?start=lead_<public_id>``: следующие срезы находят
 заявку (``load_lead_by_public_id``) и отмечают открытие бота (``mark_bot_opened``).
 
@@ -55,12 +56,16 @@ UTM_VALUE_MAX = 200
 SOURCE_TAG_MAX = 64
 NAME_MAX = 160
 URL_MAX = 1000
+# «партнёр <64>, метка <64>, источник <200>» с запасом: строка «Откуда» не обрезается.
+ORIGIN_MAX = 400
 
 CARD_SOURCE = "встреча"
 TAG_BOT_NOT_OPENED = "бот не открыл"
 TAG_IN_BOT = "в боте"
 
 PARTNER_EVENT = "lead_meeting_created"
+# Одному партнёру о заявках с одним и тем же телефоном пишем не чаще раза в это число часов.
+PARTNER_NOTIFY_WINDOW_HOURS = 24
 BOT_NOTE = "Открыл(а) бота WWC в {channel}."
 
 # Запись, перенос и отмена из бота (срез 4 бот-воронки, V46): метка и заметка в карточке CRM.
@@ -80,6 +85,12 @@ ALERT_CARD_STEP = "ping"
 _TEST_HOST_PREFIXES = ("staging.", "admin", "cabinet.")
 
 _PHONE_CHARS_RE = re.compile(r"[\d\s()+\-.]{7,32}")
+# Для записи на встречу номер начинается с кода страны 1-9 (общий E164_RE CRM пропускает «+0…»: его не трогаем).
+_MEETING_PHONE_RE = re.compile(r"\+[1-9]\d*")
+# Адреса и упоминания в имени и метках: Telegram сделал бы из них кликабельные ссылки в сообщении партнёру.
+_LINK_RE = re.compile(r"(?:https?://|ftp://|tg://|www\.|(?:t|telegram)\.me/)\S*", re.IGNORECASE)
+_MENTION_RE = re.compile(r"@\w+")
+LINK_PLACEHOLDER = "…"
 _SOURCE_TAG_RE = re.compile(r"[a-z0-9_-]{1,64}")
 _INT64_MAX = 2**63 - 1
 # Сколько прежних заявок по телефону смотреть: человек редко записывается больше пары раз.
@@ -93,12 +104,13 @@ def normalize_meeting_phone(raw: Any) -> str | None:
     """«+7 (999) 123-45-67» → «+79991234567». Не телефон — None.
 
     Кроме разбора ``normalize_phone`` строка должна состоять только из знаков телефона:
-    «звоните на 8999… после шести» телефоном не считается."""
+    «звоните на 8999… после шести» телефоном не считается. Номер начинается с «+1»…«+9»:
+    «+0…» кода страны не имеет."""
     text = unicodedata.normalize("NFKC", str(raw or "")).strip()
     if not text or not _PHONE_CHARS_RE.fullmatch(text):
         return None
     e164 = normalize_phone(text)
-    return e164 if e164 and E164_RE.fullmatch(e164) else None
+    return e164 if e164 and E164_RE.fullmatch(e164) and _MEETING_PHONE_RE.fullmatch(e164) else None
 
 
 def clean_messenger(value: Any) -> str | None:
@@ -162,17 +174,21 @@ def pick_person_anchor(rows: list[dict[str, Any]], organic_owner_id: str) -> tup
     """«Первый партнёр навсегда»: ``(person_lead_id, locked_owner_id)``.
 
     ``rows`` — прежние заявки этого арендатора с тем же телефоном, от старой к новой
-    (``lead_id``, ``assigned_owner_id``). ``person_lead_id`` — первая заявка человека
-    (у самой первой заявки поля нет). ``locked_owner_id`` — владелец первой заявки,
-    у которой был партнёр: владелец «по умолчанию» (organic) человека не закрепляет,
-    иначе заявка, пришедшая по ссылке партнёра, навсегда осталась бы у владельца WWC.
-    Нет прежних заявок или партнёра — ``(None, None)`` / ``(первая, None)``."""
+    (``lead_id``, ``assigned_owner_id``, ``bot_opened``, ``owner_active``). ``person_lead_id`` — первая
+    заявка человека (у самой первой заявки поля нет). ``locked_owner_id`` — владелец первой заявки,
+    которая закрепляет человека. Якорь — только заявка, по которой человек подтвердил себя в боте
+    (``bot_opened``: открыл бота по ссылке заявки; номер из формы сайта чужой человек мог вписать
+    в чужую заявку) и чей владелец — партнёр с действующей подпиской (``owner_active``: ушедший
+    партнёр номер не держит, иначе ему молча не доходили бы сообщения). Владелец «по умолчанию»
+    (organic) человека не закрепляет, иначе заявка, пришедшая по ссылке партнёра, навсегда осталась бы
+    у владельца WWC. Нет прежних заявок или якоря — ``(None, None)`` / ``(первая, None)``: заявка идёт
+    по обычной маршрутизации."""
     if not rows:
         return None, None
     first = str(rows[0]["lead_id"])
     for row in rows:
         owner = row.get("assigned_owner_id")
-        if owner and owner != organic_owner_id:
+        if owner and owner != organic_owner_id and row.get("bot_opened") and row.get("owner_active"):
             return first, str(owner)
     return first, None
 
@@ -185,15 +201,25 @@ def is_test_page(page_url: str | None) -> bool:
 # ---- тексты (чистые функции) -----------------------------------------------------------------
 
 
+def plain_no_links(value: Any, limit: int = NAME_MAX) -> str:
+    """``plain`` без адресов и упоминаний: «http(s)://…», «www.…», «t.me/…» и «@имя» заменяются на «…».
+    Имя и метки приходят с публичной формы; Telegram сделал бы из них кликабельные ссылки в сообщении
+    партнёру. Экранирование HTML остаётся за ``plain`` (``<`` ``>``) и отправкой (``&``)."""
+    text = plain(value, 10**6)
+    text = _MENTION_RE.sub(LINK_PLACEHOLDER, _LINK_RE.sub(LINK_PLACEHOLDER, text))
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def origin_text(*, ref_code: Any = None, source_tag: Any = None, utm_source: Any = None) -> str:
-    """«партнёр elena, метка reels_oct, источник instagram»; ничего не известно — «сайт»."""
+    """«партнёр elena, метка reels_oct, источник instagram»; ничего не известно — «сайт».
+    Адреса и @упоминания в кодах и метках заменены на «…» (``plain_no_links``)."""
     parts = []
     if ref_code:
-        parts.append(f"партнёр {plain(ref_code, 64)}")
+        parts.append(f"партнёр {plain_no_links(ref_code, 64)}")
     if source_tag:
-        parts.append(f"метка {plain(source_tag, SOURCE_TAG_MAX)}")
+        parts.append(f"метка {plain_no_links(source_tag, SOURCE_TAG_MAX)}")
     if utm_source:
-        parts.append(f"источник {plain(utm_source, UTM_VALUE_MAX)}")
+        parts.append(f"источник {plain_no_links(utm_source, UTM_VALUE_MAX)}")
     return ", ".join(parts) or "сайт"
 
 
@@ -238,13 +264,18 @@ def partner_message_text(
     origin: str,
     now: datetime | None = None,
 ) -> str:
-    """Сообщение партнёру о новой записи. Имя и метки проходят через ``plain``: ``<`` и ``>``
-    становятся ‹ ›, а остальное экранирует отправка (``format_telegram_html``)."""
+    """Сообщение партнёру о новой записи. Имя и метки проходят через ``plain_no_links``: ``<`` и ``>``
+    становятся ‹ ›, адреса (``http(s)://``, ``www.``, ``t.me/``) и ``@упоминания`` заменяются на «…»
+    (иначе Telegram сделал бы их ссылками), а остальное экранирует отправка (``format_telegram_html``)."""
     when = meeting_when(starts_at, now=now)
-    lines = [f"Новая запись на Живую встречу {when}".rstrip(), f"Имя: {plain(name, NAME_MAX)}", f"Телефон: {phone_e164}"]
+    lines = [
+        f"Новая запись на Живую встречу {when}".rstrip(),
+        f"Имя: {plain_no_links(name, NAME_MAX)}",
+        f"Телефон: {phone_e164}",
+    ]
     if messenger:
         lines.append(f"Мессенджер: {MESSENGER_TITLES.get(messenger, messenger)}")
-    lines.append(f"Откуда: {origin}")
+    lines.append(f"Откуда: {plain_no_links(origin, ORIGIN_MAX)}")
     return "\n".join(lines)
 
 
@@ -279,6 +310,10 @@ async def find_person_anchor(
 ) -> tuple[str | None, str | None]:
     """Первая заявка человека и закреплённый партнёр (``pick_person_anchor``) по телефону.
 
+    У каждой прежней заявки читаются ``bot_opened`` (``bot_opened_at`` не пусто) и ``owner_active``
+    (владелец — партнёр с включённым профилем и подпиской ``active``/``grace``, как в маршрутизации
+    владельца заявки).
+
     Блокировка на (арендатор, телефон) до конца транзакции: две одновременные первые заявки
     одного человека идут по очереди, и вторая видит первую."""
     async with conn.cursor() as cur:
@@ -289,10 +324,19 @@ async def find_person_anchor(
     rows = await fetch_all(
         conn,
         """
-        select lead_id::text as lead_id, assigned_owner_id
-        from website_leads
-        where tenant_id = %s and phone_e164 = %s and assigned_owner_id is not null
-        order by created_at, lead_id
+        select wl.lead_id::text as lead_id, wl.assigned_owner_id,
+               (wl.bot_opened_at is not null) as bot_opened,
+               exists (
+                 select 1
+                 from referral_profiles rp
+                 join partner_subscriptions ps
+                   on ps.tenant_id = rp.tenant_id and ps.ref_code = rp.ref_code
+                 where rp.tenant_id = wl.tenant_id and rp.owner_id = wl.assigned_owner_id and rp.enabled = true
+                   and partner_subscription_state(ps.paid_until, now()) in ('active', 'grace')
+               ) as owner_active
+        from website_leads wl
+        where wl.tenant_id = %s and wl.phone_e164 = %s and wl.assigned_owner_id is not null
+        order by wl.created_at, wl.lead_id
         limit %s
         """,
         (tenant_id, phone_e164, _ANCHOR_ROWS_MAX),
@@ -349,6 +393,32 @@ async def card_button_url(conn: Any, tenant_id: str, telegram_user_id: int | Non
     return crm_contact_url(viewer, card_id) if lock_reason(viewer) is None else None
 
 
+async def partner_already_told(
+    conn: Any, tenant_id: str, lead_id: str, phone_e164: str, owner_actor_id: str
+) -> bool:
+    """Партнёру этого человека о нём уже писали за последние ``PARTNER_NOTIFY_WINDOW_HOURS`` часов:
+    есть прежняя заявка того же арендатора с тем же телефоном и тем же владельцем, по которой сообщение
+    ``lead_meeting:<lead_id>`` уже стояло в ``platform_outbox`` (любым статусом). Текущая заявка не
+    считается. Цикл заявок с одним номером и разными ключами идемпотентности партнёру одного
+    сообщения за сутки не прибавляет; другому партнёру (другой владелец) сообщение уйдёт."""
+    row = await fetch_one(
+        conn,
+        """
+        select 1 as told
+        from website_leads wl
+        join platform_outbox ob
+          on ob.tenant_id = wl.tenant_id and ob.idempotency_key = 'lead_meeting:' || wl.lead_id::text
+        where wl.tenant_id = %s and wl.phone_e164 = %s and wl.assigned_owner_id = %s
+          and wl.lead_id <> %s::uuid
+          and wl.created_at > now() - make_interval(hours => %s)
+          and ob.event_type = %s
+        limit 1
+        """,
+        (tenant_id, phone_e164, owner_actor_id, lead_id, PARTNER_NOTIFY_WINDOW_HOURS, PARTNER_EVENT),
+    )
+    return row is not None
+
+
 async def notify_partner(
     conn: Any,
     *,
@@ -366,8 +436,9 @@ async def notify_partner(
     """Ставит в ``platform_outbox`` сообщение партнёру в Telegram: «Новая запись на Живую
     встречу…» и кнопка «Открыть карточку» (если карточка есть и CRM партнёру открыта, как в
     напоминании «через час встреча»). Отправляет боевой воркер. Ключ ``lead_meeting:<lead_id>``:
-    повтор заявки второго сообщения не даёт. Любой сбой — в лог, заявка уже сохранена.
-    True — сообщение поставлено."""
+    повтор заявки второго сообщения не даёт. Новая заявка с тем же телефоном тому же партнёру в
+    течение суток сообщения не ставит (``partner_already_told``): карточка и заметка в CRM при этом
+    обновляются. Любой сбой — в лог, заявка уже сохранена. True — сообщение поставлено."""
     if not owner_actor_id or is_test_page(page_url):
         return False
     try:
@@ -378,6 +449,9 @@ async def notify_partner(
             chat_id, telegram_user_id = chat
             binding_id = await _notify_binding_id(conn, tenant_id)
             if not binding_id:
+                return False
+            if await partner_already_told(conn, tenant_id, lead_id, phone_e164, owner_actor_id):
+                logger.info("meeting_lead_notify_deduped", extra={"tenant_id": tenant_id, "lead_id": lead_id})
                 return False
             payload: dict[str, Any] = {
                 "chat_id": chat_id,

@@ -219,25 +219,26 @@ def test_meeting_leads_end_to_end(monkeypatch):
             assert len(await rows("select 1 from crm_contacts")) == 1
             assert len(await rows("select 1 from platform_outbox where event_type = 'lead_meeting_created'")) == 1
 
-            # ---- 3. тот же телефон, ссылка другого партнёра: владелец прежний ------------------
+            # ---- 3. тот же телефон, ссылка другого партнёра, но бот по первой заявке не открывали:
+            #         номер не закреплён (его мог вписать кто угодно), заявка идёт по своей ссылке ---------
             second = await save("m-b", "8 999 111 22 33", first_ref="petr", active_ref="petr", messenger="max",
                                 page_url="https://petr.wwc.best/vstrecha/")
             b = await lead_row(second["public_id"])
-            assert b["assigned_owner_id"] == "igor-actor"  # первый партнёр навсегда
-            assert b["attributed_owner_id"] == "petr-actor"  # а чья ссылка привела — записано
-            assert b["person_lead_id"] == a["lead_id"] and b["meeting_id"] is None
-            assert b["metadata"]["owner_locked_by_phone"] is True
+            assert b["assigned_owner_id"] == "petr-actor" and b["attributed_owner_id"] == "petr-actor"
+            assert b["person_lead_id"] == a["lead_id"] and b["meeting_id"] is None  # человек тот же, владелец — по ссылке
+            assert "owner_locked_by_phone" not in b["metadata"]
             history = await rows("select owner_id, reason from website_lead_owner_history where lead_id = %s", (b["lead_id"],))
-            assert history == [{"owner_id": "igor-actor", "reason": "First partner kept: the same phone already has a lead"}]
-            # одна карточка человека у Игоря: вторая запись — заметка и метка, без дубля
+            assert history == [{"owner_id": "petr-actor", "reason": "Server-side referral routing"}]
+            # у Игоря по-прежнему одна карточка человека и ни одной лишней записи; у Петра ежедневник не открыт
             assert len(await rows("select 1 from crm_contacts")) == 1
             card_after = (await rows("select tags from crm_contacts"))[0]
             assert "бот не открыл" in card_after["tags"] and when_tag in card_after["tags"]
             assert [r["kind"] for r in await rows("select kind from crm_activities where contact_id = %s::uuid order by created_at", (card["contact_id"],))] == [
-                "created", "note", "lead", "note",
+                "created", "note",
             ]
+            # партнёр новой заявки — другой, чем у первой: сообщение уходит ему (дедуп по телефону — на одного партнёра)
             second_text = (await rows("select payload from platform_outbox where idempotency_key = %s", (f"lead_meeting:{b['lead_id']}",)))[0]["payload"]
-            assert second_text["chat_id"] == "7001"  # уведомление владельцу, не petr
+            assert second_text["chat_id"] == "7002"
             assert second_text["text"].split("\n")[0] == "Новая запись на Живую встречу"  # встреча не выбрана
             assert "Мессенджер: Max" in second_text["text"]
             assert second_text["text"].endswith("Откуда: партнёр petr")
@@ -258,7 +259,8 @@ def test_meeting_leads_end_to_end(monkeypatch):
             assert d2["assigned_owner_id"] == "petr-actor"
             assert d2["person_lead_id"] == (await lead_row(organic_first["public_id"]))["lead_id"]
             by_other = await save("m-d3", "+7 999 333-44-55", first_ref="igor", active_ref="igor")
-            assert (await lead_row(by_other["public_id"]))["assigned_owner_id"] == "petr-actor"
+            # d2 бота не открывала: номер за petr не закреплён, заявка идёт по своей ссылке (igor)
+            assert (await lead_row(by_other["public_id"]))["assigned_owner_id"] == "igor-actor"
 
             # ---- 6. чужой арендатор телефон не закрепляет ---------------------------------------
             other = await save("m-o", "+7 (999) 111-22-33", tenant="other", page_url="https://wwc.best/vstrecha/")
@@ -307,7 +309,7 @@ def test_meeting_leads_end_to_end(monkeypatch):
             bot_notes = [r["body"] for r in await rows("select body from crm_notes where contact_id = %s::uuid order by created_at", (card["contact_id"],))]
             assert bot_notes.count("Открыл(а) бота WWC в Telegram.") == 1
             kinds_after = [r["kind"] for r in await rows("select kind from crm_activities where contact_id = %s::uuid order by created_at", (card["contact_id"],))]
-            assert kinds_after == ["created", "note", "lead", "note", "note"]
+            assert kinds_after == ["created", "note", "note"]
 
             # повтор и второй канал: время не двигается, заметок не прибавляется
             async with tenant_connection("whieda") as conn:
@@ -327,6 +329,60 @@ def test_meeting_leads_end_to_end(monkeypatch):
                     await mark_bot_opened(conn, "whieda", first["public_id"], channel="whatsapp", channel_user_id=1)  # type: ignore[arg-type]
             async with tenant_connection("other") as conn:
                 assert await mark_bot_opened(conn, "other", first["public_id"], channel="telegram", channel_user_id=1) is None
+
+            def admin(statement: str, params: tuple = ()) -> None:
+                with psycopg.connect(db.admin_dsn, autocommit=True) as admin_conn:
+                    admin_conn.execute(statement, params)
+
+            # ---- 10б. номер подтверждён в боте: «первый партнёр навсегда» -------------------------------
+            # заявка a открыта в боте (шаг 10), её владелец igor — действующий партнёр: номер закреплён за ним,
+            # хотя новая заявка пришла по ссылке petr
+            anchored = await save("m-b2", "+7 999 111-22-33", first_ref="petr", active_ref="petr",
+                                  page_url="https://petr.wwc.best/vstrecha/")
+            b2 = await lead_row(anchored["public_id"])
+            assert b2["assigned_owner_id"] == "igor-actor"  # первый (подтверждённый) партнёр навсегда
+            assert b2["attributed_owner_id"] == "petr-actor"  # а чья ссылка привела — записано
+            assert b2["person_lead_id"] == a["lead_id"] and b2["metadata"]["owner_locked_by_phone"] is True
+            history = await rows("select owner_id, reason from website_lead_owner_history where lead_id = %s", (b2["lead_id"],))
+            assert history == [{"owner_id": "igor-actor", "reason": "First partner kept: the same phone already has a lead"}]
+            # одна карточка человека у Игоря: вторая запись — заметка и метка, без дубля
+            assert len(await rows("select 1 from crm_contacts where phone_e164 = '+79991112233'")) == 1
+            assert "lead" in [r["kind"] for r in await rows("select kind from crm_activities where contact_id = %s::uuid", (card["contact_id"],))]
+            # Игорю об этом человеке уже писали (заявка a, меньше суток назад): второе сообщение не ставится
+            assert await rows("select 1 from platform_outbox where idempotency_key = %s", (f"lead_meeting:{b2['lead_id']}",)) == []
+            # а новый человек у того же партнёра сообщение получает (дедуп — по телефону)
+            fresh = await save("m-new", "+7 999 123-00-00", first_ref="igor", active_ref="igor")
+            assert len(await rows("select 1 from platform_outbox where idempotency_key = %s",
+                                  (f"lead_meeting:{(await lead_row(fresh['public_id']))['lead_id']}",))) == 1
+            # сутки прошли: заявка a старше 24 часов, заявка b2 сообщения не получала (не считается) —
+            # следующая заявка с этим номером снова даёт Игорю сообщение
+            admin("update website_leads set created_at = created_at - interval '25 hours' where lead_id = %s::uuid", (a["lead_id"],))
+            next_day = await save("m-b3", "+7 999 111-22-33", first_ref="petr", active_ref="petr",
+                                  page_url="https://petr.wwc.best/vstrecha/")
+            b3 = await lead_row(next_day["public_id"])
+            assert b3["assigned_owner_id"] == "igor-actor" and b3["person_lead_id"] == a["lead_id"]
+            day_message = (await rows("select payload from platform_outbox where idempotency_key = %s", (f"lead_meeting:{b3['lead_id']}",)))[0]["payload"]
+            assert day_message["chat_id"] == "7001" and day_message["text"].endswith("Откуда: партнёр petr")
+            # и сразу после неё — снова тишина: окно считается от последнего сообщения
+            right_after = await save("m-b4", "+7 999 111-22-33", first_ref="petr", active_ref="petr",
+                                     page_url="https://petr.wwc.best/vstrecha/")
+            assert await rows("select 1 from platform_outbox where idempotency_key = %s",
+                              (f"lead_meeting:{(await lead_row(right_after['public_id']))['lead_id']}",)) == []
+
+            # ---- 10в. якорь — только действующий партнёр (active или grace) ------------------------------
+            g1 = await save("m-g1", "+7 999 888-00-01", first_ref="petr", active_ref="petr")
+            async with tenant_connection("whieda") as conn:
+                assert (await mark_bot_opened(conn, "whieda", g1["public_id"], channel="telegram", channel_user_id=555020)) is not None
+            admin("update partner_subscriptions set paid_until = now() - interval '1 day' where ref_code = 'petr'")  # льготный срок
+            g2 = await lead_row((await save("m-g2", "+7 999 888-00-01", first_ref="igor", active_ref="igor"))["public_id"])
+            assert g2["assigned_owner_id"] == "petr-actor" and g2["metadata"]["owner_locked_by_phone"] is True  # grace держит номер
+            admin("update partner_subscriptions set paid_until = now() - interval '10 days' where ref_code = 'petr'")  # ушёл
+            g3 = await lead_row((await save("m-g3", "+7 999 888-00-01", first_ref="igor", active_ref="igor"))["public_id"])
+            assert g3["assigned_owner_id"] == "igor-actor" and "owner_locked_by_phone" not in g3["metadata"]
+            assert g3["person_lead_id"] == g2["person_lead_id"] == (await lead_row(g1["public_id"]))["lead_id"]
+            g3_history = await rows("select reason from website_lead_owner_history where lead_id = %s", (g3["lead_id"],))
+            assert g3_history == [{"reason": "Server-side referral routing"}]
+            admin("update partner_subscriptions set paid_until = now() + interval '30 days' where ref_code = 'petr'")
 
             # ---- 11. заявка другого вида: как раньше --------------------------------------------
             old = await save_lead(

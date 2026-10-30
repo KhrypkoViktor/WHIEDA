@@ -26,6 +26,7 @@ from app.leads.meeting_leads import (
     parse_meeting_id,
     partner_message_text,
     pick_person_anchor,
+    plain_no_links,
 )
 from app.leads.service import parse_lead_body
 
@@ -60,6 +61,18 @@ def test_phone_is_normalized_to_e164(raw):
 
 def test_foreign_number_keeps_its_digits():
     assert normalize_meeting_phone("+375 29 123-45-67") == "+375291234567"
+
+
+@pytest.mark.parametrize("raw", ["+0 123 456 78 90", "+0123456789", "0123456789", "+00 123 456 7890", "0 000 000 00 00"])
+def test_number_with_a_leading_zero_country_code_is_refused(raw):
+    # общий E164_RE CRM «+0…» пропускает; для записи на встречу первая цифра после «+» — 1…9
+    assert normalize_meeting_phone(raw) is None
+
+
+def test_zero_start_phone_gives_422_in_the_meeting_body():
+    with pytest.raises(HTTPException) as caught:
+        parse_lead_body(_body(phone="+0 123 456 78 90"), "whieda")
+    assert caught.value.status_code == 422 and caught.value.detail["errors"] == ["phone"]
 
 
 @pytest.mark.parametrize(
@@ -131,32 +144,57 @@ def test_meeting_problem_reasons():
 # ---- владелец «первый партнёр навсегда» --------------------------------------------------------
 
 
+def _row(lead_id, owner, *, opened=True, active=True):
+    """Прежняя заявка человека как её отдаёт find_person_anchor: бот открыт, владелец — действующий партнёр."""
+    return {"lead_id": lead_id, "assigned_owner_id": owner, "bot_opened": opened, "owner_active": active}
+
+
 def test_no_earlier_leads_means_no_anchor():
     assert pick_person_anchor([], "viktor") == (None, None)
 
 
 def test_first_partner_stays_the_owner():
-    rows = [
-        {"lead_id": "L1", "assigned_owner_id": "elena"},
-        {"lead_id": "L2", "assigned_owner_id": "anna"},
-    ]
+    rows = [_row("L1", "elena"), _row("L2", "anna")]
     assert pick_person_anchor(rows, "viktor") == ("L1", "elena")
 
 
 def test_organic_first_lead_does_not_lock_the_person():
-    rows = [
-        {"lead_id": "L1", "assigned_owner_id": "viktor"},
-        {"lead_id": "L2", "assigned_owner_id": "anna"},
-        {"lead_id": "L3", "assigned_owner_id": "elena"},
-    ]
+    rows = [_row("L1", "viktor"), _row("L2", "anna"), _row("L3", "elena")]
     # человек привязан к первой заявке, а владелец — первый партнёр: anna
     assert pick_person_anchor(rows, "viktor") == ("L1", "anna")
     assert pick_person_anchor(rows[:1], "viktor") == ("L1", None)
 
 
 def test_rows_without_owner_are_skipped():
-    rows = [{"lead_id": "L1", "assigned_owner_id": None}, {"lead_id": "L2", "assigned_owner_id": "anna"}]
+    rows = [_row("L1", None), _row("L2", "anna")]
     assert pick_person_anchor(rows, "viktor") == ("L1", "anna")
+
+
+def test_a_lead_whose_bot_was_never_opened_is_not_an_anchor():
+    # номер из формы сайта чужой человек мог вписать в заявку партнёра: без бота номер за партнёром не закрепляется
+    rows = [_row("L1", "elena", opened=False)]
+    assert pick_person_anchor(rows, "viktor") == ("L1", None)
+    # якорем становится первая заявка, по которой бот открыт, а не просто первая с партнёром
+    rows = [_row("L1", "elena", opened=False), _row("L2", "anna"), _row("L3", "elena")]
+    assert pick_person_anchor(rows, "viktor") == ("L1", "anna")
+
+
+def test_a_partner_without_an_active_subscription_is_not_an_anchor():
+    # ушедший партнёр номер не держит: иначе notify_partner молча терял бы сообщения
+    rows = [_row("L1", "elena", active=False)]
+    assert pick_person_anchor(rows, "viktor") == ("L1", None)
+    rows = [_row("L1", "elena", active=False), _row("L2", "anna")]
+    assert pick_person_anchor(rows, "viktor") == ("L1", "anna")
+
+
+def test_missing_markers_count_as_no_anchor():
+    # строка без bot_opened/owner_active (старый формат) подтверждённой не считается
+    rows = [{"lead_id": "L1", "assigned_owner_id": "elena"}]
+    assert pick_person_anchor(rows, "viktor") == ("L1", None)
+
+
+def test_organic_owner_is_never_an_anchor_even_when_confirmed():
+    assert pick_person_anchor([_row("L1", "viktor")], "viktor") == ("L1", None)
 
 
 # ---- разбор тела запроса -----------------------------------------------------------------------
@@ -337,6 +375,53 @@ def test_partner_message_neutralizes_html_in_the_name():
         name="Аня\nТелефон: +70000000000", phone_e164="+79990000000", messenger="max", starts_at=None, origin="сайт"
     )
     assert multi.count("\nТелефон:") == 1
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("Аня https://evil.example/x?y=1 привет", "Аня … привет"),
+    ("Аня HTTP://EVIL.example", "Аня …"),
+    ("смотри www.evil.example/a и всё", "смотри … и всё"),
+    ("ищи t.me/evil_channel или T.ME/Other", "ищи … или …"),
+    ("telegram.me/evil", "…"),
+    ("пиши @evil_user, а лучше @другой", "пиши …, а лучше …"),
+    ("Анна Петрова", "Анна Петрова"),
+    ("Анна-Мария О'Нил & Co", "Анна-Мария О'Нил & Co"),   # & экранирует отправка, здесь он остаётся
+])
+def test_links_and_mentions_are_cut_out(raw, expected):
+    assert plain_no_links(raw) == expected
+
+
+def test_plain_no_links_keeps_the_html_brackets_neutralised_and_the_limit():
+    assert plain_no_links("<b>Аня</b>") == "‹b›Аня‹/b›"
+    assert len(plain_no_links("я" * 500, 160)) == 160
+    assert plain_no_links("https://" + "a" * 500 + " " + "б" * 10, 160) == "… " + "б" * 10
+    assert plain_no_links(None) == ""
+
+
+def test_partner_message_has_no_links_or_mentions_from_the_name():
+    text = partner_message_text(
+        name="Аня https://evil.example/pay @scammer t.me/evil www.evil.example",
+        phone_e164="+79990000000",
+        messenger="telegram",
+        starts_at=None,
+        origin=origin_text(ref_code="elena", source_tag="t", utm_source="https://evil.example/x @evil"),
+        now=NOW,
+    )
+    assert "http" not in text and "@" not in text and "t.me" not in text and "www." not in text
+    assert text.split("\n")[1] == "Имя: Аня … … … …"
+    assert text.split("\n")[-1] == "Откуда: партнёр elena, метка t, источник … …"
+
+
+def test_origin_text_cuts_links_out_of_the_ref_code_tag_and_utm_source():
+    assert origin_text(ref_code="https://evil.example", source_tag="@evil", utm_source="t.me/evil") == (
+        "партнёр …, метка …, источник …"
+    )
+    # то же и у уже готового текста «Откуда»: сообщение партнёру защищено на выходе
+    text = partner_message_text(
+        name="Борис", phone_e164="+79990000000", messenger=None, starts_at=None,
+        origin="партнёр x, источник https://evil.example @evil", now=NOW,
+    )
+    assert text.split("\n")[-1] == "Откуда: партнёр x, источник … …"
 
 
 def test_card_note_and_tags():
