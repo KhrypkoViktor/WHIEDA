@@ -170,5 +170,5 @@ async def test_send_max_text_uses_api2_by_default(monkeypatch):
 def test_no_httpx_client_in_max_client_skips_verify():
     source = (Path(max_client.__file__)).read_text(encoding="utf-8")
     opened = re.findall(r"httpx\.AsyncClient\(([^)]*\)?)\)", source)
-    assert len(opened) == 8
+    assert len(opened) >= 8  # M1: 8 клиентов; M2 добавил answer_max_callback — все с verify
     assert all("verify=max_ssl_context()" in call for call in opened)
