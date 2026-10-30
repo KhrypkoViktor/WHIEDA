@@ -41,6 +41,7 @@ from app.crm.rules import (
     clean_priority,
     clean_source,
     clean_tags,
+    default_plan,
     export_row,
     group_today,
     lead_note_text,
@@ -1178,6 +1179,88 @@ async def record_card_event(
         conn, tenant_id=tenant_id, account_id=account_id, contact_id=contact_id,
         kind="note", payload={"note_id": note_row["note_id"]},
     )
+    return True
+
+
+async def move_card_step_today(
+    conn: Any,
+    *,
+    tenant_id: str,
+    contact_id: str,
+    status: str,
+    from_steps: Sequence[str | None],
+    to_step: str,
+) -> date | None:
+    """Ставит живой карточке следующий шаг ``to_step`` на сегодня (по часовому поясу владельца),
+    но только если карточка в статусе ``status``, её шаг сейчас один из ``from_steps`` (``None`` —
+    шага нет) и он назначен не на будущую дату: шаг, который партнёр сам отложил, не трогаем.
+    Возвращает поставленную дату или None, если ничего не менялось (нет карточки, она удалена,
+    статус или шаг другие). История не пишется: для события по карточке — ``record_card_event``.
+    Вызывающий держит savepoint."""
+    row = await fetch_one(
+        conn,
+        """
+        select c.status, c.next_step, c.next_at, (now() at time zone a.timezone)::date as today
+        from crm_contacts c
+        join platform_accounts a on a.tenant_id = c.tenant_id and a.account_id = c.account_id
+        where c.tenant_id = %s and c.contact_id = %s::uuid and c.deleted_at is null
+        for update of c
+        """,
+        (tenant_id, contact_id),
+    )
+    if row is None or row["status"] != status or row["next_step"] not in from_steps:
+        return None
+    if row["next_at"] is not None and row["next_at"] > row["today"]:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update crm_contacts set next_step = %s, next_at = %s, updated_at = now()
+            where tenant_id = %s and contact_id = %s::uuid
+            """,
+            (to_step, row["today"], tenant_id, contact_id),
+        )
+    return row["today"]
+
+
+async def restore_card_step(
+    conn: Any,
+    *,
+    tenant_id: str,
+    contact_id: str,
+    status: str,
+    from_step: str,
+    from_next_at: date,
+) -> bool:
+    """Возвращает шаг по умолчанию для статуса (``default_plan``: у «Новый» — «Пригласить» на сегодня),
+    если карточка всё ещё в статусе ``status`` с шагом ``from_step`` на дату ``from_next_at``,
+    то есть партнёр после ``move_card_step_today`` её не трогал. Иначе False и ничего не меняется.
+    Вызывающий держит savepoint."""
+    row = await fetch_one(
+        conn,
+        """
+        select c.status, c.next_step, c.next_at, (now() at time zone a.timezone)::date as today
+        from crm_contacts c
+        join platform_accounts a on a.tenant_id = c.tenant_id and a.account_id = c.account_id
+        where c.tenant_id = %s and c.contact_id = %s::uuid and c.deleted_at is null
+        for update of c
+        """,
+        (tenant_id, contact_id),
+    )
+    if row is None or row["status"] != status or row["next_step"] != from_step or row["next_at"] != from_next_at:
+        return False
+    try:
+        plan = default_plan(status, today=row["today"])
+    except CrmRuleError:
+        return False
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update crm_contacts set next_step = %s, next_at = %s, updated_at = now()
+            where tenant_id = %s and contact_id = %s::uuid
+            """,
+            (plan.next_step, plan.next_at, tenant_id, contact_id),
+        )
     return True
 
 
