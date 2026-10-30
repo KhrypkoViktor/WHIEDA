@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import certifi
 import httpx
 
 from app.settings import get_settings
@@ -26,14 +27,15 @@ class MaxNotConfigured(RuntimeError):
 
 @lru_cache(maxsize=1)
 def max_ssl_context() -> ssl.SSLContext:
-    """TLS-контекст для вызовов к API Max: системные корни + цепочка Минцифры (PLATFORM_MAX_CA_FILE).
+    """TLS-контекст для вызовов к API Max: корни certifi (как у httpx по умолчанию) + цепочка Минцифры
+    (PLATFORM_MAX_CA_FILE).
 
     С 19.07.2026 platform-api2.max.ru отдаёт сертификат НУЦ Минцифры; httpx по умолчанию верит
     только certifi, системное хранилище не читает. Цепочку добавляем лишь в этот контекст, а не в
-    общее хранилище процесса. Нет файла или он не читается — предупреждение в лог один раз
-    (результат кэшируется) и контекст по умолчанию; проверку сертификата не отключаем никогда.
+    общее хранилище процесса и не другим клиентам. Нет файла или он не читается — предупреждение в лог
+    один раз (результат кэшируется) и контекст по умолчанию; проверку сертификата не отключаем никогда.
     """
-    context = ssl.create_default_context()
+    context = ssl.create_default_context(cafile=certifi.where())
     ca_file = get_settings().max_ca_file
     if not ca_file or not Path(ca_file).is_file():
         logger.warning("max_ca_file_missing", extra={"path": ca_file})
