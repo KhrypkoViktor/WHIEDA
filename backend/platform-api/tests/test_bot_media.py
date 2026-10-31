@@ -16,7 +16,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.bot_media import service
-from app.funnel import guest_bot, system_word, texts
+from app.funnel import consult, guest_bot, system_word, texts
+from app.funnel.guest import rows_to_max, rows_to_telegram
 from app.max import processor as max_processor
 from app.max.client import MaxKeyboardError, max_button_callback
 from app.max.update_parser import MaxCallbackEvent, MaxEvent
@@ -820,14 +821,17 @@ def _cb(data: str, chat_type: str = "private") -> TelegramCallbackQuery:
     return TelegramCallbackQuery(chat_id=42, user_id=42, callback_query_id="cq-1", data=data, chat_type=chat_type, raw={})
 
 
-@pytest.mark.parametrize(("data", "placeholder"), [
-    ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
+@pytest.mark.parametrize(("data", "question"), [
+    ("funnel:consult", texts.CONSULT_Q1),   # срез 7: вместо заглушки — первый вопрос диалога «Личный разбор»
 ])
-async def test_telegram_buttons_answer_with_the_placeholder_texts(tg_bot, data, placeholder):
+async def test_telegram_consult_button_asks_the_first_question(tg_bot, data, question):
     result = await system_word.try_handle_funnel_callback(TENANT, _cb(data), trace_id="t1")
     assert result["route"] == "funnel_callback" and result["status"] == data.removeprefix("funnel:")
     tg_bot.answer.assert_awaited_once_with(callback_query_id="cq-1", bot_token=BOT_TOKEN)
-    tg_bot.text.assert_awaited_once_with(chat_id="42", text=placeholder, bot_token=BOT_TOKEN)
+    tg_bot.text.assert_awaited_once()
+    assert tg_bot.text.await_args.kwargs["text"] == question
+    assert tg_bot.text.await_args.kwargs["chat_id"] == "42" and tg_bot.text.await_args.kwargs["bot_token"] == BOT_TOKEN
+    assert tg_bot.text.await_args.kwargs["reply_markup"] == rows_to_telegram(consult.who_reply().rows)
 
 
 # «Живая встреча» (funnel:meet) с 30.10.2026 — кнопка гостя (app/funnel/guest_bot.py), а не заглушка этого модуля.
@@ -927,15 +931,17 @@ def _max_callback(payload: str) -> MaxCallbackEvent:
     )
 
 
-@pytest.mark.parametrize(("payload", "placeholder"), [
-    ("funnel:consult", texts.FUNNEL_CONSULT_PLACEHOLDER),
+@pytest.mark.parametrize(("payload", "question"), [
+    ("funnel:consult", texts.CONSULT_Q1),   # срез 7: вместо заглушки — первый вопрос диалога «Личный разбор»
 ])
-async def test_max_buttons_send_the_placeholder_as_a_new_message_and_acknowledge(max_bot, monkeypatch, payload, placeholder):
+async def test_max_buttons_send_the_question_as_a_new_message_and_acknowledge(max_bot, monkeypatch, payload, question):
     answered = AsyncMock(return_value={"ok": True})
     monkeypatch.setattr(max_processor, "answer_max_callback", answered)
     result = await max_processor.process_max_event(TENANT, _max_callback(payload), "t1")
     assert result["status"] == "handled" and result["prefix"] == "funnel:" and result["answered"] is True
-    max_bot.text.assert_awaited_once_with(chat_id=555, user_id=42, text=placeholder)
+    max_bot.text.assert_awaited_once_with(
+        chat_id=555, user_id=42, text=question, buttons=rows_to_max(consult.who_reply().rows)
+    )
     # ответ на нажатие — пустой: текст сообщения с туром и его кнопки остаются как были
     answered.assert_awaited_once_with("cb-1", notification=None, text=None, buttons=None)
 
@@ -953,9 +959,11 @@ async def test_max_funnel_callback_answers_only_in_the_wwc_bot_and_a_private_cha
     for chat_type in ("chat", "channel"):
         assert await system_word.max_funnel_callback(TENANT, _max_callback_in(chat_type), "t1") is None
     max_bot.text.assert_not_awaited()
-    # свой тенант и личный чат — заглушка, как раньше; chat_type по умолчанию — dialog
+    # свой тенант и личный чат — первый вопрос диалога; chat_type по умолчанию — dialog
     assert await system_word.max_funnel_callback(TENANT, _max_callback_in("dialog"), "t1") is None
-    max_bot.text.assert_awaited_once_with(chat_id=555, user_id=42, text=texts.FUNNEL_CONSULT_PLACEHOLDER)
+    max_bot.text.assert_awaited_once_with(
+        chat_id=555, user_id=42, text=texts.CONSULT_Q1, buttons=rows_to_max(consult.who_reply().rows)
+    )
     max_bot.text.reset_mock()
     bare = SimpleNamespace(payload="funnel:consult", chat_id=555, user_id=42)   # без chat_type вообще
     assert await system_word.max_funnel_callback(TENANT, bare, "t1") is None

@@ -71,6 +71,7 @@ $Files = @(
     "platform_website_leads_meeting_v44.sql",
     "platform_bot_media_v45.sql",
     "platform_meeting_registrations_v46.sql",
+    "platform_consult_requests_v47.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",

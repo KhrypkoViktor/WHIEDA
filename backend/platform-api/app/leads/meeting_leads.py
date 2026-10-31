@@ -372,6 +372,10 @@ async def _notify_binding_id(conn: Any, tenant_id: str) -> str | None:
     return str(row["binding_id"]) if row else None
 
 
+# Для воронки (app/funnel/consult.py): тот же выбор бота для плановых сообщений ведущим личного разбора.
+notify_binding_id = _notify_binding_id
+
+
 async def owner_chat(conn: Any, tenant_id: str, owner_actor_id: str | None) -> tuple[str, int | None] | None:
     """Чат владельца заявки: ``(chat_id, telegram_user_id)`` из ``lead_actors`` (сначала
     ``telegram_chat_id``, иначе ``telegram_user_id``). Нет владельца или чата — None."""

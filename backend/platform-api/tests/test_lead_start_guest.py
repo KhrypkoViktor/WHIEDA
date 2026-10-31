@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.funnel import guest, guest_bot, lead_start, registration, system_word, texts
+from app.funnel import consult, guest, guest_bot, lead_start, registration, system_word, texts
 from app.funnel.guest import GuestContext, Reply, guest_menu_reply, is_guest_menu_word, rows_to_max, rows_to_telegram
 from app.funnel.guest_bot import GUEST_MAX_PREFIXES, GuestAction, parse_guest_callback
 from app.funnel.lead_start import parse_lead_start_token, start_from_lead
@@ -1208,7 +1208,7 @@ async def test_the_guest_buttons_go_through_the_processor_chain(tg, whieda_tenan
     assert result["route"] == "guest_callback" and result["status"] == "registered"
 
 
-async def test_the_consult_button_still_gets_the_old_placeholder_through_the_processor(whieda_tenant, whieda_bot_binding):
+async def test_the_consult_button_opens_the_first_question_through_the_processor(whieda_tenant, whieda_bot_binding):
     state = SimpleNamespace(text=AsyncMock(return_value={"ok": True}), answer=AsyncMock(return_value={"ok": True}))
     update = {"update_id": 5, "callback_query": {"id": "cq-9", "data": "funnel:consult", "from": {"id": USER},
                                                   "message": {"message_id": 3, "chat": {"id": USER, "type": "private"}}}}
@@ -1217,7 +1217,7 @@ async def test_the_consult_button_still_gets_the_old_placeholder_through_the_pro
             binding_context_scope(whieda_bot_binding):
         result = await process_core_telegram_update(whieda_tenant, update, "t1", binding=whieda_bot_binding)
     assert result["route"] == "funnel_callback" and result["status"] == "consult"
-    assert state.text.await_args.kwargs["text"] == texts.FUNNEL_CONSULT_PLACEHOLDER
+    assert state.text.await_args.kwargs["text"] == texts.CONSULT_Q1   # срез 7: вместо прежней заглушки — вопрос «Кто вы сейчас?»
 
 
 # ---- Max: плюмбинг ---------------------------------------------------------------------------------
@@ -1387,10 +1387,12 @@ async def test_the_max_ask_button_points_to_the_telegram_bot_because_max_has_no_
     assert "buttons" not in mx.text.await_args.kwargs
 
 
-async def test_the_max_consult_button_keeps_the_old_placeholder(mx, monkeypatch):
+async def test_the_max_consult_button_opens_the_first_question(mx, monkeypatch):
     monkeypatch.setattr(system_word, "send_max_text", mx.text)
     await max_processor.process_max_event(TENANT, max_callback("funnel:consult"), "t1")
-    mx.text.assert_awaited_once_with(chat_id=555, user_id=USER, text=texts.FUNNEL_CONSULT_PLACEHOLDER)
+    mx.text.assert_awaited_once_with(
+        chat_id=555, user_id=USER, text=texts.CONSULT_Q1, buttons=rows_to_max(consult.who_reply().rows)
+    )
 
 
 async def test_a_failed_max_action_apologises_and_the_webhook_still_answers(mx, monkeypatch):

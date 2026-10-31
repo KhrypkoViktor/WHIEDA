@@ -595,7 +595,7 @@ async def _process_core_telegram_update_scoped(
         guest_callback_result = await try_handle_guest_callback(tenant, callback, trace_id=trace_id)
         if guest_callback_result is not None:
             return guest_callback_result
-        # «Личный разбор» под видео-туром слова СИСТЕМА (воронка, 30.10.2026): пока заглушка.
+        # «Личный разбор» под видео-туром слова СИСТЕМА и его кнопки cq1:/cq2:/chost: (воронка, срез 7, 31.10.2026).
         funnel_callback_result = await try_handle_funnel_callback(tenant, callback, trace_id=trace_id)
         if funnel_callback_result is not None:
             return funnel_callback_result
