@@ -119,7 +119,7 @@ CONSULT_GOAL_LABELS = (("money", "Доход"), ("team", "Команда"), ("pr
 CONSULT_Q3 = "С кем удобнее?"
 
 # текст: воронка — заявка принята. {host} — имя ведущего, {messenger} — «Telegram» или «Max».
-CONSULT_ACCEPTED = "Заявка принята. {host} напишет вам в {messenger} и предложит время. Напоминание за час пришлём."
+CONSULT_ACCEPTED = "Заявка принята. {host} напишет вам в {messenger} и предложит время."
 # текст: воронка — тому же ведущему за последние 7 дней заявка уже отправлена.
 CONSULT_ALREADY = "Заявка уже есть, ведущий напишет."
 
@@ -132,6 +132,8 @@ CONSULT_HOST_LINE_PHONE = "Телефон: {phone}"
 CONSULT_HOST_LINE_WHO = "Кто: {who}"
 CONSULT_HOST_LINE_GOAL = "Цель: {goal}"
 CONSULT_HOST_LINE_PARTNER = "От партнёра: {code}"
+# текст: воронка — человек в Telegram без ника: кнопки «Написать» нет (ссылка по id у закрытой приватности даёт ошибку Telegram).
+CONSULT_HOST_LINE_TG_ID = "Telegram id: {id} (ника нет, кнопки «Написать» нет)"
 # текст: воронка — человек в Max: кнопки «Написать» нет, ссылки на чужой Max из Telegram нет.
 CONSULT_HOST_MAX_REPLY = "Ответьте человеку в Max."
 # текст: воронка — копия владельцу: ведущему сообщение поставить не удалось (нет чата с ботом).

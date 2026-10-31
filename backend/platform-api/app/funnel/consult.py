@@ -204,11 +204,11 @@ def max_requester(event: Any) -> Requester:
 
 
 def messenger_line(channel: str, username: str | None) -> str:
-    """«Telegram @ник» (ник проверен, это единственное место, где @ в тексте остаётся), «Telegram, без ника»
-    или «Max» (ник Max без @: Telegram сделал бы из него ссылку на чужого человека)."""
+    """«Telegram @ник» (ник проверен, это единственное место, где @ в тексте остаётся), «Telegram» (без ника: id —
+    отдельной строкой) или «Max» (ник Max без @: Telegram сделал бы из него ссылку на чужого человека)."""
     title = MESSENGER_TITLES.get(channel, plain(channel, 32))
     if channel == "telegram":
-        return f"{title} @{username}" if username else f"{title}, без ника"
+        return f"{title} @{username}" if username else title
     return f"{title} (ник {plain_no_links(username, 64)})" if username else title
 
 
@@ -217,6 +217,7 @@ def host_message_text(
     name: Any,
     channel: str,
     username: str | None,
+    user_id: int,
     phone_e164: Any,
     who: str,
     goal: str,
@@ -226,12 +227,15 @@ def host_message_text(
 ) -> str:
     """Сообщение ведущему. Имя и код партнёра проходят через ``plain_no_links``: ``<`` и ``>`` становятся ‹ ›, адреса
     и @упоминания заменяются на «…», остальное (``&``) экранирует отправка (``format_telegram_html``). Телефона
-    нет, партнёра нет — этих строк нет. ``host_name`` (копия владельцу) добавляет строку «Ведущий: …»;
-    ``unreachable`` — что ведущему сообщение поставить не удалось."""
+    нет, партнёра нет — этих строк нет. Человек в Telegram без ника: строка «Telegram id: …» (кнопки «Написать»
+    нет, см. ``host_markup``). ``host_name`` (копия владельцу) добавляет строку «Ведущий: …»; ``unreachable`` —
+    что ведущему сообщение поставить не удалось."""
     lines = [texts.CONSULT_HOST_HEAD.format(name=plain_no_links(name, NAME_MAX) or texts.CONSULT_HOST_NO_NAME)]
     if host_name:
         lines.append(texts.CONSULT_HOST_LINE_HOST.format(host=plain_no_links(host_name, 64)))
     lines.append(texts.CONSULT_HOST_LINE_MESSENGER.format(messenger=messenger_line(channel, username)))
+    if channel == "telegram" and not username:
+        lines.append(texts.CONSULT_HOST_LINE_TG_ID.format(id=int(user_id)))
     phone = plain(phone_e164, 32)
     if phone:
         lines.append(texts.CONSULT_HOST_LINE_PHONE.format(phone=phone))
@@ -247,12 +251,13 @@ def host_message_text(
     return "\n".join(lines)
 
 
-def host_markup(channel: str, user_id: int, username: str | None) -> dict[str, Any] | None:
-    """Кнопка «Написать»: ``https://t.me/<ник>`` или, без ника, ``tg://user?id=<id>``. В Max кнопки нет."""
-    if channel != "telegram":
+def host_markup(channel: str, username: str | None) -> dict[str, Any] | None:
+    """Кнопка «Написать» — ``https://t.me/<ник>``, только у человека в Telegram с ником. Без ника и в Max кнопки нет:
+    ссылка ``tg://user?id=`` у людей с закрытой приватностью даёт Telegram-ошибку 400 на всё сообщение (воркер
+    отметил бы его ``dead``), поэтому id идёт строкой в тексте (``host_message_text``)."""
+    if channel != "telegram" or not username:
         return None
-    url = f"https://t.me/{username}" if username else f"tg://user?id={int(user_id)}"
-    return {"inline_keyboard": [[{"text": texts.CONSULT_WRITE_BUTTON, "url": url}]]}
+    return {"inline_keyboard": [[{"text": texts.CONSULT_WRITE_BUTTON, "url": f"https://t.me/{username}"}]]}
 
 
 def card_note(*, host_name: str, who: str, goal: str) -> str:
@@ -390,10 +395,10 @@ async def notify_hosts(
     hosts = settings.parsed_consult_hosts()
     names = settings.parsed_consult_host_names()
     common = dict(
-        name=name, channel=requester.channel, username=requester.username, phone_e164=phone_e164,
-        who=who, goal=goal, partner_code=partner_code,
+        name=name, channel=requester.channel, username=requester.username, user_id=requester.user_id,
+        phone_e164=phone_e164, who=who, goal=goal, partner_code=partner_code,
     )
-    markup = host_markup(requester.channel, requester.user_id, requester.username)
+    markup = host_markup(requester.channel, requester.username)
     host_status = await _enqueue_message(
         conn, tenant_id=tenant_id, request_id=request_id, actor_id=hosts.get(host), binding_id=binding_id,
         text=host_message_text(**common), markup=markup, key_suffix="",

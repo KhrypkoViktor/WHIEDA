@@ -182,7 +182,7 @@ def test_a_max_requester_takes_the_name_from_the_user_object():
 
 
 def message(**changes: Any) -> str:
-    base = dict(name="Анна Петрова", channel="telegram", username="anna_petrova", phone_e164="+79991112233",
+    base = dict(name="Анна Петрова", channel="telegram", username="anna_petrova", user_id=USER, phone_e164="+79991112233",
                 who="net", goal="money", partner_code="igor")
     base.update(changes)
     return consult.host_message_text(**base)
@@ -201,7 +201,16 @@ def test_the_host_message_has_every_known_fact():
 
 def test_the_host_message_skips_what_is_unknown():
     lines = message(phone_e164=None, partner_code="", username=None, name="", who="look", goal="system").split("\n")
-    assert lines == ["Личный разбор: Без имени", "Мессенджер: Telegram, без ника", "Кто: Пока смотрю", "Цель: Понять систему"]
+    assert lines == [
+        "Личный разбор: Без имени", "Мессенджер: Telegram", f"Telegram id: {USER} (ника нет, кнопки «Написать» нет)",
+        "Кто: Пока смотрю", "Цель: Понять систему",
+    ]
+
+
+def test_a_person_with_a_nick_gets_no_id_line_and_a_person_in_max_never_gets_one():
+    assert not any(line.startswith("Telegram id") for line in message().split("\n"))
+    assert not any("id" in line.split() for line in message(channel="max", username=None).split("\n"))
+    assert "tg://" not in message(username=None) and "@" not in message(username=None)
 
 
 def test_the_host_message_for_a_person_in_max_asks_to_reply_in_max():
@@ -227,10 +236,11 @@ def test_the_owner_copy_names_the_host_and_tells_when_the_host_got_nothing():
     assert message(host_name="Елена", unreachable=True).split("\n")[-1] == texts.CONSULT_HOST_UNREACHABLE
 
 
-def test_the_write_button():
-    assert consult.host_markup("telegram", USER, "anna_petrova") == {"inline_keyboard": [[{"text": "Написать", "url": "https://t.me/anna_petrova"}]]}
-    assert consult.host_markup("telegram", USER, None) == {"inline_keyboard": [[{"text": "Написать", "url": f"tg://user?id={USER}"}]]}
-    assert consult.host_markup("max", USER, "inna_o") is None and consult.host_markup("max", USER, None) is None
+def test_the_write_button_exists_only_for_a_telegram_nick():
+    assert consult.host_markup("telegram", "anna_petrova") == {"inline_keyboard": [[{"text": "Написать", "url": "https://t.me/anna_petrova"}]]}
+    # без ника кнопки нет (ссылка по id у закрытой приватности ломает всё сообщение), в Max её нет никогда
+    assert consult.host_markup("telegram", None) is None and consult.host_markup("telegram", "") is None
+    assert consult.host_markup("max", "inna_o") is None and consult.host_markup("max", None) is None
 
 
 def test_the_card_note_names_the_host_and_the_answers():
@@ -277,7 +287,7 @@ async def test_the_telegram_request_answers_with_the_host_name_and_the_messenger
     with patch.object(consult, "submit_request", fake):
         result = await system_word.try_handle_funnel_callback(TENANT, tg_callback("chost:net:money:elena"), trace_id="t1")
     assert result == {"ok": True, "route": "funnel_callback", "status": "consult_created", "trace_id": "t1"}
-    assert tg.text.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Telegram и предложит время. Напоминание за час пришлём."
+    assert tg.text.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Telegram и предложит время."
     assert tg.text.await_args.kwargs["reply_markup"] is None
     fake.assert_awaited_once_with("whieda", Requester("telegram", USER, "Анна Петрова", "anna_petrova"), "net", "money", "elena")
 
@@ -358,7 +368,7 @@ async def test_the_max_request_answers_with_the_messenger_max(mx):
     fake = AsyncMock(return_value=consult.SubmitResult("created", Reply(texts.CONSULT_ACCEPTED.format(host="Виктор", messenger="Max")), 41))
     with patch.object(consult, "submit_request", fake):
         await max_processor.process_max_event(TENANT, max_callback("chost:look:team:viktor", user_raw={"first_name": "Инна"}), "t1")
-    assert mx.text.await_args.kwargs["text"] == "Заявка принята. Виктор напишет вам в Max и предложит время. Напоминание за час пришлём."
+    assert mx.text.await_args.kwargs["text"] == "Заявка принята. Виктор напишет вам в Max и предложит время."
     assert "buttons" in mx.text.await_args.kwargs and mx.text.await_args.kwargs["buttons"] is None
     fake.assert_awaited_once_with("whieda", Requester("max", USER, "Инна", None), "look", "team", "viktor")
 
@@ -477,7 +487,7 @@ async def test_a_request_to_viktor_is_stored_and_sent_to_him_only(world):
     world.lead = make_lead()
     result = await consult.submit_request("whieda", TG_PERSON, "net", "money", "viktor", now=NOW)
     assert result.status == "created" and result.request_id == 42 and result.notified is True
-    assert result.reply.text == "Заявка принята. Виктор напишет вам в Telegram и предложит время. Напоминание за час пришлём."
+    assert result.reply.text == "Заявка принята. Виктор напишет вам в Telegram и предложит время."
     # строка заявки: арендатор, заявка человека, канал, id, имя из профиля, ведущий, ответы
     (insert,) = world.inserts
     assert insert[:4] == ("whieda", "00000000-0000-0000-0000-00000000aaaa", "telegram", USER)
@@ -514,10 +524,12 @@ async def test_a_request_to_elena_goes_to_her_and_a_copy_to_the_owner(world):
     assert world.inserts[0][1] is None
 
 
-async def test_the_person_without_a_nick_gets_the_user_id_link_and_the_one_in_max_gets_no_button(world):
+async def test_the_person_without_a_nick_gets_the_id_line_and_no_button_and_the_one_in_max_gets_no_button(world):
     await consult.submit_request("whieda", Requester("telegram", USER, "Анна", None), "net", "money", "viktor", now=NOW)
-    assert world.outbox[0]["payload"]["reply_markup"] == {"inline_keyboard": [[{"text": "Написать", "url": f"tg://user?id={USER}"}]]}
-    assert "Telegram, без ника" in world.outbox[0]["payload"]["text"]
+    assert "reply_markup" not in world.outbox[0]["payload"]
+    assert world.outbox[0]["payload"]["text"].split("\n")[1:3] == [
+        "Мессенджер: Telegram", f"Telegram id: {USER} (ника нет, кнопки «Написать» нет)",
+    ]
     world.outbox.clear()
     result = await consult.submit_request("whieda", MAX_PERSON, "sell", "product", "elena", now=NOW)
     assert result.reply.text.startswith("Заявка принята. Елена напишет вам в Max")

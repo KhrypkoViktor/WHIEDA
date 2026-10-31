@@ -224,7 +224,7 @@ def test_consult_requests_end_to_end(monkeypatch):
 
                 done = await press(555001, "chost:net:money:elena")
                 assert done == {"ok": True, "route": "funnel_callback", "status": "consult_created", "trace_id": "t"}
-                assert sent.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Telegram и предложит время. Напоминание за час пришлём."
+                assert sent.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Telegram и предложит время."
                 (first,) = await requests_of(555001)
                 assert first["lead_id"] == lead_row["lead_id"] and first["channel"] == "telegram" and first["host"] == "elena"
                 assert first["display_name"] == "Анна Петрова" and first["answers"] == {"who": "net", "goal": "money"}
@@ -289,7 +289,7 @@ def test_consult_requests_end_to_end(monkeypatch):
                     assert (await press_max(555001, payload))["status"] == "handled"
                 assert max_sent.await_args.kwargs["text"] == "С кем удобнее?"
                 assert (await press_max(555001, "chost:look:system:elena"))["status"] == "handled"
-                assert max_sent.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Max и предложит время. Напоминание за час пришлём."
+                assert max_sent.await_args.kwargs["text"] == "Заявка принята. Елена напишет вам в Max и предложит время."
                 (in_max,) = await requests_of(555001, "max")  # тот же числовой id, но другой мессенджер — другой человек
                 assert in_max["lead_id"] is None and in_max["display_name"] == "Инна Орлова" and in_max["notified"] is True
                 assert in_max["answers"] == {"who": "look", "goal": "system"}
@@ -310,9 +310,11 @@ def test_consult_requests_end_to_end(monkeypatch):
                 assert sorted(r.status for r in results) == ["created", "exists"]
                 (oleg_request,) = await requests_of(556001)
                 oleg_messages = [m["payload"] for m in await outbox() if m["payload"]["consult_request_id"] == oleg_request["request_id"]]
-                assert len(oleg_messages) == 1  # без ника ссылка идёт на id человека
-                assert oleg_messages[0]["reply_markup"]["inline_keyboard"][0][0]["url"] == "tg://user?id=556001"
-                assert oleg_messages[0]["text"].split("\n")[1] == "Мессенджер: Telegram, без ника"
+                assert len(oleg_messages) == 1  # без ника кнопки нет, id человека — строкой в тексте
+                assert "reply_markup" not in oleg_messages[0]
+                assert oleg_messages[0]["text"].split("\n")[1:3] == [
+                    "Мессенджер: Telegram", "Telegram id: 556001 (ника нет, кнопки «Написать» нет)"
+                ]
 
                 # ---- 6. ведущая без чата с ботом: заявка есть, notified_at пуст, Виктору — с пометкой ----------
                 async with tenant_connection("whieda") as conn:
