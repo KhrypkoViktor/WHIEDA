@@ -85,6 +85,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "bot_media",
             # Запись на Живую встречу: запись, перенос, отмена (platform_meeting_registrations_v46.sql, 30.10.2026).
             "meeting_registrations",
+            # Заявки на личный разбор: кто, чего ждёт, к какому ведущему (platform_consult_requests_v47.sql, 31.10.2026).
+            "consult_requests",
             # Отметка «приложение WWC установлено» и сообщения об открытии мини-курса
             # (platform_academy_unlock_v39.sql, 19.10.2026).
             "academy_app_installs",

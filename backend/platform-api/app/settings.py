@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -10,6 +11,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 RouteMode = Literal["legacy", "shadow", "core"]
 DeepRouteMode = Literal["off", "shadow", "core"]
 TelegramUiProfile = Literal["full", "minimal"]
+
+
+_CONSULT_HOSTS_DEFAULT = {"viktor": "viktor", "elena": "onlineelena"}
+_CONSULT_NAMES_DEFAULT = {"viktor": "Виктор", "elena": "Елена"}
+
+
+def _consult_map(raw: str, default: dict[str, str]) -> dict[str, str]:
+    """JSON-объект с ключами viktor и elena -> непустые строки; чего не хватает или что сломано — берётся из default."""
+    try:
+        data = json.loads(raw or "")
+    except (TypeError, ValueError):
+        data = None
+    data = data if isinstance(data, dict) else {}
+    result = dict(default)
+    for key in default:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            result[key] = value.strip()
+    return result
 
 
 class Settings(BaseSettings):
@@ -486,6 +506,22 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ORGANIC_OWNER_ID",
         description="Owner for new leads whose referral cannot receive attribution.",
     )
+    platform_consult_hosts: str = Field(
+        default='{"viktor":"viktor","elena":"onlineelena"}',
+        validation_alias="PLATFORM_CONSULT_HOSTS",
+        description=(
+            "JSON: personal-consultation host key (viktor, elena) -> lead_actors.actor_id whose Telegram chat "
+            "gets the request (app/funnel/consult.py). A broken value falls back to the default."
+        ),
+    )
+    platform_consult_host_names: str = Field(
+        default='{"viktor":"Виктор","elena":"Елена"}',
+        validation_alias="PLATFORM_CONSULT_HOST_NAMES",
+        description=(
+            "JSON: host key (viktor, elena) -> the name shown to the person on the buttons and in the answer. "
+            "A broken value falls back to the default."
+        ),
+    )
 
     # Theme access: when enabled, every verified Telegram user (valid content
     # session) may customize the theme of an enabled personal profile without
@@ -548,6 +584,14 @@ class Settings(BaseSettings):
         """Telegram user IDs of the leader pilot (empty — nobody)."""
         raw = self.platform_leader_pilot_telegram_ids
         return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
+
+    def parsed_consult_hosts(self) -> dict[str, str]:
+        """Ведущие личного разбора: ключ (viktor, elena) -> actor_id. Кривой JSON или пустое значение — по умолчанию."""
+        return _consult_map(self.platform_consult_hosts, _CONSULT_HOSTS_DEFAULT)
+
+    def parsed_consult_host_names(self) -> dict[str, str]:
+        """Имена ведущих для людей: ключ (viktor, elena) -> имя. Кривой JSON или пустое значение — по умолчанию."""
+        return _consult_map(self.platform_consult_host_names, _CONSULT_NAMES_DEFAULT)
 
     def parsed_scheduled_notify_bindings(self) -> tuple[str, ...]:
         seen: list[str] = []

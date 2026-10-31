@@ -6,9 +6,9 @@
 не остаётся без ответа.
 
 Кнопка «Живая встреча» (``funnel:meet``) открывает список встреч для записи — это обработчик гостя
-(app/funnel/guest_bot.py); «Личный разбор» (``funnel:consult``) пока отвечает текстом-заглушкой: запись на разбор —
-отдельный срез воронки. В Max обработчик ``funnel:`` регистрируется в app/max/processor.py, в Telegram —
-в цепочке callback процессора.
+(app/funnel/guest_bot.py); «Личный разбор» (``funnel:consult``) запускает диалог из двух вопросов и выбора ведущего
+(app/funnel/consult.py, срез 7): кнопки ``cq1:`` / ``cq2:`` / ``chost:`` обрабатываются здесь же. В Max обработчики
+регистрируются в app/max/processor.py, в Telegram — в цепочке callback процессора.
 
 Слово работает только в личном чате бота WWC (тенант ``whieda``): боты других тенантов и витрин отвечают
 на «система» как раньше.
@@ -21,7 +21,8 @@ import re
 from typing import Any
 
 from app.bot_media.service import send_media
-from app.funnel import texts
+from app.funnel import consult, texts
+from app.funnel.guest import rows_to_max, rows_to_telegram
 from app.max.client import max_button_callback, send_max_text
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, send_telegram_text
@@ -35,10 +36,7 @@ CALLBACK_PREFIX = "funnel:"
 SYSTEM_WORD_RE = re.compile(r"^\s*система\s*[!.]?\s*$", re.IGNORECASE)
 
 # «Живая встреча» (funnel:meet) с 30.10.2026 открывает список встреч для записи (app/funnel/guest_bot.py);
-# «Личный разбор» пока отвечает заглушкой — запись на разбор — отдельный срез воронки.
-_PLACEHOLDERS = {
-    texts.FUNNEL_CONSULT_CALLBACK: texts.FUNNEL_CONSULT_PLACEHOLDER,
-}
+# «Личный разбор» (funnel:consult) с 31.10.2026 ведёт в диалог app/funnel/consult.py.
 
 
 def is_system_word(text: str | None) -> bool:
@@ -99,16 +97,22 @@ async def send_tour_telegram(tenant: TenantContext, chat_id: int, *, trace_id: s
 async def try_handle_funnel_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str | None = None
 ) -> dict[str, Any] | None:
-    """Нажатие «Живая встреча» / «Личный разбор» под туром: пока текст-заглушка."""
-    placeholder = _PLACEHOLDERS.get(callback.data)
-    if placeholder is None or tenant.tenant_id != FUNNEL_TENANT_ID:
+    """«Личный разбор» под туром и кнопки диалога (``funnel:consult``, ``cq1:``, ``cq2:``, ``chost:``): вопрос или
+    заявка ведущему (app/funnel/consult.py). Не наша кнопка и чужой тенант — ``None``."""
+    action = consult.parse_consult_callback(callback.data)
+    if action is None or tenant.tenant_id != FUNNEL_TENANT_ID:
         return None
     bot_token = current_bot_binding().bot_token
     await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=bot_token)
     if callback.chat_type != "private":
         return {"ok": True, "route": "funnel_callback", "status": "private_chat_required", "trace_id": trace_id}
-    await send_telegram_text(chat_id=str(callback.chat_id), text=placeholder, bot_token=bot_token)
-    return {"ok": True, "route": "funnel_callback", "status": callback.data.removeprefix(CALLBACK_PREFIX), "trace_id": trace_id}
+    requester = consult.telegram_requester(callback) if action.kind == "request" else None
+    result = await consult.handle_action(tenant.tenant_id, action, requester)
+    await send_telegram_text(
+        chat_id=str(callback.chat_id), text=result.reply.text, bot_token=bot_token,
+        reply_markup=rows_to_telegram(result.reply.rows),
+    )
+    return {"ok": result.ok, "route": "funnel_callback", "status": result.status, "trace_id": trace_id}
 
 
 # ---- Max -------------------------------------------------------------------------------------------
@@ -140,13 +144,19 @@ async def send_tour_max(
 
 
 async def max_funnel_callback(tenant: TenantContext, event: Any, trace_id: str) -> None:
-    """Нажатие кнопки воронки в Max: текст-заглушка новым сообщением (текст сообщения с туром не заменяем).
-    Как и Telegram-двойник (``try_handle_funnel_callback``), отвечает только в боте WWC (тенант ``whieda``) и
-    в личном чате (``chat_type == "dialog"``); иначе тихо ``None``."""
-    placeholder = _PLACEHOLDERS.get(str(event.payload))
-    if placeholder is None or tenant.tenant_id != FUNNEL_TENANT_ID:
+    """Нажатие кнопки «Личного разбора» в Max (``funnel:consult``, ``cq1:``, ``cq2:``, ``chost:``): вопрос или заявка
+    ведущему новым сообщением (текст сообщения с кнопками не заменяем). Как и Telegram-двойник
+    (``try_handle_funnel_callback``), отвечает только в боте WWC (тенант ``whieda``) и в личном чате
+    (``chat_type == "dialog"``); иначе тихо ``None``."""
+    action = consult.parse_consult_callback(str(event.payload))
+    if action is None or tenant.tenant_id != FUNNEL_TENANT_ID:
         return None
     if str(getattr(event, "chat_type", "dialog") or "dialog") != "dialog":
         return None
-    await send_max_text(chat_id=event.chat_id or None, user_id=event.user_id, text=placeholder)
+    requester = consult.max_requester(event) if action.kind == "request" else None
+    result = await consult.handle_action(tenant.tenant_id, action, requester)
+    await send_max_text(
+        chat_id=event.chat_id or None, user_id=event.user_id, text=result.reply.text,
+        buttons=rows_to_max(result.reply.rows),
+    )
     return None

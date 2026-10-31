@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.funnel.consult import CONSULT_MAX_PREFIXES
 from app.funnel.guest import is_guest_menu_word
 from app.funnel.guest_bot import (
     GUEST_MAX_PREFIXES,
@@ -359,6 +360,9 @@ async def handle_max_callback(tenant: TenantContext, event: MaxCallbackEvent, tr
 
 # Кнопки воронки («Живая встреча», «Личный разбор» под туром слова СИСТЕМА): payload funnel:meet | funnel:consult.
 register_max_callback(FUNNEL_CALLBACK_PREFIX, max_funnel_callback)
+# «Личный разбор» (срез 7): вопросы и выбор ведущего — cq1:<кто>, cq2:<кто>:<цель>, chost:<кто>:<цель>:<ведущий>.
+for _consult_prefix in CONSULT_MAX_PREFIXES:
+    register_max_callback(_consult_prefix, max_funnel_callback)
 # Кнопки гостя встречи (срез 4): «Записаться», «Перенести», «Отменить запись», «Живая встреча» (список встреч),
 # «Показ системы», «Задать вопрос». Префиксы funnel:meet|tour|ask длиннее общего funnel: — берут своё, funnel:consult
 # остаётся за max_funnel_callback.
