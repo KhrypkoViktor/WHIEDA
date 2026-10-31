@@ -6,6 +6,7 @@
   встречи создать 4                             — 4 ближайших слота расписания (вторник и четверг 19:30 МСК),
                                                   уже созданные пропускаются;
   ссылка встречи 12 https://…                   — задать или заменить ссылку;
+  запись встречи 12 https://…                   — ссылка на запись прошедшей встречи (её получают не пришедшие);
   отменить встречу 12                           — отменить;
   встреча прошла 12                             — отметить прошедшей.
 
@@ -44,6 +45,7 @@ USAGE_LINK = "Не похоже на ссылку: нужна https://… без
 USAGE_SCHEME = "Ссылка должна начинаться с https://, например: встреча 05.11 19:30 https://zoom.us/j/1 Название"
 USAGE_SLOTS = f"Формат: встречи создать 4 (число от 1 до {SLOTS_MAX})"
 USAGE_URL = "Формат: ссылка встречи 12 https://…"
+USAGE_RECORDING = "Формат: запись встречи 12 https://…"
 USAGE_CANCEL = "Формат: отменить встречу 12"
 USAGE_DONE = "Формат: встреча прошла 12"
 USAGE_ALL = (
@@ -52,6 +54,7 @@ USAGE_ALL = (
     "встреча 05.11 19:30 [https://ссылка] [название]\n"
     "встречи создать 4\n"
     "ссылка встречи 12 https://…\n"
+    "запись встречи 12 https://…\n"
     "отменить встречу 12\n"
     "встреча прошла 12"
 )
@@ -60,6 +63,7 @@ _I = re.IGNORECASE
 _LIST_RE = re.compile(r"встречи", _I)
 _SLOTS_RE = re.compile(r"встречи\s+создать(?:\s+(?P<rest>.*))?", _I)
 _URL_CMD_RE = re.compile(r"ссылка\s+встречи(?:\s+(?P<rest>.*))?", _I)
+_RECORDING_CMD_RE = re.compile(r"запись\s+встречи(?:\s+(?P<rest>.*))?", _I)
 _CANCEL_RE = re.compile(r"отменить\s+встречу(?:\s+(?P<rest>.*))?", _I)
 _DONE_RE = re.compile(r"встреча\s+прошла(?:\s+(?P<rest>.*))?", _I)
 _CREATE_RE = re.compile(r"встреча\s+(?P<rest>\d.*)", _I)
@@ -75,7 +79,7 @@ _ADDRESS_LIKE_RE = re.compile(r"[^\W\d_]{2,}\.[^\W\d_]{2,}")
 
 @dataclass(frozen=True)
 class MeetingCommand:
-    action: str  # list | create | slots | set_url | cancel | done | usage
+    action: str  # list | create | slots | set_url | set_recording | cancel | done | usage
     meeting_id: int | None = None
     day: int = 0
     month: int = 0
@@ -145,6 +149,17 @@ def parse_command(text: str | None) -> MeetingCommand | None:
         if url is None:
             return _usage(USAGE_LINK)
         return MeetingCommand("set_url", meeting_id=int(id_match.group(1)), join_url=url)
+
+    match = _RECORDING_CMD_RE.fullmatch(raw)
+    if match and _starts_with_id(match.group("rest")):
+        parts = (match.group("rest") or "").split()
+        id_match = _ID_RE.fullmatch(parts[0]) if parts else None
+        if id_match is None or len(parts) != 2:
+            return _usage(USAGE_RECORDING)
+        url = service.normalize_join_url(parts[1])
+        if url is None:
+            return _usage(USAGE_LINK)
+        return MeetingCommand("set_recording", meeting_id=int(id_match.group(1)), join_url=url)
 
     for pattern, action, hint in ((_CANCEL_RE, "cancel", USAGE_CANCEL), (_DONE_RE, "done", USAGE_DONE)):
         match = pattern.fullmatch(raw)
@@ -233,6 +248,8 @@ def error_text(exc: MeetingError, command: MeetingCommand) -> str:
         status = str(exc.meeting.get("status"))
         if command.action == "set_url":
             return f"Встреча #{number} {'отменена' if status == 'cancelled' else 'уже прошла'} — ссылку не меняю."
+        if command.action == "set_recording":
+            return f"Встреча #{number} отменена — запись не сохраняю."
         if command.action == "cancel":
             return f"Встреча #{number} уже отменена." if status == "cancelled" else (
                 f"Встреча #{number} уже прошла — отменить нельзя."
@@ -305,6 +322,11 @@ async def try_handle_meetings_admin_message(
                 wrote = True
                 text = f"Ссылка встречи #{row['meeting_id']} сохранена ({_when(row, moment)})."
                 status = "url_set"
+            elif command.action == "set_recording":
+                row = await service.set_recording_url(conn, tenant_id, int(command.meeting_id or 0), str(command.join_url))
+                wrote = True
+                text = f"Запись встречи #{row['meeting_id']} сохранена ({_when(row, moment)})."
+                status = "recording_set"
             elif command.action == "cancel":
                 row = await service.cancel_meeting(conn, tenant_id, int(command.meeting_id or 0))
                 wrote = True

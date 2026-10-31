@@ -125,7 +125,9 @@ def test_every_max_prefix_of_the_guest_resolves_to_the_guest_handler_and_consult
         found = max_processor.resolve_max_callback(prefix + "1")
         assert found is not None and found[1] is guest_bot.max_guest_callback, prefix
     assert max_processor.resolve_max_callback("funnel:consult")[1] is system_word.max_funnel_callback
-    assert set(GUEST_MAX_PREFIXES) == {"mreg:", "mmove:", "mmoveto:", "mcancel:", "funnel:meet", "funnel:tour", "funnel:ask"}
+    assert set(GUEST_MAX_PREFIXES) == {
+        "mreg:", "mmove:", "mmoveto:", "mcancel:", "mjoin:", "funnel:meet", "funnel:tour", "funnel:ask",
+    }
 
 
 @pytest.mark.parametrize("text", ["меню", "Меню", "МЕНЮ!", " меню ", "/menu", "/menu@WHIEDA_Advisor_bot", "меню."])

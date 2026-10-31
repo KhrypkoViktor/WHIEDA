@@ -495,6 +495,7 @@ async def test_worker_runs_the_alert_only_when_planned_and_with_bindings(_clean_
         patch.object(worker, "scheduled_notify_bindings", AsyncMock(return_value=bindings)),
         patch.object(worker, "process_due_notifications", send),
         patch("app.funnel.no_bot_alert.no_bot_alert_step", step),
+        patch("app.funnel.reminders.reminders_step", AsyncMock(return_value={})),  # напоминания о встрече — свои тесты
     ):
         assert await worker.scheduled_notifications_step(plan_crm=False, plan_no_bot=True) == {
             "no_bot_alerts": 3, "due_sent": 1,
@@ -517,6 +518,7 @@ async def test_worker_sends_due_messages_even_if_the_alert_step_fails(_clean_wor
         patch.object(worker, "scheduled_notify_bindings", AsyncMock(return_value={"whieda": _binding()})),
         patch.object(worker, "process_due_notifications", send),
         patch("app.funnel.no_bot_alert.no_bot_alert_step", AsyncMock(side_effect=RuntimeError("db down"))),
+        patch("app.funnel.reminders.reminders_step", AsyncMock(return_value={})),
         caplog.at_level(logging.ERROR, logger="app.jobs.worker"),
     ):
         assert await worker.scheduled_notifications_step(plan_crm=False, plan_no_bot=True) == {"due_sent": 1}

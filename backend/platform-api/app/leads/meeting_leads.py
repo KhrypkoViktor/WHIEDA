@@ -34,6 +34,7 @@ from app.crm.service import (
     crm_contact_url,
     load_viewer,
     lock_reason,
+    move_card_step_today,
     record_card_event,
     restore_card_step,
     safe_error,
@@ -73,6 +74,14 @@ TAG_REGISTERED_PREFIX = "записан "
 REGISTRATION_NOTE = "Записался(ась) на Живую встречу: {when}."
 MOVE_NOTE = "Перенёс(ла) запись на Живую встречу: {old} → {new}."
 CANCEL_NOTE = "Отменил(а) запись на Живую встречу: {when}."
+
+# Итог встречи (срез 5, 31.10.2026): метка, заметка и шаг «Напомнить о себе» на сегодня в карточке CRM.
+TAG_ATTENDED_PREFIX = "был "
+TAG_NO_SHOW_PREFIX = "не дошёл "
+ATTENDED_NOTE = "Был(а) на Живой встрече: {when}."
+NO_SHOW_NOTE = "Записался(ась) на Живую встречу {when}, но не пришёл(пришла)."
+# Шаги, которые итог встречи вправе заменить на «Напомнить о себе» (карточка «Новый»).
+AFTER_MEETING_REPLACEABLE_STEPS = ("invite", "ping", None)
 
 # Алерт «бот не открыл» (app/funnel/no_bot_alert.py) ставит новой карточке шаг «Напомнить о себе»
 # на сегодня и запоминает дату в metadata заявки: открытие бота возвращает шаг по умолчанию,
@@ -738,3 +747,53 @@ async def _restore_alert_step(conn: Any, tenant_id: str, lead_id: str, contact_i
                 )
     except Exception as exc:
         logger.warning("meeting_lead_alert_step_restore_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+
+
+# ---- итог встречи: метка и заметка в карточке ---------------------------------------------------
+
+
+def attendance_card_change(
+    kind: Literal["attended", "no_show"], *, starts_at: datetime, now: datetime | None = None
+) -> tuple[str, list[str]]:
+    """``(заметка, добавить метки)`` для карточки CRM: «был 05.11» или «не дошёл 05.11»."""
+    when = meeting_when(starts_at, now=now)
+    day = f"{as_msk(starts_at):%d.%m}"
+    if kind == "attended":
+        return ATTENDED_NOTE.format(when=when), [f"{TAG_ATTENDED_PREFIX}{day}"]
+    if kind == "no_show":
+        return NO_SHOW_NOTE.format(when=when), [f"{TAG_NO_SHOW_PREFIX}{day}"]
+    raise ValueError("kind must be attended or no_show")
+
+
+async def card_attendance_event(
+    conn: Any,
+    tenant_id: str,
+    contact_id: str | None,
+    kind: Literal["attended", "no_show"],
+    *,
+    starts_at: datetime,
+    now: datetime | None = None,
+) -> bool:
+    """Итог встречи в карточке CRM заявки: метка (``был 05.11`` / ``не дошёл 05.11``), заметка и шаг «Напомнить
+    о себе» на сегодня (только если карточка «Новый» и шаг не отложен партнёром). Нет карточки — ничего не делает.
+    Под savepoint: сбой карточки не отменяет отметку записи. True — карточка обновлена."""
+    if not contact_id:
+        return False
+    note, add_tags = attendance_card_change(kind, starts_at=starts_at, now=now)
+    try:
+        async with conn.transaction():
+            done = await record_card_event(conn, tenant_id=tenant_id, contact_id=contact_id, note=note, add_tags=add_tags)
+            if done:
+                await move_card_step_today(
+                    conn,
+                    tenant_id=tenant_id,
+                    contact_id=contact_id,
+                    status=ALERT_CARD_STATUS,
+                    from_steps=AFTER_MEETING_REPLACEABLE_STEPS,
+                    to_step=ALERT_CARD_STEP,
+                )
+            return done
+    except Exception as exc:
+        logger.warning("meeting_lead_card_attendance_failed", extra={"tenant_id": tenant_id, **safe_error(exc)})
+        return False
+

@@ -53,10 +53,11 @@ from app.tenancy import TenantContext
 logger = logging.getLogger("whieda.funnel.guest")
 
 # Кнопки, которые обрабатывает гость-обработчик: mreg:<встреча>, mmove:<запись>, mmoveto:<запись>:<встреча>,
-# mcancel:<запись>, funnel:meet, funnel:tour, funnel:ask. «Личный разбор» (funnel:consult) остаётся у system_word.
+# mcancel:<запись>, mjoin:<запись> (срез 5), funnel:meet, funnel:tour, funnel:ask. «Личный разбор» (funnel:consult)
+# остаётся у system_word.
 _ID = r"(\d{1,18})"
 _ACTION_RE = re.compile(
-    rf"^(?:(mreg|mmove|mcancel):{_ID}|(mmoveto):{_ID}:{_ID}|(funnel):(meet|tour|ask))$"
+    rf"^(?:(mreg|mmove|mcancel|mjoin):{_ID}|(mmoveto):{_ID}:{_ID}|(funnel):(meet|tour|ask))$"
 )
 
 # Префиксы для диспетчера Max (register_max_callback): самый длинный подходящий побеждает, так что
@@ -66,6 +67,7 @@ GUEST_MAX_PREFIXES = (
     texts.MOVE_CALLBACK_PREFIX,
     texts.MOVE_TO_CALLBACK_PREFIX,
     texts.CANCEL_CALLBACK_PREFIX,
+    texts.JOIN_CALLBACK_PREFIX,
     texts.FUNNEL_MEET_CALLBACK,
     texts.FUNNEL_TOUR_CALLBACK,
     texts.FUNNEL_ASK_CALLBACK,
@@ -74,7 +76,7 @@ GUEST_MAX_PREFIXES = (
 
 @dataclass(frozen=True)
 class GuestAction:
-    kind: str  # register | move_list | move_to | cancel | meet | tour | ask
+    kind: str  # register | move_list | move_to | cancel | join | meet | tour | ask
     registration_id: int | None = None
     meeting_id: int | None = None
 
@@ -91,6 +93,8 @@ def parse_guest_callback(data: str | None) -> GuestAction | None:
         return GuestAction("move_list", registration_id=int(short_id))
     if short == "mcancel":
         return GuestAction("cancel", registration_id=int(short_id))
+    if short == "mjoin":
+        return GuestAction("join", registration_id=int(short_id))
     if move_to:
         return GuestAction("move_to", registration_id=int(move_reg), meeting_id=int(move_meeting))
     return GuestAction(funnel_kind)
@@ -107,6 +111,8 @@ async def _run_db_action(tenant_id: str, channel: str, user_id: int, action: Gue
         )
     if action.kind == "cancel":
         return await registration.cancel(tenant_id, channel, user_id, int(action.registration_id or 0))
+    if action.kind == "join":
+        return await registration.join(tenant_id, channel, user_id, int(action.registration_id or 0))
     return await registration.list_meetings(tenant_id, channel, user_id)
 
 

@@ -293,6 +293,14 @@ class FakeMeetings:
             row.update(notes=notes, created_by=created_by, recording_url=None)
             self.rows.append(row)
             return dict(row)
+        if q.startswith("update meetings set recording_url"):
+            url, tenant, meeting_id = params
+            row = self._find(tenant, meeting_id)
+            if row is None or row["status"] not in ("planned", "done"):
+                return None
+            self.writes += 1
+            row["recording_url"] = url
+            return dict(row)
         if q.startswith("update meetings set join_url"):
             url, tenant, meeting_id = params
             row = self._find(tenant, meeting_id)
@@ -821,3 +829,62 @@ async def test_invalid_kind_is_refused_by_the_service():
     with pytest.raises(MeetingError) as excinfo:
         await service.create_meeting(object(), "whieda", starts_at=msk(2026, 11, 5), kind="private")
     assert excinfo.value.code == "bad_kind"
+
+
+# ---- запись встречи (срез 5, 31.10.2026) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("запись встречи 12 https://zoom.us/rec/9",
+     MeetingCommand("set_recording", meeting_id=12, join_url="https://zoom.us/rec/9")),
+    ("Запись  встречи #3 HTTPS://zoom.us/rec/9?pwd=Ab",
+     MeetingCommand("set_recording", meeting_id=3, join_url="HTTPS://zoom.us/rec/9?pwd=Ab")),
+])
+def test_the_recording_command_is_parsed(text, expected):
+    assert parse_command(text) == expected
+
+
+@pytest.mark.parametrize(("text", "hint"), [
+    ("запись встречи 12", meetings_admin.USAGE_RECORDING),
+    ("запись встречи", meetings_admin.USAGE_RECORDING),
+    ("запись встречи 12 https://zoom.us/rec/9 пароль 1", meetings_admin.USAGE_RECORDING),
+    ("запись встречи 12 не-ссылка", meetings_admin.USAGE_LINK),
+    ("запись встречи 12 http://", meetings_admin.USAGE_LINK),
+])
+def test_the_recording_command_with_a_wrong_format_gets_a_hint(text, hint):
+    assert parse_command(text) == MeetingCommand("usage", hint=hint)
+
+
+@pytest.mark.parametrize("text", ["запись встречи была хорошая", "запись встречи будет завтра", "запись на встречу", "записи встреч"])
+def test_ordinary_phrases_about_a_recording_are_not_commands(text):
+    assert parse_command(text) is None
+
+
+@pytest.mark.asyncio
+async def test_the_recording_link_is_saved_for_a_planned_or_finished_meeting(owner_env, fake, sent):
+    fake.add(status="done", join_url=None)
+    fake.add(starts_at=msk(2026, 11, 7))
+    result = await say("запись встречи 1 https://zoom.us/rec/111")
+    assert result["status"] == "recording_set" and fake.rows[0]["recording_url"] == "https://zoom.us/rec/111"
+    await say("запись встречи 2 https://zoom.us/rec/222")
+    assert fake.rows[1]["recording_url"] == "https://zoom.us/rec/222"
+    assert sent == ["Запись встречи #1 сохранена (чт 05.11 19:30 МСК).", "Запись встречи #2 сохранена (сб 07.11 19:30 МСК)."]
+    assert all("zoom.us" not in text for text in sent)   # ссылку бот не повторяет
+
+
+@pytest.mark.asyncio
+async def test_the_recording_link_is_refused_for_a_cancelled_meeting_and_an_unknown_number(owner_env, fake, sent):
+    fake.add(status="cancelled")
+    result = await say("запись встречи 1 https://zoom.us/rec/1")
+    assert result["status"] == "bad_status" and fake.writes == 0
+    result = await say("запись встречи 99 https://zoom.us/rec/1")
+    assert result["status"] == "not_found"
+    assert sent == ["Встреча #1 отменена — запись не сохраняю.", "Встречи #99 нет. Список: встречи"]
+
+
+@pytest.mark.asyncio
+async def test_a_stranger_cannot_set_a_recording(owner_env, fake, sent):
+    fake.add(status="done")
+    assert await say("запись встречи 1 https://zoom.us/rec/1", user_id=STRANGER) is None
+    assert fake.writes == 0 and sent == []
+

@@ -302,6 +302,15 @@ def build_max_media_attachment(kind: str, token: str) -> dict[str, Any]:
     return {"type": kind, "payload": {"token": token}}
 
 
+def max_image_url_attachment(url: str) -> dict[str, Any]:
+    """Картинка по внешнему адресу: Max сам скачает её (поле ``payload.url`` вложения ``image``, документация
+    https://dev.max.ru/docs-api/methods/POST/messages; поля url, token и photos взаимоисключающие). Только https, до 2048 знаков."""
+    value = str(url or "").strip()
+    if not value.lower().startswith("https://") or len(value) > 2048 or any(ch.isspace() for ch in value):
+        raise ValueError("max_image_url_invalid")
+    return {"type": "image", "payload": {"url": value}}
+
+
 async def send_max_attachment(
     *,
     user_id: int | str | None = None,

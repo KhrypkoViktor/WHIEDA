@@ -333,6 +333,23 @@ async def set_join_url(conn: Any, tenant: str, meeting_id: int, url: str) -> dic
     return row
 
 
+async def set_recording_url(conn: Any, tenant: str, meeting_id: int, url: str) -> dict[str, Any]:
+    """Задать или заменить ссылку на запись: у запланированной и прошедшей встречи (у отменённой записи нет).
+    Гости, которые не пришли, получают её кнопкой после встречи (app/funnel/after_meeting.py)."""
+    value = normalize_join_url(url)
+    if value is None:
+        raise MeetingError("bad_url")
+    row = await fetch_one(
+        conn,
+        "update meetings set recording_url = %s, updated_at = now() "
+        f"where tenant_id = %s and meeting_id = %s and status in ('planned', 'done') returning {_COLUMNS}",
+        (value, tenant, int(meeting_id)),
+    )
+    if row is None:
+        raise await _explain_missing(conn, tenant, meeting_id)
+    return row
+
+
 async def _finish(conn: Any, tenant: str, meeting_id: int, status: str) -> dict[str, Any]:
     row = await fetch_one(
         conn,

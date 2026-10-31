@@ -8,14 +8,14 @@
 запись, пока встреча не началась, а если её отменил владелец — в любой момент.
 
 Все функции работают на открытом ``tenant_connection`` вызывающего (RLS по арендатору, фильтр по
-``tenant_id`` всё равно есть) и сами не делают commit. Ссылка входа на встречу (``join_url``) здесь не
-читается: она нужна только напоминаниям следующих срезов.
+``tenant_id`` всё равно есть) и сами не делают commit. Ссылка входа на встречу (``join_url``) читается
+только в ``join`` — по нажатию «Присоединиться» (срез 5).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from app.db import fetch_all, fetch_one
@@ -25,11 +25,16 @@ from app.meetings.service import utcnow
 CHANNELS = ("telegram", "max")
 INACTIVE_STATUSES = ("moved", "cancelled")
 
+# «Присоединиться» работает с этого момента до конца встречи: напоминание с кнопкой уходит за час, запас — на опоздавший воркер.
+JOIN_OPENS_BEFORE = timedelta(minutes=75)
+
 _MEETING_COLUMNS = "meeting_id, kind, title, starts_at, duration_min, status"
 _REGISTRATION_COLUMNS = (
     "registration_id, meeting_id, lead_id::text as lead_id, channel, channel_user_id, status, "
     "registered_at, joined_at, moved_from"
 )
+# Встреча для кнопки «Присоединиться»: те же колонки и ссылка входа (наружу из бота уходит только при нажатии).
+_JOIN_MEETING_COLUMNS = _MEETING_COLUMNS + ", join_url"
 # Запись вместе со встречей одним запросом: колонки встречи с приставкой m_.
 _JOINED_COLUMNS = (
     "r.registration_id, r.meeting_id, r.lead_id::text as lead_id, r.channel, r.channel_user_id, r.status, "
@@ -79,6 +84,19 @@ class ChangeOutcome:
     old_registration: Registration | None = None
     meeting: dict[str, Any] | None = None
     old_meeting: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class JoinOutcome:
+    """Нажатие «Присоединиться».
+
+    ``joined`` — первое нажатие в окне (запись стала ``joined``); ``again`` — повторное (ссылка та же);
+    ``too_early`` / ``too_late`` — не в окне; ``cancelled`` — встречу отменили; ``stale`` — запись уже перенесена,
+    отменена или встреча состоялась; ``not_found`` — записи нет или она чужая. ``meeting`` — встреча со ссылкой входа."""
+
+    status: Literal["joined", "again", "too_early", "too_late", "cancelled", "stale", "not_found"]
+    registration: Registration | None = None
+    meeting: dict[str, Any] | None = None
 
 
 def _registration(row: dict[str, Any]) -> Registration:
@@ -382,3 +400,47 @@ async def cancel(
     await _set_status(conn, tenant, old.registration_id, "cancelled")
     done = replace(old, status="cancelled")
     return ChangeOutcome("cancelled", done, done, meeting, meeting)
+
+
+async def join(
+    conn: Any,
+    tenant: str,
+    *,
+    registration_id: int,
+    channel: str,
+    channel_user_id: int,
+    now: datetime | None = None,
+) -> JoinOutcome:
+    """«Присоединиться»: в окне (за ``JOIN_OPENS_BEFORE`` до начала и до конца встречи) первое нажатие ставит
+    ``joined`` и ``joined_at``; повторное ничего не меняет. Вне окна запись не трогается. Ссылка входа — в ``meeting``."""
+    _check_channel(channel)
+    current = now or utcnow()
+    reg = await _lock_own_registration(conn, tenant, registration_id, channel, channel_user_id)
+    if reg is None:
+        return JoinOutcome("not_found")
+    if reg.status not in ("registered", "joined"):
+        return JoinOutcome("stale", reg)
+    meeting = await fetch_one(
+        conn,
+        f"select {_JOIN_MEETING_COLUMNS} from meetings where tenant_id = %s and meeting_id = %s",
+        (tenant, reg.meeting_id),
+    )
+    if meeting is None:
+        return JoinOutcome("stale", reg)
+    if meeting["status"] == "cancelled":
+        return JoinOutcome("cancelled", reg, meeting)
+    starts_at = meeting["starts_at"]
+    ends_at = starts_at + timedelta(minutes=int(meeting["duration_min"]))
+    if meeting["status"] != "planned" or current >= ends_at:
+        return JoinOutcome("too_late", reg, meeting)
+    if current < starts_at - JOIN_OPENS_BEFORE:
+        return JoinOutcome("too_early", reg, meeting)
+    if reg.status == "joined":
+        return JoinOutcome("again", reg, meeting)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "update meeting_registrations set status = 'joined', joined_at = %s, updated_at = now() "
+            "where tenant_id = %s and registration_id = %s and status = 'registered'",
+            (current, tenant, reg.registration_id),
+        )
+    return JoinOutcome("joined", replace(reg, status="joined", joined_at=current), meeting)

@@ -12,6 +12,8 @@ payload:
   buttons      ряды кнопок inline-клавиатуры (max_button_callback / max_button_link / …)
   attachments  вложения по токену: {"type": "video"|"audio"|"image"|"file", "token": "…"} либо готовый
                словарь {"type": …, "payload": {"token": …}} из upload_max_media
+  image_url    https-адрес картинки (визитка партнёра): Max сам её скачает; Max не принял картинку (400) —
+               сообщение уходит ещё раз без неё, только текст и кнопки
   format       "html" — текст с HTML-разметкой Max (необязательно)
 """
 
@@ -20,12 +22,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+import logging
+
 import httpx
 from psycopg import AsyncConnection
 
 from app.jobs.outbox import enqueue_outbox_event
-from app.max.client import MaxKeyboardError, build_max_media_attachment, max_inline_keyboard, send_max_message
+from app.max.client import (
+    MaxKeyboardError,
+    build_max_media_attachment,
+    max_image_url_attachment,
+    max_inline_keyboard,
+    send_max_message,
+)
 from app.telegram.delivery import TelegramDeliveryError, TelegramDeliveryUnknown
+
+logger = logging.getLogger(__name__)
 
 CHANNEL_MAX = "max"
 EVENT_TYPE_MAX_NOTIFICATION = "max_notification"
@@ -53,6 +65,7 @@ def build_max_outbox_payload(
     buttons: list[list[dict[str, Any]]] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     html_format: bool = False,
+    image_url: str | None = None,
 ) -> dict[str, Any]:
     """Payload строки outbox для Max. Лимиты кнопок и вложений проверяются сразу, а не при отправке."""
     if not binding_id:
@@ -65,6 +78,8 @@ def build_max_outbox_payload(
         raise ValueError("text or attachments required")
     if buttons:
         max_inline_keyboard(buttons)  # MaxKeyboardError при нарушении лимитов
+    if image_url:
+        max_image_url_attachment(image_url)  # ValueError, если не https-адрес
     payload: dict[str, Any] = {"channel": CHANNEL_MAX, "binding_id": binding_id, "text": text}
     if chat_id:
         payload["chat_id"] = str(chat_id)
@@ -74,6 +89,8 @@ def build_max_outbox_payload(
         payload["buttons"] = buttons
     if media:
         payload["attachments"] = media
+    if image_url:
+        payload["image_url"] = str(image_url).strip()
     if html_format:
         payload["format"] = "html"
     return payload
@@ -92,13 +109,14 @@ async def enqueue_max_notification(
     buttons: list[list[dict[str, Any]]] | None = None,
     attachments: list[dict[str, Any]] | None = None,
     html_format: bool = False,
+    image_url: str | None = None,
     event_type: str = EVENT_TYPE_MAX_NOTIFICATION,
 ) -> dict[str, Any] | None:
     """Поставить отложенное сообщение в Max: один раз на (tenant_id, idempotency_key). due_at обязателен —
     строка со статусом «scheduled», обычная очередь process_pending_outbox её не трогает."""
     payload = build_max_outbox_payload(
         binding_id=binding_id, user_id=user_id, chat_id=chat_id, text=text, buttons=buttons,
-        attachments=attachments, html_format=html_format,
+        attachments=attachments, html_format=html_format, image_url=image_url,
     )
     return await enqueue_outbox_event(conn, tenant_id, event_type, idempotency_key, payload, due_at=due_at)
 
@@ -120,12 +138,28 @@ async def send_max_outbox_payload(payload: dict[str, Any]) -> None:
         raise TelegramDeliveryUnknown("max_due_notification_invalid") from exc
     if (not chat_id and not user_id) or (not text.strip() and not media):
         raise TelegramDeliveryUnknown("max_due_notification_empty")
-    try:
-        result = await send_max_message(
-            chat_id=chat_id, user_id=None if chat_id else user_id, text=text, attachments=media or None,
-            buttons=buttons, html_format=str(payload.get("format") or "") == "html",
-        )
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        raise TelegramDeliveryUnknown("max_send_ambiguous") from exc
+    image = None
+    image_url = str(payload.get("image_url") or "").strip()
+    if image_url:
+        try:
+            image = max_image_url_attachment(image_url)
+        except ValueError:
+            image = None  # негодный адрес: уходит без картинки
+
+    async def _send(attachments: list[dict[str, Any]]) -> dict[str, Any]:
+        try:
+            return await send_max_message(
+                chat_id=chat_id, user_id=None if chat_id else user_id, text=text, attachments=attachments or None,
+                buttons=buttons, html_format=str(payload.get("format") or "") == "html",
+            )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise TelegramDeliveryUnknown("max_send_ambiguous") from exc
+
+    result = await _send([*media, image] if image else media)
+    if image is not None and not result.get("ok"):
+        # Max не принял картинку (недоступный адрес, не изображение): текст и кнопки важнее. Отказ — не ответ с «мид»,
+        # сообщения нет, второго не будет; таймаут выше уходит в «неоднозначно» без повтора.
+        logger.warning("max_image_url_rejected", extra={"status": result.get("status")})
+        result = await _send(media)
     if not result.get("ok"):
         raise TelegramDeliveryError(f"max_delivery_rejected:{result.get('status') or 'unknown'}")

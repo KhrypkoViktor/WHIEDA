@@ -486,6 +486,14 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_ORGANIC_OWNER_ID",
         description="Owner for new leads whose referral cannot receive attribution.",
     )
+    platform_meeting_ad_card_refs: str = Field(
+        default="onlineelena",
+        validation_alias="PLATFORM_MEETING_AD_CARD_REFS",
+        description=(
+            "Comma-separated ref codes of partners whose business cards (after the Live meeting) go to a guest "
+            "without a partner (ad lead), after the card of PLATFORM_ORGANIC_OWNER_ID."
+        ),
+    )
 
     # Theme access: when enabled, every verified Telegram user (valid content
     # session) may customize the theme of an enabled personal profile without
@@ -548,6 +556,14 @@ class Settings(BaseSettings):
         """Telegram user IDs of the leader pilot (empty — nobody)."""
         raw = self.platform_leader_pilot_telegram_ids
         return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
+
+    def parsed_meeting_ad_card_refs(self) -> tuple[str, ...]:
+        seen: list[str] = []
+        for part in self.platform_meeting_ad_card_refs.split(","):
+            code = part.strip().lower()
+            if code and code not in seen:
+                seen.append(code)
+        return tuple(seen)
 
     def parsed_scheduled_notify_bindings(self) -> tuple[str, ...]:
         seen: list[str] = []

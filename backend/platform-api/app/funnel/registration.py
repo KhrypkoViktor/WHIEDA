@@ -6,7 +6,8 @@
   mmove:<запись>                    показать другие ближайшие встречи кнопками;
   mmoveto:<запись>:<встреча>        перенести: прежняя запись ``moved``, новая ``registered`` с ``moved_from``;
   mcancel:<запись>                  отменить: ``cancelled``;
-  funnel:meet                       список встреч под видео-туром (те же кнопки ``mreg:``).
+  funnel:meet                       список встреч под видео-туром (те же кнопки ``mreg:``);
+  mjoin:<запись>                    «Присоединиться» (срез 5): ``joined`` и ссылка входа кнопкой.
 
 Каждое действие открывает одно подключение, меняет запись и, если у заявки человека есть карточка CRM, её
 метку «записан <дд.мм>» и заметку. Результат — ``ActionResult`` с экраном (``Reply``), который отправляет канал
@@ -35,7 +36,7 @@ from app.funnel.guest import (
 )
 from app.leads.meeting_leads import card_registration_event, load_lead_by_channel_user, load_lead_card_id
 from app.meetings import registrations
-from app.meetings.service import format_msk, utcnow
+from app.meetings.service import format_msk, normalize_join_url, utcnow
 
 logger = logging.getLogger("whieda.funnel.registration")
 
@@ -233,3 +234,30 @@ async def cancel(
     if outcome.status == "too_late":
         return _too_late()
     return _stale()
+
+
+async def join(
+    tenant_id: str, channel: str, channel_user_id: int, registration_id: int, *, now: datetime | None = None
+) -> ActionResult:
+    """``mjoin:<запись>``: первое нажатие в окне встречи — ``joined`` и кнопка-ссылка «Открыть встречу»; повторное —
+    та же ссылка; ссылки ещё нет — «пришлём за несколько минут»; не в окне — вежливый ответ, запись не меняется."""
+    current = now or utcnow()
+    async with tenant_connection(tenant_id) as conn:
+        outcome = await registrations.join(
+            conn, tenant_id, registration_id=registration_id, channel=channel, channel_user_id=channel_user_id, now=current
+        )
+    _log("join", channel, channel_user_id, outcome.status, registration_id=registration_id)
+    meeting = outcome.meeting
+    if outcome.status in ("joined", "again"):
+        url = normalize_join_url((meeting or {}).get("join_url"))
+        if url is None:
+            return ActionResult(Reply(texts.JOIN_NO_LINK), outcome.status)
+        return ActionResult(Reply(texts.JOIN_OPEN, [[(texts.OPEN_MEETING_BUTTON, url)]]), outcome.status)
+    if outcome.status == "too_early":
+        return ActionResult(Reply(texts.JOIN_TOO_EARLY.format(when=_when(meeting, current))), "too_early")
+    if outcome.status == "too_late":
+        return ActionResult(Reply(texts.JOIN_TOO_LATE), "too_late")
+    if outcome.status == "cancelled":
+        return ActionResult(Reply(texts.JOIN_CANCELLED), "cancelled")
+    return _stale(clear=False)
+

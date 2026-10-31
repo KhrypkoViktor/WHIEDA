@@ -24,14 +24,14 @@ from typing import Any
 from app.db import fetch_one
 from app.funnel import texts
 from app.leads.meeting_leads import MeetingLead, load_lead_by_channel_user
-from app.max.client import max_button_callback
+from app.max.client import max_button_callback, max_button_link
 from app.meetings import registrations
 from app.meetings.registrations import Registration
 from app.meetings.service import format_msk, utcnow
 from app.referral_bonus.service import InviterCard, inviter_card
 from app.settings import get_settings
 
-Button = tuple[str, str]  # (подпись, callback_data)
+Button = tuple[str, str]  # (подпись, callback_data) или (подпись, https://адрес) — кнопка-ссылка
 Rows = list[list[Button]]
 ActiveRegistration = tuple[Registration, dict[str, Any]]  # (запись, её встреча)
 
@@ -55,16 +55,27 @@ class Reply:
     rows: Rows = field(default_factory=list)
 
 
+def is_link(data: str) -> bool:
+    """Вторая часть кнопки — адрес (``https://…``), а не callback_data: кнопка-ссылка. Наши callback_data
+    (``mreg:``, ``mjoin:``, ``funnel:`` …) с адреса никогда не начинаются."""
+    return str(data).lower().startswith(("https://", "http://"))
+
+
 def rows_to_telegram(rows: Rows) -> dict[str, Any] | None:
     if not rows:
         return None
-    return {"inline_keyboard": [[{"text": text, "callback_data": data} for text, data in row] for row in rows]}
+    return {
+        "inline_keyboard": [
+            [{"text": text, "url": data} if is_link(data) else {"text": text, "callback_data": data} for text, data in row]
+            for row in rows
+        ]
+    }
 
 
 def rows_to_max(rows: Rows) -> list[list[dict[str, Any]]] | None:
     if not rows:
         return None
-    return [[max_button_callback(text, data) for text, data in row] for row in rows]
+    return [[max_button_link(text, data) if is_link(data) else max_button_callback(text, data) for text, data in row] for row in rows]
 
 
 # ---- кнопки ----------------------------------------------------------------------------------------

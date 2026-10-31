@@ -18,9 +18,11 @@ from app.telegram.delivery import (
     TelegramDeliveryError,
     TelegramDeliveryUnknown,
     outbound_binding_guard,
+    send_telegram_media,
     send_telegram_media_group,
     send_telegram_photo,
     send_telegram_text,
+    telegram_caption_fits,
 )
 from app.telegram.inbox import safe_error_summary
 from app.telegram.site_login import with_site_login
@@ -33,7 +35,8 @@ MAX_ATTEMPTS = 5
 # CRM v2 (V20) adds «Через час встреча» (app.crm.meetings).
 DUE_NOTIFY_INTERVAL_SEC = 30.0
 CRM_DIGEST_INTERVAL_SEC = 300.0
-# Алерт «бот не открыл» по заявкам на Живую встречу (app/funnel/no_bot_alert.py): раз в минуту.
+# Алерт «бот не открыл» по заявкам на Живую встречу (app/funnel/no_bot_alert.py) и напоминания о встрече
+# (app/funnel/reminders.py): раз в минуту.
 NO_BOT_ALERT_INTERVAL_SEC = 60.0
 DUE_BATCH_SIZE = 50
 DUE_MAX_ATTEMPTS = 3
@@ -247,7 +250,23 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
         rows = markup.get("inline_keyboard") if isinstance(markup, dict) else None
         markup = {"inline_keyboard": [*(rows if isinstance(rows, list) else []), row]}
     photos = [str(p) for p in payload.get("photos") or [] if str(p).strip()]
+    card_photo = str(payload.get("card_photo") or "").strip()
     with outbound_binding_guard(binding.bot_token):
+        if card_photo and telegram_caption_fits("photo", text):
+            # Визитка партнёра (срез 5, 31.10.2026): фото с подписью и кнопками одним сообщением. Telegram не принял
+            # фото (адрес недоступен) — уходит обычный текст ниже; неоднозначный итог (таймаут) не повторяем.
+            try:
+                sent = await send_telegram_media(
+                    chat_id, "photo", card_photo, bot_token=binding.bot_token, caption=text,
+                    reply_markup=markup if isinstance(markup, dict) and markup else None,
+                )
+            except TelegramDeliveryUnknown:
+                raise
+            except Exception as exc:
+                logger.warning("due_notification_card_photo_failed", extra={"error_class": type(exc).__name__})
+            else:
+                if sent.get("ok"):
+                    return
         if photos:
             # Прогрев (20.10.2026): сначала фото или альбом, текст следом. Фото не ушло — текст всё равно уходит.
             try:
@@ -409,8 +428,8 @@ async def process_due_notifications(
 
 
 async def scheduled_notifications_step(*, plan_crm: bool, plan_no_bot: bool = False) -> dict[str, int]:
-    """Plan the CRM mornings (every 5 minutes), the «бот не открыл» alerts of live-meeting leads
-    (every minute) and send what is due (every 30 s).
+    """Plan the CRM mornings (every 5 minutes), the «бот не открыл» alerts of live-meeting leads and the
+    meeting reminders / after-meeting messages (every minute) and send what is due (every 30 s).
     Nothing happens in a process without PLATFORM_SCHEDULED_NOTIFY_BINDINGS."""
     if not get_settings().parsed_scheduled_notify_bindings():
         return {}
@@ -448,6 +467,13 @@ async def scheduled_notifications_step(*, plan_crm: bool, plan_no_bot: bool = Fa
             result["no_bot_alerts"] = await no_bot_alert_step(bindings)
         except Exception:
             logger.exception("no_bot_alert_step_failed")
+        # Срез 5 (31.10.2026): напоминания о встрече (24 ч, 2 ч, 1 ч, 5 мин) и сообщения после неё — тот же минутный шаг.
+        try:
+            from app.funnel.reminders import reminders_step
+
+            result.update(await reminders_step(bindings))
+        except Exception:
+            logger.exception("meeting_reminders_step_failed")
     result["due_sent"] = await process_due_notifications(bindings)
     return result
 
