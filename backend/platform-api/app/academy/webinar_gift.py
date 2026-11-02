@@ -156,3 +156,41 @@ async def grant_gift(
             },
         )
     return Granted(title=str(course["title"]), expires_at=(row or {}).get("expires_at"), already=before is not None)
+
+
+async def course_id_by_slug(conn: Any, tenant_id: str, slug: str) -> str | None:
+    """id опубликованного курса по slug; None — курса нет или он снят с публикации."""
+    row = await fetch_one(
+        conn,
+        "select course_id::text as course_id from academy_courses where tenant_id = %s and slug = %s and status = 'published'",
+        (tenant_id, slug),
+    )
+    return str(row["course_id"]) if row else None
+
+
+async def grant_hours(
+    conn: Any, tenant_id: str, course_id: str, telegram_user_id: int, hours: int, ref: str, now: datetime,
+) -> bool:
+    """Открыть курс на ``hours`` часов (Виктор, 02.11.2026: запись эфира тем, кому ушло сообщение после вебинара).
+
+    Строка ``academy_access`` с ``source = 'gift'``, ``expires_at = now + hours``. Действующий более длинный
+    (или бессрочный) подарок не укорачивается, срок истёкшего подарка обновляется; оплаченный, выданный вручную,
+    по ключу и снятый (``revoked_at``) доступ не трогаем — ``False``. ``payment_ref`` существующей строки не
+    меняется (метки «был на эфире» в ``code:…`` остаются); у новой строки — ``ref`` (не ``code:``, чтобы выдача не
+    считалась «был на эфире»). Работает в переданном соединении — вызывающий сам решает, что откатывать."""
+    row = await fetch_one(
+        conn,
+        """
+        insert into academy_access (tenant_id, course_id, telegram_user_id, source, payment_ref, expires_at)
+        values (%(t)s, %(c)s::uuid, %(u)s, 'gift', %(ref)s, %(exp)s)
+        on conflict (tenant_id, course_id, telegram_user_id) do update set
+          expires_at = case
+            when academy_access.expires_at is null then null
+            when academy_access.expires_at > excluded.expires_at then academy_access.expires_at
+            else excluded.expires_at end
+        where academy_access.source = 'gift' and academy_access.revoked_at is null
+        returning telegram_user_id
+        """,
+        {"t": tenant_id, "c": course_id, "u": int(telegram_user_id), "ref": ref, "exp": now + timedelta(hours=hours)},
+    )
+    return row is not None

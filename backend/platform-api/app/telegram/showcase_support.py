@@ -228,8 +228,12 @@ async def _touch(tenant_id: str, ticket: dict[str, Any]) -> None:
 
 
 async def open_ticket(
-    tenant: TenantContext, source: TelegramMessage | TelegramCallbackQuery, showcase: Showcase, kind: str, *, trace_id: str
+    tenant: TenantContext, source: TelegramMessage | TelegramCallbackQuery, showcase: Showcase, kind: str, *,
+    trace_id: str, notice: str | None = None, notice_markup: dict | None = None,
 ) -> dict[str, Any]:
+    """Открыть обращение (или вернуться в открытое) и сказать об этом человеку. ``notice`` — свой текст вместо
+    стандартной подсказки «Обращение … открыто / уже открыто», с ``notice_markup`` кнопками: так ответ на кнопку
+    «Что остановило?» (``wwhy:``, Виктор, 02.11.2026) сам служит подсказкой, и человек получает одно сообщение."""
     tenant_id = tenant.tenant_id
     targets = await support_targets(tenant_id, showcase)
     admin = targets.get(kind)
@@ -266,11 +270,16 @@ async def open_ticket(
         )
         await _send(
             source.chat_id,
-            f"Обращение {label} открыто. Напишите вопрос {WHO[kind]} — текст, фото или голосовое; ответ придёт сюда.",
+            notice or f"Обращение {label} открыто. Напишите вопрос {WHO[kind]} — текст, фото или голосовое; ответ придёт сюда.",
+            reply_markup=notice_markup if notice else None,
         )
     else:
         await _touch(tenant_id, ticket)
-        await _send(source.chat_id, f"Обращение {label} уже открыто — просто напишите сюда, {WHO[kind]} всё уйдёт.")
+        await _send(
+            source.chat_id,
+            notice or f"Обращение {label} уже открыто — просто напишите сюда, {WHO[kind]} всё уйдёт.",
+            reply_markup=notice_markup if notice else None,
+        )
     logger.info("showcase_support_opened", extra={"trace_id": trace_id, "ticket": label, "kind": kind, "ticket_created": ticket["created"]})
     return {"ok": True, "route": "showcase_support", "status": "ticket_opened" if ticket["created"] else "ticket_reused", "kind": kind, "ticket": label, "trace_id": trace_id}
 

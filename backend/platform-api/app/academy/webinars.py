@@ -23,13 +23,44 @@
 
 Отправляет обычный цикл уведомлений (``process_due_notifications``): заблокировавший бота —
 «dead» без повторов, остальные не страдают.
+
+Дожим после вебинаров (Виктор, 02.11.2026). Всё — в ``academy_showcases.support``, тексты и кнопки правятся
+без выпуска::
+
+    "webinar_warmup": [{
+        "key": "c1", "after_min": 180, "text": "Спасибо, что были с нами…",
+        "video_note": "<file_id кружка, загруженного боту витрины>",
+        "audience": "came",
+        "grant": {"course": "<slug курса с записью>", "hours": 48},
+        "buttons": [[{"text": "Смотреть запись", "action": "course"}],
+                    [{"text": "Что остановило?", "action": "why"}]],
+    }],
+    "webinars": {"ig_web24": {"at": "…", "date": "…", "video_notes": {"day": "<file_id>", "hour": "<file_id>"}}},
+    "why": {
+        "reasons": [{"code": "price", "text": "Дорого"}, {"code": "time", "text": "Нет времени"}],
+        "answers": {"price": {"text": "…", "buttons": [[{"text": "Написать администратору", "action": "admin"}]],
+                              "label": "лист ожидания", "open": "admin",
+                              "series": {"anatomy": {"text": "…", "buttons": []}}}},
+    }
+
+* ``video_note`` у элемента прогрева и ``video_notes`` у вебинара (ключи ``day``, ``two_hours``, ``hour``,
+  ``five`` — стандартные напоминания): сначала кружок, затем фото, затем текст с кнопками отдельным
+  сообщением. Кружок не ушёл — текст всё равно уходит; копия рассылки (``broadcast_copy``) — тоже с кружком;
+* ``audience`` (только у ``after_min``): ``came`` — были на эфире этого вебинара (нажали «Присоединиться»
+  или написали кодовое слово — метка ``code:<вебинар>`` в ``academy_access.payment_ref``), ``missed`` —
+  записаны, но не были, нет поля — все записанные. Значение не из двух — элемент не отправляется совсем:
+  опечатка не должна слать «вы не были» тем, кто был;
+* кнопка ``{"action": "why"}`` — ряды причин из ``why.reasons`` (``wwhy:<вебинар>:<код>``), ответ человеку и
+  алерт администратору — ``app.telegram.showcase_bot`` (``_try_why_callback``); текст самой кнопки служебный;
+* ``grant`` — каждому, кому элемент поставлен в очередь (новая строка outbox), курс открывается на N часов
+  (``webinar_gift.grant_hours``); кнопка ``{"action": "course"}`` — ссылка на этот курс со входом на сайт.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -75,6 +106,8 @@ class Webinar:
     label: str = ""  # подпись серии в алертах администратору («анатомия»)
     # Перенос (26.10.2026): прежние даты в пункте формы («28 октября») тоже означают этот вебинар.
     was: tuple[str, ...] = ()
+    # Кружки к стандартным напоминаниям (Виктор, 02.11.2026): ((ключ напоминания, file_id), …).
+    video_notes: tuple[tuple[str, str], ...] = ()
 
 
 def series_webinars(webinars: list["Webinar"], series: str) -> list["Webinar"]:
@@ -96,6 +129,14 @@ _WARMUP_KEY_RE = re.compile(r"^[a-z0-9_]{1,20}$")
 
 
 @dataclass(frozen=True)
+class Grant:
+    """``grant`` элемента прогрева: курс (slug) открывается на ``hours`` часов (Виктор, 02.11.2026: запись эфира)."""
+
+    course: str
+    hours: int
+
+
+@dataclass(frozen=True)
 class Warmup:
     key: str
     before: timedelta
@@ -108,29 +149,70 @@ class Warmup:
     after: bool = False
     buttons: tuple[tuple[tuple[str, str, str], ...], ...] = ()  # ((текст, "url"|"action", значение), …)
     tags: tuple[str, ...] = ()  # только для этих вебинаров (О1 для 24.10 — с повтором 31.10); пусто — для всех серии
+    # Дожим (02.11.2026): кружок идёт первым; audience — кому после эфира; grant — открыть курс тем, кому поставлено.
+    video_note: str = ""  # file_id кружка бота витрины
+    audience: str = ""  # только after: "came" — были на эфире, "missed" — записаны, но не были; '' — все
+    grant: "Grant | None" = None
 
 
 _PHOTO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
-_ACTION_RE = re.compile(r"^(admin|signup|move:[A-Za-z0-9_-]{1,40})$")
+_VIDEO_NOTE_RE = re.compile(r"^[A-Za-z0-9_-]{20,255}$")  # формат как у фото, но file_id кружка до 255
+_ACTION_RE = re.compile(r"^(admin|signup|why|course|move:[A-Za-z0-9_-]{1,40})$")
+_COURSE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")  # slug курса — как в webinar_gift
+_WHY_CODE_RE = re.compile(r"^[a-z0-9_]{1,16}$")
+_AUDIENCES = ("came", "missed")
+GRANT_MAX_HOURS = 60 * 24
+WHY_PREFIX = "wwhy:"  # callback_data причины: wwhy:<метка вебинара>:<код>, не длиннее 64 байт
+_CALLBACK_LIMIT = 64
 
 
-def _warmup_markup(item: "Warmup", webinar: "Webinar") -> dict[str, Any] | None:
-    """Кнопки сообщения: ссылка; «Написать администратору» (обращение); «Записаться на курс» — алерт
-    администратору (``wsign:<метка>``); «Записаться на повтор» — перенос (``wbn:<метка>``)."""
-    rows: list[list[dict[str, str]]] = [[item.button]] if item.button else []
-    for row in item.buttons:
-        out = []
+def _rows_markup(
+    rows: tuple[tuple[tuple[str, str, str], ...], ...], tag: str, *,
+    reasons: tuple[tuple[str, str], ...] = (), course_url: str = "",
+) -> list[list[dict[str, str]]]:
+    """Ряды кнопок из настройки; ``tag`` — метка вебинара для ``wsign:`` и ``wwhy:``.
+
+    «Что остановило?» (``why``, 02.11.2026) разворачивается в ряды причин из ``support.why.reasons`` — по одной
+    в ряд, ``wwhy:<метка>:<код>``; кнопка, что не влезла в 64 байта callback_data, пропускается. Текст самой
+    кнопки ``why`` служебный: на экране только причины. «Смотреть запись» (``course``) — ссылка на курс из
+    ``grant``; её со входом на сайт делает worker при отправке (``site_login_user_id``). Пока адреса курса нет —
+    кнопки нет."""
+    out_rows: list[list[dict[str, str]]] = []
+    for row in rows:
+        out: list[dict[str, str]] = []
         for label, kind, value in row:
             if kind == "url":
                 out.append({"text": label, "url": value})
             elif value == "admin":
                 out.append({"text": label, "callback_data": "shs:open:admin"})
             elif value == "signup":
-                out.append({"text": label, "callback_data": f"wsign:{webinar.tag}"})
+                out.append({"text": label, "callback_data": f"wsign:{tag}"})
             elif value.startswith("move:"):
                 out.append({"text": label, "callback_data": f"wbn:{value[5:]}"})
+            elif value == "course":
+                if course_url:
+                    out.append({"text": label, "url": course_url})
+            elif value == "why":
+                if out:
+                    out_rows.append(out)
+                    out = []
+                for code, reason in reasons:
+                    data = f"{WHY_PREFIX}{tag}:{code}"
+                    if len(data.encode("utf-8")) <= _CALLBACK_LIMIT:
+                        out_rows.append([{"text": reason, "callback_data": data}])
         if out:
-            rows.append(out)
+            out_rows.append(out)
+    return out_rows
+
+
+def _warmup_markup(
+    item: "Warmup", webinar: "Webinar", *, reasons: tuple[tuple[str, str], ...] = (), course_url: str = "",
+) -> dict[str, Any] | None:
+    """Кнопки сообщения: ссылка; «Написать администратору» (обращение); «Записаться на курс» — алерт
+    администратору (``wsign:<метка>``); «Записаться на повтор» — перенос (``wbn:<метка>``); «Что остановило?» —
+    причины (``wwhy:``); «Смотреть запись» — курс со входом (``_rows_markup``)."""
+    rows: list[list[dict[str, str]]] = [[item.button]] if item.button else []
+    rows.extend(_rows_markup(item.buttons, webinar.tag, reasons=reasons, course_url=course_url))
     return {"inline_keyboard": rows} if rows else None
 
 
@@ -155,6 +237,43 @@ def copy_header(webinar: Webinar, kind: str, sent: int) -> str:
     return f"<i>📋 Копия рассылки · вебинар {webinar.date} · {label} · получили {sent}</i>\n\n"
 
 
+def _button_rows(raw: Any) -> tuple[tuple[tuple[str, str, str], ...], ...]:
+    """Ряды кнопок из настройки: {text, url} или {text, action}; битая кнопка и пустой ряд пропускаются."""
+    rows: list[tuple[tuple[str, str, str], ...]] = []
+    for raw_row in raw if isinstance(raw, list) else []:
+        row = []
+        for b in raw_row if isinstance(raw_row, list) else []:
+            label = str((b or {}).get("text") or "").strip()[:64] if isinstance(b, dict) else ""
+            url, action = str(b.get("url") or "") if label else "", str(b.get("action") or "") if label else ""
+            if label and url.startswith("https://"):
+                row.append((label, "url", url))
+            elif label and _ACTION_RE.fullmatch(action):
+                row.append((label, "action", action))
+        if row:
+            rows.append(tuple(row))
+    return tuple(rows)
+
+
+def _without_action(
+    rows: tuple[tuple[tuple[str, str, str], ...], ...], *actions: str,
+) -> tuple[tuple[tuple[str, str, str], ...], ...]:
+    """Убрать кнопки с этими действиями (пустые ряды — тоже)."""
+    kept = [tuple(b for b in row if not (b[1] == "action" and b[2] in actions)) for row in rows]
+    return tuple(row for row in kept if row)
+
+
+def _grant(raw: Any) -> Grant | None:
+    """``{"course": "<slug>", "hours": 48}``: курс — slug, часы — от 1 до 60 суток; иначе — без доступа."""
+    if not isinstance(raw, dict):
+        return None
+    course = str(raw.get("course") or "")
+    try:
+        hours = int(raw["hours"]) if raw.get("hours") is not None and not isinstance(raw["hours"], bool) else 0
+    except (TypeError, ValueError):
+        return None
+    return Grant(course, hours) if _COURSE_RE.fullmatch(course) and 1 <= hours <= GRANT_MAX_HOURS else None
+
+
 def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
     raw = (support or {}).get("webinar_warmup")
     out = []
@@ -176,29 +295,105 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
             {"text": str(raw_button["text"])[:64], "url": str(raw_button["url"])}
             if raw_button.get("text") and str(raw_button.get("url") or "").startswith("https://") else None
         )
-        rows: list[tuple[tuple[str, str, str], ...]] = []
-        for raw_row in item.get("buttons") if isinstance(item.get("buttons"), list) else []:
-            row = []
-            for b in raw_row if isinstance(raw_row, list) else []:
-                label = str((b or {}).get("text") or "").strip()[:64] if isinstance(b, dict) else ""
-                url, action = str(b.get("url") or "") if label else "", str(b.get("action") or "") if label else ""
-                if label and url.startswith("https://"):
-                    row.append((label, "url", url))
-                elif label and _ACTION_RE.fullmatch(action):
-                    row.append((label, "action", action))
-            if row:
-                rows.append(tuple(row))
+        # Дожим (Виктор, 02.11.2026). Кружок — как фото, но file_id до 255. «Смотреть запись» без grant курса не знает.
+        video_note = str(item.get("video_note") or "").strip()
+        video_note = video_note if _VIDEO_NOTE_RE.fullmatch(video_note) else ""
+        grant = _grant(item.get("grant"))
+        rows = _button_rows(item.get("buttons"))
+        if grant is None:
+            rows = _without_action(rows, "course")
+        # Сегмент — только у «после эфира». Опечатка в нём (не came и не missed) не расширяет рассылку на всех:
+        # «вы не были» человеку, который был, хуже, чем пропущенное сообщение, — элемент не отправляем.
+        audience = str(item.get("audience") or "").strip().casefold() if after else ""
+        if audience and audience not in _AUDIENCES:
+            continue
         if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
             out.append(Warmup(
                 key, timedelta(minutes=minutes), text, photos, button, str(item.get("series") or "").strip(),
-                after, tuple(rows),
+                after, rows,
                 tuple(str(t) for t in item.get("tags") or [] if isinstance(t, str)) if isinstance(item.get("tags"), list) else (),
+                video_note, audience, grant,
             ))
     return out
 
 
 def warmup_text(item: Warmup, webinar: Webinar) -> str:
     return item.text.replace("{date}", webinar.date).replace("{time}", webinar.at.astimezone(MINSK).strftime("%H:%M"))
+
+
+# «Что остановило?» (Виктор, 02.11.2026): support.why = {"reasons": [{"code": "price", "text": "Дорого"}],
+# "answers": {"price": {"text", "buttons", "label", "open": "admin", "series": {"anatomy": {"text", "buttons"}}}}}.
+# Причины становятся кнопками под сообщением после эфира (``{"action": "why"}``), ответы человеку и алерты
+# администратору — app.telegram.showcase_bot (``_try_why_callback``). Тексты — в настройке: правка без выпуска.
+@dataclass(frozen=True)
+class WhyAnswer:
+    text: str
+    buttons: tuple[tuple[tuple[str, str, str], ...], ...] = ()
+    label: str = ""  # пометка в алерте администратору («лист ожидания»)
+    open: str = ""  # "admin" — после ответа открыть обращение администратору
+    series: dict[str, "WhyAnswer"] = field(default_factory=dict)  # переопределение по серии вебинара
+
+    def for_series(self, series: str) -> "WhyAnswer":
+        return self.series.get(series) or self
+
+
+@dataclass(frozen=True)
+class Why:
+    reasons: tuple[tuple[str, str], ...] = ()  # ((код, текст кнопки), …)
+    answers: dict[str, WhyAnswer] = field(default_factory=dict)
+
+    def reason(self, code: str) -> str | None:
+        return next((text for known, text in self.reasons if known == code), None)
+
+
+def _label_text(value: Any) -> str:
+    """Подпись из настройки для алерта администратору: без разметки и угловых скобок."""
+    return _plain(re.sub(r"<[^>]*>", "", str(value or "")))
+
+
+def _why_answer(raw: Any, base: WhyAnswer | None = None) -> WhyAnswer | None:
+    """Ответ на причину; у переопределения серии (``base``) не указанное поле берётся из основного ответа,
+    а ``"buttons": []`` — явное «без кнопок». В кнопках ответа ``why`` и ``course`` бессмысленны — пропускаются."""
+    if not isinstance(raw, dict):
+        return None
+    text = str(raw.get("text") or "").strip() or (base.text if base else "")
+    if not text:
+        return None
+    buttons = _without_action(_button_rows(raw["buttons"]), "why", "course") if "buttons" in raw else (
+        base.buttons if base else ()
+    )
+    label = _label_text(raw["label"])[:60] if "label" in raw else (base.label if base else "")
+    opens = (str(raw["open"]).strip().casefold() if "open" in raw else (base.open if base else ""))
+    return WhyAnswer(text, buttons, label, opens if opens == "admin" else "")
+
+
+def why_markup(answer: WhyAnswer, tag: str) -> dict[str, Any] | None:
+    """Кнопки ответа на причину — тот же разбор, что у элементов прогрева; ``signup`` — с меткой вебинара из нажатия."""
+    rows = _rows_markup(answer.buttons, tag)
+    return {"inline_keyboard": rows} if rows else None
+
+
+def why_config(support: dict[str, Any] | None) -> Why:
+    raw = (support or {}).get("why")
+    if not isinstance(raw, dict):
+        return Why()
+    reasons: list[tuple[str, str]] = []
+    for item in raw.get("reasons") if isinstance(raw.get("reasons"), list) else []:
+        code, text = (str(item.get("code") or ""), _label_text(item.get("text"))[:64]) if isinstance(item, dict) else ("", "")
+        if _WHY_CODE_RE.fullmatch(code) and text and all(code != known for known, _ in reasons):
+            reasons.append((code, text))
+    answers: dict[str, WhyAnswer] = {}
+    for code, item in (raw.get("answers") if isinstance(raw.get("answers"), dict) else {}).items():
+        answer = _why_answer(item) if _WHY_CODE_RE.fullmatch(str(code)) else None
+        if answer is None:
+            continue
+        over = item.get("series") if isinstance(item.get("series"), dict) else {}
+        series = {
+            str(name).strip(): found for name, value in over.items()
+            if str(name).strip() and (found := _why_answer(value, answer)) is not None
+        }
+        answers[str(code)] = replace(answer, series=series)
+    return Why(tuple(reasons[:20]), answers)
 
 
 # Напоминание: ключ, за сколько до начала, нужна ли ссылка, сколько после своего времени ещё слать
@@ -209,6 +404,15 @@ REMINDERS: tuple[tuple[str, timedelta, bool, timedelta], ...] = (
     ("hour", timedelta(hours=1), True, timedelta(minutes=20)),
     ("five", timedelta(minutes=5), True, timedelta(minutes=10)),
 )
+
+
+def _video_notes(raw: Any) -> tuple[tuple[str, str], ...]:
+    """``video_notes`` вебинара: {"day"|"two_hours"|"hour"|"five": file_id кружка}; чужой ключ и битый id пропускаются."""
+    keys = {kind for kind, _, _, _ in REMINDERS}
+    return tuple(
+        (str(kind), str(file_id).strip()) for kind, file_id in (raw if isinstance(raw, dict) else {}).items()
+        if kind in keys and _VIDEO_NOTE_RE.fullmatch(str(file_id).strip())
+    )
 
 
 def webinars_config(support: dict[str, Any] | None) -> list[Webinar]:
@@ -242,6 +446,7 @@ def webinars_config(support: dict[str, Any] | None) -> list[Webinar]:
             greeting=str(item.get("greeting") or "").strip(),
             label=str(item.get("label") or "").strip(),
             was=tuple(str(x).strip().casefold() for x in item.get("was") or [] if str(x).strip()),
+            video_notes=_video_notes(item.get("video_notes")),
         ))
     return out
 
@@ -318,26 +523,73 @@ async def record_join(tenant_id: str, showcase_id: str, *, telegram_user_id: int
     return row is not None
 
 
-def due_messages(
-    webinar: Webinar, warmups: list[Warmup], now: datetime,
-) -> list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]]:
-    """Что пора отправить записанным на вебинар: прогрев и напоминания — (ключ, время, текст, кнопки, фото)."""
-    out: list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]] = []
+@dataclass(frozen=True)
+class Due:
+    """Сообщение, время которого пришло: прогрев, после эфира или стандартное напоминание."""
+
+    key: str  # warm_<ключ>, post_<ключ> или day / two_hours / hour / five
+    moment: datetime
+    text: str
+    markup: dict[str, Any] | None
+    photos: tuple[str, ...] = ()
+    video_note: str = ""  # file_id кружка: уходит первым (Виктор, 02.11.2026)
+    audience: str = ""  # только post_: came / missed / '' — все записанные
+    grant: Grant | None = None  # открыть курс на N часов каждому, кому сообщение поставлено в очередь
+    login: bool = False  # в кнопках ссылка на курс — worker делает её со входом на сайт
+
+
+def _course_url(item: Warmup, base_url: str) -> str:
+    """Адрес курса для кнопки «Смотреть запись» — только если у элемента есть grant и такая кнопка."""
+    if not (item.grant and base_url and any(b[1] == "action" and b[2] == "course" for row in item.buttons for b in row)):
+        return ""
+    from app.academy.notify import course_page_url
+
+    return course_page_url(item.grant.course, base_url)
+
+
+def due_items(
+    webinar: Webinar, warmups: list[Warmup], now: datetime, *,
+    reasons: tuple[tuple[str, str], ...] = (), base_url: str = "",
+) -> list[Due]:
+    """Что пора отправить записанным на вебинар: прогрев, после эфира и стандартные напоминания.
+
+    ``reasons`` — причины для кнопки «Что остановило?» (``why_config``), ``base_url`` — адрес витрины для кнопки
+    «Смотреть запись». Кружок напоминания — из ``Webinar.video_notes``."""
+    out: list[Due] = []
+
+    def make(item: Warmup, key: str, moment: datetime) -> Due:
+        url = _course_url(item, base_url)
+        return Due(
+            key, moment, warmup_text(item, webinar),
+            _warmup_markup(item, webinar, reasons=reasons, course_url=url),
+            item.photos, item.video_note,
+            # У элементов до эфира сегмент игнорируется (Виктор, 02.11.2026).
+            item.audience if item.after else "", item.grant, bool(url),
+        )
+
     for item in warmups:
         if item.series != webinar.series or (item.tags and webinar.tag not in item.tags):
             continue
         if item.after:
             moment = webinar.at + item.before
             if moment <= now < moment + WARMUP_WINDOW:
-                out.append((f"post_{item.key}", moment, warmup_text(item, webinar), _warmup_markup(item, webinar), item.photos))
+                out.append(make(item, f"post_{item.key}", moment))
             continue
         moment = webinar.at - item.before
         if moment <= now < min(moment + WARMUP_WINDOW, webinar.at):
-            out.append((f"warm_{item.key}", moment, warmup_text(item, webinar), _warmup_markup(item, webinar), item.photos))
+            out.append(make(item, f"warm_{item.key}", moment))
+    notes = dict(webinar.video_notes)
     for kind, moment in due_reminders(webinar, now):
         markup = _link_markup(webinar) if kind in ("hour", "five") else None
-        out.append((kind, moment, reminder_text(kind, webinar), markup, ()))
+        out.append(Due(kind, moment, reminder_text(kind, webinar), markup, (), notes.get(kind, "")))
     return out
+
+
+def due_messages(
+    webinar: Webinar, warmups: list[Warmup], now: datetime,
+) -> list[tuple[str, datetime, str, dict[str, Any] | None, tuple[str, ...]]]:
+    """``due_items`` в прежнем виде — (ключ, время, текст, кнопки, фото); рассылку ведёт ``due_items``."""
+    return [(d.key, d.moment, d.text, d.markup, d.photos) for d in due_items(webinar, warmups, now)]
 
 
 def due_reminders(webinar: Webinar, now: datetime) -> list[tuple[str, datetime]]:
@@ -641,6 +893,7 @@ async def unlinked_prompts(tenant_id: str, showcase: Any, *, now: datetime | Non
 CONFIRM_WITHIN = timedelta(minutes=10)
 CONFIRM_FETCH_SEC = 60.0
 _last_confirm_fetch: dict[str, datetime] = {}
+_grant_warned: set[tuple[str, str]] = set()  # (вебинар, сообщение), по которым уже сказали «курса для grant нет»
 
 
 def confirm_key(showcase_id: str, telegram_user_id: int, series: str = "") -> str:
@@ -654,6 +907,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
     Возвращает число новых сообщений."""
     from app.academy.ad_leads import BOT_TAG, match_lead
     from app.academy.showcases import load_showcases
+    from app.academy.webinar_gift import course_id_by_slug, grant_hours  # webinar_gift импортирует нас
     from app.db import fetch_all, tenant_connection
     from app.jobs.outbox import enqueue_outbox_event
     from app.telegram.showcase_support import KIND_ADMIN, support_targets
@@ -668,8 +922,9 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 continue
             # Что пора делать по расписанию — считается без базы.
             warmups = warmup_config(showcase.support)
+            reasons = why_config(showcase.support).reasons
             work = [
-                (webinar, due_messages(webinar, warmups, now),
+                (webinar, due_items(webinar, warmups, now, reasons=reasons, base_url=showcase.base_url),
                  not webinar.url and _in(webinar.at - NO_LINK_WARNING, now, webinar.at - timedelta(hours=1)),
                  _in(webinar.at - CALL_LIST, now, webinar.at))
                 for webinar in webinars
@@ -682,13 +937,17 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
 
             async def enqueue(
                 conn: Any, key: str, chat_id: int, text: str, markup: dict[str, Any] | None = None,
-                photos: tuple[str, ...] = (),
+                photos: tuple[str, ...] = (), video_note: str = "", login: bool = False,
             ) -> int:
                 payload: dict[str, Any] = {"chat_id": str(int(chat_id)), "text": text, "binding_id": binding_id}
                 if markup:
                     payload["reply_markup"] = markup
                 if photos:
                     payload["photos"] = list(photos)
+                if video_note:
+                    payload["video_note"] = video_note  # worker: сначала кружок, затем фото, затем текст
+                if login:
+                    payload["site_login_user_id"] = int(chat_id)  # ссылки на сайт в кнопках — со входом (worker)
                 row = await enqueue_outbox_event(
                     conn, tenant_id=tenant_id, event_type=EVENT, idempotency_key=key, payload=payload, due_at=now,
                 )
@@ -698,13 +957,41 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
 
             async def copy(
                 conn: Any, key: str, webinar: Webinar, kind: str, sent: int, text: str,
-                markup: dict[str, Any] | None = None, photos: tuple[str, ...] = (),
+                markup: dict[str, Any] | None = None, photos: tuple[str, ...] = (), video_note: str = "",
+                login: bool = False,
             ) -> int:
-                """Копия рассылки — один раз, когда она ушла хоть кому-то."""
+                """Копия рассылки — один раз, когда она ушла хоть кому-то; с кружком и фото, как её видят люди."""
                 if not sent:
                     return 0
                 head = copy_header(webinar, kind, sent)
-                return sum([await enqueue(conn, f"{key}:copy:{uid}", uid, head + text, markup, photos) for uid in copies])
+                return sum([
+                    await enqueue(conn, f"{key}:copy:{uid}", uid, head + text, markup, photos, video_note, login)
+                    for uid in copies
+                ])
+
+            code_words: dict[int, set[str]] = {}
+            code_words_loaded = False
+
+            async def came_ids(conn: Any, webinar: Webinar, people: list[Opened]) -> set[int]:
+                """Кто был на эфире этого вебинара (Виктор, 02.11.2026): нажал «Присоединиться» (``joined`` в записи
+                человека) или написал кодовое слово — в ``academy_access.payment_ref`` метка ``code:<вебинар>[,…]``.
+                Кодовые слова читаются одним запросом на шаг, а не на человека."""
+                nonlocal code_words_loaded
+                if not code_words_loaded:
+                    for row in await fetch_all(
+                        conn,
+                        "select telegram_user_id, payment_ref from academy_access"
+                        " where tenant_id = %s and payment_ref like 'code:%%'",
+                        (tenant_id,),
+                    ):
+                        code_words.setdefault(int(row["telegram_user_id"]), set()).update(
+                            label.strip() for label in str(row["payment_ref"])[5:].split(",")
+                        )
+                    code_words_loaded = True
+                return {
+                    o.telegram_user_id for o in people
+                    if any(tag == webinar.tag for tag, _ in o.joined) or webinar.tag in code_words.get(o.telegram_user_id, ())
+                }
 
             async with tenant_connection(tenant_id) as conn:
                 opens = await load_opens(conn, tenant_id, showcase.showcase_id)
@@ -847,7 +1134,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                         if o.series == webinar.series and person_webinar(o, leads_by_id, webinars) == webinar.tag
                     ]
                     same = {w.tag for w in webinars if w.series == webinar.series}
-                    for kind, moment, text, markup, photos in reminders:
+                    for due in reminders:
+                        kind, moment = due.key, due.moment
                         sent = 0
                         got: set[str] = set()
                         if kind.startswith("warm_"):
@@ -859,6 +1147,21 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                 )
                                 if str(r["idempotency_key"]).split(":")[2] in same  # тот же прогрев той же серии
                             }
+                        course_id: str | None = None
+                        if due.grant is not None:
+                            course_id = await course_id_by_slug(conn, tenant_id, due.grant.course)
+                            if course_id is None:
+                                # Сообщение с кнопкой «Смотреть запись» без открытого курса хуже опоздавшего:
+                                # пока slug не исправят (окно 2 часа), не шлём и не помечаем отправленным.
+                                if (prefix, kind) not in _grant_warned:  # шаг идёт каждые полминуты — пишем один раз
+                                    _grant_warned.add((prefix, kind))
+                                    logger.warning(
+                                        "webinar_grant_course_missing",
+                                        extra={"webinar": webinar.tag, "kind": kind, "course": due.grant.course},
+                                    )
+                                continue
+                        # Кто был на эфире — одним запросом на шаг (кнопка «Присоединиться» или кодовое слово).
+                        came = await came_ids(conn, webinar, audience) if audience and kind.startswith("post_") and due.audience else None
                         for opened in audience:
                             if opened.opened_at is not None and opened.opened_at > moment:
                                 continue  # открыл бота позже — это сообщение ему уже не нужно
@@ -866,12 +1169,39 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                 continue
                             if kind.startswith("post_") and is_paid(leads_by_id.get(opened.lead_id or "")):
                                 continue  # предложение после эфира оплатившим не шлём
-                            sent += await enqueue(
-                                conn, f"{prefix}:{kind}:{opened.telegram_user_id}", opened.telegram_user_id, text, markup,
-                                photos,
-                            )
+                            if came is not None and (opened.telegram_user_id in came) != (due.audience == "came"):
+                                continue  # сегмент: были / записаны, но не были
+                            key = f"{prefix}:{kind}:{opened.telegram_user_id}"
+                            if due.grant is None or course_id is None:
+                                sent += await enqueue(
+                                    conn, key, opened.telegram_user_id, due.text, due.markup, due.photos, due.video_note,
+                                    due.login,
+                                )
+                                continue
+                            # Доступ и сообщение — вместе: не открылся — сообщение откатывается и уйдёт на следующем шаге.
+                            try:
+                                async with conn.transaction():
+                                    created = await enqueue(
+                                        conn, key, opened.telegram_user_id, due.text, due.markup, due.photos,
+                                        due.video_note, due.login,
+                                    )
+                                    if created:
+                                        await grant_hours(
+                                            conn, tenant_id, course_id, opened.telegram_user_id, due.grant.hours,
+                                            f"grant:{webinar.tag}:{due.key}", now,
+                                        )
+                            except Exception as exc:
+                                logger.warning(
+                                    "webinar_grant_failed",
+                                    extra={"webinar": webinar.tag, "kind": kind, "error": type(exc).__name__},
+                                )
+                                continue
+                            sent += created
                         queued += sent
-                        queued += await copy(conn, f"{prefix}:{kind}", webinar, kind, sent, text, markup, photos)
+                        queued += await copy(
+                            conn, f"{prefix}:{kind}", webinar, kind, sent, due.text, due.markup, due.photos,
+                            due.video_note, due.login,
+                        )
                         if sent:
                             logger.info("webinar_reminders_queued", extra={"webinar": webinar.tag, "kind": kind, "queued": sent})
                     if admin is None:

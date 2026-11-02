@@ -49,6 +49,7 @@ from app.academy.webinar_gift import GIFT_BUTTON, gift_closed_text, gift_config,
 from app.academy.webinars import (
     JOIN_PREFIX,
     OPEN_BUTTON,
+    WHY_PREFIX,
     move_markup,
     move_webinar,
     moved_text,
@@ -59,6 +60,8 @@ from app.academy.webinars import (
     unlinked_prompts,
     webinar_series_of,
     webinars_config,
+    why_config,
+    why_markup,
 )
 from app.academy.showcases import Showcase
 from app.referral_bonus.service import ensure_telegram_actor
@@ -68,7 +71,7 @@ from app.telegram.consent import record_telegram_consent
 from app.telegram.content_access import try_handle_content_access
 from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
 from app.telegram.site_login import with_site_login
-from app.telegram.showcase_support import KIND_ADMIN, support_buttons, support_targets, try_handle_callback as try_handle_support_callback, try_handle_forum_message, try_handle_private_message
+from app.telegram.showcase_support import KIND_ADMIN, open_ticket, support_buttons, support_targets, try_handle_callback as try_handle_support_callback, try_handle_forum_message, try_handle_private_message
 from app.telegram.update_parser import parse_start_token, parse_telegram_callback, parse_telegram_message
 from app.tenancy import TenantContext
 
@@ -548,6 +551,84 @@ async def _try_signup_callback(
     return {"ok": True, "route": "showcase_signup", "webinar": tag, "admin_alert": queued, "trace_id": trace_id}
 
 
+async def _try_why_callback(
+    tenant: TenantContext, callback: Any, showcase: Showcase, *, trace_id: str,
+) -> dict[str, Any] | None:
+    """«Что остановило?» под сообщением после эфира (Виктор, 02.11.2026): человеку — ответ на причину из
+    ``support.why.answers`` (для серии вебинара — свой, если есть), администратору — один алерт на человека,
+    вебинар и причину: что остановило, кто, контакты и строка таблицы. Повторное нажатие — ответ снова, алерт нет.
+
+    ``"open": "admin"`` в ответе — после него человеку открывается обращение администратору, как кнопкой «Написать
+    администратору»: следующее сообщение уйдёт ему. Штатное открытие шлёт своё сообщение-подсказку, поэтому текст
+    ответа (с кнопками) *становится* этой подсказкой — человек получает одно сообщение, не два (``open_ticket(notice=…)``);
+    в тексте ответа стоит сказать «напишите сюда». Неизвестная причина или нет настройки — молчаливый ответ на нажатие."""
+    from app.academy.webinars import EVENT, lead_card
+    from app.db import tenant_connection
+    from app.jobs.outbox import enqueue_outbox_event
+
+    data = str(callback.data or "")
+    if not data.startswith(WHY_PREFIX) or callback.chat_type != "private":
+        return None
+    token = current_bot_binding().bot_token
+    await answer_callback_query(callback_query_id=callback.callback_query_id, bot_token=token)
+    tag, _, code = data[len(WHY_PREFIX):].rpartition(":")
+    why = why_config(showcase.support)
+    reason = why.reason(code)
+    if reason is None:
+        logger.info("showcase_why_unknown", extra={"trace_id": trace_id, "webinar": tag, "code": code[:16]})
+        return {"ok": True, "route": "showcase_why", "known": False, "trace_id": trace_id}
+    webinar = next((w for w in webinars_config(showcase.support) if w.tag == tag), None)
+    answer = (why.answers[code].for_series(webinar.series if webinar else "")) if code in why.answers else None
+    try:
+        admin = (await support_targets(tenant.tenant_id, showcase)).get(KIND_ADMIN)
+    except Exception:
+        logger.warning("showcase_why_admin_lookup_failed", extra={"trace_id": trace_id}, exc_info=True)
+        admin = None
+    if answer is not None:
+        markup = why_markup(answer, tag)
+        shown = False
+        if answer.open == "admin" and admin is not None:
+            try:
+                await open_ticket(
+                    tenant, callback, showcase, KIND_ADMIN, trace_id=trace_id, notice=answer.text, notice_markup=markup,
+                )
+                shown = True
+            except Exception:
+                logger.warning("showcase_why_open_failed", extra={"trace_id": trace_id}, exc_info=True)
+        if not shown:
+            await _send(callback.chat_id, answer.text, markup)
+    queued = False
+    try:
+        if admin is not None:
+            user = ((callback.raw or {}).get("callback_query") or {}).get("from") or {}
+            name = _plain_name(" ".join(str(user.get(k) or "").strip() for k in ("first_name", "last_name")).strip())
+            username = str(user.get("username") or "").strip() or None
+            card = await lead_card(
+                tenant.tenant_id, showcase, telegram_user_id=int(callback.user_id), username=username, name=name,
+            )
+            side = (webinar.label or {"": "композиция", "anatomy": "анатомия"}.get(webinar.series, webinar.series)) if webinar else ""
+            text = (
+                f'❓ <b>Что остановило</b>: «{_plain_name(reason)}» — '
+                f'<b><a href="tg://user?id={int(callback.user_id)}">{name or "Без имени"}</a></b>'
+                + (f" (@{username})" if username else "")
+                + (f" · {side} · после вебинара {webinar.date}" if webinar else "")
+                + (f" · 📝 {answer.label}" if answer is not None and answer.label else "")
+                + (f"\n\n{card}" if card else "")
+            )
+            async with tenant_connection(tenant.tenant_id) as conn:
+                row = await enqueue_outbox_event(
+                    conn, tenant_id=tenant.tenant_id, event_type=EVENT,
+                    idempotency_key=f"wwhy:{showcase.showcase_id}:{tag}:{code}:{int(callback.user_id)}",
+                    payload={"chat_id": str(int(admin)), "text": text, "binding_id": showcase.telegram_binding_id},
+                    due_at=datetime.now(timezone.utc),
+                )
+            queued = bool(row and row.get("created"))
+    except Exception:
+        logger.warning("showcase_why_notify_failed", extra={"trace_id": trace_id}, exc_info=True)
+    logger.info("showcase_why", extra={"trace_id": trace_id, "webinar": tag, "code": code, "admin_alert": queued})
+    return {"ok": True, "route": "showcase_why", "known": True, "webinar": tag, "code": code, "admin_alert": queued, "trace_id": trace_id}
+
+
 NOT_IN_BOT_COMMANDS = {"не в боте", "/nebot", "кто не в боте"}
 
 
@@ -680,6 +761,9 @@ async def process_showcase_bot_update(
         signed = await _try_signup_callback(tenant, callback, showcase, trace_id=trace_id)
         if signed is not None:
             return signed
+        why = await _try_why_callback(tenant, callback, showcase, trace_id=trace_id)
+        if why is not None:
+            return why
         linked = await _try_link_callback(tenant, callback, showcase, trace_id=trace_id)
         if linked is not None:
             return linked

@@ -251,7 +251,18 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
         markup = {"inline_keyboard": [*(rows if isinstance(rows, list) else []), row]}
     photos = [str(p) for p in payload.get("photos") or [] if str(p).strip()]
     card_photo = str(payload.get("card_photo") or "").strip()
+    video_note = str(payload.get("video_note") or "").strip()
     with outbound_binding_guard(binding.bot_token):
+        if video_note:
+            # Кружок (Виктор, 02.11.2026): первым, затем фото, затем текст с кнопками отдельным сообщением (у кружка
+            # подписи и кнопок нет). Кружок не ушёл (файл чужого бота, устарел) — текст всё равно уходит; неоднозначный
+            # итог (таймаут) не повторяем — как с визиткой ниже.
+            try:
+                await send_telegram_media(chat_id, "video_note", video_note, bot_token=binding.bot_token)
+            except TelegramDeliveryUnknown:
+                raise
+            except Exception as exc:
+                logger.warning("due_notification_video_note_failed", extra={"error_class": type(exc).__name__})
         if card_photo and telegram_caption_fits("photo", text):
             # Визитка партнёра (срез 5, 31.10.2026): фото с подписью и кнопками одним сообщением. Telegram не принял
             # фото (адрес недоступен) — уходит обычный текст ниже; неоднозначный итог (таймаут) не повторяем.
