@@ -596,7 +596,10 @@ async def _try_why_callback(
             except Exception:
                 logger.warning("showcase_why_open_failed", extra={"trace_id": trace_id}, exc_info=True)
         if not shown:
-            await _send(callback.chat_id, answer.text, markup)
+            try:
+                await _send(callback.chat_id, answer.text, markup)
+            except Exception:
+                logger.warning("showcase_why_answer_failed", extra={"trace_id": trace_id}, exc_info=True)  # алерт всё равно уходит
     queued = False
     try:
         if admin is not None:

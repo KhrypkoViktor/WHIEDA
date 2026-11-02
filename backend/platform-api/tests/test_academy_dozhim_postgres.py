@@ -256,6 +256,47 @@ def test_missing_course_holds_the_after_webinar_message_back_and_missing_segment
         db.run_with_app(proof)
 
 
+@pytest.mark.integration
+def test_unreadable_leads_sheet_holds_after_webinar_offers_back(monkeypatch):
+    """Таблица заявок не открылась — не знаем, кто оплатил: предложение после эфира в этом шаге не уходит никому
+    (оплатившим тоже), а в следующем шаге своего окна, когда таблица открылась, уходит как обычно (02.11.2026)."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    support = {**SUPPORT, "broadcast_copy": [], "webinar_warmup": [{"key": "all", "after_min": 120, "text": "Всем записанным."}]}
+    with temporary_database("whieda_dozhim_nosheet") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb where showcase_id = 'almira'",
+                         (json.dumps(support, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            state = {"down": True}
+
+            async def flaky_fetch(config):
+                if state["down"]:
+                    raise RuntimeError("leads_sheet_not_csv")
+                return parse_leads(PAID_CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", flaky_fetch)
+            webinars._last_confirm_fetch.clear()
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, {"almira-academy-bot": object()}, clock=at(24, 19, 31)) == 0
+            state["down"] = False
+            sc._reset_cache()
+            assert await webinars.webinar_step({"whieda"}, {"almira-academy-bot": object()}, clock=at(24, 19, 40)) == 1
+            async with tenant_connection("whieda") as conn:
+                keys = {r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")}
+            assert keys == {f"webinar:almira:ig_web24:post_all:{ANNA}"}  # Борис оплатил — ему и теперь не уходит
+
+        db.run_with_app(proof)
+
+
 # ---- «Что остановило?» от нажатия до обращения администратору -----------------------------------------------
 
 KIRILL, STUDENT = 7002, 9001

@@ -298,7 +298,7 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
         # Дожим (Виктор, 02.11.2026). Кружок — как фото, но file_id до 255. «Смотреть запись» без grant курса не знает.
         video_note = str(item.get("video_note") or "").strip()
         video_note = video_note if _VIDEO_NOTE_RE.fullmatch(video_note) else ""
-        grant = _grant(item.get("grant"))
+        grant = _grant(item.get("grant")) if after else None  # до эфира открывать запись незачем
         rows = _button_rows(item.get("buttons"))
         if grant is None:
             rows = _without_action(rows, "course")
@@ -306,6 +306,7 @@ def warmup_config(support: dict[str, Any] | None) -> list[Warmup]:
         # «вы не были» человеку, который был, хуже, чем пропущенное сообщение, — элемент не отправляем.
         audience = str(item.get("audience") or "").strip().casefold() if after else ""
         if audience and audience not in _AUDIENCES:
+            logger.warning("webinar_warmup_audience_unknown", extra={"key": key, "audience": audience[:20]})
             continue
         if _WARMUP_KEY_RE.fullmatch(key) and text and 10 <= minutes <= 14 * 24 * 60:
             out.append(Warmup(
@@ -1016,10 +1017,12 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     continue
                 config = sheet_config(showcase.support)
                 leads: list[Lead] = []
+                sheet_failed = False
                 if config:
                     try:
                         leads = await fetch_leads(config)
                     except Exception as exc:
+                        sheet_failed = True
                         logger.warning("webinar_sheet_failed", extra={"showcase": showcase.showcase_id, "error": type(exc).__name__})
                 if confirm_now:
                     _last_confirm_fetch[fetch_key] = now
@@ -1138,6 +1141,10 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                     same = {w.tag for w in webinars if w.series == webinar.series}
                     for due in reminders:
                         kind, moment = due.key, due.moment
+                        if kind.startswith("post_") and sheet_failed:
+                            # Таблица заявок не открылась — не знаем, кто оплатил: предложение после эфира (и доступ
+                            # к записи) ждёт следующего шага в своём окне, а не уходит оплатившим (02.11.2026).
+                            continue
                         sent = 0
                         got: set[str] = set()
                         if kind.startswith("warm_"):
@@ -1187,11 +1194,12 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                         conn, key, opened.telegram_user_id, due.text, due.markup, due.photos,
                                         due.video_note, due.login,
                                     )
-                                    if created:
-                                        await grant_hours(
-                                            conn, tenant_id, course_id, opened.telegram_user_id, due.grant.hours,
-                                            f"grant:{webinar.tag}:{due.key}", now,
-                                        )
+                                    if created and not await grant_hours(
+                                        conn, tenant_id, course_id, opened.telegram_user_id, due.grant.hours,
+                                        f"grant:{webinar.tag}:{due.key}", now,
+                                    ):
+                                        # Доступ снят вручную или он не подарок — не трогаем; сообщение всё равно уходит.
+                                        logger.info("webinar_grant_kept", extra={"webinar": webinar.tag, "kind": kind})
                             except Exception as exc:
                                 logger.warning(
                                     "webinar_grant_failed",
