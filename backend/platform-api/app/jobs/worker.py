@@ -255,12 +255,10 @@ async def _send_due_notification(binding: BotBindingContext, payload: dict[str, 
     with outbound_binding_guard(binding.bot_token):
         if video_note:
             # Кружок (Виктор, 02.11.2026): первым, затем фото, затем текст с кнопками отдельным сообщением (у кружка
-            # подписи и кнопок нет). Кружок не ушёл (файл чужого бота, устарел) — текст всё равно уходит; неоднозначный
-            # итог (таймаут) не повторяем — как с визиткой ниже.
+            # подписи и кнопок нет). Кружок не ушёл (файл чужого бота, устарел, таймаут) — текст с кнопками всё равно
+            # уходит: главное в сообщении — он; кружок при этом не повторяем.
             try:
                 await send_telegram_media(chat_id, "video_note", video_note, bot_token=binding.bot_token)
-            except TelegramDeliveryUnknown:
-                raise
             except Exception as exc:
                 logger.warning("due_notification_video_note_failed", extra={"error_class": type(exc).__name__})
         if card_photo and telegram_caption_fits("photo", text):

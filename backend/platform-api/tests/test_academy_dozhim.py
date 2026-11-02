@@ -268,7 +268,7 @@ async def test_circle_goes_first_then_photo_then_text_with_buttons():
 
 
 @pytest.mark.asyncio
-async def test_failed_circle_never_costs_the_text_but_an_ambiguous_timeout_is_not_repeated():
+async def test_failed_or_ambiguous_circle_never_costs_the_text():
     from app.telegram.delivery import TelegramDeliveryError, TelegramDeliveryUnknown
 
     worker, binding, calls = _worker_calls()
@@ -281,15 +281,13 @@ async def test_failed_circle_never_costs_the_text_but_an_ambiguous_timeout_is_no
         ):
             await worker._send_due_notification(binding, payload)
         assert calls == [("text", "Пост")]
-    # Неоднозначный итог — как у визитки с фото: не повторяем и текст не шлём (а то кружок придёт дважды).
+    # Неоднозначный итог кружка (таймаут): кружок не повторяем, а текст с кнопками всё равно уходит — главное в нём.
     calls.clear()
     with patch.object(worker, "send_telegram_media", AsyncMock(side_effect=TelegramDeliveryUnknown("telegram_send_ambiguous"))), patch.object(
         worker, "send_telegram_text", text
     ):
-        with pytest.raises(TelegramDeliveryUnknown):
-            await worker._send_due_notification(binding, payload)
-    assert calls == []
-    assert worker._final_delivery_error(TelegramDeliveryUnknown("x")) is True
+        await worker._send_due_notification(binding, payload)
+    assert calls == [("text", "Пост")]
 
 
 @pytest.mark.asyncio

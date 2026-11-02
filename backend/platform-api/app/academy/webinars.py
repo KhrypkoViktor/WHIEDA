@@ -973,9 +973,10 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
             code_words_loaded = False
 
             async def came_ids(conn: Any, webinar: Webinar, people: list[Opened]) -> set[int]:
-                """Кто был на эфире этого вебинара (Виктор, 02.11.2026): нажал «Присоединиться» (``joined`` в записи
+                """Кто был на эфире своей серии (Виктор, 02.11.2026): нажал «Присоединиться» (``joined`` в записи
                 человека) или написал кодовое слово — в ``academy_access.payment_ref`` метка ``code:<вебинар>[,…]``.
-                Кодовые слова читаются одним запросом на шаг, а не на человека."""
+                Считается любой уже начавшийся эфир серии, не только этот: был 24.10 и записался на повтор 31.10 —
+                «вы не смогли прийти» ему не шлём. Кодовые слова читаются одним запросом на шаг, а не на человека."""
                 nonlocal code_words_loaded
                 if not code_words_loaded:
                     for row in await fetch_all(
@@ -988,9 +989,10 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                             label.strip() for label in str(row["payment_ref"])[5:].split(",")
                         )
                     code_words_loaded = True
+                tags = {w.tag for w in webinars if w.series == webinar.series and w.at <= now}
                 return {
                     o.telegram_user_id for o in people
-                    if any(tag == webinar.tag for tag, _ in o.joined) or webinar.tag in code_words.get(o.telegram_user_id, ())
+                    if any(tag in tags for tag, _ in o.joined) or tags & code_words.get(o.telegram_user_id, set())
                 }
 
             async with tenant_connection(tenant_id) as conn:

@@ -18,6 +18,7 @@ CIRCLE_A = "DQACAgIAAxkBAAIB" + "a" * 40
 CIRCLE_B = "DQACAgIAAxkBAAIB" + "b" * 40
 COPY_TO = 688931415
 CODE_USER, OTHER_CODE, GUEST, OTHER_BUTTON, PURCHASED, LONG_GIFT, SHORT_GIFT, REVOKED = 3010, 3011, 3012, 3013, 3014, 3015, 3016, 3017
+REPEATER = 3018  # был на эфире 24.10 и записан на повтор 31.10
 SUPPORT_MIGRATIONS = (*MIGRATIONS, "platform_service_sales_v10.sql")
 
 SUPPORT = {
@@ -51,11 +52,13 @@ insert into academy_ad_opens (tenant_id, showcase_id, telegram_user_id, telegram
   ('whieda', 'almira', {PURCHASED}, null, 'Купила курс', 'ig_web24', null, '2026-10-21T10:00:00+03:00'),
   ('whieda', 'almira', {LONG_GIFT}, null, 'Длинный подарок', 'ig_web24', null, '2026-10-21T10:00:00+03:00'),
   ('whieda', 'almira', {SHORT_GIFT}, null, 'Короткий подарок', 'ig_web24', null, '2026-10-21T10:00:00+03:00'),
-  ('whieda', 'almira', {REVOKED}, null, 'Снятый доступ', 'ig_web24', null, '2026-10-21T10:00:00+03:00');
+  ('whieda', 'almira', {REVOKED}, null, 'Снятый доступ', 'ig_web24', null, '2026-10-21T10:00:00+03:00'),
+  ('whieda', 'almira', {REPEATER}, null, 'Был и на повтор', 'ig_web31', null, '2026-10-21T10:00:00+03:00');
 -- «Присоединиться»: Анна — на этом эфире, «Нажал на 31-е» — на другом, купившая — на этом.
 update academy_ad_opens set joined = '{{"ig_web24": "2026-10-24T17:31:00+03:00"}}'::jsonb
   where telegram_user_id in ({ANNA}, {BORIS}, {PURCHASED});
 update academy_ad_opens set joined = '{{"ig_web31": "2026-10-31T17:31:00+03:00"}}'::jsonb where telegram_user_id = {OTHER_BUTTON};
+update academy_ad_opens set joined = '{{"ig_web24": "2026-10-24T17:40:00+03:00"}}'::jsonb where telegram_user_id = {REPEATER};
 insert into academy_courses (tenant_id, slug, title, access_rule, author_actor_id, status, kind) values
   ('whieda', 'zapis-24', 'Запись эфира 24.10', 'purchase', 'almira', 'published', 'course'),
   ('whieda', 'podarok', 'Урок в подарок', 'purchase', 'almira', 'published', 'gift');
@@ -197,6 +200,14 @@ def test_segments_circles_copies_and_hours_of_access(monkeypatch):
                     )
             assert await step(clock + timedelta(minutes=20)) == 0
             assert (await access_of(ANNA))["expires_at"] == clock + timedelta(minutes=5)
+
+            # «Был» — по всей серии (02.11.2026): был 24.10, записан на повтор 31.10 и на нём не был — после 31.10 ему
+            # «спасибо, что были», а не «вы не были». До своего эфира 31.10 он в рассылки 24.10 не попадал.
+            assert not [k for k in payloads if k.endswith(f":{REPEATER}")]
+            await step(at(31, 19, 31))
+            after31 = await sent()
+            assert f"webinar:almira:ig_web31:post_c1:{REPEATER}" in after31
+            assert f"webinar:almira:ig_web31:post_m1:{REPEATER}" not in after31
 
         db.run_with_app(proof)
 
