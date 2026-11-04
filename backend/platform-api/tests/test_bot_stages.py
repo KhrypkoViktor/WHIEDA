@@ -54,7 +54,7 @@ def tg_labels(markup: dict) -> list[str]:
 
 @asynccontextmanager
 async def fake_connection(tenant_id: str):
-    yield SimpleNamespace(tenant=tenant_id)
+    yield FakeConn()
 
 
 # ---- мир: статус человека и всё, что от него зависит, подменено -------------------------------------------
@@ -98,6 +98,8 @@ def world(monkeypatch, stages_on, whieda_bot_binding):
         monkeypatch.setattr(target, resolve)
     for target in ("app.bot_stages.telegram.person_stage", "app.bot_stages.max.person_stage", "app.telegram.referral_bonus.person_stage"):
         monkeypatch.setattr(target, person)
+    w.academy = False
+    monkeypatch.setattr("app.funnel.guest.has_academy_access", AsyncMock(side_effect=lambda *a, **kw: w.academy))
     monkeypatch.setattr("app.funnel.guest_bot.tenant_connection", fake_connection)
     monkeypatch.setattr("app.funnel.guest.load_lead_by_channel_user", AsyncMock(return_value=None))
     monkeypatch.setattr("app.funnel.guest.inviter_actor_id", AsyncMock(side_effect=lambda *a, **kw: "igor-actor" if w.inviter else None))
@@ -1057,3 +1059,113 @@ async def test_the_example_site_is_the_inviters_then_the_demo_then_nothing(monke
     monkeypatch.setattr("app.bot_stages.telegram.inviter_card", AsyncMock(return_value=SimpleNamespace(site_url=inviter_site)))
     assert await stages_tg.example_site_url("whieda", "telegram", USER) == expected
     get_settings.cache_clear()
+
+
+# ---- «🎓 Академия» в меню гостя: только с доступом ---------------------------------------------------------
+
+ACADEMY = ("🎓 Академия", "acad:home")
+
+
+def test_the_academy_button_sits_between_the_consult_and_the_question(stages_on):
+    with_access = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW, academy=ACADEMY)
+    assert labels(with_access.rows) == [
+        "📅 Записаться: вт 03.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос",
+    ]
+    assert data(with_access.rows) == ["mreg:11", "funnel:tour", "funnel:consult", "acad:home", "funnel:ask"]
+    without = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW)
+    assert "🎓 Академия" not in labels(without.rows)
+    assert labels(without.rows) == ["📅 Записаться: вт 03.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+
+
+def test_with_the_switch_off_the_guest_menu_never_gets_the_academy_button():
+    reply = guest_menu_reply(None, registration=None, open_meetings=[], now=NOW, academy=ACADEMY)
+    assert "🎓 Академия" not in labels(reply.rows) and data(reply.rows) == ["funnel:tour", "funnel:consult", "funnel:ask"]
+
+
+@pytest.fixture
+def academy_db(monkeypatch, stages_on):
+    state = SimpleNamespace(has=True, calls=[])
+
+    async def has_access(conn, tenant_id, channel, user_id):
+        state.calls.append((channel, user_id))
+        if isinstance(state.has, Exception):
+            raise state.has
+        return state.has
+
+    monkeypatch.setattr("app.funnel.guest.has_academy_access", has_access)
+    return state
+
+
+async def test_the_academy_button_needs_access_and_goes_to_the_academy_of_the_channel(academy_db):
+    academy_db.has = True
+    assert await guest.academy_button(FakeConn(), "whieda", "telegram", USER) == ("🎓 Академия", "acad:home")
+    channel, url = await guest.academy_button(FakeConn(), "whieda", "max", 9300)
+    assert channel == "🎓 Академия" and url.startswith("https://") and url.endswith("/academy/")  # в Max — ссылка на сайт
+    academy_db.has = False
+    assert await guest.academy_button(FakeConn(), "whieda", "telegram", USER) is None
+
+
+async def test_the_academy_button_is_absent_when_the_academy_is_closed_or_the_check_fails(academy_db, monkeypatch):
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "false")
+    get_settings.cache_clear()
+    assert await guest.academy_button(FakeConn(), "whieda", "telegram", USER) is None
+    assert academy_db.calls == []  # Академия закрыта — запроса нет
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    get_settings.cache_clear()
+    academy_db.has = RuntimeError("db down")
+    assert await guest.academy_button(FakeConn(), "whieda", "telegram", USER) is None  # сбой — меню без кнопки, не ошибка
+
+
+async def test_the_academy_check_is_not_made_with_the_switch_off(monkeypatch):
+    has_access = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.funnel.guest.has_academy_access", has_access)
+    assert await guest.academy_button(FakeConn(), "whieda", "telegram", USER) is None
+    has_access.assert_not_awaited()
+
+
+async def test_a_guest_without_access_has_no_academy_button_in_telegram(world, whieda_tenant, whieda_bot_binding):
+    world.stage, world.academy = "guest", False
+    result = await start_telegram(world, whieda_tenant, whieda_bot_binding)
+    assert result["route"] == "guest_menu"
+    assert tg_labels(world.sent[-1][2]) == ["📅 Записаться: вт 03.11 19:30", "📅 Записаться: чт 05.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+
+
+async def test_a_guest_with_access_gets_the_academy_button_after_the_consult_in_telegram(world, whieda_tenant, whieda_bot_binding):
+    world.stage, world.academy = "guest", True
+    await start_telegram(world, whieda_tenant, whieda_bot_binding)
+    markup = world.sent[-1][2]
+    assert tg_labels(markup)[-4:] == ["▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
+    assert [button for row in markup["inline_keyboard"] for button in row][-2] == {"text": "🎓 Академия", "callback_data": "acad:home"}
+
+
+async def test_the_academy_button_is_in_the_menu_word_and_in_max(max_world, whieda_tenant, whieda_bot_binding):
+    max_world.stage, max_world.academy = "guest", True
+    result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", ""), "t1")
+    assert result["stage"] == "guest"
+    buttons = [b for row in max_world.max_sent[-1][1] for b in row]
+    assert [b["text"] for b in buttons][-4:] == ["▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
+    assert buttons[-2].get("url", "").endswith("/academy/")
+    max_world.academy = False
+    await max_processor.handle_max_message(MAX_TENANT, max_event("message", "меню"), "t1")
+    assert "🎓 Академия" not in [b["text"] for row in max_world.max_sent[-1][1] for b in row]
+
+
+@pytest.mark.parametrize("stage", ["partner_whieda", "partner_wwc"])
+async def test_partners_do_not_get_a_guest_academy_button(world, whieda_tenant, whieda_bot_binding, stage):
+    world.stage, world.academy = stage, True
+    await start_telegram(world, whieda_tenant, whieda_bot_binding)
+    flat = tg_labels(world.sent[-1][2])
+    assert flat.count("🎓 Академия") <= 1  # у партнёра WWC Академия — кнопка кабинета, у партнёра WHIEDA — «Курс «Запуск WWC»»
+    assert "▶ Показ системы" not in flat
+
+
+async def test_the_lead_start_screen_shows_the_academy_button_too(monkeypatch, stages_on):
+    from tests.test_lead_start_guest import Start, make_lead
+
+    world = Start(monkeypatch, lead=make_lead())
+    monkeypatch.setattr("app.funnel.lead_start.academy_button", AsyncMock(return_value=ACADEMY))
+    result = await world.run()
+    assert labels(result.reply.rows)[-3:] == ["🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
+    monkeypatch.setattr("app.funnel.lead_start.academy_button", AsyncMock(return_value=None))
+    assert "🎓 Академия" not in labels((await world.run()).reply.rows)
+

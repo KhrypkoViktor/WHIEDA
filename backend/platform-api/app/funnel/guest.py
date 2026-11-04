@@ -20,12 +20,13 @@ Telegram и Max подключают это в ``app/funnel/guest_bot.py``. Те
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from app.bot_stages.service import STAGE_GUEST, inviter_actor_id, resolve_stage, stages_enabled
+from app.bot_stages.service import STAGE_GUEST, has_academy_access, inviter_actor_id, resolve_stage, stages_enabled
 from app.db import fetch_one
 from app.funnel import texts
 from app.leads.meeting_leads import MeetingLead, load_lead_by_channel_user
@@ -35,6 +36,8 @@ from app.meetings.registrations import Registration
 from app.meetings.service import format_msk, utcnow
 from app.referral_bonus.service import InviterCard, inviter_card
 from app.settings import get_settings
+
+logger = logging.getLogger("whieda.funnel.guest")
 
 Button = tuple[str, str]  # (подпись, callback_data) или (подпись, https://адрес) — кнопка-ссылка
 Rows = list[list[Button]]
@@ -120,14 +123,18 @@ def control_rows(registration_id: int) -> Rows:
     ]
 
 
-def menu_rows() -> Rows:
-    """«Показ системы», «Личный разбор», «Задать вопрос» — каждая в своём ряду."""
+def menu_rows(*, academy: Button | None = None) -> Rows:
+    """«Показ системы», «Личный разбор», «Задать вопрос» — каждая в своём ряду. Три меню включены и у гостя есть доступ
+    в Академии (``academy_button``) — между «Личным разбором» и «Задать вопрос» ещё «🎓 Академия»."""
     if _stages():
-        return [
+        rows: Rows = [
             [(texts.STAGE_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
             [(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
-            [(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)],
         ]
+        if academy is not None:
+            rows.append([academy])
+        rows.append([(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)])
+        return rows
     return [
         [(texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
         [(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
@@ -154,6 +161,7 @@ def guest_menu_reply(
     open_meetings: list[dict[str, Any]],
     now: datetime | None = None,
     note: str | None = None,
+    academy: Button | None = None,
 ) -> Reply:
     """Меню гостя. Есть активная запись — её дата и кнопки «Перенести» / «Отменить запись»; нет — ближайшие
     встречи кнопками «Записаться: …» (или строка, что встреч пока нет). Внизу всегда три кнопки меню.
@@ -171,7 +179,7 @@ def guest_menu_reply(
         rows.extend(register_rows(open_meetings, now=now))
     else:
         parts.append(texts.GUEST_NO_MEETINGS)
-    rows.extend(menu_rows())
+    rows.extend(menu_rows(academy=academy))
     return Reply("\n\n".join(parts), rows)
 
 
@@ -186,6 +194,34 @@ async def load_guest_view(
     if active:
         return active[0], []
     return None, await registrations.open_meetings(conn, tenant_id, limit=MENU_MEETINGS, now=current)
+
+
+async def academy_button(conn: Any, tenant_id: str, channel: str, channel_user_id: int) -> Button | None:
+    """Кнопка «🎓 Академия» для меню гостя — только если три меню включены, Академия открыта и у человека есть любой
+    доступ в ней (``has_academy_access``, один запрос). В Telegram — вход в Академию бота, в Max — ссылка на Академию на
+    сайте. Нет доступа, Академия закрыта или сбой запроса — ``None``: меню гостя без кнопки. Запрос идёт под своей
+    точкой отката: сбой не обрывает общую транзакцию меню."""
+    if not stages_enabled(tenant_id):
+        return None
+    from app.academy.service import academy_open
+
+    if not academy_open():
+        return None
+    try:
+        async with conn.transaction():
+            has_access = await has_academy_access(conn, tenant_id, channel, channel_user_id)
+    except Exception as exc:  # noqa: BLE001 — меню важнее кнопки
+        logger.warning("guest_academy_check_failed", extra={"channel": channel, "error_class": type(exc).__name__})
+        return None
+    if not has_access:
+        return None
+    if channel == "max":
+        from app.bot_stages.menus import academy_url
+
+        return (texts.STAGE_ACADEMY_BUTTON, academy_url())
+    from app.telegram.academy import ACADEMY_HOME_CALLBACK
+
+    return (texts.STAGE_ACADEMY_BUTTON, ACADEMY_HOME_CALLBACK)
 
 
 async def owner_card(tenant_id: str, owner_actor_id: str | None) -> InviterCard | None:

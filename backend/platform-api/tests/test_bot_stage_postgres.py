@@ -110,6 +110,26 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
                 "insert into account_identities (tenant_id, telegram_user_id, provider, external_id) values "
                 "('whieda', 7002, 'max', '9302')"
             )
+            # Академия: курс, купленный человеком 7100; отозванный подарок у 7200; пройденный урок у партнёра 7002
+            conn.execute(
+                "insert into academy_courses (tenant_id, slug, title, access_rule, status) values ('whieda', 'kurs', 'Курс', 'purchase', 'published')"
+            )
+            conn.execute(
+                "insert into academy_lessons (tenant_id, course_id, slug, module_title, position, title, body_html) "
+                "select 'whieda', course_id, 'urok-1', 'Неделя 1', 1, 'Урок 1', '<p>1</p>' from academy_courses where slug = 'kurs'"
+            )
+            conn.execute(
+                "insert into academy_access (tenant_id, course_id, telegram_user_id, source, revoked_at) "
+                "select 'whieda', course_id, 7100, 'purchase', null from academy_courses where slug = 'kurs'"
+            )
+            conn.execute(
+                "insert into academy_access (tenant_id, course_id, telegram_user_id, source, revoked_at) "
+                "select 'whieda', course_id, 7200, 'gift', now() from academy_courses where slug = 'kurs'"
+            )
+            conn.execute(
+                "insert into academy_progress (tenant_id, telegram_user_id, lesson_id) "
+                "select 'whieda', 7002, lesson_id from academy_lessons where slug = 'urok-1'"
+            )
             db.grant_api_role(conn)
 
         async def proof() -> None:
@@ -141,6 +161,19 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
             assert await column_of("igor-actor") == "guest"
             assert await stage("telegram", 7001) == "partner_wwc"
             assert await column_of("igor-actor") == "partner_wwc"
+
+            # --- доступ к Академии (кнопка «🎓 Академия» в меню гостя) ---
+            async def academy(channel: str, user: int, tenant_id: str = "whieda") -> bool:
+                async with tenant_connection(tenant_id) as c:
+                    return await service.has_academy_access(c, tenant_id, channel, user)
+
+            assert await academy("telegram", 7100) is True    # куплен курс
+            assert await academy("telegram", 7200) is False   # доступ отозван
+            assert await academy("telegram", 7002) is True    # пройден урок
+            assert await academy("telegram", 99999) is False  # человека с доступом нет
+            assert await academy("max", 9302) is True         # Max-учётка привязана к 7002
+            assert await academy("max", 9300) is False        # Max-человек без привязки
+            assert await academy("telegram", 7100, "other") is False  # чужой арендатор доступа не видит
 
             # --- повышение ---
             assert await service.promote("whieda", "telegram", 7100, "partner_whieda") == "changed"

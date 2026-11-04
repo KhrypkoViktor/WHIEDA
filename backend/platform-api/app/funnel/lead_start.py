@@ -29,7 +29,7 @@ from typing import Any, Literal
 from app.crm.service import safe_error
 from app.db import tenant_connection
 from app.funnel import texts
-from app.funnel.guest import Reply, guest_menu_reply, load_guest_view, owner_card
+from app.funnel.guest import Reply, academy_button, guest_menu_reply, load_guest_view, owner_card
 from app.leads.meeting_leads import card_registration_event, load_lead_by_public_id, mark_bot_opened
 from app.meetings import registrations
 from app.meetings.service import utcnow
@@ -126,6 +126,7 @@ async def start_from_lead(
                     conn, tenant_id, lead.crm_card, "registered", starts_at=outcome.meeting["starts_at"], now=current
                 )
         registration, open_meetings = await load_guest_view(conn, tenant_id, channel, channel_user_id, now=current)
+        academy = await academy_button(conn, tenant_id, channel, channel_user_id)
 
     gone = outcome is not None and outcome.status in ("closed", "not_found")
     inviter_name = ((card.display_name if card else "") or "").strip() or None
@@ -135,6 +136,7 @@ async def start_from_lead(
         open_meetings=open_meetings,
         now=current,
         note=texts.GUEST_MEETING_GONE if gone else None,
+        academy=academy,
     )
     status: Literal["registered", "already", "closed", "menu"] = "menu"
     if outcome is not None:

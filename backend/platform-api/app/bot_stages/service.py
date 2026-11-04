@@ -294,3 +294,37 @@ async def own_site_url(conn: Any, tenant_id: str, channel: str, user_id: int) ->
     """Адрес сайта самого партнёра (включённый профиль с ``public_site_url``); нет сайта — None."""
     row = await fetch_one(conn, _OWN_SITE_SQL, _params(tenant_id, channel, user_id))
     return (str(row["site_url"]) if row else "") or None
+
+
+# ---- доступ к Академии: «🎓 Академия» в меню гостя ------------------------------------------------------
+
+_ACADEMY_ACCESS_SQL = """
+with who as (
+  select %(user)s::bigint as telegram_user_id where %(channel)s = 'telegram'
+  union
+  select ai.telegram_user_id from account_identities ai
+  where ai.tenant_id = %(tenant)s and ai.provider = %(channel)s and ai.external_id = %(user_text)s
+    and ai.revoked_at is null
+)
+select
+  exists (
+    select 1 from academy_access a join who w on w.telegram_user_id = a.telegram_user_id
+    where a.tenant_id = %(tenant)s and a.revoked_at is null
+  )
+  or exists (
+    select 1 from academy_progress p join who w on w.telegram_user_id = p.telegram_user_id
+    where p.tenant_id = %(tenant)s
+  ) as has_access
+"""
+
+
+async def has_academy_access(conn: Any, tenant_id: str, channel: str, user_id: int) -> bool:
+    """У человека есть любой доступ в Академии: купленный курс, подарок, ключ или доступ от владельца (строка
+    ``academy_access`` без отзыва) либо уже пройденный урок. Один запрос. Max-пользователь ищется по привязанной
+    учётке (``account_identities``): доступ в Академии записан на Telegram-id.
+
+    Клуб отдельно не проверяется: клубный доступ даёт включённый профиль сайта, а такой человек — партнёр WWC,
+    не гость, и Академия у него в кабинете."""
+    row = await fetch_one(conn, _ACADEMY_ACCESS_SQL, _params(tenant_id, channel, user_id))
+    return bool((row or {}).get("has_access"))
+

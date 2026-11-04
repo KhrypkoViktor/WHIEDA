@@ -34,6 +34,7 @@ from app.db import tenant_connection
 from app.funnel import registration, texts
 from app.funnel.guest import (
     Reply,
+    academy_button,
     guest_menu_reply,
     is_guest_menu_word,
     load_guest_view,
@@ -144,12 +145,13 @@ async def _guest_menu(tenant_id: str, channel: str, user_id: int) -> Reply | Non
             if guest is None:
                 return None
             registration_view, open_meetings = await load_guest_view(conn, tenant_id, channel, user_id)
+            academy = await academy_button(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001 — партнёрам и всем остальным бот отвечает как прежде
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
-    return guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings)
+    return guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy)
 
 
 async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | None, Reply | None]:
@@ -164,12 +166,13 @@ async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | 
             if guest is None:
                 return stage, None
             registration_view, open_meetings = await load_guest_view(conn, tenant_id, channel, user_id)
+            academy = await academy_button(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None, None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
-    return stage, guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings)
+    return stage, guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy)
 
 
 async def check_waiting_cards(tenant_id: str, channel: str, user_id: int) -> None:
