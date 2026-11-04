@@ -33,3 +33,18 @@ For production-grade ordering across replicas:
 5. **Migration:** run the durable worker in shadow mode beside the in-memory sequencer, compare ordering metrics, then cut over route handlers.
 
 Until that exists, scale Core Telegram traffic vertically or pin webhook traffic to a single active Core instance.
+
+## Button presses (04.11.2026)
+
+- The fingerprint of a button is `callback_data` **plus the `message_id` of the message the button sits under**
+  (`build_message_fingerprint(callback_data=..., message_id=...)`). A repeated tap on the same button of the
+  same message within 12 s is a duplicate (protection against a double order stays); the same `callback_data`
+  under a new message (e.g. «Пропустить» on the next step of the site request) goes through.
+  Text messages keep the old fingerprint.
+- For buttons `run_ordered(..., drop_inflight_duplicate=True)`: a repeat of a fingerprint that is still being
+  handled (or waits for the chat queue) is dropped at once, without waiting for the chat lock; the router answers
+  such a duplicate with an empty `answerCallbackQuery` so the spinner on the button stops.
+- `on_accepted` fires before the chat queue: the router sends `sendChatAction typing` there (private chat of the
+  WWC bot, off switch `PLATFORM_TELEGRAM_CALLBACK_TYPING=false`).
+- `SequencerResult.wait_ms` / `run_ms` go to the log line `telegram_update_processed kind=... wait_ms=... run_ms=...`
+  (queue wait vs handler time).

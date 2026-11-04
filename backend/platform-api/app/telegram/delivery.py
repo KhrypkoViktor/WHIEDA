@@ -406,6 +406,27 @@ async def _post_telegram(
         raise TelegramDeliveryUnknown("telegram_send_ambiguous") from exc
 
 
+async def send_chat_action(
+    *,
+    chat_id: str,
+    bot_token: str,
+    action: str = "typing",
+    timeout_sec: float = 3.0,
+) -> dict[str, Any]:
+    """«Бот печатает…» в чате (4.11.2026): человек видит, что нажатие принято, пока обработчик
+    ходит в базу и Telegram. Прямой вызов, не в очередь доставки; сбой решает вызывающий — на обработку
+    он влиять не должен."""
+    if not chat_id or not bot_token:
+        return {"ok": False, "skipped": True}
+    _assert_outbound_token(bot_token)
+    url = _bot_api_url(bot_token, "sendChatAction")
+    data, status_code = await _post_telegram(url, {"chat_id": chat_id, "action": action}, timeout_sec)
+    if status_code >= 400 or not data.get("ok"):
+        logger.warning("telegram_chat_action_failed", extra={"status": status_code})
+        return {"ok": False, "status_code": status_code, "detail": data}
+    return {"ok": True}
+
+
 async def answer_callback_query(
     *,
     callback_query_id: str,

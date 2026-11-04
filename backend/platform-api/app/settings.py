@@ -184,6 +184,14 @@ class Settings(BaseSettings):
             "Falls back to in-process when the inbox schema is not ready."
         ),
     )
+    telegram_callback_typing: bool = Field(
+        default=True,
+        validation_alias="PLATFORM_TELEGRAM_CALLBACK_TYPING",
+        description=(
+            "Send «typing» to a private chat of the WWC bot as soon as a button press is accepted, "
+            "so the person sees the bot working. Off switch if Telegram ever throttles it."
+        ),
+    )
     feature_readiness_cache_ttl_sec: float = Field(
         default=30.0,
         validation_alias="PLATFORM_FEATURE_READINESS_CACHE_TTL_SEC",

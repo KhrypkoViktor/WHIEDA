@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -20,7 +21,12 @@ from app.telegram.bindings import (
     resolve_bot_binding_context,
     verify_webhook_secret,
 )
-from app.telegram.delivery import deliver_structured_advisor_response, send_telegram_text
+from app.telegram.delivery import (
+    answer_callback_query,
+    deliver_structured_advisor_response,
+    send_chat_action,
+    send_telegram_text,
+)
 from app.telegram.log_safe import chat_ref
 from app.telegram.modes import is_telegram_deliverable, should_deliver_telegram_response
 from app.telegram.inbox import compact_telegram_payload, get_inbox_store
@@ -206,6 +212,59 @@ async def _process_telegram_update_body(
     await _forward_to_legacy_consultant(update, trace_id)
 
 
+# Задачи «бот печатает…»: держим ссылку, пока идут, иначе сборщик мусора может убрать их на лету.
+_typing_tasks: set[asyncio.Task] = set()
+
+
+async def _send_typing(binding: BotBindingContext, chat_id: int | str, trace_id: str | None) -> None:
+    try:
+        await send_chat_action(chat_id=str(chat_id), bot_token=binding.bot_token)
+    except Exception:
+        # Индикатор — удобство: Telegram не ответил, обработка кнопки идёт как шла.
+        logger.warning(
+            "telegram_typing_failed",
+            extra={"trace_id": trace_id, "chat_id": chat_ref(str(chat_id))},
+        )
+
+
+def _schedule_typing(binding: BotBindingContext, callback: dict, trace_id: str | None) -> None:
+    """Нажатие кнопки в личном чате бота WWC принято: «печатает…» уходит сразу, не дожидаясь очереди
+    чата и обработчика (отдельная задача; сбой не влияет на обработку). Бот витрины автора Академии
+    и чужие арендаторы — как были."""
+    try:
+        if (
+            not get_settings().telegram_callback_typing
+            or binding.processing_mode != "core"
+            or binding.tenant.tenant_id != "whieda"
+            or binding.showcase_id
+        ):
+            return
+        chat = (callback.get("message") or {}).get("chat") or {}
+        if str(chat.get("type") or "private") != "private" or chat.get("id") is None:
+            return
+        task = asyncio.get_running_loop().create_task(_send_typing(binding, chat["id"], trace_id))
+        _typing_tasks.add(task)
+        task.add_done_callback(_typing_tasks.discard)
+    except Exception:
+        logger.warning("telegram_typing_schedule_failed", extra={"trace_id": trace_id}, exc_info=True)
+
+
+async def _ack_duplicate_callback(binding: BotBindingContext, callback: dict, trace_id: str | None) -> None:
+    """Повторный тап отброшен как дубль: ответ без текста снимает «часики» на кнопке."""
+    callback_query_id = str(callback.get("id") or "")
+    if not callback_query_id:
+        return
+    try:
+        await answer_callback_query(callback_query_id=callback_query_id, bot_token=binding.bot_token)
+    except Exception:
+        logger.warning("telegram_duplicate_ack_failed", extra={"trace_id": trace_id}, exc_info=True)
+
+
+def _callback_kind(callback_data: str) -> str:
+    """Семейство кнопки для журнала («svc:confirm», «site:skip»): без хвоста, где бывают id."""
+    return ":".join(callback_data.split(":", 2)[:2]) or "-"
+
+
 async def _process_telegram_update(
     binding: BotBindingContext,
     update: dict,
@@ -226,7 +285,13 @@ async def _process_telegram_update(
     callback_hash = (
         hashlib.sha256(callback_data.encode("utf-8")).hexdigest()[:12] if callback_data else None
     )
-    message_fingerprint = build_message_fingerprint(text=text, callback_data=callback_data)
+    # Кнопка — это callback_data и сообщение, под которым её нажали: «Пропустить» с одним и тем же
+    # callback_data на следующем шаге анкеты стоит под новым сообщением и не считается повтором.
+    message_fingerprint = build_message_fingerprint(
+        text=text,
+        callback_data=callback_data,
+        message_id=(callback.get("message") or {}).get("message_id") if callback_data else None,
+    )
     chat_key = str(chat_id)
     sequencer = get_chat_sequencer()
 
@@ -252,6 +317,10 @@ async def _process_telegram_update(
         handler,
         message_fingerprint=message_fingerprint,
         namespace=binding.binding_id,
+        # Нажатия кнопок: повтор, пока первый тап ещё обрабатывается, отбрасывается сразу (а не после
+        # очереди чата), «печатает…» уходит до очереди. Текстовые сообщения — как были.
+        drop_inflight_duplicate=bool(callback_data),
+        on_accepted=(lambda: _schedule_typing(binding, callback, trace_id)) if callback_data else None,
     )
     if result.duplicate:
         logger.info(
@@ -262,6 +331,16 @@ async def _process_telegram_update(
                 "chat_id": chat_ref(chat_key),
             },
         )
+        if callback_data:
+            await _ack_duplicate_callback(binding, callback, trace_id)
+        return
+    # Числа — в тексте строки, не в extra: формат журнала Core поля extra не печатает.
+    logger.info(
+        "telegram_update_processed kind=%s wait_ms=%d run_ms=%d",
+        _callback_kind(callback_data) if callback_data else "message",
+        round(result.wait_ms),
+        round(result.run_ms),
+    )
 
 
 @router.post("/v1/telegram/{binding_id}/webhook")

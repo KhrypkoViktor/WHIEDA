@@ -116,3 +116,16 @@ def no_solution_bundles(request):
 
     with patch("app.advisor.sql.engine.repo.load_active_solution_bundles", AsyncMock(return_value=[])):
         yield
+
+
+@pytest.fixture(autouse=True)
+def no_real_typing_or_duplicate_ack(request, monkeypatch):
+    """«Печатает…» и ответ на отброшенный тап (app/telegram/routes.py, 04.11.2026) — прямые вызовы Bot API:
+    обычные тесты роутера их не шлют (и не ходят в сеть). Тесты нажатия (test_tap_fast*) ставят подмену Bot API
+    сами и проверяют настоящие вызовы."""
+    if request.node.fspath.basename.startswith("test_tap_fast"):
+        yield
+        return
+    monkeypatch.setattr("app.telegram.routes.send_chat_action", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr("app.telegram.routes.answer_callback_query", AsyncMock(return_value={"ok": True}))
+    yield

@@ -4,6 +4,11 @@ This module serializes handling of Telegram updates that share the same chat,
 while allowing different chats to run concurrently. It is intentionally
 in-memory and scoped to one Core container — see TELEGRAM_CHAT_SEQUENCER_V1.md
 for a durable upgrade path.
+
+Нажатия кнопок (04.11.2026): отпечаток кнопки — ``callback_data`` + сообщение, под которым она
+нажата (одна и та же «Пропустить» на следующем шаге — другое сообщение, а не повторный тап);
+повторный тап по той же кнопке того же сообщения, пока первый ещё обрабатывается, отбрасывается
+сразу, не ожидая очереди чата (``drop_inflight_duplicate``).
 """
 
 from __future__ import annotations
@@ -27,6 +32,10 @@ DEFAULT_MESSAGE_FINGERPRINT_TTL_SEC = 12.0
 class SequencerResult:
     duplicate: bool
     value: object | None = None
+    # Сколько обновление ждало очередь чата и сколько работал обработчик (мс) — в журнал, чтобы
+    # «кнопка отвечает 5 секунд» разбиралась по цифрам: очередь за предыдущим обновлением или сам обработчик.
+    wait_ms: float = 0.0
+    run_ms: float = 0.0
 
 
 class ChatUpdateSequencer:
@@ -48,6 +57,8 @@ class ChatUpdateSequencer:
         self._last_access: dict[str, float] = {}
         self._processed_updates: dict[str, float] = {}
         self._recent_message_fingerprints: dict[tuple[str, str], float] = {}
+        # Отпечатки, которые обрабатываются прямо сейчас (только у вызовов с drop_inflight_duplicate).
+        self._inflight_fingerprints: set[tuple[str, str]] = set()
         self._meta_lock = asyncio.Lock()
 
     async def run_ordered(
@@ -58,36 +69,63 @@ class ChatUpdateSequencer:
         *,
         message_fingerprint: str | None = None,
         namespace: str = "default",
+        drop_inflight_duplicate: bool = False,
+        on_accepted: Callable[[], None] | None = None,
     ) -> SequencerResult:
+        """Выполнить ``handler`` в очереди чата; повтор того же update_id или отпечатка — ``duplicate``.
+
+        ``drop_inflight_duplicate`` — повтор отпечатка, пока первый ещё обрабатывается (или ждёт очереди
+        чата), отбрасывается сразу, а не после ожидания блокировки: так повторный тап по кнопке
+        получает ответ немедленно. Без флага (текстовые сообщения) поведение прежнее.
+        ``on_accepted`` — вызывается один раз, когда обновление принято (не дубль до очереди) и до ожидания
+        очереди чата: сюда ставят «бот печатает», чтобы человек видел реакцию, даже если чат занят."""
         scoped_chat_key = f"{namespace}:{chat_key}"
         update_key = f"{namespace}:{update_id}" if update_id is not None else None
-        if message_fingerprint and await self._is_duplicate_fingerprint(
-            scoped_chat_key, message_fingerprint
-        ):
-            return SequencerResult(duplicate=True, value=None)
-        if update_key is not None and await self._is_duplicate(update_key):
-            return SequencerResult(duplicate=True, value=None)
-
-        lock = await self._chat_lock(scoped_chat_key)
-        async with lock:
-            if message_fingerprint and await self._is_duplicate_fingerprint(
-                scoped_chat_key, message_fingerprint
-            ):
+        inflight_key: tuple[str, str] | None = None
+        if message_fingerprint:
+            if drop_inflight_duplicate:
+                if not await self._claim_inflight_fingerprint(scoped_chat_key, message_fingerprint):
+                    return SequencerResult(duplicate=True, value=None)
+                inflight_key = (scoped_chat_key, message_fingerprint)
+            elif await self._is_duplicate_fingerprint(scoped_chat_key, message_fingerprint):
                 return SequencerResult(duplicate=True, value=None)
+        try:
             if update_key is not None and await self._is_duplicate(update_key):
                 return SequencerResult(duplicate=True, value=None)
-            try:
-                value = await handler()
-            except Exception:
-                raise
-            else:
-                if update_key is not None:
-                    await self._remember_update(update_key)
-                if message_fingerprint:
-                    await self._remember_fingerprint(scoped_chat_key, message_fingerprint)
-                return SequencerResult(duplicate=False, value=value)
-            finally:
-                await self._touch_chat(scoped_chat_key)
+            if on_accepted is not None:
+                on_accepted()
+
+            queued_at = time.monotonic()
+            lock = await self._chat_lock(scoped_chat_key)
+            async with lock:
+                started_at = time.monotonic()
+                wait_ms = (started_at - queued_at) * 1000
+                if message_fingerprint and await self._is_duplicate_fingerprint(
+                    scoped_chat_key, message_fingerprint
+                ):
+                    return SequencerResult(duplicate=True, value=None, wait_ms=wait_ms)
+                if update_key is not None and await self._is_duplicate(update_key):
+                    return SequencerResult(duplicate=True, value=None, wait_ms=wait_ms)
+                try:
+                    value = await handler()
+                except Exception:
+                    raise
+                else:
+                    if update_key is not None:
+                        await self._remember_update(update_key)
+                    if message_fingerprint:
+                        await self._remember_fingerprint(scoped_chat_key, message_fingerprint)
+                    return SequencerResult(
+                        duplicate=False,
+                        value=value,
+                        wait_ms=wait_ms,
+                        run_ms=(time.monotonic() - started_at) * 1000,
+                    )
+                finally:
+                    await self._touch_chat(scoped_chat_key)
+        finally:
+            if inflight_key is not None:
+                self._inflight_fingerprints.discard(inflight_key)
 
     async def _chat_lock(self, chat_key: str) -> asyncio.Lock:
         async with self._meta_lock:
@@ -119,6 +157,17 @@ class ChatUpdateSequencer:
             now = time.monotonic()
             self._cleanup_fingerprints_locked(now)
             return (chat_key, fingerprint) in self._recent_message_fingerprints
+
+    async def _claim_inflight_fingerprint(self, chat_key: str, fingerprint: str) -> bool:
+        """Занять отпечаток для обработки; ``False`` — он недавно обработан или обрабатывается сейчас."""
+        async with self._meta_lock:
+            now = time.monotonic()
+            self._cleanup_fingerprints_locked(now)
+            key = (chat_key, fingerprint)
+            if key in self._recent_message_fingerprints or key in self._inflight_fingerprints:
+                return False
+            self._inflight_fingerprints.add(key)
+            return True
 
     async def _remember_fingerprint(self, chat_key: str, fingerprint: str) -> None:
         async with self._meta_lock:
@@ -166,10 +215,18 @@ class ChatUpdateSequencer:
             self._recent_message_fingerprints.pop(key, None)
 
 
-def build_message_fingerprint(*, text: str = "", callback_data: str = "") -> str | None:
-    raw = str(callback_data or "").strip() or str(text or "").strip().lower()
+def build_message_fingerprint(
+    *, text: str = "", callback_data: str = "", message_id: int | str | None = None
+) -> str | None:
+    """Отпечаток обновления для защиты от дублей. У кнопки — ``callback_data`` и сообщение с кнопкой
+    (``message_id``): тот же тап по той же кнопке того же сообщения — дубль, а та же «Пропустить» под
+    новым сообщением на следующем шаге — нет."""
+    data = str(callback_data or "").strip()
+    raw = data or str(text or "").strip().lower()
     if not raw:
         return None
+    if data and message_id not in (None, ""):
+        raw = f"{data}\x00m{message_id}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
