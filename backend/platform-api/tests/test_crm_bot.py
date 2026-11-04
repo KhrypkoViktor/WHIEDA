@@ -82,7 +82,11 @@ async def test_word_opens_the_diary_with_a_login_link():
         result = await bot.try_handle_crm_text(WITH_CRM, _msg("ежедневник"), trace_id="t1")
     assert result["status"] == "open"
     markup = send.await_args.kwargs["reply_markup"]
-    assert markup == {"inline_keyboard": [[{"text": "📒 Открыть WWC CRM", "url": "https://igor.wwc.best/crm/#wwc-login=t"}]]}
+    assert markup == {"inline_keyboard": [
+        [{"text": "📒 Открыть WWC CRM", "url": "https://igor.wwc.best/crm/#wwc-login=t"}],
+        # вторая кнопка (04.11.2026): выбор людей в Telegram, app/crm/telegram_import.py
+        [{"text": "➕ Добавить из Telegram", "callback_data": "crm:addtg"}],
+    ]}
     assert send.await_args.kwargs["text"].startswith("📒 WWC CRM — ")
     assert "ежедневник" not in send.await_args.kwargs["text"].lower()
 

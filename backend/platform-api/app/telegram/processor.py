@@ -47,6 +47,11 @@ from app.telegram.academy import (
     try_handle_academy_text,
 )
 from app.crm.bot import try_handle_crm_text
+from app.crm.telegram_import import (
+    try_handle_crm_add_telegram,
+    try_handle_crm_add_telegram_callback,
+    try_handle_crm_shared,
+)
 from app.lead_email.bot import try_handle_lead_email_message
 from app.login_identities.bot import try_handle_login_identity_message
 from app.referral_bonus.service import (
@@ -157,6 +162,7 @@ from app.telegram.update_parser import (
     TelegramMessage,
     parse_start_token,
     parse_telegram_callback,
+    parse_shared_message,
     parse_telegram_message,
     should_process_telegram_message,
 )
@@ -608,6 +614,10 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
+        # «➕ Добавить из Telegram» под «Открыть WWC CRM» (04.11.2026): не зависит от трёх меню, работает при любом флаге.
+        crm_add_callback_result = await try_handle_crm_add_telegram_callback(tenant, callback, trace_id=trace_id)
+        if crm_add_callback_result is not None:
+            return crm_add_callback_result
         # Кнопки трёх меню (stg:…): «Что дальше», «Пригласить», «Ещё», «← Назад», «Да» / «Нет» ведущего. Выключено — None.
         stage_callback_result = await try_handle_stage_callback(tenant, callback, trace_id=trace_id)
         if stage_callback_result is not None:
@@ -670,6 +680,13 @@ async def _process_core_telegram_update_scoped(
 
     msg = parse_telegram_message(update)
     if not msg:
+        # Сообщение без текста от «Добавить из Telegram» (выбор людей, переслан контакт) разбирает только CRM; всё
+        # прочее без текста, как и раньше, — «ignored». Другие потоки такие сообщения по-прежнему не видят.
+        shared = parse_shared_message(update)
+        if shared is not None:
+            crm_shared_result = await try_handle_crm_shared(tenant, shared, trace_id=trace_id)
+            if crm_shared_result is not None:
+                return crm_shared_result
         return {"ok": True, "route": "ignored"}
 
     # Support forum group: «/forum» registration and the administrator's
@@ -831,6 +848,13 @@ async def _process_core_telegram_update_scoped(
     profile_requests_result = await try_handle_profile_requests_command(tenant, msg, trace_id=trace_id)
     if profile_requests_result is not None:
         return profile_requests_result
+
+    # «Добавить из Telegram» (04.11.2026): «/start crm_add_tg» с сайта, слова «добавить из телеграм» и «✖️ Не добавлять».
+    # Раньше разбора /start-меток: иначе параметр ушёл бы в рефералы и «неизвестные метки».
+    if msg.chat_type == "private":
+        crm_add_result = await try_handle_crm_add_telegram(tenant, msg, trace_id=trace_id)
+        if crm_add_result is not None:
+            return crm_add_result
 
     start_token = parse_start_token(msg.text)
     if start_token:

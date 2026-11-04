@@ -36,6 +36,7 @@ from app.telegram.support import is_support_forum_traffic
 from app.telegram.worker import dispatch_inbox_work
 from app.telegram.update_parser import (
     parse_telegram_callback,
+    parse_shared_message,
     parse_telegram_message,
     should_process_telegram_message,
 )
@@ -135,7 +136,9 @@ async def _process_telegram_update_body(
     if not chat_id:
         return
 
-    parsed_message = parse_telegram_message(update)
+    # Выбор людей и переслан контакт («Добавить из Telegram») — тоже без текста: их пропускает отдельный разбор,
+    # иначе они терялись бы здесь, как фото без подписи 23.09.2026.
+    parsed_message = parse_telegram_message(update) or parse_shared_message(update)
     if not parsed_message or not should_process_telegram_message(
         parsed_message, binding.bot_username
     ):

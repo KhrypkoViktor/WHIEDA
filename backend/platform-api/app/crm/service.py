@@ -25,6 +25,8 @@ from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
+import psycopg
+
 from app.academy.service import preview_admin_ids
 from app.crm.rules import (
     EXPORT_HEADER,
@@ -46,6 +48,7 @@ from app.crm.rules import (
     group_today,
     lead_note_text,
     looks_like_timezone,
+    parse_telegram,
     phone_from_lead_contact,
     plan_done,
     plan_for_patch,
@@ -70,7 +73,8 @@ BULK_LIMIT = 500  # contacts per import request (phone book, .vcf, .csv)
 CONTACT_COLUMNS = """
     c.contact_id::text as contact_id, c.name, c.phone_e164, c.phone_raw, c.source,
     c.status, c.next_step, c.next_at, c.meeting_at, c.lead_id::text as lead_id,
-    c.tags, c.priority, c.last_touch_at, c.created_at, c.updated_at
+    c.tags, c.priority, c.last_touch_at, c.created_at, c.updated_at,
+    c.telegram_username, c.telegram_user_id
 """
 # Kept for callers of v1 (the name had a leading underscore there).
 _CONTACT_COLUMNS = CONTACT_COLUMNS
@@ -286,6 +290,8 @@ def contact_out(row: dict[str, Any]) -> dict[str, Any]:
         "phone": row.get("phone_e164") or row.get("phone_raw") or "",
         "phone_e164": row.get("phone_e164"),
         "phone_raw": row.get("phone_raw"),
+        "telegram_username": row.get("telegram_username"),
+        "telegram_user_id": int(row["telegram_user_id"]) if row.get("telegram_user_id") is not None else None,
         "source": row.get("source") or "",
         "status": status,
         "status_title": STATUS_TITLES.get(status, status),
@@ -375,25 +381,60 @@ async def add_activity(
     )
 
 
-async def _duplicate_of(
-    conn: Any, tenant_id: str, account_id: str, phone_e164: str | None, *, except_id: str | None = None
-) -> str | None:
-    if not phone_e164:
+async def _duplicate_match(
+    conn: Any,
+    tenant_id: str,
+    account_id: str,
+    phone_e164: str | None = None,
+    *,
+    telegram_username: str | None = None,
+    telegram_user_id: int | None = None,
+    except_id: str | None = None,
+) -> tuple[str, str] | None:
+    """``(contact_id, field)`` of the oldest live card of this account that already has the number, the
+    Telegram name (any case) or the Telegram id; ``field`` is ``phone`` or ``telegram`` (the API contract:
+    a name and an id are both «telegram»). The number wins over the name, the name over the id."""
+    if not phone_e164 and not telegram_username and telegram_user_id is None:
         return None
     row = await fetch_one(
         conn,
         """
-        select contact_id::text as contact_id
+        select contact_id::text as contact_id,
+               case when phone_e164 = %(phone)s::text then 'phone' else 'telegram' end as field
         from crm_contacts
-        where tenant_id = %s and account_id = %s::uuid and phone_e164 = %s
+        where tenant_id = %(tenant_id)s and account_id = %(account_id)s::uuid
           and deleted_at is null
-          and (%s::uuid is null or contact_id <> %s::uuid)
-        order by created_at
+          and (%(except_id)s::uuid is null or contact_id <> %(except_id)s::uuid)
+          and (phone_e164 = %(phone)s::text
+               or lower(telegram_username) = lower(%(username)s::text)
+               or telegram_user_id = %(user_id)s::bigint)
+        order by case when phone_e164 = %(phone)s::text then 0
+                      when lower(telegram_username) = lower(%(username)s::text) then 1 else 2 end,
+                 created_at, contact_id
         limit 1
         """,
-        (tenant_id, account_id, phone_e164, except_id, except_id),
+        {
+            "tenant_id": tenant_id,
+            "account_id": account_id,
+            "phone": phone_e164 or None,
+            "username": telegram_username or None,
+            "user_id": telegram_user_id,
+            "except_id": except_id,
+        },
     )
-    return row["contact_id"] if row else None
+    return (row["contact_id"], row["field"]) if row else None
+
+
+async def _duplicate_of(
+    conn: Any, tenant_id: str, account_id: str, phone_e164: str | None, *, except_id: str | None = None
+) -> str | None:
+    """The oldest live card with this number (lead cards, v1 callers), or None."""
+    match = await _duplicate_match(conn, tenant_id, account_id, phone_e164, except_id=except_id)
+    return match[0] if match else None
+
+
+def _duplicate_error(match: tuple[str, str]) -> CrmError:
+    return CrmError("duplicate", 409, contact_id=match[0], field=match[1])
 
 
 async def today_view(tenant_id: str, account: dict[str, Any], *, conn: Any = None) -> dict[str, Any]:
@@ -471,52 +512,241 @@ async def create_contact(
     source: Any = None,
     tags: Any = None,
     priority: Any = None,
+    telegram: Any = None,
 ) -> dict[str, Any]:
     try:
         clean = clean_name(name)
         clean_tag_list = clean_tags(tags)
         star = clean_priority(priority) if priority is not None else 0
+        username = parse_telegram(telegram)
     except CrmRuleError as exc:
         raise _rule(exc) from exc
     phone_e164, phone_raw = split_phone(phone)
+    account_id = account["account_id"]
     async with tenant_connection(tenant_id) as conn:
-        duplicate = await _duplicate_of(conn, tenant_id, account["account_id"], phone_e164)
-        if duplicate:
-            raise CrmError("duplicate", 409, contact_id=duplicate)
-        row = await fetch_one(
-            conn,
-            f"""
-            with created as (
-              insert into crm_contacts (
-                tenant_id, account_id, name, phone_e164, phone_raw, source,
-                status, next_step, next_at, tags, priority
-              )
-              values (%s, %s::uuid, %s, %s, %s, %s, 'new', 'invite', %s, %s::text[], %s)
-              returning *
-            )
-            select {CONTACT_COLUMNS} from created c
-            """,
-            (
-                tenant_id,
-                account["account_id"],
-                clean,
-                phone_e164,
-                phone_raw,
-                clean_source(source),
-                account["today"],
-                clean_tag_list,
-                star,
-            ),
+        duplicate = await _duplicate_match(
+            conn, tenant_id, account_id, phone_e164, telegram_username=username
         )
+        if duplicate:
+            raise _duplicate_error(duplicate)
+        try:
+            # A savepoint: two requests for one address at once — the unique index refuses the second,
+            # and the transaction stays usable to name the card that won (409, not a 500).
+            async with conn.transaction():
+                row = await fetch_one(
+                    conn,
+                    f"""
+                    with created as (
+                      insert into crm_contacts (
+                        tenant_id, account_id, name, phone_e164, phone_raw, source,
+                        status, next_step, next_at, tags, priority, telegram_username
+                      )
+                      values (%s, %s::uuid, %s, %s, %s, %s, 'new', 'invite', %s, %s::text[], %s, %s)
+                      returning *
+                    )
+                    select {CONTACT_COLUMNS} from created c
+                    """,
+                    (
+                        tenant_id,
+                        account_id,
+                        clean,
+                        phone_e164,
+                        phone_raw,
+                        clean_source(source),
+                        account["today"],
+                        clean_tag_list,
+                        star,
+                        username,
+                    ),
+                )
+        except psycopg.errors.UniqueViolation:
+            duplicate = await _duplicate_match(
+                conn, tenant_id, account_id, phone_e164, telegram_username=username
+            )
+            if duplicate is None:
+                raise
+            raise _duplicate_error(duplicate) from None
         await add_activity(
             conn,
             tenant_id=tenant_id,
-            account_id=account["account_id"],
+            account_id=account_id,
             contact_id=row["contact_id"],
             kind="created",
             payload={"source": "manual"},
         )
     return contact_out(row)
+
+
+async def _find_telegram_card(
+    conn: Any,
+    tenant_id: str,
+    account_id: str,
+    *,
+    telegram_user_id: int | None,
+    telegram_username: str | None,
+    phone_e164: str | None,
+) -> dict[str, Any] | None:
+    """The live card of this account that already is this person: by the Telegram id, then by the name
+    (any case), then by the number. Locked, so two fills of one card do not overwrite each other."""
+    if telegram_user_id is None and not telegram_username and not phone_e164:
+        return None
+    return await fetch_one(
+        conn,
+        f"""
+        select {CONTACT_COLUMNS}
+        from crm_contacts c
+        where c.tenant_id = %(tenant_id)s and c.account_id = %(account_id)s::uuid and c.deleted_at is null
+          and (c.telegram_user_id = %(user_id)s::bigint
+               or lower(c.telegram_username) = lower(%(username)s::text)
+               or c.phone_e164 = %(phone)s::text)
+        order by case when c.telegram_user_id = %(user_id)s::bigint then 0
+                      when lower(c.telegram_username) = lower(%(username)s::text) then 1 else 2 end,
+                 c.created_at, c.contact_id
+        limit 1
+        for update of c
+        """,
+        {
+            "tenant_id": tenant_id,
+            "account_id": account_id,
+            "user_id": telegram_user_id,
+            "username": telegram_username or None,
+            "phone": phone_e164 or None,
+        },
+    )
+
+
+async def _taken_by_another(
+    conn: Any,
+    tenant_id: str,
+    account_id: str,
+    contact_id: str,
+    *,
+    telegram_user_id: int | None,
+    telegram_username: str | None,
+    phone_e164: str | None,
+) -> set[str]:
+    """Which of the three values another live card of this account already holds: ``id``, ``username``, ``phone``."""
+    row = await fetch_one(
+        conn,
+        """
+        select coalesce(bool_or(telegram_user_id = %(user_id)s::bigint), false) as id,
+               coalesce(bool_or(lower(telegram_username) = lower(%(username)s::text)), false) as username,
+               coalesce(bool_or(phone_e164 = %(phone)s::text), false) as phone
+        from crm_contacts
+        where tenant_id = %(tenant_id)s and account_id = %(account_id)s::uuid and deleted_at is null
+          and contact_id <> %(contact_id)s::uuid
+        """,
+        {
+            "tenant_id": tenant_id,
+            "account_id": account_id,
+            "contact_id": contact_id,
+            "user_id": telegram_user_id,
+            "username": telegram_username or None,
+            "phone": phone_e164 or None,
+        },
+    )
+    return {key for key in ("id", "username", "phone") if row and row.get(key)}
+
+
+async def _fill_telegram_card(
+    conn: Any,
+    tenant_id: str,
+    account_id: str,
+    found: dict[str, Any],
+    *,
+    telegram_user_id: int | None,
+    telegram_username: str | None,
+    phone_e164: str | None,
+    phone_raw: str | None,
+) -> dict[str, Any]:
+    """The person is already a card: write only what the card lacks (never over a value, never a value that
+    another card of the account holds — the unique indexes would refuse it). ``updated`` — something was written."""
+    taken = await _taken_by_another(
+        conn, tenant_id, account_id, found["contact_id"],
+        telegram_user_id=telegram_user_id, telegram_username=telegram_username, phone_e164=phone_e164,
+    )
+    values: dict[str, Any] = {}
+    if telegram_user_id is not None and found.get("telegram_user_id") is None and "id" not in taken:
+        values["telegram_user_id"] = telegram_user_id
+    if telegram_username and not found.get("telegram_username") and "username" not in taken:
+        values["telegram_username"] = telegram_username
+    if phone_e164 and not found.get("phone_e164") and not found.get("phone_raw") and "phone" not in taken:
+        values["phone_e164"], values["phone_raw"] = phone_e164, phone_raw
+    row = found
+    if values:
+        try:
+            async with conn.transaction():
+                row = await _apply_update(conn, tenant_id, account_id, found["contact_id"], values)
+        except psycopg.errors.UniqueViolation:
+            # Taken a moment ago by a parallel request: the card stays as it was.
+            values, row = {}, found
+    return {"card": row, "status": "exists", "updated": bool(values)}
+
+
+async def add_telegram_contacts(
+    tenant_id: str, account: dict[str, Any], people: Sequence[dict[str, Any]], *, source: str = "Telegram"
+) -> list[dict[str, Any]]:
+    """The bot's «Добавить из Telegram» (people chosen in Telegram) and a contact forwarded to the bot.
+
+    One transaction for the batch: if the database fails, nothing is half-added and the person can try again.
+    A person is ``{name, telegram_username?, telegram_user_id?, phone?}`` (the Telegram name is cleaned by
+    the caller with ``parse_telegram``). Answers one item per person, in order: ``{status, updated, card}``
+    where ``status`` is ``created`` (a «Новый контакт» card with the first step «Пригласить», as in a manual
+    add) or ``exists`` (the person is already here by Telegram id, name or number: only the missing fields
+    are filled and ``updated`` says whether anything was written); ``card`` is the row of the card.
+    """
+    account_id = account["account_id"]
+    results: list[dict[str, Any]] = []
+    async with tenant_connection(tenant_id) as conn:
+        for person in people:
+            username = person.get("telegram_username") or None
+            user_id = person.get("telegram_user_id")
+            phone_e164, phone_raw = split_phone(person.get("phone"))
+            try:
+                name = clean_name(person.get("name"))
+            except CrmRuleError:
+                name = "Контакт Telegram"
+            lookup = {"telegram_user_id": user_id, "telegram_username": username, "phone_e164": phone_e164}
+            result = None
+            for _attempt in (1, 2):
+                found = await _find_telegram_card(conn, tenant_id, account_id, **lookup)
+                if found is not None:
+                    result = await _fill_telegram_card(
+                        conn, tenant_id, account_id, found, **lookup, phone_raw=phone_raw
+                    )
+                    break
+                try:
+                    async with conn.transaction():
+                        row = await fetch_one(
+                            conn,
+                            f"""
+                            with created as (
+                              insert into crm_contacts (
+                                tenant_id, account_id, name, phone_e164, phone_raw, source,
+                                status, next_step, next_at, telegram_username, telegram_user_id
+                              )
+                              values (%s, %s::uuid, %s, %s, %s, %s, 'new', 'invite', %s, %s, %s)
+                              returning *
+                            )
+                            select {CONTACT_COLUMNS} from created c
+                            """,
+                            (
+                                tenant_id, account_id, name, phone_e164, phone_raw, clean_source(source),
+                                account["today"], username, user_id,
+                            ),
+                        )
+                except psycopg.errors.UniqueViolation:
+                    continue  # the same person was added a moment ago: the second pass finds that card
+                await add_activity(
+                    conn, tenant_id=tenant_id, account_id=account_id, contact_id=row["contact_id"],
+                    kind="created", payload={"source": "telegram"},
+                )
+                result = {"card": row, "status": "created", "updated": False}
+                break
+            if result is None:  # refused twice and still not found: the caller answers «не получилось»
+                raise CrmError("duplicate", 409)
+            results.append(result)
+    return results
 
 
 async def _existing_by_phone(
@@ -735,14 +965,27 @@ async def update_contact(
                 values["tags"] = clean_tags(changes["tags"])
             if "priority" in changes:
                 values["priority"] = clean_priority(changes["priority"] if changes["priority"] is not None else 0)
+            phone_e164 = None
             if "phone" in changes:
                 phone_e164, phone_raw = split_phone(changes["phone"])
-                duplicate = await _duplicate_of(
-                    conn, tenant_id, account_id, phone_e164, except_id=current["contact_id"]
+                values["phone_e164"], values["phone_raw"] = phone_e164, phone_raw
+            username = None
+            if "telegram" in changes:
+                # "" and null clear both fields. A different address may be another person: the id
+                # (set only by the bot) goes with it; the same name in another case only changes the case.
+                username = parse_telegram(changes["telegram"])
+                current_username = current.get("telegram_username")
+                same = bool(username and current_username and username.lower() == current_username.lower())
+                values["telegram_username"] = username
+                if not same:
+                    values["telegram_user_id"] = None
+            if phone_e164 or username:
+                duplicate = await _duplicate_match(
+                    conn, tenant_id, account_id, phone_e164,
+                    telegram_username=username, except_id=current["contact_id"],
                 )
                 if duplicate:
-                    raise CrmError("duplicate", 409, contact_id=duplicate)
-                values["phone_e164"], values["phone_raw"] = phone_e164, phone_raw
+                    raise _duplicate_error(duplicate)
 
             meeting_given = "meeting_at" in changes
             meeting_date: date | None = None
@@ -778,15 +1021,29 @@ async def update_contact(
         values["next_step"], values["next_at"] = plan.next_step, plan.next_at
 
         meeting_changed = meeting_given and values["meeting_at"] != current.get("meeting_at")
-        row = await _apply_update(
-            conn,
-            tenant_id,
-            account_id,
-            current["contact_id"],
-            values,
-            touched=meeting_changed and values["meeting_at"] is not None,
-            reset_meeting_reminder=meeting_changed,
-        )
+        try:
+            # A savepoint: a request racing for the same Telegram name loses to the unique index (409).
+            async with conn.transaction():
+                row = await _apply_update(
+                    conn,
+                    tenant_id,
+                    account_id,
+                    current["contact_id"],
+                    values,
+                    touched=meeting_changed and values["meeting_at"] is not None,
+                    reset_meeting_reminder=meeting_changed,
+                )
+        except psycopg.errors.UniqueViolation:
+            duplicate = (
+                await _duplicate_match(
+                    conn, tenant_id, account_id, telegram_username=username, except_id=current["contact_id"]
+                )
+                if username
+                else None
+            )
+            if duplicate is None:
+                raise
+            raise _duplicate_error(duplicate) from None
 
         async def history(kind: str, payload: dict[str, Any]) -> None:
             await add_activity(
@@ -969,15 +1226,16 @@ async def delete_contact(tenant_id: str, account: dict[str, Any], contact_id: st
 
 async def restore_contact(tenant_id: str, account: dict[str, Any], contact_id: str) -> dict[str, Any]:
     """«Вернуть» within RESTORE_WINDOW. A live card answers as is (a double tap);
-    later or never deleted by this account — 404; the number now belongs to
-    another live card — 409 duplicate."""
+    later or never deleted by this account — 404; the number, the Telegram name or the Telegram id now
+    belongs to another live card — 409 duplicate (``field``: phone / telegram)."""
     account_id = account["account_id"]
     contact_uuid = _contact_uuid(contact_id)
     async with tenant_connection(tenant_id) as conn:
         found = await fetch_one(
             conn,
             """
-            select phone_e164, deleted_at is null as live, deleted_at > now() - %s as restorable
+            select phone_e164, telegram_username, telegram_user_id,
+                   deleted_at is null as live, deleted_at > now() - %s as restorable
             from crm_contacts
             where tenant_id = %s and account_id = %s::uuid and contact_id = %s::uuid
             for update
@@ -987,17 +1245,33 @@ async def restore_contact(tenant_id: str, account: dict[str, Any], contact_id: s
         if found is None or not (found["live"] or found["restorable"]):
             raise CrmError("contact_not_found", 404)
         if not found["live"]:
-            duplicate = await _duplicate_of(conn, tenant_id, account_id, found["phone_e164"], except_id=contact_uuid)
+            duplicate = await _duplicate_match(
+                conn, tenant_id, account_id, found["phone_e164"],
+                telegram_username=found["telegram_username"], telegram_user_id=found["telegram_user_id"],
+                except_id=contact_uuid,
+            )
             if duplicate:
-                raise CrmError("duplicate", 409, contact_id=duplicate)
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    update crm_contacts set deleted_at = null
-                    where tenant_id = %s and account_id = %s::uuid and contact_id = %s::uuid
-                    """,
-                    (tenant_id, account_id, contact_uuid),
+                raise _duplicate_error(duplicate)
+            try:
+                # A savepoint: the address taken between the check and the update is a 409 too.
+                async with conn.transaction():
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            """
+                            update crm_contacts set deleted_at = null
+                            where tenant_id = %s and account_id = %s::uuid and contact_id = %s::uuid
+                            """,
+                            (tenant_id, account_id, contact_uuid),
+                        )
+            except psycopg.errors.UniqueViolation:
+                duplicate = await _duplicate_match(
+                    conn, tenant_id, account_id, found["phone_e164"],
+                    telegram_username=found["telegram_username"], telegram_user_id=found["telegram_user_id"],
+                    except_id=contact_uuid,
                 )
+                if duplicate is None:
+                    raise
+                raise _duplicate_error(duplicate) from None
         row = await load_contact(conn, tenant_id, account_id, contact_uuid)
     return contact_out(row)
 
@@ -1093,7 +1367,7 @@ async def export_csv(tenant_id: str, account: dict[str, Any]) -> str:
         rows = await fetch_all(
             conn,
             """
-            select c.name, c.phone_e164, c.phone_raw, c.source, c.status, c.next_step, c.next_at,
+            select c.name, c.phone_e164, c.phone_raw, c.source, c.status, c.next_step, c.next_at, c.telegram_username,
                    coalesce(
                      string_agg(
                        to_char(n.created_at at time zone %(tz)s, 'DD.MM.YYYY') || ': ' || n.body,

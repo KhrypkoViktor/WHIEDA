@@ -82,6 +82,7 @@ MIGRATIONS = (
     "platform_consult_requests_v47.sql",  # заявки на личный разбор: consult_requests (31.10.2026)
     "platform_pricing_november_v48.sql",  # акция ноября: клуб на 2 месяца, тариф club_2m (04.11.2026)
     "platform_bot_stage_v49.sql",  # статус человека в боте: guest / partner_whieda / partner_wwc (04.11.2026)
+    "platform_crm_telegram_v50.sql",  # адрес Telegram и ID в карточке WWC CRM (04.11.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

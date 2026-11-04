@@ -51,11 +51,15 @@ def test_v20_twice_on_v1_data_backfills_the_history_once(monkeypatch):
     _clean_env(monkeypatch)
     with temporary_database("whieda_crm_v20") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
-            db.apply_migrations(conn, names=[name for name in MIGRATIONS if name != "platform_crm_v20.sql"])
+            # V50 (адрес Telegram) строится на deleted_at из V20: идёт после него.
+            db.apply_migrations(
+                conn, names=[name for name in MIGRATIONS if name not in ("platform_crm_v20.sql", "platform_crm_telegram_v50.sql")]
+            )
             conn.execute(SEED)
             conn.execute(OLD_DATA)
             v20 = (SQL_DIR / "platform_crm_v20.sql").read_text(encoding="utf-8")
             conn.execute(v20)
+            conn.execute((SQL_DIR / "platform_crm_telegram_v50.sql").read_text(encoding="utf-8"))
             first = conn.execute(
                 "select kind, contact_id::text, payload, created_at from crm_activities order by kind, contact_id, created_at"
             ).fetchall()
@@ -295,7 +299,9 @@ def test_crm_v2_cards_lists_templates_and_meeting_reminders(monkeypatch):
             twin = await crm.create_contact("whieda", igor, name="Борис второй", phone="+7 900 000-00-01")
             with pytest.raises(crm.CrmError) as taken:
                 await crm.restore_contact("whieda", igor, boris["id"])
-            assert (taken.value.status, taken.value.code, taken.value.extra) == (409, "duplicate", {"contact_id": twin["id"]})
+            assert (taken.value.status, taken.value.code, taken.value.extra) == (
+                409, "duplicate", {"contact_id": twin["id"], "field": "phone"}
+            )
             await crm.delete_contact("whieda", igor, twin["id"])
             restored = await crm.restore_contact("whieda", igor, boris["id"])
             assert restored["name"] == "Борис_1"

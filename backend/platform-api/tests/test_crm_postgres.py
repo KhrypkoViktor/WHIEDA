@@ -174,7 +174,9 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
 
             with pytest.raises(crm.CrmError) as dup:
                 await crm.create_contact("whieda", igor, name="Аня", phone="+7 (928) 672-92-88")
-            assert (dup.value.status, dup.value.code, dup.value.extra) == (409, "duplicate", {"contact_id": anna["id"]})
+            assert (dup.value.status, dup.value.code, dup.value.extra) == (
+                409, "duplicate", {"contact_id": anna["id"], "field": "phone"}
+            )
 
             view = await crm.today_view("whieda", igor)
             assert [g["step"] for g in view["groups"]] == ["invite"]
@@ -215,7 +217,7 @@ def test_crm_contact_lifecycle_lead_card_and_morning_message(monkeypatch):
             assert await names(status="new") == ["Борис"]
 
             csv_text = await crm.export_csv("whieda", igor)
-            assert csv_text.startswith("﻿Имя;Телефон;Откуда знакомы;Статус;Следующий шаг;Дата;Заметки\r\n")
+            assert csv_text.startswith("﻿Имя;Телефон;Откуда знакомы;Статус;Следующий шаг;Дата;Заметки;Telegram\r\n")
             assert "Анна Петрова;+79286729288;соседка;Клиент;Напомнить о себе;" in csv_text
             assert "Была на презентации, думает" in csv_text
 

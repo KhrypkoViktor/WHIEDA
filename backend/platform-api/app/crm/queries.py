@@ -47,6 +47,18 @@ def _like_pattern(needle: str) -> str:
     return f"%{escaped}%"
 
 
+def _telegram_needle(needle: str) -> str:
+    """What to look for in telegram_username: the search words without «@» and the t.me prefix."""
+    text = needle.strip()
+    for prefix in ("https://", "http://"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):]
+    for prefix in ("t.me/", "telegram.me/"):
+        if text.lower().startswith(prefix):
+            text = text[len(prefix):]
+    return text.lstrip("@")
+
+
 def _rule_error(exc: CrmRuleError) -> CrmError:
     return CrmError(exc.code, exc.status)
 
@@ -73,11 +85,15 @@ def _contact_filters(
     if needle:
         params["pattern"] = _like_pattern(needle)
         params["digits"] = "".join(ch for ch in needle if ch.isdigit())
+        # A Telegram name is stored without «@», and people type «@tanya» or «t.me/tanya»: the part after them.
+        telegram_needle = _telegram_needle(needle)
+        params["tg_pattern"] = _like_pattern(telegram_needle) if telegram_needle else None  # «@» alone matches nobody
         where.append(
             """(
               c.name ilike %(pattern)s escape '!'
               or c.source ilike %(pattern)s escape '!'
               or c.phone_raw ilike %(pattern)s escape '!'
+              or c.telegram_username ilike %(tg_pattern)s::text escape '!'
               or (length(%(digits)s::text) >= 3 and (
                     strpos(coalesce(c.phone_e164, ''), %(digits)s::text) > 0
                  or strpos(regexp_replace(coalesce(c.phone_raw, ''), '[^0-9]', '', 'g'), %(digits)s::text) > 0))

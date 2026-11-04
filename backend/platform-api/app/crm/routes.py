@@ -200,6 +200,8 @@ class MeBody(BaseModel):
 class ContactCreateBody(BaseModel):
     name: str = Field(max_length=500)
     phone: str | None = Field(default=None, max_length=200)
+    # «@имя», «t.me/имя», … (rules.parse_telegram). telegram_user_id is not a field here: only the bot sets it.
+    telegram: str | None = Field(default=None, max_length=200)
     source: str | None = Field(default=None, max_length=500)
     tags: list[Tag] | None = Field(default=None, max_length=50)
     priority: int | None = None
@@ -223,6 +225,7 @@ class ContactPatchBody(BaseModel):
 
     name: str | None = Field(default=None, max_length=500)
     phone: str | None = Field(default=None, max_length=200)
+    telegram: str | None = Field(default=None, max_length=200)  # "" or null clears the name and the id
     source: str | None = Field(default=None, max_length=500)
     status: str | None = None
     next_step: str | None = None
@@ -320,7 +323,7 @@ async def crm_contacts(
     limit: int | None = None,
     sort: str | None = None,
 ) -> dict[str, Any]:
-    """``{items, next_cursor, total}``; ``q`` — ILIKE on name, source and phone."""
+    """``{items, next_cursor, total}``; ``q`` — ILIKE on name, source, phone and Telegram name."""
     ctx = await _context(request)
     legacy = cursor is None and limit is None and sort is None and tag is None
     try:
@@ -372,6 +375,8 @@ async def crm_contact_create(body: ContactCreateBody, request: Request) -> dict[
         extra["tags"] = body.tags
     if body.priority is not None:
         extra["priority"] = body.priority
+    if body.telegram is not None:
+        extra["telegram"] = body.telegram
     try:
         contact = await create_contact(
             ctx.tenant_id, ctx.account, name=body.name, phone=body.phone, source=body.source, **extra

@@ -198,6 +198,51 @@ def split_phone(value: Any) -> tuple[str | None, str | None]:
     return as_e164(normalize_phone(raw)), raw
 
 
+# ---- Telegram address of a card (04.11.2026, договор ядро ↔ сайт) --------------------------
+
+TELEGRAM_NAME_RE = re.compile(r"[A-Za-z0-9_]{4,32}")
+# The same shape as the CHECK on crm_contacts.telegram_username (V50).
+# Service paths of t.me that look like a name. Telegram serves them as pages, so none of them
+# can be a user name, and «t.me/share» is a link to share something, not a person.
+TELEGRAM_RESERVED: frozenset[str] = frozenset({
+    "addemoji", "addlist", "addstickers", "addtheme", "bg", "boost", "confirmphone", "contact", "giftcode", "invoice",
+    "iv", "joinchat", "login", "msg", "proxy", "setlanguage", "share", "socks",
+})
+_TELEGRAM_LINK_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me)/(?P<path>[^?#\s]*)(?:\?[^#\s]*)?", re.IGNORECASE
+)
+_TELEGRAM_RESOLVE_RE = re.compile(r"tg://resolve\?domain=(?P<name>[^&#\s/]*)/?", re.IGNORECASE)
+
+
+def parse_telegram(value: Any) -> str | None:
+    """The Telegram user name of what a person typed, scanned or pasted; ``None`` for an empty value.
+
+    Accepted: ``@name``, ``name``, ``t.me/name``, ``https://t.me/name``, ``https://telegram.me/name``,
+    ``tg://resolve?domain=name`` — the links with a trailing ``/`` and ``?…``. The case stays as sent.
+    Anything else (an invite ``t.me/+…`` or ``t.me/joinchat/…``, ``t.me/c/…``, ``t.me/s/…``, a post
+    ``t.me/name/123``, a service path, another host or scheme, a phrase) is ``invalid_telegram``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise CrmRuleError("invalid_telegram")
+    text = value.strip()
+    if not text:
+        return None
+    link = _TELEGRAM_LINK_RE.fullmatch(text)
+    resolve = None if link else _TELEGRAM_RESOLVE_RE.fullmatch(text)
+    if link:
+        name = link.group("path")
+        name = name[:-1] if name.endswith("/") else name
+    elif resolve:
+        name = resolve.group("name")
+    else:
+        name = text[1:] if text.startswith("@") else text
+    if not TELEGRAM_NAME_RE.fullmatch(name) or name.lower() in TELEGRAM_RESERVED:
+        raise CrmRuleError("invalid_telegram")
+    return name
+
+
 def looks_like_timezone(value: Any) -> bool:
     """Shape check before asking Postgres whether the IANA name exists."""
     name = str(value or "").strip()
@@ -459,7 +504,7 @@ def csv_cell(value: Any) -> str:
     return "'" + text if text.startswith(_FORMULA_PREFIXES) else text
 
 
-EXPORT_HEADER = ("Имя", "Телефон", "Откуда знакомы", "Статус", "Следующий шаг", "Дата", "Заметки")
+EXPORT_HEADER = ("Имя", "Телефон", "Откуда знакомы", "Статус", "Следующий шаг", "Дата", "Заметки", "Telegram")
 
 
 def export_row(row: dict[str, Any]) -> list[str]:
@@ -473,6 +518,9 @@ def export_row(row: dict[str, Any]) -> list[str]:
         STEP_TITLES.get(str(row.get("next_step")), "") if row.get("next_step") else "",
         next_at.strftime("%d.%m.%Y") if isinstance(next_at, date) else "",
         csv_cell(row.get("notes") or ""),
+        # «t.me/имя», not «@имя»: a cell that starts with @ runs as a formula in Excel, and a link is what
+        # the partner wants from a table. A name is [A-Za-z0-9_] only, so the cell never starts with = + - @.
+        f"t.me/{row['telegram_username']}" if row.get("telegram_username") else "",
     ]
 
 

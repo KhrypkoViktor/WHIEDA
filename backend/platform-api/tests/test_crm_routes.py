@@ -365,3 +365,82 @@ async def test_bulk_data_the_database_refuses_is_400_without_the_rows_in_logs(cr
     assert response.json()["error"] == "invalid_input"
     assert "Анна" not in response.text
     assert "Анна" not in caplog.text and "Failing row" not in caplog.text
+
+
+# ---- адрес Telegram в карточке (04.11.2026): договор ядро ↔ сайт ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_create_passes_the_telegram_address_and_never_the_id(crm_app):
+    create = AsyncMock(return_value={**CONTACT, "telegram_username": "tanya_k", "telegram_user_id": None})
+    response = await _call(
+        crm_app, "POST", "/contacts",
+        json={"name": "Таня", "telegram": "t.me/tanya_k", "telegram_user_id": 123456789, "telegram_username": "x_hacker"},
+        extra=[patch("app.crm.routes.create_contact", create)],
+    )
+    assert response.status_code == 201
+    assert response.json()["contact"]["telegram_username"] == "tanya_k"
+    # the id and the name fields of the answer are not request fields: only the bot sets the id
+    assert create.await_args.kwargs == {"name": "Таня", "phone": None, "source": None, "telegram": "t.me/tanya_k"}
+
+
+@pytest.mark.asyncio
+async def test_create_without_telegram_is_called_as_before(crm_app):
+    create = AsyncMock(return_value=CONTACT)
+    await _call(crm_app, "POST", "/contacts", json={"name": "Анна", "phone": "8 928 672-92-88"},
+                extra=[patch("app.crm.routes.create_contact", create)])
+    assert "telegram" not in create.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_patch_telegram_reaches_the_service_as_sent_and_clears_on_empty_or_null(crm_app):
+    for sent in ("@tanya_k", "", None):
+        update = AsyncMock(return_value=CONTACT)
+        response = await _call(
+            crm_app, "PATCH", "/contacts/c1", json={"telegram": sent, "telegram_user_id": 7},
+            extra=[patch("app.crm.routes.update_contact", update)],
+        )
+        assert response.status_code == 200
+        assert update.await_args.args[3] == {"telegram": sent}  # the id is not a field of the request
+    update = AsyncMock(return_value=CONTACT)
+    await _call(crm_app, "PATCH", "/contacts/c1", json={"name": "Таня"}, extra=[patch("app.crm.routes.update_contact", update)])
+    assert update.await_args.args[3] == {"name": "Таня"}  # not sent — not touched
+
+
+@pytest.mark.asyncio
+async def test_invalid_telegram_is_400_with_its_code_and_a_duplicate_names_the_card_and_the_field(crm_app):
+    invalid = AsyncMock(side_effect=CrmError("invalid_telegram", 400))
+    response = await _call(crm_app, "POST", "/contacts", json={"name": "Таня", "telegram": "t.me/joinchat/AAA"},
+                           extra=[patch("app.crm.routes.create_contact", invalid)])
+    assert response.status_code == 400 and response.json()["error"] == "invalid_telegram"
+
+    taken = AsyncMock(side_effect=CrmError("duplicate", 409, contact_id="c-old", field="telegram"))
+    response = await _call(crm_app, "PATCH", "/contacts/c1", json={"telegram": "tanya_k"},
+                           extra=[patch("app.crm.routes.update_contact", taken)])
+    assert response.status_code == 409
+    assert response.json()["error"] == "duplicate"
+    assert (response.json()["contact_id"], response.json()["field"]) == ("c-old", "telegram")
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+@pytest.mark.asyncio
+async def test_a_bad_address_is_refused_before_the_database_is_touched():
+    """Проверка адреса идёт раньше подключения: ни транзакции, ни записи для 400."""
+    from app.crm import service
+
+    for bad in ("t.me/joinchat/AAAA", "t.me/+AbCdEfGh", "https://t.me/tanya_k/123", "t.me/share", "привет"):
+        with patch.object(service, "tenant_connection", side_effect=AssertionError("database touched")):
+            with pytest.raises(CrmError) as error:
+                await service.create_contact("whieda", ACCOUNT, name="Таня", telegram=bad)
+        assert (error.value.status, error.value.code) == (400, "invalid_telegram")
+
+
+def test_contact_out_always_has_both_telegram_fields():
+    from app.crm.service import contact_out
+
+    base = {"contact_id": "c1", "name": "Таня", "status": "new"}
+    out = contact_out(base)
+    assert out["telegram_username"] is None and out["telegram_user_id"] is None
+    out = contact_out({**base, "telegram_username": "tanya_k", "telegram_user_id": 123456789})
+    assert (out["telegram_username"], out["telegram_user_id"]) == ("tanya_k", 123456789)
+    assert isinstance(out["telegram_user_id"], int)

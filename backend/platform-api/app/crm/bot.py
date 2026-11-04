@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 CRM_BUTTON_LABEL = "📒 WWC CRM"
 OPEN_BUTTON_LABEL = "📒 Открыть WWC CRM"
+# Вторая кнопка под «Открыть»: человек выбирает людей в Telegram (app/crm/telegram_import.py).
+ADD_TG_BUTTON_LABEL = "➕ Добавить из Telegram"
+ADD_TG_CALLBACK = "crm:addtg"
 
 _TEXT_RE = re.compile(
     r"^/?(?:(?:wwc\s+)?(?:crm|срм)|ежедневник|мой\s+ежедневник|открыть\s+ежедневник"
@@ -44,6 +47,13 @@ LOCK_TEXT = {
         "После проверки откроем её всем с PRO."
     ),
 }
+
+
+def lock_markup(reason: str) -> dict[str, Any] | None:
+    """The button under a lock text: «Продлить платформу» for those without PRO, nothing for the pilot lock."""
+    if reason == "pro_required":
+        return {"inline_keyboard": [[{"text": "Продлить платформу", "callback_data": "renew:start"}]]}
+    return None
 
 
 def is_crm_text(text: str) -> bool:
@@ -80,11 +90,8 @@ async def try_handle_crm_text(tenant: TenantContext, msg: TelegramMessage, *, tr
     binding = current_bot_binding()
     reason = lock_reason(viewer)
     if reason is not None:
-        keyboard = None
-        if reason == "pro_required":
-            keyboard = {"inline_keyboard": [[{"text": "Продлить платформу", "callback_data": "renew:start"}]]}
         await send_telegram_text(
-            chat_id=str(msg.chat_id), text=LOCK_TEXT[reason], bot_token=binding.bot_token, reply_markup=keyboard
+            chat_id=str(msg.chat_id), text=LOCK_TEXT[reason], bot_token=binding.bot_token, reply_markup=lock_markup(reason)
         )
         return {"ok": True, "route": "crm_text", "status": reason, "trace_id": trace_id}
     url = await with_site_login(crm_url(viewer), tenant_id=tenant.tenant_id, telegram_user_id=msg.user_id)
@@ -92,6 +99,11 @@ async def try_handle_crm_text(tenant: TenantContext, msg: TelegramMessage, *, tr
         chat_id=str(msg.chat_id),
         text=OPEN_TEXT,
         bot_token=binding.bot_token,
-        reply_markup={"inline_keyboard": [[{"text": OPEN_BUTTON_LABEL, "url": url}]]},
+        reply_markup={
+            "inline_keyboard": [
+                [{"text": OPEN_BUTTON_LABEL, "url": url}],
+                [{"text": ADD_TG_BUTTON_LABEL, "callback_data": ADD_TG_CALLBACK}],
+            ]
+        },
     )
     return {"ok": True, "route": "crm_text", "status": "open", "trace_id": trace_id}

@@ -54,7 +54,7 @@ def test_v49_has_no_dollar_sign_a_lock_timeout_and_is_registered_everywhere_once
         listed = (ROOT / relative).read_text(encoding="utf-8")
         assert listed.count(V49) == 1, relative
         assert listed.index(V48) < listed.index(V49), relative
-    assert MIGRATIONS[-1] == V49
+    assert MIGRATIONS.index(V49) == MIGRATIONS.index(V48) + 1  # V49 стоит сразу за V48; позже могут идти другие (V50)
 
 
 @pytest.mark.integration
@@ -68,7 +68,7 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
 
     with temporary_database("whieda_bot_stage") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
-            db.apply_migrations(conn, MIGRATIONS[:-1])  # всё, кроме V49: у людей ещё нет поля
+            db.apply_migrations(conn, [name for name in MIGRATIONS if name != V49])  # всё, кроме V49: у людей ещё нет поля
             conn.execute(SEED)
             conn.execute(
                 "insert into lead_actor_channels (tenant_id, actor_id, channel, channel_user_id, channel_chat_id, display_name) "

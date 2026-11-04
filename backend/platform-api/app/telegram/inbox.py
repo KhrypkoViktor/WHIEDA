@@ -53,6 +53,20 @@ def compact_telegram_payload(update: dict[str, Any] | None) -> dict[str, Any] | 
         document = message.get("document")
         if isinstance(document, dict) and document.get("file_id"):
             payload["message"]["document"] = {"file_id": document.get("file_id")}
+        # «Добавить из Telegram» (WWC CRM): люди из выбора «👥 Выбрать людей» приходят без текста, и без этих полей
+        # обновление дошло бы до обработчика пустым. Только то, что нужно карточке: id, имя, @адрес. Пересланный
+        # контакт (message.contact) сюда НЕ попадает: очередь не хранит номера телефонов (см. тест
+        # test_compact_payload_drops_contact_and_keeps_update_id) — при включённой очереди он не дойдёт до CRM.
+        users_shared = message.get("users_shared")
+        if isinstance(users_shared, dict):
+            people = [
+                {key: user.get(key) for key in ("user_id", "first_name", "last_name", "username")}
+                for user in (users_shared.get("users") or [])
+                if isinstance(user, dict)
+            ]
+            payload["message"]["users_shared"] = {"request_id": users_shared.get("request_id"), "users": people}
+            if isinstance(users_shared.get("user_ids"), list) and not people:
+                payload["message"]["users_shared"]["user_ids"] = users_shared["user_ids"]
     callback = update.get("callback_query")
     if isinstance(callback, dict):
         cb_message = callback.get("message") if isinstance(callback.get("message"), dict) else {}

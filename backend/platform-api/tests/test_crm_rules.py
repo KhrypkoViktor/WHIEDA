@@ -20,6 +20,7 @@ from app.crm.rules import (
     group_today,
     lead_note_text,
     looks_like_timezone,
+    parse_telegram,
     phone_from_lead_contact,
     plan_for_patch,
     split_phone,
@@ -258,4 +259,79 @@ def test_export_cells_are_spreadsheet_safe():
         }
     )
     assert row == ["Анна", "8 928 672-92-88", "соседка", "Презентация проведена", "Довести до решения",
-                   "27.09.2026", "25.09.2026: была на презентации"]
+                   "27.09.2026", "25.09.2026: была на презентации", ""]
+
+
+# ---- адрес Telegram (04.11.2026): договор ядро ↔ сайт ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "@tanya_k", "tanya_k", "t.me/tanya_k", "https://t.me/tanya_k", "http://t.me/tanya_k",
+        "https://telegram.me/tanya_k", "telegram.me/tanya_k", "T.ME/tanya_k", "HTTPS://T.Me/tanya_k",
+        "t.me/tanya_k/", "https://t.me/tanya_k/", "https://t.me/tanya_k?start=abc", "t.me/tanya_k/?x=1",
+        "tg://resolve?domain=tanya_k", "TG://resolve?domain=tanya_k", "  @tanya_k  ", "\t@tanya_k\n",
+    ],
+)
+def test_parse_telegram_takes_every_form_of_an_address(raw):
+    assert parse_telegram(raw) == "tanya_k"
+
+
+def test_parse_telegram_keeps_the_case_as_sent():
+    assert parse_telegram("@Tanya_K") == "Tanya_K"
+    assert parse_telegram("https://t.me/TanyaK") == "TanyaK"
+    assert parse_telegram("tg://resolve?domain=TanyaK") == "TanyaK"
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "\n"])
+def test_parse_telegram_empty_is_none(raw):
+    assert parse_telegram(raw) is None
+
+
+@pytest.mark.parametrize("name", ["abcd", "a" * 32, "ABC_123", "_abc", "1234"])
+def test_parse_telegram_name_length_and_alphabet_edges(name):
+    assert parse_telegram(name) == name
+    assert parse_telegram(f"@{name}") == name
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "abc", "a" * 33, "@abc", "@", "t.me/", "https://t.me", "tanya k", "@tanya k", "@tanya-k", "@таня_к", "@tanya.k",
+        # приглашения, закрытые чаты, каналы, сообщения
+        "t.me/joinchat/AAAAAE", "https://t.me/joinchat/AAAAAE", "t.me/+AbCdEfGh12", "https://t.me/+AbCdEfGh12",
+        "t.me/+79001234567", "https://t.me/c/123456/78", "t.me/s/durov", "https://t.me/s/durov/12",
+        "t.me/tanya_k/123", "https://t.me/tanya_k/123?single", "t.me/tanya_k//", "t.me//tanya_k",
+        # служебные адреса
+        "t.me/addstickers/Pack", "t.me/addstickers", "t.me/share", "t.me/share/url?url=x", "https://t.me/proxy?server=1",
+        "t.me/proxy", "t.me/iv?url=x", "t.me/iv", "t.me/addemoji/Pack", "t.me/addtheme/x", "t.me/setlanguage/ru",
+        "t.me/socks?server=1", "t.me/login/123456", "t.me/invoice/x", "t.me/giftcode/x", "t.me/boost/channel",
+        # прочие схемы и хосты
+        "tg://user?id=123456789", "tg://join?invite=abc", "tg://resolve?phone=79001234567", "tg://resolve?domain=",
+        "tg://resolve", "tg://resolve?domain=abc", "tg://resolve?domain=tanya_k&post=5", "ftp://t.me/tanya_k",
+        "https://example.com/tanya_k", "https://t.me.evil.com/tanya_k", "https://nott.me/tanya_k", "https://www.t.me/tanya_k",
+        "https://t.me/tanya_k#frag", "https://vk.com/tanya_k", "mailto:tanya_k@example.com", "tanya_k@example.com",
+        "+7 900 000-00-00", "привет, это Таня", "https://t.me/tanya_k https://t.me/ivan_p",
+    ],
+)
+def test_parse_telegram_refuses_the_rest(raw):
+    with pytest.raises(CrmRuleError) as exc:
+        parse_telegram(raw)
+    assert (exc.value.code, exc.value.status) == ("invalid_telegram", 400)
+
+
+def test_parse_telegram_not_a_string_is_invalid_not_a_crash():
+    with pytest.raises(CrmRuleError):
+        parse_telegram(["tanya_k"])
+
+
+def test_export_row_has_a_telegram_column_at_the_end_that_is_not_a_formula():
+    from app.crm.rules import EXPORT_HEADER
+
+    assert EXPORT_HEADER[-1] == "Telegram" and len(EXPORT_HEADER) == 8
+    row = export_row({"name": "Таня", "status": "new", "telegram_username": "tanya_k"})
+    assert row[-1] == "t.me/tanya_k" and len(row) == len(EXPORT_HEADER)
+    assert export_row({"name": "Таня", "status": "new"})[-1] == ""
+    # только ID: по нему в таблице написать нельзя, ячейка пустая
+    assert export_row({"name": "Таня", "status": "new", "telegram_user_id": 7})[-1] == ""

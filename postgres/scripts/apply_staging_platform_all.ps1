@@ -74,6 +74,7 @@ $Files = @(
     "platform_consult_requests_v47.sql",
     "platform_pricing_november_v48.sql",
     "platform_bot_stage_v49.sql",
+    "platform_crm_telegram_v50.sql",
     "platform_partner_library_v1.sql",
     "platform_api_session_context_v1.sql",
     "platform_advisor_structured_base_v1.sql",
