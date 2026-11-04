@@ -4,16 +4,17 @@
 --                                       + подключение 20 (акция), при продлении — сайт 30 + клуб 120
 --   клуб, пробный месяц (club_1m)       новый тариф 40 WWC$; поэтому access_months допускает 1
 -- Повторный запуск ничего не ломает. Применить к общей базе один раз, записать в APPLIED.log.
+-- Срок 2 в списке — с V48 (04.11.2026): иначе повторный прогон этого файла падает на её строке club_2m.
 
 alter table partner_subscription_plans drop constraint if exists partner_subscription_plans_access_months_check;
 alter table partner_subscription_plans add constraint partner_subscription_plans_access_months_check
-  check (access_months in (0, 1, 3, 6, 12));
+  check (access_months in (0, 1, 2, 3, 6, 12));
 alter table partner_payment_ledger drop constraint if exists partner_payment_ledger_access_months_check;
 alter table partner_payment_ledger add constraint partner_payment_ledger_access_months_check
-  check (access_months in (0, 1, 3, 6, 12));
+  check (access_months in (0, 1, 2, 3, 6, 12));
 alter table partner_payment_intents drop constraint if exists partner_payment_intents_access_months_check;
 alter table partner_payment_intents add constraint partner_payment_intents_access_months_check
-  check (access_months in (0, 1, 3, 6, 12));
+  check (access_months in (0, 1, 2, 3, 6, 12));
 
 update partner_subscription_plans set price_wusd_minor = 3000, price_rub_minor = 300000
  where tenant_id = 'whieda' and plan_code = 'site_setup';
