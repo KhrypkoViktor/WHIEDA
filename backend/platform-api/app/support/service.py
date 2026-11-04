@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.theme_access.service import REF_TO_ISSUED_SUBDOMAIN
+from app.ttl_cache import TtlCache
 
 Direction = Literal["user_to_admin", "admin_to_user", "system"]
 
@@ -303,12 +304,34 @@ async def register_forum(
             """,
             (tenant_id, binding_id, kind, int(chat_id), (title or "")[:200] or None, int(registered_by)),
         )
+    _forget_forum(tenant_id, binding_id, kind)
     return dict(row)
 
 
+# Форум поддержки (группа и темы) читается на каждую заявку, шаг анкеты и сообщение владельцу — а
+# меняется раз в месяцы: «/forum», создание темы «Заявки на сайты». Запись живёт 20 секунд и
+# сбрасывается нашими же записями (register_forum, set_forum_service_threads, set_site_orders_thread);
+# «форума нет» запоминается так же. Другой контейнер Core увидит перемену не позже чем через срок записи.
+FORUM_CACHE_TTL_SEC = 20.0
+_forum_cache: TtlCache[dict[str, Any] | None] = TtlCache(max_entries=64)
+_FORUM_MISS: Any = object()
+
+
+def clear_forum_cache() -> None:
+    _forum_cache.clear()
+
+
+def _forget_forum(tenant_id: str, binding_id: str, kind: str) -> None:
+    _forum_cache.pop((tenant_id, binding_id, kind))
+
+
 async def get_forum(tenant_id: str, *, binding_id: str, kind: str = FORUM_KIND_SERVICES) -> dict[str, Any] | None:
+    key = (tenant_id, binding_id, kind)
+    cached = _forum_cache.get(key, _FORUM_MISS)
+    if cached is not _FORUM_MISS:
+        return dict(cached) if cached is not None else None
     async with tenant_connection(tenant_id) as conn:
-        return await fetch_one(
+        row = await fetch_one(
             conn,
             """
             select tenant_id, binding_id, kind, chat_id, title, bonuses_thread_id, reports_thread_id
@@ -316,6 +339,8 @@ async def get_forum(tenant_id: str, *, binding_id: str, kind: str = FORUM_KIND_S
             """,
             (tenant_id, binding_id, kind),
         )
+    _forum_cache.set(key, dict(row) if row is not None else None, ttl=FORUM_CACHE_TTL_SEC)
+    return row
 
 
 async def set_forum_service_threads(
@@ -335,6 +360,7 @@ async def set_forum_service_threads(
             """,
             (bonuses_thread_id, reports_thread_id, tenant_id, binding_id, FORUM_KIND_SERVICES),
         )
+    _forget_forum(tenant_id, binding_id, FORUM_KIND_SERVICES)
 
 
 async def attach_forum_topic(
@@ -400,6 +426,7 @@ async def set_site_orders_thread(tenant_id: str, *, binding_id: str, thread_id: 
             """,
             (thread_id, tenant_id, binding_id, FORUM_KIND_SITE),
         )
+    _forget_forum(tenant_id, binding_id, FORUM_KIND_SITE)
 
 
 _MESSAGE_COLUMNS = """

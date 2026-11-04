@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import dataclasses
 import hmac
 import os
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from fastapi import HTTPException
 from app.db import fetch_one, get_pool
 from app.settings import get_settings
 from app.tenancy import TenantContext, fetch_all_entitlements
+from app.ttl_cache import TtlCache
 
 ProcessingMode = Literal["core", "shadow", "legacy"]
 
@@ -65,7 +67,45 @@ def validate_processing_mode(tenant: TenantContext, raw_mode: str | None) -> Pro
     return cast(ProcessingMode, mode)
 
 
+# Привязка бота читается на каждое обновление Telegram до ответа вебхуку (транзакция: привязка,
+# арендатор, права, витрина). Строка меняется только оператором (статус, арендатор, режим),
+# поэтому успешный ответ живёт полминуты, как арендатор по хосту; пустой («нет такой/не активна»)
+# и ошибки не запоминаются: новая привязка и починка базы видны сразу.
+BINDING_CACHE_TTL_SEC = 30.0
+BINDING_CACHE_MAX_ENTRIES = 64
+_binding_cache: TtlCache[BotBindingContext] = TtlCache(max_entries=BINDING_CACHE_MAX_ENTRIES)
+
+
+def clear_binding_cache() -> None:
+    """Забыть найденные привязки: тесты и всё, что меняет tenant_bot_bindings, tenants, права."""
+    _binding_cache.clear()
+
+
+def _copy_binding(context: BotBindingContext) -> BotBindingContext:
+    # Права арендатора — обычный словарь: кэш не отдаёт один и тот же объект разным вызовам.
+    tenant = context.tenant
+    return dataclasses.replace(
+        context,
+        tenant=TenantContext(
+            tenant_id=tenant.tenant_id,
+            status=tenant.status,
+            display_name=tenant.display_name,
+            entitlements=dict(tenant.entitlements),
+        ),
+    )
+
+
 async def resolve_bot_binding_context(binding_id: str) -> BotBindingContext | None:
+    cached = _binding_cache.get(binding_id)
+    if cached is not None:
+        return _copy_binding(cached)
+    context = await _resolve_bot_binding_context_uncached(binding_id)
+    if context is not None:
+        _binding_cache.set(binding_id, _copy_binding(context), ttl=BINDING_CACHE_TTL_SEC)
+    return context
+
+
+async def _resolve_bot_binding_context_uncached(binding_id: str) -> BotBindingContext | None:
     settings = get_settings()
     try:
         pool = get_pool()

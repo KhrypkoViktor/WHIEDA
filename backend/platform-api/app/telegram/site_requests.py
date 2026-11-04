@@ -6,6 +6,7 @@ import logging
 import re
 from typing import Any
 
+from app.db import tenant_connection
 from app.referral_bonus.service import (
     ensure_telegram_actor,
     referral_payment_notification_context,
@@ -274,12 +275,13 @@ async def _is_orders_chat(tenant_id: str, chat_id: int) -> bool:
     return bool(forum) and int(forum["chat_id"]) == int(chat_id)
 
 
-async def _actor(tenant: TenantContext, msg: TelegramMessage | TelegramCallbackQuery) -> str:
+async def _actor(tenant: TenantContext, msg: TelegramMessage | TelegramCallbackQuery, *, conn: Any = None) -> str:
     return await ensure_telegram_actor(
         tenant.tenant_id,
         telegram_user_id=msg.user_id,
         telegram_chat_id=msg.chat_id,
         raw_update=msg.raw,
+        conn=conn,
     )
 
 
@@ -456,14 +458,26 @@ async def try_handle_site_request_callback(
             await _deliver(callback.chat_id, "Оплата записана. Заявка добавлена в очередь создания сайта.", thread_id=reply_thread)
             return {"ok": True, "route": "site_request_confirm", "trace_id": trace_id}
 
+        if action == "skip":
+            # Актор и закрытие шага — одна транзакция (две были). Следующий вопрос человеку уходит
+            # раньше, чем сообщение владельцу: человек ждёт кнопку, владелец — нет.
+            skip_error: SiteRequestError | None = None
+            request: dict[str, Any] = {}
+            skipped = ""
+            async with tenant_connection(tenant.tenant_id) as conn:
+                actor_id = await _actor(tenant, callback, conn=conn)
+                try:
+                    request, skipped = await skip_site_request_step(tenant.tenant_id, actor_id, conn=conn)
+                except SiteRequestError as exc:
+                    skip_error = exc  # актор остаётся записанным, как при двух транзакциях
+            if skip_error is not None:
+                raise skip_error
+            await _prompt_for_request(callback.chat_id, request)
+            await _notify_owner_step(tenant.tenant_id, _callback_as_message(callback), request, done=skipped, skipped=True)
+            return {"ok": True, "route": "site_request", "status": request["status"], "skipped": skipped, "trace_id": trace_id}
         actor_id = await _actor(tenant, callback)
         if action == "accept":
             return await _accept_order_consent(tenant, callback, actor_id, trace_id=trace_id)
-        if action == "skip":
-            request, skipped = await skip_site_request_step(tenant.tenant_id, actor_id)
-            await _notify_owner_step(tenant.tenant_id, _callback_as_message(callback), request, done=skipped, skipped=True)
-            await _prompt_for_request(callback.chat_id, request)
-            return {"ok": True, "route": "site_request", "status": request["status"], "skipped": skipped, "trace_id": trace_id}
         if action == "create":
             if await _order_consent_needed(tenant.tenant_id, actor_id, callback.user_id):
                 # Без нажатия «Принимаю» заявка не создаётся (владелец, 23.10.2026).

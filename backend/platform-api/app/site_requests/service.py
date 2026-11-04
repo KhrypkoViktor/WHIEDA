@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -246,9 +247,12 @@ SKIPPABLE_STEPS: dict[str, tuple[str, str]] = {
 }
 
 
-async def skip_site_request_step(tenant_id: str, actor_id: str) -> tuple[dict[str, Any], str]:
-    """«Пропустить»: шаг закрывается пустым. Возвращает заявку и что пропущено."""
-    async with tenant_connection(tenant_id) as conn:
+async def skip_site_request_step(tenant_id: str, actor_id: str, *, conn: Any = None) -> tuple[dict[str, Any], str]:
+    """«Пропустить»: шаг закрывается пустым. Возвращает заявку и что пропущено.
+
+    ``conn`` — открытое ``tenant_connection`` того же арендатора (кнопка «Пропустить» ищет актора и
+    закрывает шаг одной транзакцией); без него функция открывает свою, как раньше."""
+    async with (nullcontext(conn) if conn is not None else tenant_connection(tenant_id)) as conn:
         current = await fetch_one(
             conn,
             """
