@@ -9,9 +9,11 @@ from typing import Any
 from app.advisor.service import handle_structured_query
 from app.advisor.sql import repository as repo
 from app.advisor.sql.engine import CALCULATOR_INSTRUCTION
+from app.bot_stages.service import stages_enabled
 from app.cart.service import create_session
 from app.cart.web_links import calculator_web_url
 from app.db import tenant_connection
+from app.funnel import texts as funnel_texts
 from app.onboarding.service import handle_onboarding_text
 from app.telegram.bindings import current_bot_binding, tenant_from_binding
 from app.telegram.delivery import (
@@ -237,6 +239,21 @@ async def handle_main_menu(
     *,
     trace_id: str = "",
 ) -> dict[str, Any]:
+    if stages_enabled(tenant.tenant_id):
+        # Три меню: старый текст «Главное меню: 📦 Товары … 📅 Встречи» был без кнопок (пункты работали, только если их
+        # напечатать) — вместо него одна кнопка возврата в меню по статусу человека.
+        await _deliver_navigation_text(
+            chat_id,
+            funnel_texts.STAGE_BACK_TEXT,
+            tenant,
+            inline_markup={
+                "inline_keyboard": [
+                    [{"text": funnel_texts.STAGE_BACK_BUTTON, "callback_data": funnel_texts.STAGE_MENU_CALLBACK}]
+                ]
+            },
+            include_main_menu=False,
+        )
+        return {"ok": True, "route": "main_menu", "trace_id": trace_id}
     lines = [
         f"Главное меню {tenant.display_name}:",
         "",

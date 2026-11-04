@@ -12,6 +12,11 @@
 переноса и отмены клавиатура старого сообщения снимается через editMessageReplyMarkup. Не гость, чужой тенант,
 группа, сбой базы — обработчик возвращает ``None``/текст ошибки, и бот отвечает как прежде.
 
+Бот под три типа людей (PLATFORM_BOT_STAGES, V49): гость — любой со статусом ``guest`` (``app/bot_stages``), а не только
+тот, кто открыл заявку на встречу; на голом «/start», по метке ``src_`` и по ссылке партнёра он видит это меню. Слово
+«WWC Bot» гостя тоже ведёт в его меню: советчика по товарам у гостя нет. При первом касании и при смене статуса
+ставится синяя кнопка «Меню» чата (setMyCommands со scope=chat).
+
 В логи имён и телефонов не попадает: ``user_ref`` — последние четыре цифры id.
 """
 
@@ -23,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.sql.text import detect_service_intent
+from app.bot_stages.service import STAGE_GUEST, resolve_stage, stages_enabled
 from app.crm.service import safe_error
 from app.db import tenant_connection
 from app.funnel import registration, texts
@@ -45,7 +51,7 @@ from app.referral_bonus.service import accept_referral_start
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
-from app.telegram.navigation import is_newcomer_panel_request
+from app.telegram.navigation import is_newcomer_panel_request, is_wwc_bot_request
 from app.telegram.support import open_site_support, try_relay_user_message
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
@@ -146,6 +152,54 @@ async def _guest_menu(tenant_id: str, channel: str, user_id: int) -> Reply | Non
     return guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings)
 
 
+async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | None, Reply | None]:
+    """Статус человека и, если он гость, его меню — одним подключением. Не гость — ``(статус, None)``. Сбой базы —
+    ``(None, None)``: бот ответит как прежде. Нужен только при включённых трёх меню (``app/bot_stages``)."""
+    try:
+        async with tenant_connection(tenant_id) as conn:
+            stage = await resolve_stage(conn, tenant_id, channel, user_id)
+            if stage != STAGE_GUEST:
+                return stage, None
+            guest = await resolve_guest(conn, tenant_id, channel, user_id, stage=stage)
+            if guest is None:
+                return stage, None
+            registration_view, open_meetings = await load_guest_view(conn, tenant_id, channel, user_id)
+        card = await owner_card(tenant_id, guest.owner_actor_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
+        return None, None
+    inviter_name = ((card.display_name if card else "") or "").strip() or None
+    return stage, guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings)
+
+
+async def check_waiting_cards(tenant_id: str, channel: str, user_id: int) -> None:
+    """Человек открыл бота по ссылке партнёра или заявки (три меню включены): карточки CRM на этапе «Партнёр», которые
+    ждали, пока он появится, — вопрос ведущему (``app/crm/stage_link.py``). Сбой здесь старт не ломает."""
+    if not stages_enabled(tenant_id):
+        return
+    try:
+        from app.crm.stage_link import check_partner_cards
+
+        await check_partner_cards(tenant_id, channel, user_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guest_waiting_cards_failed", extra={"channel": channel, **safe_error(exc)})
+
+
+async def _after_first_touch(tenant_id: str, channel: str, user_id: int, chat_id: int | None) -> None:
+    """Человек открыл бота по ссылке заявки (три меню включены): карточки CRM, которые ждали его, и синяя кнопка
+    «Меню» — гостевая (только Telegram). Сбой здесь старт не ломает."""
+    if not stages_enabled(tenant_id):
+        return
+    await check_waiting_cards(tenant_id, channel, user_id)
+    try:
+        if channel == "telegram" and chat_id is not None:
+            from app.bot_stages.telegram import sync_chat_commands
+
+            await sync_chat_commands(chat_id, STAGE_GUEST)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guest_first_touch_failed", extra={"channel": channel, **safe_error(exc)})
+
+
 # ---- Telegram --------------------------------------------------------------------------------------
 
 
@@ -182,6 +236,7 @@ async def handle_lead_start_telegram(
     if result is None:
         return None
     await _send_telegram(msg.chat_id, result.reply)
+    await _after_first_touch(tenant.tenant_id, "telegram", msg.user_id, msg.chat_id)
     logger.info(
         "lead_start",
         extra={
@@ -203,18 +258,24 @@ async def try_handle_guest_menu_text(
     if tenant.tenant_id != FUNNEL_TENANT_ID or msg.chat_type != "private":
         return None
     text = msg.text
-    if not (is_guest_menu_word(text) or is_newcomer_panel_request(text) or detect_service_intent(text) == "greeting"):
+    # Три меню: «WWC Bot» у гостя — тоже его меню, а не панель советчика (советчика по товарам у гостя нет).
+    wwc_bot = stages_enabled(tenant.tenant_id) and is_wwc_bot_request(text)
+    if not (is_guest_menu_word(text) or is_newcomer_panel_request(text) or wwc_bot or detect_service_intent(text) == "greeting"):
         return None
     reply = await _guest_menu(tenant.tenant_id, "telegram", msg.user_id)
     if reply is None:
         return None
-    if not (is_guest_menu_word(text) or is_newcomer_panel_request(text)):
+    if not (is_guest_menu_word(text) or is_newcomer_panel_request(text) or wwc_bot):
         # Начало вопроса с приветствия («Здравствуйте, как перенести встречу?») у гостя с открытым обращением
         # («Задать вопрос») — это вопрос владельцу, а не просьба показать меню: пересылаем, как любой его текст.
         relayed = await try_relay_user_message(tenant, msg, trace_id=trace_id)
         if relayed is not None:
             return relayed
     await _send_telegram(msg.chat_id, reply)
+    if stages_enabled(tenant.tenant_id):
+        from app.bot_stages.telegram import sync_chat_commands
+
+        await sync_chat_commands(msg.chat_id, STAGE_GUEST)
     logger.info("guest_menu", extra={"channel": "telegram", "user_ref": _user_ref(msg.user_id), "trace_id": trace_id})
     return {"ok": True, "route": "guest_menu", "status": "shown", "trace_id": trace_id}
 
@@ -239,6 +300,7 @@ async def _guest_ask_header(tenant_id: str, user_id: int) -> str:
     """Шапка обращения владельцу: «Гость Живой встречи» и, если у человека есть заявка с партнёром,
     «, от партнёра <код>» (код — ссылка, по которой он записался). Сбой базы шапку не ломает."""
     code = ""
+    lead = None
     try:
         async with tenant_connection(tenant_id) as conn:
             lead = await load_lead_by_channel_user(conn, tenant_id, "telegram", user_id)
@@ -246,7 +308,10 @@ async def _guest_ask_header(tenant_id: str, user_id: int) -> str:
             code = plain_no_links(lead.active_ref_code or lead.first_ref_code, 64)
     except Exception as exc:  # noqa: BLE001
         logger.warning("guest_ask_header_failed", extra={"channel": "telegram", **safe_error(exc)})
-    return texts.ASK_HEADER_GUEST_FROM_PARTNER.format(code=code) if code else texts.ASK_HEADER_GUEST
+    if code:
+        return texts.ASK_HEADER_GUEST_FROM_PARTNER.format(code=code)
+    # Три меню: гость без заявки на встречу — не «гость Живой встречи», а гость бота.
+    return texts.ASK_HEADER_GUEST if lead is not None or not stages_enabled(tenant_id) else texts.STAGE_ASK_HEADER_GUEST
 
 
 async def try_handle_guest_callback(
@@ -321,6 +386,7 @@ async def handle_lead_start_max(
     if result is None:
         return None
     await _send_max(event.chat_id, event.user_id, result.reply)
+    await _after_first_touch(tenant.tenant_id, "max", event.user_id, None)
     logger.info(
         "lead_start",
         extra={

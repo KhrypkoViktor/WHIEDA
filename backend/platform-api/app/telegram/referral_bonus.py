@@ -9,7 +9,9 @@ from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import HTTPException
 
+from app.bot_stages.service import STAGE_PARTNER_WWC, person_stage, stages_enabled
 from app.cart.web_links import CALCULATOR_WEB_URL
+from app.funnel import texts as funnel_texts
 from app.max.webapp import create_max_link
 from app.referral_bonus.service import (
     InviterCard,
@@ -32,7 +34,7 @@ from app.telegram.academy import academy_button_rows
 from app.crm.bot import crm_button_rows
 from app.telegram.bindings import current_bot_binding
 from app.telegram.site_login import with_site_login
-from app.telegram.money import wwc, wwc_signed
+from app.telegram.money import RUB_PER_WWC, format_minor, wwc, wwc_signed
 from app.telegram.navigation import WWC_BOT_BUTTON_LABEL, WWC_BOT_CALLBACK
 from app.telegram.feedback import WISH_BUTTON
 from app.telegram.support import SERVICES_CARD_CALLBACK, SUPPORT_SITE_CALLBACK, open_site_support
@@ -137,6 +139,7 @@ def _dashboard_keyboard(
     academy_rows: list[list[dict[str, Any]]] | None = None,
     site_login_url: str | None = None,
     cabinet_url: str | None = None,
+    stages: bool = False,
 ) -> dict[str, Any]:
     markup = _dashboard_rows(
         bot_username=bot_username,
@@ -146,6 +149,7 @@ def _dashboard_keyboard(
         minimal=minimal,
         academy_rows=academy_rows,
         site_login_url=site_login_url,
+        stages=stages,
     )
     if cabinet_url:
         # Личный кабинет на сайте (/me/, 02.10.2026) — первая кнопка: там всё,
@@ -163,7 +167,12 @@ def _dashboard_rows(
     minimal: bool,
     academy_rows: list[list[dict[str, Any]]] | None = None,
     site_login_url: str | None = None,
+    stages: bool = False,
 ) -> dict[str, Any]:
+    if stages:
+        return _dashboard_rows_partner_wwc(
+            site_url=site_url, has_site=has_site, academy_rows=academy_rows, site_login_url=site_login_url
+        )
     link = f"https://t.me/{bot_username}?start=ref_{invite_code}"
     invite = invitation_text(link)
     share_url = _share_url(link)
@@ -201,6 +210,37 @@ def _dashboard_rows(
     rows.insert(1, [{"text": "Продлить платформу", "callback_data": "renew:start"}] if has_site else order_site)
     # «Академия» — сразу под «Мой сайт» и продлением (курс «Запуск WWC»).
     rows[2:2] = academy_rows or []
+    return {"inline_keyboard": rows}
+
+
+def _dashboard_rows_partner_wwc(
+    *,
+    site_url: str,
+    has_site: bool,
+    academy_rows: list[list[dict[str, Any]]] | None,
+    site_login_url: str | None,
+) -> dict[str, Any]:
+    """Кабинет партнёра WWC под три меню (04.11.2026): прежний ``full`` с новыми подписями. «Посмотреть WWC» → «Мой сайт»,
+    «Продлить платформу» → «Продлить сайт», «WWC Bot» → «Товары и ответы»; «Скопировать приглашение», «Отправить приглашение»
+    и «Мои рефералы» — один экран «Пригласить»; «Подключить Gemini Pro» ушёл в «Ещё → Сервисы»."""
+    order_site = [{"text": funnel_texts.STAGE_PW_ORDER_BUTTON, "callback_data": "site:create"}]
+    renew = [{"text": funnel_texts.STAGE_RENEW_BUTTON, "callback_data": "renew:start"}]
+    site_label = funnel_texts.STAGE_CABINET_SITE_BUTTON if has_site else funnel_texts.STAGE_CABINET_NO_SITE_BUTTON
+    rows: list[list[dict[str, Any]]] = [
+        [{"text": site_label, "url": site_login_url or site_url}],
+        renew if has_site else order_site,
+    ]
+    # «Академия» и «WWC CRM» — сразу под сайтом и продлением, только тем, кому они открыты.
+    rows.extend(academy_rows or [])
+    rows.extend(
+        [
+            [{"text": funnel_texts.STAGE_INVITE_BUTTON, "callback_data": funnel_texts.STAGE_INVITE_CALLBACK}],
+            [{"text": funnel_texts.STAGE_BONUS_HISTORY_BUTTON, "callback_data": "referral:history"}],
+            [{"text": funnel_texts.STAGE_ADVISOR_BUTTON, "callback_data": WWC_BOT_CALLBACK}],
+            [dict(SUPPORT_BUTTON), dict(WISH_BUTTON)],
+            [{"text": funnel_texts.STAGE_MORE_BUTTON, "callback_data": funnel_texts.STAGE_MORE_CALLBACK}],
+        ]
+    )
     return {"inline_keyboard": rows}
 
 
@@ -284,6 +324,15 @@ def cabinet_text(site: dict[str, Any] | None, *, balance_minor: int, link: str) 
     )
 
 
+def cabinet_text_partner_wwc(site: dict[str, Any] | None, *, balance_minor: int) -> str:
+    """Кабинет партнёра WWC в боте под три меню: статус сайта и бонусы с пояснением, что это скидка на услуги.
+    Ссылка-приглашение — на экране «Пригласить», приглашённые и профиль сайта — в кабинете на сайте."""
+    bonus = funnel_texts.STAGE_BONUS_LINE.format(
+        wwc=wwc(balance_minor), rub=format_minor(int(balance_minor) * RUB_PER_WWC)
+    )
+    return "\n".join(["Личный кабинет", "", _site_status_line(site), bonus, "", "Приглашённые и профиль сайта — в кабинете на сайте."])
+
+
 def site_offer_text(inviter_name: str) -> str:
     """Один экран под одно действие (текст владельца, 17.09.2026). Без баланса
     и рефссылки: человек ещё ничего не купил, кабинет ему сейчас — шум."""
@@ -332,6 +381,16 @@ async def show_referral_dashboard(
     raw_update: dict[str, Any],
     trace_id: str,
 ) -> dict[str, Any]:
+    stages = stages_enabled(tenant.tenant_id)
+    if stages:
+        # Три меню: гостю — меню гостя, партнёру WHIEDA — своё; кабинет ниже только у партнёра WWC (и при сбое базы).
+        from app.bot_stages.telegram import show_stage_menu
+
+        shown = await show_stage_menu(
+            tenant, telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id, trace_id=trace_id
+        )
+        if shown is not None:
+            return shown
     actor_id = await _actor_for_telegram(
         tenant,
         telegram_user_id=telegram_user_id,
@@ -348,7 +407,10 @@ async def show_referral_dashboard(
     site = dashboard.get("site") or {}
     minimal = get_settings().telegram_ui_profile == "minimal"
     site_url = str(site.get("url") or "https://wwc.best/")
-    text = cabinet_text(site or None, balance_minor=int(dashboard["balance_wusd_minor"]), link=link)
+    if stages:
+        text = cabinet_text_partner_wwc(site or None, balance_minor=int(dashboard["balance_wusd_minor"]))
+    else:
+        text = cabinet_text(site or None, balance_minor=int(dashboard["balance_wusd_minor"]), link=link)
     await _deliver(
         telegram_chat_id,
         text,
@@ -367,6 +429,7 @@ async def show_referral_dashboard(
             cabinet_url=await with_site_login(
                 cabinet_page_url(site_url), tenant_id=tenant.tenant_id, telegram_user_id=telegram_user_id
             ),
+            stages=stages,
         ),
     )
     return {"ok": True, "route": "referral", "actor_id": actor_id, "trace_id": trace_id}
@@ -380,6 +443,18 @@ async def show_invitation(
     raw_update: dict[str, Any],
     trace_id: str,
 ) -> dict[str, Any]:
+    stages = stages_enabled(tenant.tenant_id)
+    if stages:
+        # Три меню: ссылка-приглашение и список приглашённых — только у партнёра WWC; гость и партнёр WHIEDA видят своё меню.
+        try:
+            stage = await person_stage(tenant.tenant_id, "telegram", telegram_user_id)
+        except Exception:  # noqa: BLE001 — сбой базы: отвечаем как прежде
+            stages, stage = False, STAGE_PARTNER_WWC
+        if stages and stage != STAGE_PARTNER_WWC:
+            return await show_referral_dashboard(
+                tenant, telegram_user_id=telegram_user_id, telegram_chat_id=telegram_chat_id, raw_update=raw_update,
+                trace_id=trace_id,
+            )
     actor_id = await _actor_for_telegram(
         tenant,
         telegram_user_id=telegram_user_id,
@@ -392,6 +467,19 @@ async def show_invitation(
         await _deliver(telegram_chat_id, "Приглашение временно недоступно.")
         return {"ok": False, "route": "referral_invite", "status": "bot_username_missing", "trace_id": trace_id}
     link = f"https://t.me/{username}?start=ref_{invite_code}"
+    if stages:
+        # Один экран «Пригласить»: ссылка, кнопки «Скопировать» и «Отправить», список приглашённых, «← В кабинет».
+        page = await list_referrals(tenant.tenant_id, actor_id, limit=20)
+        keyboard = _invitation_keyboard(link)
+        keyboard["inline_keyboard"].append(
+            [{"text": funnel_texts.STAGE_BACK_BUTTON, "callback_data": funnel_texts.STAGE_MENU_CALLBACK}]
+        )
+        await _deliver(
+            telegram_chat_id,
+            "\n".join([funnel_texts.STAGE_INVITE_HEAD, link, "", _referrals_text(page["items"])]),
+            reply_markup=keyboard,
+        )
+        return {"ok": True, "route": "referral_invite", "actor_id": actor_id, "stage": STAGE_PARTNER_WWC, "trace_id": trace_id}
     await _deliver(
         telegram_chat_id,
         invitation_text(link),

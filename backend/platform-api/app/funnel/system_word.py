@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 from app.bot_media.service import send_media
+from app.bot_stages.service import stages_enabled
 from app.funnel import consult, texts
 from app.funnel.guest import rows_to_max, rows_to_telegram
 from app.max.client import max_button_callback, send_max_text
@@ -43,21 +44,30 @@ def is_system_word(text: str | None) -> bool:
     return bool(SYSTEM_WORD_RE.match(str(text or "")))
 
 
+def _labels() -> tuple[str, str]:
+    """Подписи двух кнопок под туром: три меню включены (04.11.2026) — те же, что в меню гостя, с картинкой."""
+    if stages_enabled():
+        return texts.STAGE_MEET_BUTTON, texts.STAGE_CONSULT_BUTTON
+    return texts.FUNNEL_MEET_BUTTON, texts.FUNNEL_CONSULT_BUTTON
+
+
 def telegram_markup() -> dict[str, Any]:
     """Inline-клавиатура Telegram: две кнопки, каждая в своём ряду."""
+    meet, consult = _labels()
     return {
         "inline_keyboard": [
-            [{"text": texts.FUNNEL_MEET_BUTTON, "callback_data": texts.FUNNEL_MEET_CALLBACK}],
-            [{"text": texts.FUNNEL_CONSULT_BUTTON, "callback_data": texts.FUNNEL_CONSULT_CALLBACK}],
+            [{"text": meet, "callback_data": texts.FUNNEL_MEET_CALLBACK}],
+            [{"text": consult, "callback_data": texts.FUNNEL_CONSULT_CALLBACK}],
         ]
     }
 
 
 def max_buttons() -> list[list[dict[str, Any]]]:
     """Ряды кнопок Max (max_button_callback): те же две кнопки."""
+    meet, consult = _labels()
     return [
-        [max_button_callback(texts.FUNNEL_MEET_BUTTON, texts.FUNNEL_MEET_CALLBACK)],
-        [max_button_callback(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
+        [max_button_callback(meet, texts.FUNNEL_MEET_CALLBACK)],
+        [max_button_callback(consult, texts.FUNNEL_CONSULT_CALLBACK)],
     ]
 
 

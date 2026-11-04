@@ -11,6 +11,13 @@ from fastapi import HTTPException
 
 from app.advisor.service import handle_structured_query
 from app.advisor.sql.text import detect_service_intent
+from app.bot_stages.service import stages_enabled
+from app.bot_stages.telegram import (
+    stage_command,
+    try_handle_guest_text,
+    try_handle_owner_partner_word,
+    try_handle_stage_callback,
+)
 from app.db_feature_readiness import (
     ONBOARDING_UNAVAILABLE_TEXT,
     get_feature_status,
@@ -91,6 +98,7 @@ from app.telegram.bot_media_admin import try_handle_bot_media_message
 from app.funnel.system_word import try_handle_funnel_callback, try_handle_system_word
 # Гость встречи (срез 4 бот-воронки, 30.10.2026): /start lead_<id>, меню гостя, кнопки записи.
 from app.funnel.guest_bot import (
+    check_waiting_cards,
     handle_lead_start_telegram,
     try_handle_guest_callback,
     try_handle_guest_menu_text,
@@ -145,6 +153,7 @@ from app.telegram.navigation import (
     main_menu_reply_keyboard,
 )
 from app.telegram.update_parser import (
+    TelegramCallbackQuery,
     TelegramMessage,
     parse_start_token,
     parse_telegram_callback,
@@ -195,6 +204,13 @@ async def _remove_legacy_reply_keyboard(chat_id: int) -> None:
         text="Открываю личный кабинет.",
         bot_token=binding.bot_token,
         reply_markup=main_menu_reply_keyboard(),
+    )
+
+
+def _command_as_callback(msg: TelegramMessage, data: str) -> TelegramCallbackQuery:
+    """Команда меню («/site», «/course») как нажатие кнопки: те же обработчики, без ответа на нажатие (id пустой)."""
+    return TelegramCallbackQuery(
+        chat_id=msg.chat_id, user_id=msg.user_id, callback_query_id="", data=data, chat_type=msg.chat_type, raw=msg.raw,
     )
 
 
@@ -316,6 +332,8 @@ async def handle_referral_start_token(
     }
     await deliver_text(msg.chat_id, messages[result.status])
     if result.status in {"attributed", "already_registered"}:
+        # Три меню: карточка CRM этого человека могла быть переведена на «Партнёр», пока его не было в боте.
+        await check_waiting_cards(tenant.tenant_id, "telegram", msg.user_id)
         # Owner's rule (15.09): no extra step — the cabinet opens right away.
         await show_referral_dashboard(
             tenant,
@@ -590,6 +608,10 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
+        # Кнопки трёх меню (stg:…): «Что дальше», «Пригласить», «Ещё», «← В кабинет», «Да» / «Нет» ведущего. Выключено — None.
+        stage_callback_result = await try_handle_stage_callback(tenant, callback, trace_id=trace_id)
+        if stage_callback_result is not None:
+            return stage_callback_result
         # Кнопки гостя встречи: «Записаться», «Перенести», «Отменить запись», «Живая встреча» (список встреч),
         # «Показ системы», «Задать вопрос» (воронка, срез 4, 30.10.2026). До «Личного разбора» ниже.
         guest_callback_result = await try_handle_guest_callback(tenant, callback, trace_id=trace_id)
@@ -728,6 +750,24 @@ async def _process_core_telegram_update_scoped(
     if support_result is not None:
         return support_result
 
+    # Меню партнёра WHIEDA: «/site» — заказ сайта, «/course» — курс (те же сценарии, что кнопки «Заказать сайт» и «Курс»).
+    command = stage_command(msg.text) if msg.chat_type == "private" and stages_enabled(tenant.tenant_id) else None
+    if command == "site":
+        if manual_operations:
+            await _manual_operation_notice(msg.chat_id)
+            return {"ok": True, "route": "manual_partner_operation", "trace_id": trace_id}
+        site_command_result = await try_handle_site_request_callback(
+            tenant, _command_as_callback(msg, "site:create"), trace_id=trace_id
+        )
+        if site_command_result is not None:
+            return site_command_result
+    elif command == "course":
+        course_command_result = await try_handle_academy_callback(
+            tenant, _command_as_callback(msg, "acad:home"), trace_id=trace_id
+        )
+        if course_command_result is not None:
+            return course_command_result
+
     referral_result = await try_handle_referral_message(tenant, msg, trace_id=trace_id)
     if referral_result is not None:
         return referral_result
@@ -765,6 +805,11 @@ async def _process_core_telegram_update_scoped(
     )
     if referral_admin_result is not None:
         return referral_admin_result
+
+    # Владелец: «партнёр @ник» — человек становится партнёром WHIEDA, «партнёр снять @ник» — снова гость (три меню).
+    stage_word_result = await try_handle_owner_partner_word(tenant, msg, trace_id=trace_id)
+    if stage_word_result is not None:
+        return stage_word_result
 
     # Владелец: «встречи», «встреча 05.11 19:30 …», «встречи создать 4», «ссылка встречи 12 …»,
     # «отменить встречу 12», «встреча прошла 12» (V43, 30.10.2026). У остальных текст идёт дальше.
@@ -858,15 +903,24 @@ async def _process_core_telegram_update_scoped(
     # «WWC Bot» (button or text) opens the advisor menu; bare /start and a
     # greeting open the cabinet on every profile — the old seven-button panel
     # lives behind the «WWC Bot» button (owner, 19.09.2026).
+    stages_on = stages_enabled(tenant.tenant_id)
+    if stages_on:
+        # Три меню: гость — любой со статусом «гость» (по метке src_, по голому /start, по ссылке): его меню на /start,
+        # «меню», приветствие и «WWC Bot» (советчика по товарам у гостя нет). Партнёрам обработчик вернёт None.
+        guest_menu_result = await try_handle_guest_menu_text(tenant, msg, trace_id=trace_id)
+        if guest_menu_result is not None:
+            return guest_menu_result
     if is_wwc_bot_request(msg.text):
         return await handle_newcomer_panel(tenant, msg.chat_id, trace_id=trace_id)
-    # Гость встречи (есть заявка на встречу или запись, не партнёр): голый /start, «меню» и приветствие открывают
-    # меню гостя вместо кабинета партнёра. Партнёрам и всем остальным — без изменений (обработчик вернёт None).
-    guest_menu_result = await try_handle_guest_menu_text(tenant, msg, trace_id=trace_id)
-    if guest_menu_result is not None:
-        return guest_menu_result
+    if not stages_on:
+        # Гость встречи (есть заявка на встречу или запись, не партнёр): голый /start, «меню» и приветствие открывают
+        # меню гостя вместо кабинета партнёра. Партнёрам и всем остальным — без изменений (обработчик вернёт None).
+        guest_menu_result = await try_handle_guest_menu_text(tenant, msg, trace_id=trace_id)
+        if guest_menu_result is not None:
+            return guest_menu_result
     if is_newcomer_panel_request(msg.text) or detect_service_intent(msg.text) == "greeting":
-        await _remove_legacy_reply_keyboard(msg.chat_id)
+        if not stages_on:
+            await _remove_legacy_reply_keyboard(msg.chat_id)
         return await show_referral_dashboard(
             tenant,
             telegram_user_id=msg.user_id,
@@ -874,6 +928,11 @@ async def _process_core_telegram_update_scoped(
             raw_update=msg.raw,
             trace_id=trace_id,
         )
+
+    # Три меню: слова каталога («товары», «/products», «/match» …) гость не открывает — у него нет советчика по товарам.
+    guest_catalog_result = await try_handle_guest_text(tenant, msg, trace_id=trace_id, only_catalog_words=True)
+    if guest_catalog_result is not None:
+        return guest_catalog_result
 
     navigation_result = await handle_navigation_text(tenant, msg, trace_id)
     if navigation_result:
@@ -896,5 +955,10 @@ async def _process_core_telegram_update_scoped(
     wwc_service_result = await try_handle_wwc_service_text(tenant, msg, trace_id=trace_id)
     if wwc_service_result is not None:
         return wwc_service_result
+
+    # Три меню: свободный текст гостя — «Нажмите «Задать вопрос»», а не ответ советчика по товарам.
+    guest_text_result = await try_handle_guest_text(tenant, msg, trace_id=trace_id)
+    if guest_text_result is not None:
+        return guest_text_result
 
     return await handle_advisor_query(tenant, msg, trace_id)

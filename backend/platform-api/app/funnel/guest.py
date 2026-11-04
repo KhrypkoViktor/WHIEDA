@@ -12,6 +12,10 @@
   * ``owner_card`` — партнёр владельца заявки для строки «Вы пришли от …».
 
 Telegram и Max подключают это в ``app/funnel/guest_bot.py``. Тексты — ``app/funnel/texts.py``.
+
+Бот под три типа людей (PLATFORM_BOT_STAGES, V49, 04.11.2026): гость — любой, у кого статус ``guest`` (``app/bot_stages``):
+пришёл по метке ``src_``, по голому «/start», по ссылке партнёра или заявки. Заявка на встречу и запись больше не нужны;
+экран тот же, подписи кнопок и первая строка — из раздела «три типа людей» в ``texts.py``.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from app.bot_stages.service import STAGE_GUEST, inviter_actor_id, resolve_stage, stages_enabled
 from app.db import fetch_one
 from app.funnel import texts
 from app.leads.meeting_leads import MeetingLead, load_lead_by_channel_user
@@ -45,6 +50,11 @@ LIST_MEETINGS = 3
 
 def is_guest_menu_word(text: str | None) -> bool:
     return bool(GUEST_MENU_WORD_RE.match(str(text or "")))
+
+
+def _stages() -> bool:
+    """Три меню включены: подписи кнопок и первая строка гостя — новые (меню гостя бывает только в боте WWC)."""
+    return stages_enabled()
 
 
 @dataclass(frozen=True)
@@ -92,7 +102,10 @@ def register_rows(meetings: list[dict[str, Any]], registered_ids: frozenset[int]
     rows: Rows = []
     for meeting in meetings:
         meeting_id = int(meeting["meeting_id"])
-        label = texts.GUEST_REGISTERED_BUTTON if meeting_id in registered_ids else texts.GUEST_REGISTER_BUTTON
+        if _stages():
+            label = texts.STAGE_REGISTERED_BUTTON if meeting_id in registered_ids else texts.STAGE_REGISTER_BUTTON
+        else:
+            label = texts.GUEST_REGISTERED_BUTTON if meeting_id in registered_ids else texts.GUEST_REGISTER_BUTTON
         rows.append([(label.format(when=short_when(meeting["starts_at"], now=now)), f"{texts.REGISTER_CALLBACK_PREFIX}{meeting_id}")])
     return rows
 
@@ -109,6 +122,12 @@ def control_rows(registration_id: int) -> Rows:
 
 def menu_rows() -> Rows:
     """«Показ системы», «Личный разбор», «Задать вопрос» — каждая в своём ряду."""
+    if _stages():
+        return [
+            [(texts.STAGE_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
+            [(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
+            [(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)],
+        ]
     return [
         [(texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
         [(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
@@ -120,6 +139,11 @@ def menu_rows() -> Rows:
 
 
 def guest_header(inviter_name: str | None) -> str:
+    if _stages():
+        # «Вы пришли от <партнёр>.» — если партнёр известен; дальше — что такое WWC и «С чего начать?».
+        if not inviter_name:
+            return texts.STAGE_GUEST_INTRO
+        return "\n".join((texts.GUEST_FROM_PARTNER.format(name=inviter_name), texts.STAGE_GUEST_INTRO))
     return texts.GUEST_FROM_PARTNER.format(name=inviter_name) if inviter_name else texts.GUEST_IN_WWC
 
 
@@ -204,10 +228,13 @@ class GuestContext:
     channel: str
     channel_user_id: int
     lead: MeetingLead | None = None
+    # Партнёр, чья ссылка закрепила человека в боте (src_<метка>_<код>, ref_<код>), когда заявки на встречу нет.
+    attributed_owner_id: str | None = None
 
     @property
     def owner_actor_id(self) -> str | None:
-        return self.lead.assigned_owner_id if self.lead else None
+        owner = self.lead.assigned_owner_id if self.lead else None
+        return owner or self.attributed_owner_id
 
 
 async def is_partner(conn: Any, tenant_id: str, channel: str, channel_user_id: int) -> bool:
@@ -219,12 +246,25 @@ async def is_partner(conn: Any, tenant_id: str, channel: str, channel_user_id: i
     return row is not None
 
 
-async def resolve_guest(conn: Any, tenant_id: str, channel: str, channel_user_id: int) -> GuestContext | None:
+async def resolve_guest(
+    conn: Any, tenant_id: str, channel: str, channel_user_id: int, *, stage: str | None = None
+) -> GuestContext | None:
     """Гость или None. Не гость: нет ни заявки на встречу, открытой этим человеком, ни записи на встречу — либо
     он партнёр (есть включённый ``referral_profiles``): партнёру и всем остальным бот отвечает как прежде.
 
+    Три меню включены (PLATFORM_BOT_STAGES): гость — любой со статусом ``guest`` (``app/bot_stages``), заявка и запись
+    не нужны; заявка, если она есть, даёт имя партнёра и телефон, иначе партнёр — тот, чья ссылка закрепила человека.
+    ``stage`` — статус, уже прочитанный вызывающим (чтобы не читать его второй раз).
+
     ``conn`` — открытое ``tenant_connection`` того же арендатора. Сбой запроса — исключение: вызывающий
     не должен ломать из-за него обычный ответ бота."""
+    if stages_enabled(tenant_id):
+        if (stage or await resolve_stage(conn, tenant_id, channel, channel_user_id)) != STAGE_GUEST:
+            return None
+        lead = await load_lead_by_channel_user(conn, tenant_id, channel, channel_user_id)
+        owner = lead.assigned_owner_id if lead else None
+        attributed = None if owner else await inviter_actor_id(conn, tenant_id, channel, channel_user_id)
+        return GuestContext(channel=channel, channel_user_id=int(channel_user_id), lead=lead, attributed_owner_id=attributed)
     lead = await load_lead_by_channel_user(conn, tenant_id, channel, channel_user_id)
     if lead is None and not await registrations.person_has_registration(
         conn, tenant_id, channel=channel, channel_user_id=channel_user_id
