@@ -43,8 +43,14 @@ from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
 from app.tenancy import TenantContext
+from app.ttl_cache import TtlCache
 
 logger = logging.getLogger("whieda.bot_stages")
+
+# Какой статус синей кнопки «Меню» этого чата процесс уже поставил: кабинет партнёра открывают чаще всего, и каждый раз
+# ходить в Telegram за тем же списком команд незачем. Смена статуса — другой ключ значения, и команды ставятся заново.
+_COMMANDS_TTL_SEC = 6 * 3600
+_synced_commands: TtlCache[str] = TtlCache(max_entries=50_000)
 
 _COMMAND_RE = re.compile(r"^/(site|course)(?:@\w+)?\s*$", re.IGNORECASE)
 _CONFIRM_RE = re.compile(r"^stg:(y|n):([0-9a-f]{32})$")
@@ -76,6 +82,9 @@ async def sync_chat_commands(chat_id: int | str, stage: str) -> bool:
     if not stages_enabled(current_bot_binding().tenant.tenant_id):
         return False
     binding = current_bot_binding()
+    cache_key = (binding.binding_id, int(chat_id))
+    if _synced_commands.get(cache_key) == stage:
+        return True
     site_support = bool(binding.tenant.entitlements.get("site_support", False))
     commands = menus.commands_for_stage(stage, include_wish=site_support, include_max=site_support)
     try:
@@ -87,10 +96,18 @@ async def sync_chat_commands(chat_id: int | str, stage: str) -> bool:
     except Exception as exc:  # noqa: BLE001 — меню команд не должно ломать ответ
         logger.warning("bot_stage_commands_failed", extra={"stage": stage, "error_class": type(exc).__name__})
         return False
+    if result.get("ok"):
+        _synced_commands.set(cache_key, stage, _COMMANDS_TTL_SEC)
     return bool(result.get("ok"))
 
 
 # ---- пример сайта партнёра -------------------------------------------------------------------------
+
+
+def _as_url(value: str) -> str:
+    """Адрес без схемы («olga.wwc.best») — https: кнопка-ссылка без неё стала бы кнопкой с данными."""
+    value = str(value or "").strip()
+    return value if value.lower().startswith(("http://", "https://")) else f"https://{value}"
 
 
 async def example_site_url(tenant_id: str, channel: str, user_id: int) -> str | None:
@@ -100,11 +117,12 @@ async def example_site_url(tenant_id: str, channel: str, user_id: int) -> str | 
         async with tenant_connection(tenant_id) as conn:
             inviter = await inviter_actor_id(conn, tenant_id, channel, user_id)
         card = await inviter_card(tenant_id, inviter) if inviter else None
-        if card and card.site_url:
-            return card.site_url
+        if card and card.site_url.strip():
+            return _as_url(card.site_url)
     except Exception as exc:  # noqa: BLE001 — кнопка важнее ссылки: падаем на демо-сайт
         logger.warning("bot_stage_inviter_site_failed", extra={"channel": channel, **safe_error(exc)})
-    return get_settings().platform_demo_partner_url.strip() or None
+    demo = get_settings().platform_demo_partner_url.strip()
+    return _as_url(demo) if demo else None
 
 
 # ---- показ меню ------------------------------------------------------------------------------------

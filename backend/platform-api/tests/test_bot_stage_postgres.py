@@ -113,8 +113,6 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
             db.grant_api_role(conn)
 
         async def proof() -> None:
-            from unittest.mock import AsyncMock, patch
-
             from app.bot_stages import service
             from app.db import fetch_all, tenant_connection
 

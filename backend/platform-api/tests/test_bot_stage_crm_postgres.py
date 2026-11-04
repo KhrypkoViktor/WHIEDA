@@ -14,7 +14,6 @@ Telegram и Max не вызываются: отправка — мок. Пере
 
 from __future__ import annotations
 
-import json
 import os
 from unittest.mock import AsyncMock, patch
 
@@ -89,7 +88,7 @@ def test_crm_card_to_partner_asks_the_host_and_yes_promotes_the_person(monkeypat
             from app.bot_stages import telegram as stages_tg
             from app.crm import service as crm
             from app.crm import stage_link
-            from app.db import fetch_all, fetch_one, tenant_connection
+            from app.db import fetch_all, tenant_connection
             from app.telegram.bindings import BotBindingContext, binding_context_scope
             from app.telegram.update_parser import TelegramCallbackQuery
             from app.tenancy import TenantContext

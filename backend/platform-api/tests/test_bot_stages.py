@@ -1022,3 +1022,38 @@ def test_rows_become_telegram_and_max_keyboards_with_links_and_callbacks():
     assert telegram[0] == [{"text": "1️⃣ Что дальше", "callback_data": "stg:next"}]
     max_rows = rows_to_max(reply.rows)
     assert max_rows[1][0]["type"] == "link" and max_rows[0][0]["type"] == "callback"
+
+
+async def test_the_commands_of_a_chat_are_set_once_per_stage_not_on_every_cabinet_open(world):
+    assert await stages_tg.sync_chat_commands(4242, "partner_wwc") is True
+    assert await stages_tg.sync_chat_commands(4242, "partner_wwc") is True  # кабинет открыли снова — в Telegram не ходим
+    assert [method for method, _ in world.calls] == ["setMyCommands"]
+    assert await stages_tg.sync_chat_commands(4242, "guest") is True        # статус сменился — список ставится заново
+    assert await stages_tg.sync_chat_commands(4343, "guest") is True        # другой чат — свой список
+    assert [payload["scope"]["chat_id"] for _, payload in world.calls] == [4242, 4242, 4343]
+
+
+async def test_a_failed_set_my_commands_is_not_remembered(world, monkeypatch):
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", AsyncMock(return_value={"ok": False}))
+    assert await stages_tg.sync_chat_commands(4242, "guest") is False
+    ok = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", ok)
+    assert await stages_tg.sync_chat_commands(4242, "guest") is True        # повтор пошёл в Telegram: неудача не запомнена
+    ok.assert_awaited_once()
+
+
+@pytest.mark.parametrize(("inviter_site", "demo", "expected"), [
+    ("https://olga.wwc.best", "", "https://olga.wwc.best"),       # сайт пригласившего
+    ("olga.wwc.best", "", "https://olga.wwc.best"),               # без схемы — https, иначе кнопка станет кнопкой с данными
+    ("", "https://demo.wwc.best", "https://demo.wwc.best"),      # у пригласившего сайта нет — демо
+    ("", "demo.wwc.best", "https://demo.wwc.best"),
+    ("", "", None),                                               # нет и демо — кнопки «Пример сайта партнёра» не будет
+])
+async def test_the_example_site_is_the_inviters_then_the_demo_then_nothing(monkeypatch, inviter_site, demo, expected):
+    monkeypatch.setenv("PLATFORM_DEMO_PARTNER_URL", demo)
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.bot_stages.telegram.tenant_connection", fake_connection)
+    monkeypatch.setattr("app.bot_stages.telegram.inviter_actor_id", AsyncMock(return_value="olga-actor" if inviter_site else None))
+    monkeypatch.setattr("app.bot_stages.telegram.inviter_card", AsyncMock(return_value=SimpleNamespace(site_url=inviter_site)))
+    assert await stages_tg.example_site_url("whieda", "telegram", USER) == expected
+    get_settings.cache_clear()
