@@ -2,22 +2,23 @@
 
 Products (owner, 14–15.09.2026; prices from 02.10.2026, V18):
   PRO (сайт)            platform_subscription   3/6/12 мес   30/54/96 WWC$
-  CLUB                  club_subscription       1 / 3 мес    40 / 120 WWC$ (1 мес — пробный)
+  CLUB                  club_subscription       1 / 2 / 3 мес  40 / 80 / 120 WWC$ (1 мес — пробный, 2 мес — акция ноября)
   настройка сайта       site_setup              разово       30 WWC$
-  пакет PRO + клуб      bundle_pro_club         3 мес        150 WWC$: новому партнёру PRO 30 + клуб 100
-                                                             + настройка 20 (акция октября), продление — PRO 30 + клуб 120
+  пакет PRO + клуб      bundle_pro_club         3 мес        150 WWC$: продление — PRO 30 + клуб 120
+                                                             Новому партнёру по акции ноября: PRO 30 на 3 мес + клуб 60
+                                                             на 2 мес + настройка 20 = 110 WWC$ (V48)
 
 One received transfer may pay several lines. The owner writes:
 
     оплата ref:olga-samtsova
     PRO 30 WWC$ 3
-    клуб 100 WWC$ 3 акция
+    клуб 60 WWC$ 2 акция
     настройка 20 WWC$ акция
-    получено 150 WWC$
+    получено 110 WWC$
 
 or the old one-liner ``оплата ref:code 30 WWC$ 3`` (= one PRO line), or a
 bundle line ``пакет 150 WWC$`` which expands into PRO 30 + клуб 120 (the bundle
-renewal; a new partner's October offer is written as the three lines above).
+renewal; a new partner's November offer is written as the three lines above).
 A line whose amount differs from the price (personal price included) must
 say «акция», and «получено» must equal the sum of lines — otherwise nothing
 is recorded and the bot explains what does not add up.
@@ -58,7 +59,7 @@ _CURRENCY = r"(RUB|₽|WUSD|WWC\$|W\$)"
 _HEAD_RE = re.compile(rf"^(?:оплата|/pay)\s+{_IDENTIFIER}(?:\s+{_AMOUNT}\s+{_CURRENCY}(?:\s+(3|6|12))?)?\s*$", re.IGNORECASE)
 _LINE_RE = re.compile(
     rf"^(?P<product>pro|платформа|сайт|клуб|club|настройка(?:\s+сайта)?|setup|пакет|bundle|курс|академия|course)\s+"
-    rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>12|1|3|6))?(?:\s+(?P<note>.+))?$",
+    rf"{_AMOUNT}\s+{_CURRENCY}(?:\s+(?P<months>12|1|2|3|6))?(?:\s+(?P<note>.+))?$",
     re.IGNORECASE,
 )
 _RECEIVED_RE = re.compile(rf"^получено\s+{_AMOUNT}\s+{_CURRENCY}\s*$", re.IGNORECASE)
@@ -76,7 +77,7 @@ USAGE = (
     "клуб 120 WWC$ 3\n"
     "настройка 30 WWC$\n"
     "получено 180 WWC$\n"
-    "Новый партнёр по акции октября: PRO 30 WWC$ 3 / клуб 100 WWC$ 3 акция / настройка 20 WWC$ акция.\n"
+    "Новый партнёр по акции ноября: PRO 30 WWC$ 3 / клуб 60 WWC$ 2 акция / настройка 20 WWC$ акция.\n"
     "Продление пакета PRO+клуб: строка «пакет 150 WWC$». Пробный месяц клуба: «клуб 40 WWC$ 1».\n"
     "Цена не по тарифу — добавьте слово «акция».\n"
     "Часть суммы бонусами партнёра: строка «бонусами 5 WWC$» — тогда «получено» меньше строк ровно на неё."

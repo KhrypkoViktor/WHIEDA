@@ -69,7 +69,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 await set_site_request_plan("whieda", "proof-new", "gold")
             req = await set_site_request_plan("whieda", "proof-new", "bundle")
             assert req["status"] == "awaiting_payment" and req["plan_code"] == "bundle"
-            assert req["currency"] == "RUB" and req["total_amount_minor"] == 1_500_000 and req["subscription_amount_minor"] == 300_000
+            assert req["currency"] == "RUB" and req["total_amount_minor"] == 1_100_000 and req["subscription_amount_minor"] == 300_000
             req = await submit_site_payment_proof("whieda", "proof-new", chat_id=5002, message_id=77, file_id="receipt")
             assert req["status"] == "pending_confirmation"
 
@@ -78,15 +78,17 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             assert done["payment"]["club_paid_until"] is not None
             ledger = await rows("select product_code, amount_minor, access_months, promo_note from partner_payment_ledger where ref_code = 'anastasy' order by product_code")
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [
-                ("club_subscription", 1_000_000, 3), ("platform_subscription", 300_000, 3), ("site_setup", 200_000, 0),
+                ("club_subscription", 600_000, 2), ("platform_subscription", 300_000, 3), ("site_setup", 200_000, 0),
             ]
             assert ledger[0]["promo_note"]
             header = await rows("select received_amount_minor, currency from partner_payments where ref_code = 'anastasy'")
-            assert header == [{"received_amount_minor": 1_500_000, "currency": "RUB"}]
+            assert header == [{"received_amount_minor": 1_100_000, "currency": "RUB"}]
             access = await rows("select paid_until from partner_product_access where ref_code = 'anastasy' and product_code = 'club_subscription'")
             assert access and access[0]["paid_until"] is not None
             sub = await rows("select paid_until from partner_subscriptions where ref_code = 'anastasy'")
             assert sub and sub[0]["paid_until"] is not None
+            # Клуб на месяц короче сайта: 2 месяца против 3 (акция ноября, V48).
+            assert sub[0]["paid_until"] > access[0]["paid_until"]
             bonus = await rows("select amount_minor, product_code from partner_bonus_ledger where actor_id = 'proof-inviter'")
             assert [(b["amount_minor"], b["product_code"]) for b in bonus] == [(600, "platform_subscription")]
             # Confirming again changes nothing.

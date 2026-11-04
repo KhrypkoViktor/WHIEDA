@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.site_requests.service import plan_lines, plan_total_minor
 from app.subscriptions.pricing import PaymentLine, describe_lines, parse_payment_command, validate_lines
 from app.subscriptions.service import SubscriptionError
 
@@ -34,6 +35,20 @@ def test_bundle_line_expands_into_pro_and_promo_club():
     ]
     rub = parse_payment_command("оплата ref:zinaida\nпакет 10500 RUB")
     assert [(l.product_code, l.amount_minor) for l in rub.lines] == [("platform_subscription", 300000), ("club_subscription", 750000)]
+
+
+def test_november_offer_has_two_months_of_club():
+    # Акция ноября (V48): в боте комплект — 11 000 ₽, вручную владелец пишет те же три строки.
+    assert plan_total_minor("bundle", "RUB") == 1_100_000
+    assert plan_total_minor("bundle", "WUSD") == 11_000
+    expected = [("platform_subscription", 3000, 3, False), ("club_subscription", 6000, 2, True), ("site_setup", 2000, 0, True)]
+    assert [(l.product_code, l.amount_minor, l.access_months, l.promo) for l in plan_lines("bundle", "WUSD")] == expected
+    parsed = parse_payment_command(
+        "оплата ref:zinaida\nPRO 30 WWC$ 3\nклуб 60 WWC$ 2 акция\nнастройка 20 WWC$ акция\nполучено 110 WWC$"
+    )
+    assert [(l.product_code, l.amount_minor, l.access_months, l.promo) for l in parsed.lines] == expected
+    assert parsed.received_minor == 11_000
+    assert validate_lines(parsed.lines, {"platform_subscription": 3000, "club_subscription": 8000, "site_setup": 3000}, 11_000) == []
 
 
 def test_currencies_and_aliases():

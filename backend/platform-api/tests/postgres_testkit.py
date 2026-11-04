@@ -80,6 +80,7 @@ MIGRATIONS = (
     "platform_bot_media_v45.sql",  # хранилище медиа бота: видео-тур, голосовые, кружки (30.10.2026)
     "platform_meeting_registrations_v46.sql",  # запись на Живую встречу: meeting_registrations (30.10.2026)
     "platform_consult_requests_v47.sql",  # заявки на личный разбор: consult_requests (31.10.2026)
+    "platform_pricing_november_v48.sql",  # акция ноября: клуб на 2 месяца, тариф club_2m (04.11.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 

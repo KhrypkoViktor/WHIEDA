@@ -19,19 +19,19 @@ from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF
 
 # Что оформляют (владелец; цены с 02.10.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
 #   site   — PRO 3 мес + подключение сайта: 30 + 30 WWC$ = 3 000 + 3 000 ₽
-#   bundle — акция октября: PRO 30 + клуб 100 вместо 120 + подключение 20 вместо 30
-#            = 150 WWC$ = 15 000 ₽
+#   bundle — акция ноября (владелец, 04.11.2026; в октябре было 150): PRO 30 на 3 мес +
+#            клуб 60 вместо 80 на 2 мес + подключение 20 вместо 30 = 110 WWC$ = 11 000 ₽
 PLANS: dict[str, dict[str, Any]] = {
     "site": {
         "label": "Сайт на 3 месяца + настройка",
         "lines": (("platform_subscription", 3_000, 3, False, ""), ("site_setup", 3_000, 0, False, "")),
     },
     "bundle": {
-        "label": "Платформа + Клуб на 3 месяца",
+        "label": "Платформа + Клуб: сайт на 3 месяца, клуб на 2",
         "lines": (
             ("platform_subscription", 3_000, 3, False, ""),
-            ("club_subscription", 10_000, 3, True, "пакет PRO + клуб (акция октября)"),
-            ("site_setup", 2_000, 0, True, "пакет PRO + клуб (акция октября)"),
+            ("club_subscription", 6_000, 2, True, "пакет PRO + клуб (акция ноября)"),
+            ("site_setup", 2_000, 0, True, "пакет PRO + клуб (акция ноября)"),
         ),
     },
 }
