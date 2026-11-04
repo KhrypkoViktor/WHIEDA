@@ -274,3 +274,23 @@ async def find_telegram_person(tenant_id: str, who: str) -> list[dict[str, Any]]
         else:
             rows = await fetch_all(conn, _HANDLE_SQL, {"tenant": tenant_id, "handle": value.lstrip("@").lower()})
     return [dict(row) for row in rows if row.get("telegram_user_id") is not None]
+
+
+# ---- собственный сайт партнёра: для меню партнёра WWC в Max ---------------------------------------------
+
+_OWN_SITE_SQL = (
+    _PERSON_CTE
+    + """
+select coalesce(rp.public_profile->>'public_site_url', '') as site_url
+from referral_profiles rp
+where rp.tenant_id = %(tenant)s and rp.enabled and rp.owner_id in (select actor_id from person)
+order by (rp.public_profile->>'public_site_url') is null, rp.ref_code
+limit 1
+"""
+)
+
+
+async def own_site_url(conn: Any, tenant_id: str, channel: str, user_id: int) -> str | None:
+    """Адрес сайта самого партнёра (включённый профиль с ``public_site_url``); нет сайта — None."""
+    row = await fetch_one(conn, _OWN_SITE_SQL, _params(tenant_id, channel, user_id))
+    return (str(row["site_url"]) if row else "") or None

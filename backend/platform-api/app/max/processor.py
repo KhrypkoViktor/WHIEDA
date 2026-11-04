@@ -15,10 +15,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.advisor.service import handle_structured_query
+from app.bot_stages.max import max_stage_callback, show_stage_menu_max, try_handle_guest_text_max
+from app.bot_stages.service import stages_enabled
+from app.funnel import texts as funnel_texts
 from app.funnel.consult import CONSULT_MAX_PREFIXES
 from app.funnel.guest import is_guest_menu_word
 from app.funnel.guest_bot import (
     GUEST_MAX_PREFIXES,
+    check_waiting_cards,
     handle_lead_start_max,
     max_guest_callback,
     try_handle_guest_menu_max,
@@ -61,6 +65,9 @@ def _greeting(status: str, inviter: Any) -> str:
         "invalid": ["Ссылка-приглашение недействительна или больше не активна."],
         "self_referral": ["Свою ссылку нельзя использовать для себя."],
     }[status]
+    if stages_enabled("whieda"):
+        # Три меню: следом идёт меню по статусу человека — совет про товары и «Мои заявки» в приветствии не нужны.
+        return "\n".join(line for line in lines if line)
     lines.append("")
     lines.append("Напишите вопрос по товару — отвечу по официальным документам WHIEDA.")
     lines.append(MY_LEADS_HINT)
@@ -94,7 +101,9 @@ async def _handle_max_source_start(tenant: TenantContext, event: MaxEvent, sourc
         tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id,
         source=source, accept_partner=accept_partner, ensure_actor=ensure_actor,
     )
-    await _reply(event, WELCOME_PLAIN)
+    # Три меню: человек с меткой — гость (его меню), а не общее приветствие; сбой меню — приветствие, как прежде.
+    if await show_stage_menu_max(tenant, event, trace_id) is None:
+        await _reply(event, WELCOME_PLAIN)
     logger.info(
         "max_start_source",
         extra={"trace_id": trace_id, "tag": source.tag, "first_seen": result.first_seen, "recorded": result.recorded},
@@ -126,6 +135,10 @@ async def handle_max_start(tenant: TenantContext, event: MaxEvent, trace_id: str
             tenant.tenant_id, channel=CHANNEL, channel_user_id=event.user_id, channel_chat_id=event.chat_id,
             username=event.username, display_name=event.display_name,
         )
+        # Три меню: гость, партнёр WHIEDA и партнёр WWC видят каждый своё меню вместо общего приветствия.
+        staged_menu = await show_stage_menu_max(tenant, event, trace_id)
+        if staged_menu is not None:
+            return staged_menu
         # Гость встречи видит своё меню вместо общего приветствия; остальные — как прежде.
         guest_menu = await try_handle_guest_menu_max(tenant, event, trace_id)
         if guest_menu is not None:
@@ -138,6 +151,11 @@ async def handle_max_start(tenant: TenantContext, event: MaxEvent, trace_id: str
     )
     inviter = await inviter_card(tenant.tenant_id, result.inviter_actor_id) if result.inviter_actor_id else None
     await _reply(event, _greeting(result.status, inviter))
+    if stages_enabled(tenant.tenant_id):
+        # Три меню: карточка CRM этого человека могла быть переведена на «Партнёр», пока его не было в боте; следом — его меню.
+        if result.status in ("attributed", "already_registered"):
+            await check_waiting_cards(tenant.tenant_id, CHANNEL, event.user_id)
+        await show_stage_menu_max(tenant, event, trace_id)
     logger.info("max_start", extra={"trace_id": trace_id, "status": result.status, "user_ref": str(event.user_id)[-4:]})
     return {"ok": result.status == "attributed", "route": "max_start", "status": result.status, "trace_id": trace_id}
 
@@ -156,6 +174,11 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     wish = await _try_max_wish(tenant, event, trace_id)
     if wish is not None:
         return wish
+    # Три меню: «меню» — меню по статусу человека (гость, партнёр WHIEDA, партнёр WWC).
+    if is_guest_menu_word(event.text) and stages_enabled(tenant.tenant_id):
+        staged_menu = await show_stage_menu_max(tenant, event, trace_id)
+        if staged_menu is not None:
+            return staged_menu
     # «меню» у гостя встречи — его меню (воронка, срез 4, 30.10.2026); у остальных слово идёт дальше, как раньше.
     if is_guest_menu_word(event.text):
         guest_menu = await try_handle_guest_menu_max(tenant, event, trace_id)
@@ -164,6 +187,10 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     # Слово «система» → видео-тур с кнопками (воронка, 30.10.2026): после служебных слов, до советника.
     if is_system_word(event.text):
         return await handle_system_word_max(tenant, event, trace_id)
+    # Три меню: свободный текст гостя — «Нажмите «Задать вопрос»», а не ответ советчика по товарам.
+    guest_text = await try_handle_guest_text_max(tenant, event, trace_id)
+    if guest_text is not None:
+        return guest_text
     body = {
         "session": f"max:{event.chat_id or event.user_id}",
         "question": event.text,
@@ -368,3 +395,5 @@ for _consult_prefix in CONSULT_MAX_PREFIXES:
 # остаётся за max_funnel_callback.
 for _guest_prefix in GUEST_MAX_PREFIXES:
     register_max_callback(_guest_prefix, max_guest_callback)
+# Кнопки трёх меню (stg:next — «Что дальше» партнёра WHIEDA, stg:menu — «← В кабинет»): меню по статусу человека.
+register_max_callback(funnel_texts.STAGE_CALLBACK_PREFIX, max_stage_callback)
