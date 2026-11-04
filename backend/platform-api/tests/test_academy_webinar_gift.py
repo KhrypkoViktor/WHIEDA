@@ -114,6 +114,33 @@ async def test_code_word_in_window_opens_the_gift_with_a_button(whieda_tenant, a
 
 
 @pytest.mark.asyncio
+async def test_code_word_works_on_the_anatomy_webinar_day(whieda_tenant, almira_binding):  # noqa: F811
+    """Слово искало эфир только среди композиции: 4.11 на анатомии бот отвечал «срок закончился»."""
+    support = {
+        **ALMIRA_GIFT.support,
+        "webinars": {
+            **WEBINARS,
+            "ig_an28": {"at": "2026-11-04T19:30:00+03:00", "date": "4 ноября", "url": "", "series": "anatomy"},
+        },
+    }
+    during = datetime(2026, 11, 4, 20, 0, tzinfo=MINSK)
+    grant = AsyncMock(return_value=Granted(title="Прямое и кривое", expires_at=at(31, 18, 0), already=False))
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=replace(ALMIRA_GIFT, support=support))), patch(
+        "app.telegram.showcase_bot.send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 1})
+    ), patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()), patch(
+        "app.telegram.showcase_bot.gift_webinar", lambda webinars, now: gift_webinar(webinars, during)
+    ), patch("app.telegram.showcase_bot.preview_admin_ids", lambda: frozenset()), patch(
+        "app.telegram.showcase_bot.grant_gift", grant
+    ), patch(
+        "app.telegram.showcase_bot.with_site_login", AsyncMock(return_value="https://academy.almira.by/academy/?course=igra-formy-podarok")
+    ):
+        result = await process_core_telegram_update(whieda_tenant, _text("мастерство", 4003), "t", binding=almira_binding)
+    assert (result["route"], result["webinar"]) == ("showcase_gift", "ig_an28")
+    # Метка code:ig_an28 в доступе — по ней человек считается пришедшим и получает предложение.
+    assert grant.await_args.args[2:4] == (4003, "ig_an28")
+
+
+@pytest.mark.asyncio
 async def test_code_word_out_of_window_explains_and_grants_nothing(whieda_tenant, almira_binding):  # noqa: F811
     sent = AsyncMock(return_value={"ok": True, "message_id": 1})
     grant = AsyncMock()

@@ -666,7 +666,7 @@ async def _try_code_word(tenant: TenantContext, msg: Any, showcase: Showcase, *,
     if gift is None or not msg.text or not is_code_word(msg.text, gift):
         return None
     now = datetime.now(timezone.utc)
-    webinars = series_webinars(webinars_config(showcase.support), "")
+    webinars = webinars_config(showcase.support)  # любая серия: слово одно и на композиции, и на анатомии (Саша, 03.11.2026)
     webinar = gift_webinar(webinars, now)
     if webinar is None and int(msg.user_id) in preview_admin_ids() and webinars:
         webinar = min(webinars, key=lambda w: w.at)  # проверка владельцем — в любой день
