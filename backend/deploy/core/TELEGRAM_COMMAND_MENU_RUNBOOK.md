@@ -40,3 +40,22 @@ Canary in a private chat:
 5. Confirm that NSP has no calculator command.
 
 Do not change a production bot while validating staging.
+
+## Three menus by the person's stage (04.11.2026, migration V49)
+
+With `PLATFORM_BOT_STAGES=true` (the default) the WWC bot shows one of three screens by the person's stage
+(`lead_actors.bot_stage`, code in `app/bot_stages/`): `guest` (any `/start`, `src_<tag>`, partner link),
+`partner_whieda` (the host confirmed him in WWC CRM, or the owner wrote «партнёр @ник») and `partner_wwc` (an enabled
+`referral_profiles`, i.e. a paid site; the owner and the admins too). The profile above then no longer chooses the
+cabinet buttons; it still decides whether site orders and renewals are manual (`minimal`).
+
+- Apply `postgres/sql/platform_bot_stage_v49.sql` to the database first (twice is safe); code that reads the column before
+  the migration falls back to «partner_wwc by the site profile, else guest» and does not fail.
+- The blue «Меню» button is set per chat (`setMyCommands`, `scope=chat`) at the first `/start` and when the stage changes:
+  guest `/start /support`, WHIEDA partner `/start /site /course /support`, WWC partner the six `minimal` commands.
+  `configure_telegram_menu.py` still sets the default list for everyone; leave it as it is.
+- The host question «… стал партнёром WHIEDA — подтвердить?» is a `platform_outbox` row (`bot_stage_confirm_asked`), sent by
+  the production worker (`PLATFORM_SCHEDULED_NOTIFY_BINDINGS`); staging without that variable sends nothing.
+- `PLATFORM_DEMO_PARTNER_URL` — the demo site for «Пример сайта партнёра» when the inviter has no site.
+- Rollback without a deploy: `PLATFORM_BOT_STAGES=false` and restart Core; stages already written stay in the table.
+
