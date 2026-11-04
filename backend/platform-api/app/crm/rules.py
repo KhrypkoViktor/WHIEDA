@@ -200,7 +200,7 @@ def split_phone(value: Any) -> tuple[str | None, str | None]:
 
 # ---- Telegram address of a card (04.11.2026, договор ядро ↔ сайт) --------------------------
 
-TELEGRAM_NAME_RE = re.compile(r"[A-Za-z0-9_]{4,32}")
+TELEGRAM_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{3,31}")
 # The same shape as the CHECK on crm_contacts.telegram_username (V50).
 # Service paths of t.me that look like a name. Telegram serves them as pages, so none of them
 # can be a user name, and «t.me/share» is a link to share something, not a person.

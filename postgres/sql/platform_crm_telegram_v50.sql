@@ -26,7 +26,7 @@ alter table crm_contacts add column if not exists telegram_user_id bigint;
 
 alter table crm_contacts drop constraint if exists crm_contacts_telegram_username_check;
 alter table crm_contacts add constraint crm_contacts_telegram_username_check
-  check (telegram_username is null or telegram_username ~ '^[A-Za-z0-9_]{4,32}\Z');
+  check (telegram_username is null or telegram_username ~ '^[A-Za-z][A-Za-z0-9_]{3,31}\Z');
 
 create unique index if not exists crm_contacts_telegram_username_live
   on crm_contacts (tenant_id, account_id, lower(telegram_username))

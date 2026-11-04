@@ -289,7 +289,7 @@ def test_parse_telegram_empty_is_none(raw):
     assert parse_telegram(raw) is None
 
 
-@pytest.mark.parametrize("name", ["abcd", "a" * 32, "ABC_123", "_abc", "1234"])
+@pytest.mark.parametrize("name", ["abcd", "a" * 32, "ABC_123", "a1_b"])
 def test_parse_telegram_name_length_and_alphabet_edges(name):
     assert parse_telegram(name) == name
     assert parse_telegram(f"@{name}") == name
@@ -301,7 +301,7 @@ def test_parse_telegram_name_length_and_alphabet_edges(name):
         "abc", "a" * 33, "@abc", "@", "t.me/", "https://t.me", "tanya k", "@tanya k", "@tanya-k", "@таня_к", "@tanya.k",
         # приглашения, закрытые чаты, каналы, сообщения
         "t.me/joinchat/AAAAAE", "https://t.me/joinchat/AAAAAE", "t.me/+AbCdEfGh12", "https://t.me/+AbCdEfGh12",
-        "t.me/+79001234567", "https://t.me/c/123456/78", "t.me/s/durov", "https://t.me/s/durov/12",
+        "1234", "_abc", "89001234567", "t.me/+79001234567", "https://t.me/c/123456/78", "t.me/s/durov", "https://t.me/s/durov/12",
         "t.me/tanya_k/123", "https://t.me/tanya_k/123?single", "t.me/tanya_k//", "t.me//tanya_k",
         # служебные адреса
         "t.me/addstickers/Pack", "t.me/addstickers", "t.me/share", "t.me/share/url?url=x", "https://t.me/proxy?server=1",

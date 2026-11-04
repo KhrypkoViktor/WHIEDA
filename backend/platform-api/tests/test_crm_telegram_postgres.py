@@ -68,10 +68,10 @@ def test_v50_columns_check_and_unique_indexes(monkeypatch):
                 "select count(*) from crm_contacts where telegram_username is not null or telegram_user_id is not null"
             ).fetchone() == (0,)  # old cards: both empty
 
-            # проверка имени: латиница, цифры, «_», 4–32 знака
-            for good in ("abcd", "Tanya_K", "a" * 32, "_abc", "1234"):
+            # проверка имени: сначала буква, дальше латиница, цифры, «_», всего 4–32 знака
+            for good in ("abcd", "Tanya_K", "a" * 32, "a1_b"):
                 conn.execute("update crm_contacts set telegram_username = %s where contact_id = %s", (good, _card(1)))
-            for bad in ("abc", "a" * 33, "tanya k", "таня_к", "tanya-k", "@tanya", "tanya\n", ""):
+            for bad in ("abc", "a" * 33, "_abc", "1234", "89001234567", "tanya k", "таня_к", "tanya-k", "@tanya", "tanya\n", ""):
                 with pytest.raises(psycopg.errors.CheckViolation):
                     conn.execute("update crm_contacts set telegram_username = %s where contact_id = %s", (bad, _card(1)))
             conn.execute("update crm_contacts set telegram_username = null where contact_id = %s", (_card(1),))
