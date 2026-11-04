@@ -10,6 +10,7 @@ from app.academy.transcode import TranscodeSlot
 from app.db import fetch_all, get_pool, tenant_connection
 from app.jobs.n8n_integration import trigger_lead_delivery
 from app.jobs.outbox import ensure_outbox_table
+from app.jobs.stall_watchdog import beat, start_stall_watchdog
 from app.login_identities.service import login_cleanup_step
 from app.max.outbox import CHANNEL_MAX, payload_channel, send_max_outbox_payload
 from app.settings import get_settings
@@ -103,6 +104,7 @@ async def process_pending_outbox(batch_size: int = 20) -> int:
             )
 
     for row in rows:
+        beat()
         ok = await _dispatch_event(row)
         if ok:
             processed += 1
@@ -581,6 +583,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     outbox_backoff = FailureBackoff()
     while True:
         pause = poll_interval_sec
+        beat()
         try:
             await process_pending_outbox()
         except Exception:
@@ -590,6 +593,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
             pause = max(pause, outbox_backoff.failed())
         else:
             outbox_backoff.succeeded()
+        beat()
         try:
             await transcode.step()
         except Exception:
@@ -603,16 +607,19 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
             plan_no_bot = now - last_no_bot >= NO_BOT_ALERT_INTERVAL_SEC
             if plan_no_bot:
                 last_no_bot = now
+            beat()
             try:
                 await scheduled_notifications_step(plan_crm=plan_crm, plan_no_bot=plan_no_bot)
             except Exception:
                 logger.exception("scheduled_notifications_step_failed")
+            beat()
             try:
                 await academy_notifications_step()
             except Exception:
                 logger.exception("academy_notifications_step_failed")
         if now - last_club >= CLUB_MEETINGS_INTERVAL_SEC:
             last_club = now
+            beat()
             try:
                 from app.telegram.club_meetings import club_meetings_step
 
@@ -621,18 +628,21 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 logger.exception("club_meetings_step_failed")
         if now - last_cleanup >= ACADEMY_CLEANUP_INTERVAL_SEC:
             last_cleanup = now
+            beat()
             try:
                 await cleanup_abandoned_uploads()
             except Exception:
                 logger.exception("academy_cleanup_failed")
         if now - last_login_cleanup >= LOGIN_CLEANUP_INTERVAL_SEC:
             last_login_cleanup = now
+            beat()
             try:
                 await login_cleanup_step()
             except Exception:
                 logger.exception("login_cleanup_failed")
         if now - last_site_nudge >= SITE_NUDGE_INTERVAL_SEC:
             last_site_nudge = now
+            beat()
             try:
                 from app.site_requests.nudge import site_request_nudge_step
 
@@ -649,6 +659,7 @@ async def init_pool_for_worker() -> None:
 
 
 def main() -> None:
+    start_stall_watchdog()
     asyncio.run(worker_loop())
 
 

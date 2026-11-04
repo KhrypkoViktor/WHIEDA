@@ -11,6 +11,17 @@ from app.settings import get_settings
 
 _pool: AsyncConnectionPool | None = None
 
+# Оборванное без FIN соединение считается мёртвым примерно за минуту. Без этого срок задаёт система:
+# 2 ч 11 мин ожидания, и зависший запрос на столько же останавливал воркер (04.11.2026). Долгому
+# запросу это не мешает: на пробы отвечает система сервера, пока запрос выполняется.
+_TCP_LIVENESS = {
+    "keepalives": 1,
+    "keepalives_idle": 30,
+    "keepalives_interval": 10,
+    "keepalives_count": 3,
+    "tcp_user_timeout": 60_000,
+}
+
 
 async def init_pool() -> None:
     global _pool
@@ -20,7 +31,7 @@ async def init_pool() -> None:
             conninfo=settings.database_url,
             min_size=settings.database_pool_min,
             max_size=settings.database_pool_max,
-            kwargs={"row_factory": dict_row, "prepare_threshold": None},
+            kwargs={"row_factory": dict_row, "prepare_threshold": None, **_TCP_LIVENESS},
             open=False,
         )
         await _pool.open()

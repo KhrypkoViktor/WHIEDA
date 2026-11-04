@@ -25,6 +25,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.db import fetch_all, fetch_one, tenant_connection
+from app.jobs.stall_watchdog import beat
 from app.settings import get_settings
 from app.support.service import open_or_reuse_ticket, record_relayed_message
 from app.telegram import support
@@ -151,6 +152,7 @@ async def run_nudge(
             raise RuntimeError("bot_binding_unavailable")
     report: list[dict[str, Any]] = []
     for row in await find_candidates(min_hours=min_hours, max_days=max_days):
+        beat()  # письмо — до пяти вызовов Telegram: при его сбое проход дольше срока сторожа, хотя цикл жив
         if only and row["rid"] != only:
             continue
         first = first_name(row)
