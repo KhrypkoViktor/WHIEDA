@@ -147,6 +147,24 @@ class Settings(BaseSettings):
             "minimal on production while payments and site creation stay manual."
         ),
     )
+    # Бот под три типа людей (04.11.2026, V49): гость / партнёр WHIEDA / партнёр WWC вместо профиля full|minimal.
+    platform_bot_stages: bool = Field(
+        default=True,
+        validation_alias="PLATFORM_BOT_STAGES",
+        description=(
+            "Three menus by the person's stage in the WWC bot (guest, WHIEDA partner, WWC partner) instead of "
+            "PLATFORM_TELEGRAM_UI_PROFILE. False = the old behaviour: one cabinet, the profile decides the buttons, "
+            "only a meeting guest sees the guest menu. Needs migration V49 (lead_actors.bot_stage) on the database."
+        ),
+    )
+    platform_demo_partner_url: str = Field(
+        default="",
+        validation_alias="PLATFORM_DEMO_PARTNER_URL",
+        description=(
+            "Demo partner site for the «Пример сайта партнёра» button of a WHIEDA partner whose inviter has no site. "
+            "Empty = the button is shown only when the inviter has a site."
+        ),
+    )
     tenant_media_base_url: str | None = Field(
         default=None,
         validation_alias="PLATFORM_TENANT_MEDIA_BASE_URL",

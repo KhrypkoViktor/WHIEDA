@@ -129,3 +129,28 @@ def no_real_typing_or_duplicate_ack(request, monkeypatch):
     monkeypatch.setattr("app.telegram.routes.send_chat_action", AsyncMock(return_value={"ok": True}))
     monkeypatch.setattr("app.telegram.routes.answer_callback_query", AsyncMock(return_value={"ok": True}))
     yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _bot_stages_off_for_the_old_suite():
+    """Три меню бота (PLATFORM_BOT_STAGES, V49, 04.11.2026) по умолчанию включены, а все прежние тесты писались
+    под старое поведение — один кабинет, профиль full|minimal. Они идут с выключателем «выкл»: это и есть проверка,
+    что при PLATFORM_BOT_STAGES=false бот отвечает как раньше. Новые тесты включают три меню сами (фикстура ``stages_on``)."""
+    from app.settings import get_settings
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("PLATFORM_BOT_STAGES", "false")
+        get_settings.cache_clear()
+        yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def stages_on(monkeypatch):
+    """Включить три меню бота на время теста (настройки читаются заново и после теста сбрасываются)."""
+    from app.settings import get_settings
+
+    monkeypatch.setenv("PLATFORM_BOT_STAGES", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
