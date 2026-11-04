@@ -317,6 +317,10 @@ async def _guest_ask_header(tenant_id: str, user_id: int) -> str:
     return texts.ASK_HEADER_GUEST if lead is not None or not stages_enabled(tenant_id) else texts.STAGE_ASK_HEADER_GUEST
 
 
+# Шапка обращения гостя для других обработчиков поддержки («Поддержка» гостя ведёт в то же обращение, что «Задать вопрос»).
+guest_ask_header = _guest_ask_header
+
+
 async def try_handle_guest_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str | None = None
 ) -> dict[str, Any] | None:

@@ -1169,3 +1169,95 @@ async def test_the_lead_start_screen_shows_the_academy_button_too(monkeypatch, s
     monkeypatch.setattr("app.funnel.lead_start.academy_button", AsyncMock(return_value=None))
     assert "🎓 Академия" not in labels((await world.run()).reply.rows)
 
+
+
+# ---- «Поддержка» гостя и партнёра WHIEDA: то же обращение, что «Задать вопрос» -------------------------------
+
+from tests.test_telegram_support_site import (  # noqa: E402  (фикстуры и обновления того же теста поддержки)
+    OWNER as SUPPORT_OWNER,
+    SUPPORT_INVITE_TEXT,
+    SUPPORT_SITE_CALLBACK,
+    USER as SUPPORT_USER,
+    _callback as support_callback,
+    _message as support_message,
+    _site_ticket,
+    no_forums,  # noqa: F401
+    quiet_linking,  # noqa: F401
+    two_admins,  # noqa: F401
+)
+
+ASK_TEXT = "Напишите вопрос одним сообщением — передам Виктору"
+
+
+async def open_support(whieda_tenant, binding, update) -> tuple[dict, list[dict], list[dict]]:
+    """Прогнать «Поддержку» через процессор: (итог, сообщения человеку, сообщения владельцу)."""
+    send = AsyncMock(return_value={"ok": True, "message_id": 501})
+    with patch("app.telegram.support.send_telegram_text", send), \
+            patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=_site_ticket())), \
+            patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})), \
+            patch("app.telegram.support.answer_callback_query", AsyncMock()), \
+            patch("app.funnel.guest_bot.load_lead_by_channel_user", AsyncMock(return_value=None)):
+        result = await process_core_telegram_update(whieda_tenant, update, "s1", binding=binding)
+    to_user = [call.kwargs for call in send.await_args_list if call.kwargs["chat_id"] == str(SUPPORT_USER)]
+    to_owner = [call.kwargs for call in send.await_args_list if call.kwargs["chat_id"] == str(SUPPORT_OWNER)]
+    return result, to_user, to_owner
+
+
+SUPPORT_ENTRANCES = {
+    "command": lambda: support_message("/support"),
+    "word": lambda: support_message("Поддержка"),
+    "button": lambda: support_callback(SUPPORT_SITE_CALLBACK),
+}
+
+
+@pytest.mark.parametrize("entrance", sorted(SUPPORT_ENTRANCES))
+@pytest.mark.parametrize(("stage", "header"), [("guest", "Гость бота WWC"), ("partner_whieda", "Партнёр WHIEDA")])
+async def test_support_of_a_guest_and_of_a_whieda_partner_is_the_ask_ticket(
+    world, whieda_tenant, whieda_bot_binding, two_admins, no_forums, quiet_linking, stage, header, entrance
+):
+    world.stage = stage
+    result, to_user, to_owner = await open_support(whieda_tenant, whieda_bot_binding, SUPPORT_ENTRANCES[entrance]())
+    assert result["status"] == "ticket_opened"
+    # человеку — приглашение «Задать вопрос», а не «Напишите, что изменить на вашем сайте…»
+    assert [call["text"] for call in to_user] == [ASK_TEXT]
+    assert "на вашем сайте" not in to_user[0]["text"] and SUPPORT_INVITE_TEXT not in to_user[0]["text"]
+    # владельцу — шапка гостя или партнёра WHIEDA вместо «Сайт: не найден»
+    (card,) = to_owner
+    assert header in card["text"] and "#S-1042" in card["text"]
+    assert "Сайт:" not in card["text"] and "не найден" not in card["text"]
+
+
+@pytest.mark.parametrize("entrance", sorted(SUPPORT_ENTRANCES))
+async def test_support_of_a_wwc_partner_is_unchanged(world, whieda_tenant, whieda_bot_binding, two_admins, no_forums, quiet_linking, entrance):
+    world.stage = "partner_wwc"
+    result, to_user, to_owner = await open_support(whieda_tenant, whieda_bot_binding, SUPPORT_ENTRANCES[entrance]())
+    assert result["status"] == "ticket_opened"
+    assert len(to_user) == 1 and SUPPORT_INVITE_TEXT in to_user[0]["text"]
+    assert "Сайт:" in to_owner[0]["text"] and "Гость" not in to_owner[0]["text"] and "Партнёр WHIEDA" not in to_owner[0]["text"]
+
+
+async def test_support_with_the_switch_off_is_the_old_ticket_for_everyone(whieda_tenant, whieda_bot_binding, two_admins, no_forums, quiet_linking):
+    result, to_user, to_owner = await open_support(whieda_tenant, whieda_bot_binding, support_message("/support"))
+    assert result["status"] == "ticket_opened"
+    assert SUPPORT_INVITE_TEXT in to_user[0]["text"] and "Сайт: не найден" in to_owner[0]["text"]
+
+
+async def test_the_guest_ask_button_keeps_its_own_ticket_and_does_not_look_the_stage_up_again(world, whieda_tenant, two_admins, no_forums):
+    from app.telegram import support
+
+    world.stage = "guest"
+    lookup = AsyncMock(return_value=("другой текст", "другая шапка"))
+    with patch("app.bot_stages.telegram.support_view_for_stage", lookup), patch.object(support, "open_or_reuse_ticket", AsyncMock(return_value=_site_ticket())), \
+            patch.object(support, "send_telegram_text", AsyncMock(return_value={"ok": True, "message_id": 5})) as sent, \
+            patch.object(support, "record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
+        source = parse_telegram_message(_update({"text": "x"}, user_id=SUPPORT_USER))
+        await support.open_site_support(whieda_tenant, source, trace_id="t", user_text=ASK_TEXT, guest_header="Гость Живой встречи")
+    lookup.assert_not_awaited()
+    assert [call.kwargs["text"] for call in sent.await_args_list if call.kwargs["chat_id"] == str(SUPPORT_USER)] == [ASK_TEXT]
+    assert any("Гость Живой встречи" in call.kwargs["text"] for call in sent.await_args_list)
+
+
+async def test_a_database_failure_leaves_support_as_it_was(world, whieda_tenant, whieda_bot_binding, two_admins, no_forums, quiet_linking, monkeypatch):
+    monkeypatch.setattr("app.bot_stages.telegram.person_stage", AsyncMock(side_effect=RuntimeError("db down")))
+    result, to_user, _ = await open_support(whieda_tenant, whieda_bot_binding, support_message("/support"))
+    assert result["status"] == "ticket_opened" and SUPPORT_INVITE_TEXT in to_user[0]["text"]

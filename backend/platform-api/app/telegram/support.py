@@ -526,6 +526,17 @@ async def _open_tunnel(
     invite_override: str | None = None,
     guest_header: str | None = None,
 ) -> dict[str, Any]:
+    if channel == CHANNEL_SITE and guest_header is None:
+        # Три меню: гость и партнёр WHIEDA — не партнёры с сайтом. Любой вход в «Поддержку» (меню, /support, слово, кнопка
+        # кабинета, вложение без обращения) открывает им то же обращение, что гостевая кнопка «Задать вопрос»: тот же
+        # текст человеку (кроме обращения, открытого вложением — у него свой текст) и шапка владельцу без «Сайт: не найден».
+        from app.bot_stages.telegram import support_view_for_stage
+
+        view = await support_view_for_stage(tenant, source.user_id)
+        if view is not None:
+            stage_text, guest_header = view
+            if invite_override is None and opened_by_attachment is None:
+                invite_override = stage_text
     kind = forum_kind_for_channel(channel)
     route = "support" if kind == FORUM_KIND_SITE else "services"
     admin = _admin_for_kind(kind)

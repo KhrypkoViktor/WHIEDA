@@ -229,6 +229,8 @@ STAGE_PW_EXAMPLE_BUTTON = "🌐 Пример сайта партнёра"
 STAGE_PW_ORDER_BUTTON = "🛒 Заказать сайт WWC"
 STAGE_PW_COURSE_BUTTON = "🎓 Курс «Запуск WWC»"
 STAGE_PW_SUPPORT_BUTTON = "✍️ Поддержка"
+# текст: воронка — шапка обращения владельцу от партнёра WHIEDA: сайта у него ещё нет, это не «Сайт: не найден».
+STAGE_PW_ASK_HEADER = "Партнёр WHIEDA"
 # текст: воронка — «Что дальше»: три шага партнёра WHIEDA.
 STAGE_PW_NEXT_TEXT = (
     "Что дальше — три шага:\n\n"

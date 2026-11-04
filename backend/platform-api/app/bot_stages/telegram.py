@@ -231,6 +231,31 @@ async def try_handle_guest_text(
     return {"ok": True, "route": "guest_free_text", "trace_id": trace_id}
 
 
+# ---- «Поддержка» гостя и партнёра WHIEDA -----------------------------------------------------------------
+
+
+async def support_view_for_stage(tenant: TenantContext, user_id: int) -> tuple[str, str] | None:
+    """Как открыть обращение «Поддержка» человеку без сайта: ``(приглашение человеку, шапка владельцу)``. Гостю и
+    партнёру WHIEDA — то же приглашение и тот же вид обращения, что у кнопки гостя «Задать вопрос» («Напишите вопрос одним
+    сообщением — передам Виктору», а не «Напишите, что изменить на вашем сайте…»); владельцу вместо «Сайт: не найден» —
+    «Гость …» или «Партнёр WHIEDA». Партнёр WWC, три меню выключены, чужой арендатор или сбой базы — ``None``: обращение
+    открывается как прежде."""
+    if not stages_enabled(tenant.tenant_id):
+        return None
+    try:
+        stage = await person_stage(tenant.tenant_id, "telegram", user_id)
+        if stage == STAGE_GUEST:
+            from app.funnel.guest_bot import guest_ask_header
+
+            return texts.ASK_PROMPT, await guest_ask_header(tenant.tenant_id, user_id)
+    except Exception as exc:  # noqa: BLE001 — поддержка важнее вида обращения
+        logger.warning("bot_stage_support_view_failed", extra={"user_ref": user_ref(user_id), **safe_error(exc)})
+        return None
+    if stage == STAGE_PARTNER_WHIEDA:
+        return texts.ASK_PROMPT, texts.STAGE_PW_ASK_HEADER
+    return None
+
+
 # ---- человеку, которого повысили -------------------------------------------------------------------
 
 
