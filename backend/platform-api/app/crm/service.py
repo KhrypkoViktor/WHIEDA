@@ -704,6 +704,15 @@ def _date_iso(value: Any) -> str | None:
     return value.isoformat() if isinstance(value, date) else None
 
 
+async def _ask_host_about_partner(conn: Any, tenant_id: str, contact_id: str) -> None:
+    """Карточка перешла на этап «Партнёр»: бот спрашивает хозяина карточки, стал ли человек партнёром WHIEDA
+    (``app/crm/stage_link.py``). Нужен человек карточки в боте; без него и пока три меню выключены — ничего.
+    Импорт внутри функции: ``stage_link`` сам тянет ``app.crm.service`` через заявки на встречу."""
+    from app.crm.stage_link import on_card_partner
+
+    await on_card_partner(conn, tenant_id, contact_id)
+
+
 async def update_contact(
     tenant_id: str, account: dict[str, Any], contact_id: str, changes: dict[str, Any]
 ) -> dict[str, Any]:
@@ -791,6 +800,8 @@ async def update_contact(
                 await history("meeting", {"action": "cancel"})
         if new_status is not None and new_status != current["status"]:
             await history("status", {"from": current["status"], "to": new_status})
+            if new_status == "partner":
+                await _ask_host_about_partner(conn, tenant_id, row["contact_id"])
         elif ("next_step" in changes or "next_at" in changes) and (
             (plan.next_step, plan.next_at) != (current.get("next_step"), current.get("next_at"))
         ):
@@ -862,6 +873,8 @@ async def done_contact(
                 conn, tenant_id=tenant_id, account_id=account_id, contact_id=row["contact_id"], kind="status",
                 payload={"from": current["status"], "to": plan.status},
             )
+            if plan.status == "partner":
+                await _ask_host_about_partner(conn, tenant_id, row["contact_id"])
         if meeting_changed:
             await add_activity(
                 conn, tenant_id=tenant_id, account_id=account_id, contact_id=row["contact_id"], kind="meeting",
