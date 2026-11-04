@@ -90,7 +90,7 @@ async def try_handle_guest_text_max(tenant: TenantContext, event: Any, trace_id:
 
 
 async def max_stage_callback(tenant: TenantContext, event: Any, trace_id: str) -> None:
-    """Кнопки трёх меню в Max (``stg:next`` — «Что дальше», ``stg:menu`` — «← В кабинет»); регистрируется в
+    """Кнопки трёх меню в Max (``stg:next`` — «Что дальше», ``stg:menu`` — «← Назад»); регистрируется в
     ``app/max/processor.py`` по префиксу ``stg:``. Ответ — новым сообщением; в группах и при выключенных трёх меню — тихо."""
     payload = str(event.payload or "")
     if tenant.tenant_id != "whieda" or not stages_enabled(tenant.tenant_id):
@@ -108,6 +108,6 @@ async def max_stage_callback(tenant: TenantContext, event: Any, trace_id: str) -
             logger.warning("bot_stage_max_callback_failed", extra={"trace_id": trace_id, **safe_error(exc)})
             await send_max_text(chat_id=event.chat_id or None, user_id=event.user_id, text=texts.GUEST_ERROR)
             return None
-    # «← В кабинет» и кнопка не по статусу: меню по статусу человека.
+    # «← Назад» и кнопка не по статусу: меню по статусу человека.
     await show_stage_menu_max(tenant, event, trace_id)
     return None

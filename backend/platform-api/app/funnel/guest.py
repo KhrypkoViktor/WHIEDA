@@ -9,7 +9,7 @@
   * ``resolve_guest`` — определить гостя;
   * ``Reply`` и сборка экранов (текст и ряды кнопок ``(подпись, callback_data)``), ``rows_to_telegram`` и
     ``rows_to_max`` превращают ряды в клавиатуру канала;
-  * ``owner_card`` — партнёр владельца заявки для строки «Вы пришли от …».
+  * ``owner_card`` — партнёр владельца заявки для строки «Вас пригласил партнёр: …».
 
 Telegram и Max подключают это в ``app/funnel/guest_bot.py``. Тексты — ``app/funnel/texts.py``.
 
@@ -147,7 +147,7 @@ def menu_rows(*, academy: Button | None = None) -> Rows:
 
 def guest_header(inviter_name: str | None) -> str:
     if _stages():
-        # «Вы пришли от <партнёр>.» — если партнёр известен; дальше — что такое WWC и «С чего начать?».
+        # «Вас пригласил партнёр: <имя>.» — если партнёр известен; дальше — что такое WWC и «С чего начать?».
         if not inviter_name:
             return texts.STAGE_GUEST_INTRO
         return "\n".join((texts.GUEST_FROM_PARTNER.format(name=inviter_name), texts.STAGE_GUEST_INTRO))

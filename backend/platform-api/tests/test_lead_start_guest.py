@@ -145,7 +145,7 @@ def test_other_text_is_not_the_menu_word(text):
 
 def test_the_guest_menu_names_the_partner_and_lists_two_meetings_with_the_three_buttons():
     reply = guest_menu_reply("Ольга Смирнова", registration=None, open_meetings=[TUE, THU], now=NOW)
-    assert reply.text == "Вы пришли от Ольга Смирнова.\n\nВыберите ближайшую живую встречу."
+    assert reply.text == "Вас пригласил партнёр: Ольга Смирнова.\n\nВыберите ближайшую живую встречу."
     assert labels(reply.rows) == ["Записаться: вт 03.11 19:30", "Записаться: чт 05.11 19:30", *MENU_LABELS]
     assert callback_data(reply.rows) == ["mreg:11", "mreg:12", *MENU_DATA]
     assert all(len(row) == 1 for row in reply.rows)
@@ -160,7 +160,7 @@ def test_without_a_partner_the_guest_is_simply_in_wwc():
 def test_an_active_registration_replaces_the_meeting_list_with_move_and_cancel():
     reply = guest_menu_reply("Ольга", registration=(make_registration(7, 12), THU), open_meetings=[], now=NOW)
     assert reply.text == (
-        "Вы пришли от Ольга.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
+        "Вас пригласил партнёр: Ольга.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
     )
     assert reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(reply.rows[1:]) == MENU_DATA
@@ -175,7 +175,7 @@ def test_no_meetings_at_all_is_said_plainly_and_the_menu_stays():
 
 def test_a_note_goes_under_the_greeting():
     reply = guest_menu_reply("Ольга", registration=None, open_meetings=[TUE], now=NOW, note=texts.GUEST_MEETING_GONE)
-    assert reply.text.split("\n\n")[:2] == ["Вы пришли от Ольга.", "Встреча, на которую вы записывались, уже прошла или отменена."]
+    assert reply.text.split("\n\n")[:2] == ["Вас пригласил партнёр: Ольга.", "Встреча, на которую вы записывались, уже прошла или отменена."]
 
 
 def test_register_buttons_mark_the_meeting_the_person_is_already_on():
@@ -335,7 +335,7 @@ async def test_a_lead_with_a_partner_and_a_meeting_attributes_registers_and_gree
     assert start.event.await_args.args[2:4] == ("card-1", "registered")
     assert start.event.await_args.kwargs["starts_at"] == THU["starts_at"]
     assert result.reply.text == (
-        "Вы пришли от Игорь Волков.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
+        "Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
     )
     assert result.reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(result.reply.rows[1:]) == MENU_DATA
@@ -394,7 +394,7 @@ async def test_a_failed_attribution_does_not_stop_the_registration_and_the_greet
     result = await start.run()
     assert result.attribution == "error" and result.status == "registered"
     start.register.assert_awaited_once()
-    assert result.reply.text.startswith("Вы пришли от Игорь Волков.")
+    assert result.reply.text.startswith("Вас пригласил партнёр: Игорь Волков.")
 
 
 async def test_a_lead_without_a_meeting_shows_the_two_nearest_meetings(start):
@@ -695,7 +695,7 @@ def tg(whieda_bot_binding):
 
 
 def lead_result(status="registered", **changes) -> lead_start.LeadStartResult:
-    reply = Reply("Вы пришли от Игорь.", [[("Перенести", "mmove:7")], [("Показ системы", "funnel:tour")]])
+    reply = Reply("Вас пригласил партнёр: Игорь.", [[("Перенести", "mmove:7")], [("Показ системы", "funnel:tour")]])
     return lead_start.LeadStartResult(reply=reply, status=status, **{"attribution": "attributed", "inviter_name": "Игорь", **changes})
 
 
@@ -705,7 +705,7 @@ async def test_the_telegram_lead_start_sends_the_greeting_with_the_keyboard(tg):
     assert result == {"ok": True, "route": "lead_start", "status": "registered", "attribution": "attributed", "trace_id": "t1"}
     assert start.await_args.kwargs["channel"] == "telegram" and start.await_args.kwargs["public_id"] == "L-1-ABC"
     tg.text.assert_awaited_once_with(
-        chat_id=str(USER), text="Вы пришли от Игорь.", bot_token=BOT_TOKEN,
+        chat_id=str(USER), text="Вас пригласил партнёр: Игорь.", bot_token=BOT_TOKEN,
         reply_markup={"inline_keyboard": [
             [{"text": "Перенести", "callback_data": "mmove:7"}], [{"text": "Показ системы", "callback_data": "funnel:tour"}],
         ]},
@@ -783,7 +783,7 @@ async def test_a_guest_gets_the_guest_menu_instead_of_the_cabinet(tg, monkeypatc
     result = await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg(text), trace_id="t1")
     assert result == {"ok": True, "route": "guest_menu", "status": "shown", "trace_id": "t1"}
     sent = tg.text.await_args.kwargs
-    assert sent["text"].startswith("Вы пришли от Игорь Волков.\n\nВыберите ближайшую живую встречу.")
+    assert sent["text"].startswith("Вас пригласил партнёр: Игорь Волков.\n\nВыберите ближайшую живую встречу.")
     assert callback_data([[(b["text"], b["callback_data"])] for row in sent["reply_markup"]["inline_keyboard"] for b in row]) == [
         "mreg:11", "mreg:12", *MENU_DATA,
     ]
@@ -1261,7 +1261,7 @@ async def test_a_max_start_with_a_lead_token_sends_the_greeting_with_the_same_bu
     assert result == {"ok": True, "route": "max_lead_start", "status": "registered", "attribution": "attributed", "trace_id": "t1"}
     assert start.await_args.kwargs["channel"] == "max" and start.await_args.kwargs["public_id"] == "L-20261030-AB12CD3"
     mx.text.assert_awaited_once_with(
-        chat_id=555, user_id=USER, text="Вы пришли от Игорь.",
+        chat_id=555, user_id=USER, text="Вас пригласил партнёр: Игорь.",
         buttons=[[max_button_callback("Перенести", "mmove:7")], [max_button_callback("Показ системы", "funnel:tour")]],
     )
     mx.source_start.assert_not_awaited()

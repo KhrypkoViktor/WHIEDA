@@ -203,7 +203,7 @@ async def show_stage_menu(
 async def try_handle_stage_callback(
     tenant: TenantContext, callback: TelegramCallbackQuery, *, trace_id: str
 ) -> dict[str, Any] | None:
-    """Кнопки трёх меню: ``stg:next`` («Что дальше»), ``stg:menu`` («← В кабинет»), ``stg:invite`` («Пригласить»),
+    """Кнопки трёх меню: ``stg:next`` («Что дальше»), ``stg:menu`` («← Назад»), ``stg:invite`` («Пригласить»),
     ``stg:more`` («Ещё»), ``stg:y:<карточка>`` / ``stg:n:<карточка>`` («Да» / «Нет» ведущему). Не наша кнопка, три меню
     выключены или чужой арендатор — ``None``."""
     data = str(callback.data or "")
@@ -241,7 +241,7 @@ async def try_handle_stage_callback(
             trace_id=trace_id,
         )
         return {**base, "status": "invite", **{k: v for k, v in shown.items() if k == "ok"}}
-    # «← В кабинет» и кнопка не по статусу (устаревшее сообщение): меню по статусу человека.
+    # «← Назад» и кнопка не по статусу (устаревшее сообщение): меню по статусу человека.
     shown = await show_referral_dashboard(
         tenant, telegram_user_id=callback.user_id, telegram_chat_id=callback.chat_id, raw_update=callback.raw,
         trace_id=trace_id,

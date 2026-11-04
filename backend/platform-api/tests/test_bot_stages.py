@@ -203,7 +203,7 @@ def test_the_guest_menu_text_and_the_four_buttons(stages_on):
 
 def test_the_guest_menu_names_the_partner_before_the_wwc_line(stages_on):
     reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[], now=NOW)
-    assert reply.text.splitlines()[0] == "Вы пришли от Игорь Волков."
+    assert reply.text.splitlines()[0] == "Вас пригласил партнёр: Игорь Волков."
     assert reply.text.splitlines()[1].startswith("Вы в WWC: Whieda World Club")
     assert "Ближайших живых встреч пока нет" in reply.text
     assert data(reply.rows) == ["funnel:tour", "funnel:consult", "funnel:ask"]
@@ -250,7 +250,7 @@ def test_the_whieda_partner_menu_without_an_example_site_has_no_such_button():
 def test_the_next_screen_lists_three_steps_with_their_buttons():
     reply = menus.partner_whieda_next_reply(channel="telegram", example_url=OLGA_SITE)
     assert [line[:2] for line in reply.text.splitlines() if line[:1].isdigit()] == ["1.", "2.", "3."]
-    assert labels(reply.rows) == ["🌐 Пример сайта партнёра", "🛒 Заказать сайт WWC", "🎓 Курс «Запуск WWC»", "← В кабинет"]
+    assert labels(reply.rows) == ["🌐 Пример сайта партнёра", "🛒 Заказать сайт WWC", "🎓 Курс «Запуск WWC»", "← Назад"]
     assert data(reply.rows)[-1] == "stg:menu"
 
 
@@ -307,7 +307,7 @@ def test_the_cabinet_text_says_bonuses_are_a_discount_in_roubles():
 
 def test_the_more_screen_holds_the_services_and_the_calculator():
     reply = menus.more_reply()
-    assert labels(reply.rows) == ["🧩 Сервисы", "🧮 Калькулятор", "← В кабинет"]
+    assert labels(reply.rows) == ["🧩 Сервисы", "🧮 Калькулятор", "← Назад"]
     assert data(reply.rows)[0] == "svc:card:gemini" and data(reply.rows)[1].startswith("https://") and data(reply.rows)[2] == "stg:menu"
 
 
@@ -322,7 +322,8 @@ def test_the_max_menu_of_a_wwc_partner_is_links_and_one_question_button():
 def test_every_new_text_the_funnel_owner_waits_for_is_marked():
     source = open(texts.__file__, encoding="utf-8").read()
     for name in ("STAGE_GUEST_INTRO", "STAGE_GUEST_FREE_TEXT", "STAGE_PW_INTRO", "STAGE_PW_NEXT_TEXT", "STAGE_PW_CONGRATS", "STAGE_CONFIRM_ASK",
-                 "STAGE_BONUS_LINE", "STAGE_INVITE_HEAD", "STAGE_MORE_TEXT", "STAGE_BACK_TEXT", "STAGE_MAX_PWWC_TEXT"):
+                 "STAGE_BONUS_LINE", "STAGE_INVITE_HEAD", "STAGE_MORE_TEXT", "STAGE_BACK_TEXT", "STAGE_MAX_PWWC_TEXT",
+                 "STAGE_BACK_BUTTON", "SYSTEM_TOUR_PENDING", "SYSTEM_TOUR_FALLBACK_BUTTON"):
         before = source.split(f"\n{name} = ")[0].rsplit("\n", 4)[-4:]
         assert any("# текст: воронка" in line for line in before), name
 
@@ -344,7 +345,7 @@ async def test_telegram_start_of_a_guest_shows_the_guest_menu_and_sets_the_guest
     result = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     assert result["route"] == "guest_menu"
     chat, text, markup = world.sent[-1]
-    assert chat == str(USER) and text.startswith("Вы пришли от Игорь Волков.\nВы в WWC: Whieda World Club")
+    assert chat == str(USER) and text.startswith("Вас пригласил партнёр: Игорь Волков.\nВы в WWC: Whieda World Club")
     assert tg_labels(markup)[-3:] == ["▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
     method, payload = world.calls[-1]
     assert method == "setMyCommands" and payload["scope"] == {"type": "chat", "chat_id": USER}
@@ -404,7 +405,7 @@ async def test_the_invite_screen_of_a_wwc_partner_is_one_screen_with_link_button
     assert text.splitlines()[0] == "🔗 Пригласить"
     assert "https://t.me/WHIEDA_Advisor_bot?start=ref_c0de1234" in text.splitlines()
     assert "Мои рефералы" in text and "Анна" in text
-    assert tg_labels(markup) == ["Скопировать приглашение", "Отправить приглашение", "← В кабинет"]
+    assert tg_labels(markup) == ["Скопировать приглашение", "Отправить приглашение", "← Назад"]
 
 
 # ---- выбор меню по статусу: 3 × Max ---------------------------------------------------------------------
@@ -416,7 +417,7 @@ async def test_max_start_of_a_guest_shows_the_guest_menu(max_world):
     result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", ""), "t1")
     assert result["route"] == "max_stage_menu" and result["stage"] == "guest"
     text, buttons = max_world.max_sent[-1]
-    assert text.startswith("Вы пришли от Игорь Волков.\nВы в WWC: Whieda World Club")
+    assert text.startswith("Вас пригласил партнёр: Игорь Волков.\nВы в WWC: Whieda World Club")
     assert [b["text"] for row in buttons for b in row][-3:] == ["▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
 
 
@@ -612,7 +613,7 @@ async def test_the_dead_main_menu_text_is_replaced_by_one_back_button(world, whi
         await catalog_browse.handle_main_menu(whieda_tenant, USER)
     kwargs = sent.await_args.kwargs
     assert kwargs["text"] == "Вернуться в кабинет?"
-    assert kwargs["reply_markup"] == {"inline_keyboard": [[{"text": "← В кабинет", "callback_data": "stg:menu"}]]}
+    assert kwargs["reply_markup"] == {"inline_keyboard": [[{"text": "← Назад", "callback_data": "stg:menu"}]]}
     assert "Главное меню" not in kwargs["text"] and "📦" not in kwargs["text"]
 
 

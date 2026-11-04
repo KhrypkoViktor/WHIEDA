@@ -19,7 +19,7 @@ from app.bot_media import service
 from app.funnel import consult, guest_bot, system_word, texts
 from app.funnel.guest import rows_to_max, rows_to_telegram
 from app.max import processor as max_processor
-from app.max.client import MaxKeyboardError, max_button_callback
+from app.max.client import MaxKeyboardError, max_button_callback, max_button_link
 from app.max.update_parser import MaxCallbackEvent, MaxEvent
 from app.settings import get_settings
 from app.telegram import bot_media_admin, delivery
@@ -761,6 +761,34 @@ def test_the_two_buttons_are_the_same_in_telegram_and_max():
     ]
 
 
+PRESENTATION_URL = "https://wwc.best/start/media/presentation.mp4"
+
+
+def test_without_the_tour_the_first_button_is_a_link_to_the_company_video_and_the_two_buttons_follow():
+    """Тура нет (текст-заглушка): сверху кнопка-ссылка на ролик о компании, ниже прежние «Живая встреча» и «Личный разбор»."""
+    assert texts.SYSTEM_TOUR_FALLBACK_URL == PRESENTATION_URL and texts.SYSTEM_TOUR_FALLBACK_BUTTON == "▶ Смотреть (6 мин)"
+    assert texts.SYSTEM_TOUR_PENDING == "Видео о системе скоро будет здесь. А пока — 6 минут о компании WHIEDA."
+    assert system_word.telegram_markup(presentation=True) == {"inline_keyboard": [
+        [{"text": "▶ Смотреть (6 мин)", "url": PRESENTATION_URL}],
+        [{"text": "Живая встреча", "callback_data": "funnel:meet"}],
+        [{"text": "Личный разбор", "callback_data": "funnel:consult"}],
+    ]}
+    assert system_word.max_buttons(presentation=True) == [
+        [max_button_link("▶ Смотреть (6 мин)", PRESENTATION_URL)],
+        [max_button_callback("Живая встреча", "funnel:meet")],
+        [max_button_callback("Личный разбор", "funnel:consult")],
+    ]
+
+
+def test_the_tour_buttons_have_no_link_to_the_company_video():
+    """Тур загружен: поведение прежнее — только две кнопки-нажатия, без ссылки на ролик о компании."""
+    tg_buttons = [button for row in system_word.telegram_markup()["inline_keyboard"] for button in row]
+    assert tg_buttons and all("url" not in button and "callback_data" in button for button in tg_buttons)
+    max_flat = [button for row in system_word.max_buttons() for button in row]
+    assert max_flat and all(button["type"] == "callback" for button in max_flat)
+    assert PRESENTATION_URL not in repr((system_word.telegram_markup(), system_word.max_buttons()))
+
+
 def _tg_msg(text: str, chat_type: str = "private") -> TelegramMessage:
     return TelegramMessage(chat_id=42, user_id=42, message_id=1, text=text, chat_type=chat_type, file_id=None, raw={})
 
@@ -788,11 +816,12 @@ async def test_telegram_word_sends_the_tour_with_caption_and_two_buttons(tg_bot)
         None, "whieda", "system_tour", channel="telegram", chat_id=42,
         caption=texts.SYSTEM_TOUR_CAPTION, reply_markup=system_word.telegram_markup(),
     )
+    assert "url" not in repr(tg_bot.media.await_args.kwargs["reply_markup"])   # ссылка на ролик — только когда тура нет
     tg_bot.text.assert_not_awaited()
 
 
 @pytest.mark.parametrize("outcome", [{"ok": False, "status": "missing"}, {"ok": False, "status": "failed"}, RuntimeError("db down")])
-async def test_telegram_without_the_tour_answers_with_the_pending_text_and_the_same_buttons(tg_bot, outcome):
+async def test_telegram_without_the_tour_answers_with_the_pending_text_the_company_video_link_and_the_two_buttons(tg_bot, outcome):
     if isinstance(outcome, Exception):
         tg_bot.media.side_effect = outcome
     else:
@@ -800,8 +829,10 @@ async def test_telegram_without_the_tour_answers_with_the_pending_text_and_the_s
     result = await system_word.try_handle_system_word(TENANT, _tg_msg("система"), trace_id="t1")
     assert result["status"] == "pending"
     tg_bot.text.assert_awaited_once_with(
-        chat_id="42", text=texts.SYSTEM_TOUR_PENDING, bot_token=BOT_TOKEN, reply_markup=system_word.telegram_markup()
+        chat_id="42", text=texts.SYSTEM_TOUR_PENDING, bot_token=BOT_TOKEN, reply_markup=system_word.telegram_markup(presentation=True)
     )
+    first_row = tg_bot.text.await_args.kwargs["reply_markup"]["inline_keyboard"][0]
+    assert first_row == [{"text": "▶ Смотреть (6 мин)", "url": PRESENTATION_URL}]
 
 
 @pytest.mark.parametrize(("tenant", "text", "chat_type"), [
@@ -874,6 +905,7 @@ async def test_max_word_sends_the_tour_with_the_same_caption_and_buttons(max_bot
         None, "whieda", "system_tour", channel="max", chat_id=555, user_id=42,
         caption=texts.SYSTEM_TOUR_CAPTION, buttons=system_word.max_buttons(),
     )
+    assert all(b["type"] == "callback" for row in max_bot.media.await_args.kwargs["buttons"] for b in row)   # без ссылки на ролик
     max_bot.text.assert_not_awaited()
     max_bot.advisor.assert_not_awaited()
 
@@ -882,7 +914,10 @@ async def test_max_word_without_the_tour_answers_with_the_pending_text_and_butto
     max_bot.media.return_value = {"ok": False, "status": "download_failed"}
     result = await max_processor.handle_max_message(TENANT, _max_event("система."), "t1")
     assert result["status"] == "pending" and result["reason"] == "download_failed"
-    max_bot.text.assert_awaited_once_with(chat_id=555, user_id=42, text=texts.SYSTEM_TOUR_PENDING, buttons=system_word.max_buttons())
+    max_bot.text.assert_awaited_once_with(
+        chat_id=555, user_id=42, text=texts.SYSTEM_TOUR_PENDING, buttons=system_word.max_buttons(presentation=True)
+    )
+    assert max_bot.text.await_args.kwargs["buttons"][0] == [max_button_link("▶ Смотреть (6 мин)", PRESENTATION_URL)]
     max_bot.advisor.assert_not_awaited()
 
 

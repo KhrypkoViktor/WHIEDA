@@ -468,7 +468,7 @@ async def show_invitation(
         return {"ok": False, "route": "referral_invite", "status": "bot_username_missing", "trace_id": trace_id}
     link = f"https://t.me/{username}?start=ref_{invite_code}"
     if stages:
-        # Один экран «Пригласить»: ссылка, кнопки «Скопировать» и «Отправить», список приглашённых, «← В кабинет».
+        # Один экран «Пригласить»: ссылка, кнопки «Скопировать» и «Отправить», список приглашённых, «← Назад».
         page = await list_referrals(tenant.tenant_id, actor_id, limit=20)
         keyboard = _invitation_keyboard(link)
         keyboard["inline_keyboard"].append(

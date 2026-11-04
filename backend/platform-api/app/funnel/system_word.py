@@ -2,8 +2,8 @@
 
 Человек пишет «система» (любой регистр, можно с «!» или «.» на конце) → бот присылает видео-тур ``system_tour``
 из хранилища медиа (app/bot_media) с подписью ``SYSTEM_TOUR_CAPTION`` и кнопками «Живая встреча» и «Личный разбор».
-Тур ещё не загружен (или канал не принял файл) → текст ``SYSTEM_TOUR_PENDING`` с теми же кнопками: человек
-не остаётся без ответа.
+Тур ещё не загружен (или канал не принял файл) → текст ``SYSTEM_TOUR_PENDING``, первой кнопкой-ссылкой ролик о компании
+(``SYSTEM_TOUR_FALLBACK_URL``) и теми же двумя кнопками ниже: человек из рекламы не упирается в тупик.
 
 Кнопка «Живая встреча» (``funnel:meet``) открывает список встреч для записи — это обработчик гостя
 (app/funnel/guest_bot.py); «Личный разбор» (``funnel:consult``) запускает диалог из двух вопросов и выбора ведущего
@@ -24,7 +24,7 @@ from app.bot_media.service import send_media
 from app.bot_stages.service import stages_enabled
 from app.funnel import consult, texts
 from app.funnel.guest import rows_to_max, rows_to_telegram
-from app.max.client import max_button_callback, send_max_text
+from app.max.client import send_max_text
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import answer_callback_query, send_telegram_text
 from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
@@ -51,24 +51,24 @@ def _labels() -> tuple[str, str]:
     return texts.FUNNEL_MEET_BUTTON, texts.FUNNEL_CONSULT_BUTTON
 
 
-def telegram_markup() -> dict[str, Any]:
-    """Inline-клавиатура Telegram: две кнопки, каждая в своём ряду."""
+def _rows(*, presentation: bool) -> list[list[tuple[str, str]]]:
+    """Ряды кнопок под туром: «Живая встреча» и «Личный разбор», каждая в своём ряду. Тура нет (``presentation``) —
+    первым рядом кнопка-ссылка на ролик о компании (адрес с ``https://`` rows_to_* превращают в кнопку-ссылку)."""
     meet, consult = _labels()
-    return {
-        "inline_keyboard": [
-            [{"text": meet, "callback_data": texts.FUNNEL_MEET_CALLBACK}],
-            [{"text": consult, "callback_data": texts.FUNNEL_CONSULT_CALLBACK}],
-        ]
-    }
+    rows = [[(meet, texts.FUNNEL_MEET_CALLBACK)], [(consult, texts.FUNNEL_CONSULT_CALLBACK)]]
+    if presentation:
+        rows.insert(0, [(texts.SYSTEM_TOUR_FALLBACK_BUTTON, texts.SYSTEM_TOUR_FALLBACK_URL)])
+    return rows
 
 
-def max_buttons() -> list[list[dict[str, Any]]]:
-    """Ряды кнопок Max (max_button_callback): те же две кнопки."""
-    meet, consult = _labels()
-    return [
-        [max_button_callback(meet, texts.FUNNEL_MEET_CALLBACK)],
-        [max_button_callback(consult, texts.FUNNEL_CONSULT_CALLBACK)],
-    ]
+def telegram_markup(*, presentation: bool = False) -> dict[str, Any]:
+    """Inline-клавиатура Telegram: две кнопки, каждая в своём ряду; с ``presentation`` — ещё ссылка на ролик сверху."""
+    return rows_to_telegram(_rows(presentation=presentation)) or {}
+
+
+def max_buttons(*, presentation: bool = False) -> list[list[dict[str, Any]]]:
+    """Ряды кнопок Max (callback и link): те же кнопки, что в Telegram."""
+    return rows_to_max(_rows(presentation=presentation)) or []
 
 
 # ---- Telegram --------------------------------------------------------------------------------------
@@ -84,7 +84,8 @@ async def try_handle_system_word(
 
 
 async def send_tour_telegram(tenant: TenantContext, chat_id: int, *, trace_id: str | None = None) -> dict[str, Any]:
-    """Видео-тур в личный чат Telegram с кнопками «Живая встреча» и «Личный разбор» (или текст-заглушка, если тура нет).
+    """Видео-тур в личный чат Telegram с кнопками «Живая встреча» и «Личный разбор» (или текст с ссылкой на ролик о
+    компании, если тура нет).
     Им пользуются слово СИСТЕМА и кнопка «Показ системы» в меню гостя."""
     base: dict[str, Any] = {"ok": True, "route": "funnel_system", "trace_id": trace_id}
     try:
@@ -99,7 +100,7 @@ async def send_tour_telegram(tenant: TenantContext, chat_id: int, *, trace_id: s
         return {**base, "status": "tour", "kind": result.get("kind")}
     await send_telegram_text(
         chat_id=str(chat_id), text=texts.SYSTEM_TOUR_PENDING,
-        bot_token=current_bot_binding().bot_token, reply_markup=telegram_markup(),
+        bot_token=current_bot_binding().bot_token, reply_markup=telegram_markup(presentation=True),
     )
     return {**base, "status": "pending", "reason": result.get("status")}
 
@@ -149,7 +150,7 @@ async def send_tour_max(
         result = {"ok": False, "status": "error"}
     if result.get("ok"):
         return {**base, "status": "tour", "kind": result.get("kind")}
-    await send_max_text(chat_id=chat_id, user_id=user_id, text=texts.SYSTEM_TOUR_PENDING, buttons=max_buttons())
+    await send_max_text(chat_id=chat_id, user_id=user_id, text=texts.SYSTEM_TOUR_PENDING, buttons=max_buttons(presentation=True))
     return {**base, "status": "pending", "reason": result.get("status")}
 
 

@@ -608,7 +608,7 @@ async def _process_core_telegram_update_scoped(
         )
         if marketing_callback_result is not None:
             return marketing_callback_result
-        # Кнопки трёх меню (stg:…): «Что дальше», «Пригласить», «Ещё», «← В кабинет», «Да» / «Нет» ведущего. Выключено — None.
+        # Кнопки трёх меню (stg:…): «Что дальше», «Пригласить», «Ещё», «← Назад», «Да» / «Нет» ведущего. Выключено — None.
         stage_callback_result = await try_handle_stage_callback(tenant, callback, trace_id=trace_id)
         if stage_callback_result is not None:
             return stage_callback_result

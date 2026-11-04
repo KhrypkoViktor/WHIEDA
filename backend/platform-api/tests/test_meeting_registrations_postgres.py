@@ -425,7 +425,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
 
                 started = await guest_bot.handle_lead_start_telegram(tenant, message(555001), lead_a["public_id"], trace_id="t")
                 assert started == {"ok": True, "route": "lead_start", "status": "registered", "attribution": "attributed", "trace_id": "t"}
-                assert last_text().startswith("Вы пришли от Игорь Волков.\n\nВы записаны на Живую встречу: ")
+                assert last_text().startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: ")
                 assert last_text().endswith(" МСК.\nНапоминание о встрече придёт сюда.")
                 regs = await registrations_of(555001)
                 assert len(regs) == 1 and regs[0]["status"] == "registered" and regs[0]["meeting_id"] == 1
@@ -453,7 +453,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 for text in ("/start", "меню", "привет"):
                     shown = await guest_bot.try_handle_guest_menu_text(tenant, message(555001, text), trace_id="t")
                     assert shown["route"] == "guest_menu"
-                    assert last_text().startswith("Вы пришли от Игорь Волков.\n\nВы записаны на Живую встречу")
+                    assert last_text().startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу")
                 async with tenant_connection("whieda") as conn:
                     guest_context = await resolve_guest(conn, "whieda", "telegram", 555001)
                 assert guest_context is not None and guest_context.lead.public_id == lead_a["public_id"]
@@ -594,7 +594,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 await guest_bot.handle_lead_start_max(
                     tenant, SimpleNamespace(user_id=777003, chat_id=889, username=None, display_name="Яна", text=""), lead_e["public_id"], "t"
                 )
-            assert max_sent.await_args.kwargs["text"].startswith("Вы пришли от Игорь Волков.\n\nВы записаны на Живую встречу: ")
+            assert max_sent.await_args.kwargs["text"].startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: ")
             assert (await rows("select inviter_actor_id, source from partner_referral_attributions where invitee_actor_id = 'max:whieda:777003'")) == [
                 {"inviter_actor_id": "igor-actor", "source": "max_deeplink"}
             ]

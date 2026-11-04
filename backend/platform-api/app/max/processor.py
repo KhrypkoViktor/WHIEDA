@@ -395,5 +395,5 @@ for _consult_prefix in CONSULT_MAX_PREFIXES:
 # остаётся за max_funnel_callback.
 for _guest_prefix in GUEST_MAX_PREFIXES:
     register_max_callback(_guest_prefix, max_guest_callback)
-# Кнопки трёх меню (stg:next — «Что дальше» партнёра WHIEDA, stg:menu — «← В кабинет»): меню по статусу человека.
+# Кнопки трёх меню (stg:next — «Что дальше» партнёра WHIEDA, stg:menu — «← Назад»): меню по статусу человека.
 register_max_callback(funnel_texts.STAGE_CALLBACK_PREFIX, max_stage_callback)
