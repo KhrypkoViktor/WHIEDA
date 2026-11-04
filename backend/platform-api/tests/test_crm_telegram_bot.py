@@ -156,7 +156,7 @@ async def test_the_prompt_and_the_keyboard_are_exactly_the_agreed_ones(world):
             [{"text": "✖️ Не добавлять"}],
         ],
         "resize_keyboard": True,
-        "one_time_keyboard": True,
+        "one_time_keyboard": False,
     }
     assert isinstance(telegram_import.REQUEST_ID, int)
     assert world.send.await_args.kwargs["chat_id"] == "5" and world.send.await_args.kwargs["bot_token"] == "token"

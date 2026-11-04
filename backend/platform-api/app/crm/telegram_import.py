@@ -84,7 +84,8 @@ REQUEST_KEYBOARD: dict[str, Any] = {
         [{"text": CANCEL_LABEL}],
     ],
     "resize_keyboard": True,
-    "one_time_keyboard": True,
+    # Не прятать после нажатия: закрыл выбор людей — кнопки на месте. Снимает их итог или отмена (проверено в Telegram).
+    "one_time_keyboard": False,
 }
 # What the picker's keyboard is replaced with: the bot's own reply keyboard — today it has none, so this is
 # «remove_keyboard» (the bot navigates by Telegram's command menu); if a profile gets a keyboard it comes back.
