@@ -45,8 +45,10 @@ Do not change a production bot while validating staging.
 
 With `PLATFORM_BOT_STAGES=true` (the default) the WWC bot shows one of three screens by the person's stage
 (`lead_actors.bot_stage`, code in `app/bot_stages/`): `guest` (any `/start`, `src_<tag>`, partner link),
-`partner_whieda` (the host confirmed him in WWC CRM, or the owner wrote «партнёр @ник») and `partner_wwc` (an enabled
-`referral_profiles`, i.e. a paid site; the owner and the admins too). The profile above then no longer chooses the
+`partner_whieda` (the host confirmed him in WWC CRM, or the owner wrote «партнёр @ник») and `partner_wwc` (any
+`referral_profiles` row, enabled or not, or a site request in `pending_confirmation` / `pending_provisioning`, i.e. paid
+but not yet activated; the owner and the admins too). Site-form steps `awaiting_*`, `rejected` and `cancelled` leave a
+person a guest. Only an enabled profile writes `bot_stage`; a disabled one or a queued request is shown but never stored. The profile above then no longer chooses the
 cabinet buttons; it still decides whether site orders and renewals are manual (`minimal`).
 
 - Apply `postgres/sql/platform_bot_stage_v49.sql` to the database first (twice is safe); code that reads the column before

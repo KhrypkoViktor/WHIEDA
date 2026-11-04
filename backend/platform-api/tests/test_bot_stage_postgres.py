@@ -3,8 +3,10 @@
 1. V49 идемпотентна (дважды подряд), знака доллара нет, зарегистрирована во всех списках миграций и стоит после V48;
 2. колонка: text not null default 'guest', ограничение на три значения; заполнение — включённый referral_profiles →
    partner_wwc, остальные guest; повторный прогон не откатывает partner_whieda и не трогает отключённые профили;
-3. чтение статуса: гость по умолчанию, владелец и админ — partner_wwc, профиль сайта — partner_wwc (и поле подтягивается),
+3. чтение статуса: гость по умолчанию, выключенный профиль — всё равно partner_wwc, владелец и админ — partner_wwc, профиль сайта — partner_wwc (и поле подтягивается),
    канал Max и привязанная учётка находят того же человека, чужой арендатор статуса не видит;
+3a. оплативший без активации и партнёр с выключенным профилем — partner_wwc (бонусы и ссылка не пропадают), а поле
+   bot_stage при этом не пишется; анкета, не дошедшая до оплаты, отклонённая и отменённая заявки — гость;
 4. повышение: partner_whieda ставится один раз, повтор — already, партнёра WWC вниз не отдаёт; «снять» возвращает
    в гости только partner_whieda; поиск человека по @нику и по id;
 5. база без колонки (код выкатили раньше миграции): статус читается по профилю сайта, бот не падает.
@@ -110,6 +112,26 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
                 "insert into account_identities (tenant_id, telegram_user_id, provider, external_id) values "
                 "('whieda', 7002, 'max', '9302')"
             )
+            # Оплативший без активации и прочие: профиль сайта и заявка на сайт в разных состояниях
+            conn.execute(
+                "insert into lead_actors (actor_id, tenant_id, display_name, telegram_chat_id, telegram_user_id) values "
+                "('paid-actor', 'whieda', 'Оплатила', '7300', 7300), ('receipt-actor', 'whieda', 'Чек', '7301', 7301), "
+                "('disabled-actor', 'whieda', 'Выключен', '7302', 7302), ('awaiting-actor', 'whieda', 'Анкета', '7303', 7303), "
+                "('rejected-actor', 'whieda', 'Отклонена', '7304', 7304), ('cancelled-actor', 'whieda', 'Отменена', '7305', 7305)"
+            )
+            conn.execute(
+                "insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode, public_profile, enabled) values "
+                "('paid', 'whieda', 'paid-actor', 'named', '{\"subdomain\": \"paid\"}', false), "
+                "('syncoff', 'whieda', 'disabled-actor', 'named', '{}', false)"
+            )
+            conn.execute(
+                "insert into partner_site_requests (tenant_id, actor_id, status, requested_subdomain) values "
+                "('whieda', 'paid-actor', 'pending_provisioning', 'paid'), "          # оплата подтверждена, профиль ещё выключен
+                "('whieda', 'receipt-actor', 'pending_confirmation', 'receipt'), "    # чек отправлен, ждёт подтверждения
+                "('whieda', 'awaiting-actor', 'awaiting_photo', 'awaiting'), "        # анкета не дошла до оплаты
+                "('whieda', 'rejected-actor', 'rejected', 'rejected'), "
+                "('whieda', 'cancelled-actor', 'cancelled', 'cancelled')"
+            )
             # Академия: курс, купленный человеком 7100; отозванный подарок у 7200; пройденный урок у партнёра 7002
             conn.execute(
                 "insert into academy_courses (tenant_id, slug, title, access_rule, status) values ('whieda', 'kurs', 'Курс', 'purchase', 'published')"
@@ -148,7 +170,7 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
             assert await stage("telegram", 7100) == "guest"           # обычный человек из бота
             assert await stage("telegram", 99999) == "guest"          # которого бот ещё не знает
             assert await stage("telegram", 7001) == "partner_wwc"     # профиль сайта
-            assert await stage("telegram", 7003) == "guest"           # профиль отключён
+            assert await stage("telegram", 7003) == "partner_wwc"     # профиль выключен: кабинет с бонусами и ссылкой остаётся
             assert await stage("telegram", 5000) == "partner_wwc"     # владелец, даже без строки в базе
             assert await stage("telegram", 5001) == "partner_wwc"     # суперадмин
             assert await stage("max", 9300) == "guest"                # Max: человек без профиля
@@ -161,6 +183,23 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
             assert await column_of("igor-actor") == "guest"
             assert await stage("telegram", 7001) == "partner_wwc"
             assert await column_of("igor-actor") == "partner_wwc"
+
+            # --- оплативший без активации и выключенный профиль: partner_wwc, поле не трогаем ---
+            assert await stage("telegram", 7300) == "partner_wwc"   # заявка pending_provisioning, профиль enabled=false
+            assert await stage("telegram", 7301) == "partner_wwc"   # заявка pending_confirmation, профиля ещё нет
+            assert await stage("telegram", 7302) == "partner_wwc"   # профиль enabled=false из синхронизации, заявки нет
+            for key in (7303, 7304, 7305):                          # awaiting_*, rejected, cancelled — человек остаётся гостем
+                assert await stage("telegram", key) == "guest", key
+            for actor in ("paid-actor", "receipt-actor", "disabled-actor"):
+                assert await column_of(actor) == "guest", actor     # выключенный профиль и заявка в очередь в поле не оседают
+            # заявку отклонили — человек снова гость (поле не писали, держаться нечему)
+            async with tenant_connection("whieda") as c:
+                await c.execute("update partner_site_requests set status = 'rejected' where actor_id = 'receipt-actor'")
+            assert await stage("telegram", 7301) == "guest"
+            # поле, уже записанное как partner_whieda, оплата не трогает: статус partner_wwc виден, а в поле остаётся прежнее
+            async with tenant_connection("whieda") as c:
+                await c.execute("update lead_actors set bot_stage = 'partner_whieda' where actor_id = 'paid-actor'")
+            assert await stage("telegram", 7300) == "partner_wwc" and await column_of("paid-actor") == "partner_whieda"
 
             # --- доступ к Академии (кнопка «🎓 Академия» в меню гостя) ---
             async def academy(channel: str, user: int, tenant_id: str = "whieda") -> bool:
@@ -233,6 +272,10 @@ def test_the_bot_stage_column_the_backfill_and_the_transitions(monkeypatch):
 
         async def without_the_column() -> None:
             from app.bot_stages import service
+
+            assert await service.person_stage("whieda", "telegram", 7300) == "partner_wwc"   # заявка в очереди и выключенный профиль
+            assert await service.person_stage("whieda", "telegram", 7302) == "partner_wwc"   # выключенный профиль
+            assert await service.person_stage("whieda", "telegram", 7303) == "guest"         # анкета без оплаты
 
             assert await service.person_stage("whieda", "telegram", 7001) == "partner_wwc"   # по профилю сайта
             assert await service.person_stage("whieda", "telegram", 7100) == "guest"

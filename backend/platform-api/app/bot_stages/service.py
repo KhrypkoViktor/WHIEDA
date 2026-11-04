@@ -4,10 +4,16 @@
 
   ``guest``           пришёл с рекламы, по голому «/start», по ссылке заявки или партнёра, пока его никто не повысил;
   ``partner_whieda``  ведущий подтвердил его в WWC CRM (``app/crm/stage_link.py``) или владелец написал «партнёр @ник»;
-  ``partner_wwc``     у него включённый ``referral_profiles`` (оплаченный сайт) — меню кабинета.
+  ``partner_wwc``     у него есть профиль сайта ``referral_profiles`` (включённый или нет) либо оплаченная заявка на сайт,
+                      которая ещё не активирована, — меню кабинета с бонусами и ссылкой-приглашением.
 
-Хранится в ``lead_actors.bot_stage`` (V49). Но статус партнёра WWC бот берёт и из самого профиля сайта — не ждёт, пока
-поле догонит его: человек с включённым профилем всегда ``partner_wwc`` и при первом касании поле подтягивается.
+Хранится в ``lead_actors.bot_stage`` (V49). Но статус партнёра WWC бот берёт и из самих профилей и заявок — не ждёт, пока
+поле догонит их. Профиль — любой, не только включённый: заявка на сайт создаёт его выключенным (``enabled = false``) до
+активации, профиль из синхронизации Partners_Ref тоже бывает выключен, а бонусы и ссылку человек терять не должен.
+Заявка — в статусе ``pending_confirmation`` (чек отправлен) или ``pending_provisioning`` (оплата подтверждена); анкета,
+не дошедшая до оплаты (``awaiting_*``), отклонённая и отменённая заявки человека гостем не делают партнёром.
+Поле ``bot_stage`` подтягивается к ``partner_wwc`` только по включённому профилю и вниз не пишется: выключенный профиль
+или заявка в очереди статус показывают, но в поле не оседают (отклонят заявку — человек снова гость).
 Владелец и админы бота — как ``partner_wwc``. Статус никогда не понижается сам: подтверждение ведущего не отбирает
 у партнёра WWC его кабинет; снять статус «партнёр WHIEDA» может только владелец словом «партнёр снять @ник».
 
@@ -77,10 +83,26 @@ with person as (
 )
 """
 
-_HAS_PROFILE = """
+# Включённый профиль сайта — единственное, что подтягивает поле bot_stage к partner_wwc.
+_HAS_ENABLED_PROFILE = """
 exists (
   select 1 from referral_profiles rp
   where rp.tenant_id = %(tenant)s and rp.enabled and rp.owner_id in (select actor_id from person)
+)
+"""
+
+# Партнёр WWC для бота: любой профиль сайта (включённый или нет) либо оплаченная, но не активированная заявка.
+_HAS_PROFILE = """
+(
+  exists (
+    select 1 from referral_profiles rp
+    where rp.tenant_id = %(tenant)s and rp.owner_id in (select actor_id from person)
+  )
+  or exists (
+    select 1 from partner_site_requests sr
+    where sr.tenant_id = %(tenant)s and sr.actor_id in (select actor_id from person)
+      and sr.status in ('pending_confirmation', 'pending_provisioning')
+  )
 )
 """
 
@@ -88,6 +110,7 @@ _STAGE_SQL = (
     _PERSON_CTE
     + f"""
 select {_HAS_PROFILE} as has_profile,
+  {_HAS_ENABLED_PROFILE} as has_enabled_profile,
   coalesce((
     select la.bot_stage from lead_actors la
     where la.tenant_id = %(tenant)s and la.actor_id in (select actor_id from person)
@@ -129,7 +152,7 @@ async def resolve_stage(conn: Any, tenant_id: str, channel: str, user_id: int) -
     row = await fetch_one(conn, _STAGE_SQL, params)
     stored = str((row or {}).get("bot_stage") or STAGE_GUEST)
     if bool((row or {}).get("has_profile")):
-        if stored != STAGE_PARTNER_WWC:
+        if bool((row or {}).get("has_enabled_profile")) and stored != STAGE_PARTNER_WWC:
             async with conn.cursor() as cur:
                 await cur.execute(_SYNC_PROFILE_SQL, params)
         return STAGE_PARTNER_WWC
@@ -137,7 +160,8 @@ async def resolve_stage(conn: Any, tenant_id: str, channel: str, user_id: int) -
 
 
 async def person_stage(tenant_id: str, channel: str, user_id: int) -> str:
-    """Статус человека своим подключением. Миграции V49 ещё нет — статус по профилю сайта (партнёр WWC или гость)."""
+    """Статус человека своим подключением. Миграции V49 ещё нет — статус по профилю сайта и заявке в очереди (партнёр
+    WWC или гость)."""
     if channel == "telegram" and is_owner_or_admin(user_id):
         return STAGE_PARTNER_WWC
     try:
