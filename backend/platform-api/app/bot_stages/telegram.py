@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -47,10 +48,18 @@ from app.ttl_cache import TtlCache
 
 logger = logging.getLogger("whieda.bot_stages")
 
-# Какой статус синей кнопки «Меню» этого чата процесс уже поставил: кабинет партнёра открывают чаще всего, и каждый раз
-# ходить в Telegram за тем же списком команд незачем. Смена статуса — другой ключ значения, и команды ставятся заново.
+# Синяя кнопка «Меню» этого чата. Кабинет партнёра открывают чаще всего, и каждый раз ходить в Telegram за тем же списком
+# команд незачем: процесс помнит, что с чатом. Значение — статус и его состояние: ``<статус>`` (список стоит, 6 часов),
+# ``pending:<статус>`` (вызов идёт, минуту — второй не запускаем), ``failed:<статус>`` (Telegram не ответил, 5 минут не
+# повторяем: иначе на каждом /start новая задача и новое ожидание). Смена статуса — другое значение, и команды ставятся заново.
 _COMMANDS_TTL_SEC = 6 * 3600
+_COMMANDS_PENDING_TTL_SEC = 60
+_COMMANDS_FAILED_TTL_SEC = 5 * 60
+# Вызов setMyCommands необязателен — ждать его дольше нескольких секунд незачем (по умолчанию в _call_telegram десять).
+COMMANDS_TIMEOUT_SEC = 3.0
 _synced_commands: TtlCache[str] = TtlCache(max_entries=50_000)
+# Фоновые вызовы: держим ссылку, пока идут, иначе сборщик мусора может убрать задачу на лету (как «печатает…» в routes.py).
+_background_tasks: set[asyncio.Task] = set()
 
 _COMMAND_RE = re.compile(r"^/(site|course)(?:@\w+)?\s*$", re.IGNORECASE)
 _CONFIRM_RE = re.compile(r"^stg:(y|n):([0-9a-f]{32})$")
@@ -76,29 +85,66 @@ async def send_reply(chat_id: int | str, reply: Reply) -> None:
     )
 
 
+async def _set_chat_commands(
+    cache_key: tuple[str, int], chat_id: int, stage: str, commands: list[dict[str, str]], bot_token: str
+) -> None:
+    """Сам вызов setMyCommands (фоновая задача): короткий таймаут, итог — в кэш процесса. Сбой — в лог и в кэш на пять
+    минут, чтобы не повторять его на каждом /start."""
+    ok = False
+    try:
+        result = await asyncio.wait_for(
+            _call_telegram(
+                "setMyCommands",
+                {"commands": commands, "scope": {"type": "chat", "chat_id": int(chat_id)}},
+                bot_token=bot_token,
+                timeout_sec=COMMANDS_TIMEOUT_SEC,
+            ),
+            timeout=COMMANDS_TIMEOUT_SEC,
+        )
+        ok = bool(result.get("ok"))
+    except Exception as exc:  # noqa: BLE001 — таймаут, сеть, ошибка Telegram: меню команд необязательное
+        logger.warning("bot_stage_commands_failed", extra={"stage": stage, "error_class": type(exc).__name__})
+    if _synced_commands.get(cache_key) != f"pending:{stage}":
+        return  # пока шёл вызов, статус чата сменился и поставлен новый список: этот итог устарел
+    if ok:
+        _synced_commands.set(cache_key, stage, _COMMANDS_TTL_SEC)
+    else:
+        _synced_commands.set(cache_key, f"failed:{stage}", _COMMANDS_FAILED_TTL_SEC)
+
+
 async def sync_chat_commands(chat_id: int | str, stage: str) -> bool:
-    """Синяя кнопка «Меню» этого чата по статусу: setMyCommands со scope=chat. Ставится при первом касании
-    (меню гостя) и при смене статуса. Сбой — в лог (метод и код ответа), человеку ничего не показываем."""
-    if not stages_enabled(current_bot_binding().tenant.tenant_id):
-        return False
+    """Синяя кнопка «Меню» этого чата по статусу: setMyCommands со scope=chat. Ставится при первом касании (меню гостя)
+    и при смене статуса. Вызов идёт фоновой задачей и ответа не задерживает: меню человеку уходит, не дожидаясь
+    Telegram (раньше ждали до десяти секунд). Возвращает ``True``, если список уже стоит или поставлен в работу, ``False`` —
+    нечего ставить (три меню выключены) или недавний вызов не удался и пять минут не повторяется."""
     binding = current_bot_binding()
+    if not stages_enabled(binding.tenant.tenant_id):
+        return False
     cache_key = (binding.binding_id, int(chat_id))
-    if _synced_commands.get(cache_key) == stage:
+    state = _synced_commands.get(cache_key)
+    if state in (stage, f"pending:{stage}"):
         return True
+    if state == f"failed:{stage}":
+        return False
     site_support = bool(binding.tenant.entitlements.get("site_support", False))
     commands = menus.commands_for_stage(stage, include_wish=site_support, include_max=site_support)
+    _synced_commands.set(cache_key, f"pending:{stage}", _COMMANDS_PENDING_TTL_SEC)
     try:
-        result = await _call_telegram(
-            "setMyCommands",
-            {"commands": commands, "scope": {"type": "chat", "chat_id": int(chat_id)}},
-            bot_token=binding.bot_token,
+        task = asyncio.get_running_loop().create_task(
+            _set_chat_commands(cache_key, int(chat_id), stage, commands, binding.bot_token)
         )
-    except Exception as exc:  # noqa: BLE001 — меню команд не должно ломать ответ
-        logger.warning("bot_stage_commands_failed", extra={"stage": stage, "error_class": type(exc).__name__})
+    except RuntimeError:  # нет работающего цикла (вызов вне async-кода): ставить некому
+        _synced_commands.pop(cache_key)
         return False
-    if result.get("ok"):
-        _synced_commands.set(cache_key, stage, _COMMANDS_TTL_SEC)
-    return bool(result.get("ok"))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return True
+
+
+async def flush_background() -> None:
+    """Дождаться фоновых вызовов setMyCommands. Нужно тестам и остановке процесса; боевой путь результата не ждёт."""
+    if _background_tasks:
+        await asyncio.gather(*list(_background_tasks), return_exceptions=True)
 
 
 # ---- пример сайта партнёра -------------------------------------------------------------------------

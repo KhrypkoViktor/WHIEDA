@@ -194,6 +194,7 @@ def test_crm_card_to_partner_asks_the_host_and_yes_promotes_the_person(monkeypat
                     "Вы партнёр WHIEDA. Следующий шаг — ваш сайт и первые люди.",
                 ]
                 assert (str(OWNER), "@igor_v подтвердил(а): Анна Петрова — партнёр WHIEDA.") in sent
+                await stages_tg.flush_background()  # setMyCommands идёт фоном
                 scopes = [payload["scope"]["chat_id"] for method, payload in api_calls if method == "setMyCommands"]
                 assert scopes == [8800]   # синяя кнопка «Меню» человека переустановлена на меню партнёра WHIEDA
 

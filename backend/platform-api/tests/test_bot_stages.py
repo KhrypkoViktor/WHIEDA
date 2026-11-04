@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import ExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -136,7 +137,9 @@ async def start_telegram(world, tenant, binding, text="/start", user=USER) -> di
         stack.enter_context(patch("app.telegram.processor.first_start_consent_notice", AsyncMock(return_value=None)))
         stack.enter_context(patch("app.telegram.processor.offer_marketing_consent", AsyncMock()))
         stack.enter_context(patch("app.telegram.processor.record_source_start", AsyncMock()))
-        return await process_core_telegram_update(tenant, _update({"text": text}, user_id=user), "t1", binding=binding)
+        result = await process_core_telegram_update(tenant, _update({"text": text}, user_id=user), "t1", binding=binding)
+    await stages_tg.flush_background()  # setMyCommands идёт фоном: дожидаемся его, чтобы тест видел вызов
+    return result
 
 
 def max_event(kind="start", text="", user=9300, chat=777) -> MaxEvent:
@@ -812,10 +815,12 @@ def owner_world(world, monkeypatch):
     return world
 
 
-def owner_says(text: str, user: int = OWNER):
-    return stages_tg.try_handle_owner_partner_word(
+async def owner_says(text: str, user: int = OWNER):
+    result = await stages_tg.try_handle_owner_partner_word(
         TENANT_FOR_TESTS, parse_telegram_message(_update({"text": text}, user_id=user)), trace_id="t"
     )
+    await stages_tg.flush_background()
+    return result
 
 
 TENANT_FOR_TESTS = SimpleNamespace(tenant_id="whieda")
@@ -892,6 +897,7 @@ async def test_set_my_commands_goes_to_the_chat_scope_for_each_stage(world):
         ("partner_wwc", ["cabinet", "invite", "calculator", "max", "support", "wish"]),
     ):
         assert await stages_tg.sync_chat_commands(4242, stage) is True
+        await stages_tg.flush_background()
         method, payload = world.calls[-1]
         assert method == "setMyCommands"
         assert payload["scope"] == {"type": "chat", "chat_id": 4242}
@@ -900,9 +906,11 @@ async def test_set_my_commands_goes_to_the_chat_scope_for_each_stage(world):
 
 async def test_a_failed_set_my_commands_does_not_break_the_reply(world, monkeypatch):
     monkeypatch.setattr("app.bot_stages.telegram._call_telegram", AsyncMock(side_effect=RuntimeError("telegram down")))
-    assert await stages_tg.sync_chat_commands(4242, "guest") is False
+    assert await stages_tg.sync_chat_commands(4242, "guest") is True    # вызов ушёл в фон: исключение туда и уходит
+    await stages_tg.flush_background()
     monkeypatch.setattr("app.bot_stages.telegram._call_telegram", AsyncMock(return_value={"ok": False}))
-    assert await stages_tg.sync_chat_commands(4242, "guest") is False
+    assert await stages_tg.sync_chat_commands(4343, "guest") is True
+    await stages_tg.flush_background()
 
 
 async def test_no_commands_are_set_with_the_switch_off(world, monkeypatch):
@@ -914,6 +922,7 @@ async def test_no_commands_are_set_with_the_switch_off(world, monkeypatch):
 
 async def test_announce_writes_the_congratulation_then_the_menu_and_resets_the_commands(world):
     assert await stages_tg.announce_partner_whieda("whieda", "telegram", 8800) is True
+    await stages_tg.flush_background()
     texts_sent = [text for chat, text, _ in world.sent if chat == "8800"]
     assert texts_sent == [
         "Поздравляем — вы партнёр WHIEDA! Ниже ваше меню: сайт, курс, первые люди.",
@@ -1028,20 +1037,14 @@ def test_rows_become_telegram_and_max_keyboards_with_links_and_callbacks():
 
 async def test_the_commands_of_a_chat_are_set_once_per_stage_not_on_every_cabinet_open(world):
     assert await stages_tg.sync_chat_commands(4242, "partner_wwc") is True
+    assert await stages_tg.sync_chat_commands(4242, "partner_wwc") is True  # вызов ещё идёт — второй не запускаем
+    await stages_tg.flush_background()
     assert await stages_tg.sync_chat_commands(4242, "partner_wwc") is True  # кабинет открыли снова — в Telegram не ходим
     assert [method for method, _ in world.calls] == ["setMyCommands"]
     assert await stages_tg.sync_chat_commands(4242, "guest") is True        # статус сменился — список ставится заново
     assert await stages_tg.sync_chat_commands(4343, "guest") is True        # другой чат — свой список
+    await stages_tg.flush_background()
     assert [payload["scope"]["chat_id"] for _, payload in world.calls] == [4242, 4242, 4343]
-
-
-async def test_a_failed_set_my_commands_is_not_remembered(world, monkeypatch):
-    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", AsyncMock(return_value={"ok": False}))
-    assert await stages_tg.sync_chat_commands(4242, "guest") is False
-    ok = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", ok)
-    assert await stages_tg.sync_chat_commands(4242, "guest") is True        # повтор пошёл в Telegram: неудача не запомнена
-    ok.assert_awaited_once()
 
 
 @pytest.mark.parametrize(("inviter_site", "demo", "expected"), [
@@ -1261,3 +1264,95 @@ async def test_a_database_failure_leaves_support_as_it_was(world, whieda_tenant,
     monkeypatch.setattr("app.bot_stages.telegram.person_stage", AsyncMock(side_effect=RuntimeError("db down")))
     result, to_user, _ = await open_support(whieda_tenant, whieda_bot_binding, support_message("/support"))
     assert result["status"] == "ticket_opened" and SUPPORT_INVITE_TEXT in to_user[0]["text"]
+
+
+# ---- setMyCommands не задерживает ответ ---------------------------------------------------------------------
+
+
+async def test_the_menu_goes_out_even_if_set_my_commands_hangs(world, whieda_tenant, whieda_bot_binding, monkeypatch):
+    world.stage = "guest"
+    gate = asyncio.Event()
+    started: list[str] = []
+
+    async def hanging(method, payload, *, bot_token, timeout_sec=10.0):
+        started.append(method)
+        await gate.wait()  # Telegram не отвечает
+        return {"ok": True}
+
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", hanging)
+    monkeypatch.setattr("app.bot_stages.telegram.COMMANDS_TIMEOUT_SEC", 30.0)  # таймаут длинный: ответ не может его ждать
+    with ExitStack() as stack:
+        _through_processor(stack)
+        stack.enter_context(patch("app.telegram.processor.first_start_consent_notice", AsyncMock(return_value=None)))
+        stack.enter_context(patch("app.telegram.processor.offer_marketing_consent", AsyncMock()))
+        result = await asyncio.wait_for(
+            process_core_telegram_update(whieda_tenant, _update({"text": "/start"}, user_id=USER), "t1", binding=whieda_bot_binding),
+            timeout=2.0,
+        )
+    assert result["route"] == "guest_menu"
+    assert world.sent[-1][1].startswith("Вы в WWC: Whieda World Club")  # меню у человека
+    await asyncio.sleep(0)
+    assert started == ["setMyCommands"] and stages_tg._background_tasks  # вызов начат и всё ещё висит, ответу он не мешал
+    gate.set()
+    await stages_tg.flush_background()
+    assert not stages_tg._background_tasks
+
+
+async def test_a_hanging_set_my_commands_is_cut_by_the_short_timeout_and_not_repeated_for_minutes(world, monkeypatch):
+    calls: list[int] = []
+
+    async def hanging(method, payload, *, bot_token, timeout_sec=10.0):
+        calls.append(payload["scope"]["chat_id"])
+        await asyncio.Event().wait()  # навсегда
+
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", hanging)
+    monkeypatch.setattr("app.bot_stages.telegram.COMMANDS_TIMEOUT_SEC", 0.05)
+    assert await stages_tg.sync_chat_commands(4242, "guest") is True
+    await asyncio.wait_for(stages_tg.flush_background(), timeout=2.0)       # короткий таймаут оборвал вызов
+    # повторный /start сразу: новой задачи и нового ожидания нет
+    assert await stages_tg.sync_chat_commands(4242, "guest") is False
+    await stages_tg.flush_background()
+    assert calls == [4242]
+    # через пять минут — снова пробуем
+    import app.ttl_cache as ttl
+
+    real_now = ttl._now
+    monkeypatch.setattr(ttl, "_now", lambda: real_now() + 301)
+    assert await stages_tg.sync_chat_commands(4242, "guest") is True
+    await asyncio.wait_for(stages_tg.flush_background(), timeout=2.0)
+    assert calls == [4242, 4242]
+
+
+async def test_the_menu_goes_out_even_if_set_my_commands_fails_and_a_second_start_does_not_call_again(world, whieda_tenant, whieda_bot_binding, monkeypatch):
+    world.stage = "guest"
+    failing = AsyncMock(side_effect=RuntimeError("telegram down"))
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", failing)
+    first = await start_telegram(world, whieda_tenant, whieda_bot_binding)
+    second = await start_telegram(world, whieda_tenant, whieda_bot_binding)
+    assert first["route"] == "guest_menu" and second["route"] == "guest_menu"
+    assert [chat for chat, text, _ in world.sent if text.startswith("Вы в WWC")] == [str(USER), str(USER)]  # оба меню у человека
+    failing.assert_awaited_once()  # неудача запомнена на несколько минут, на втором /start вызова нет
+
+
+async def test_an_outdated_result_does_not_overwrite_the_newer_stage_of_the_chat(world, monkeypatch):
+    gate = asyncio.Event()
+    seen: list[str] = []
+
+    async def slow_then_fast(method, payload, *, bot_token, timeout_sec=10.0):
+        seen.append(payload["commands"][0]["command"])
+        if len(seen) == 1:
+            await gate.wait()
+        return {"ok": True}
+
+    monkeypatch.setattr("app.bot_stages.telegram._call_telegram", slow_then_fast)
+    binding = stages_tg.current_bot_binding()
+    key = (binding.binding_id, 4242)
+    await stages_tg.sync_chat_commands(4242, "guest")                 # «start …» — этот вызов ещё идёт
+    await asyncio.sleep(0)
+    await stages_tg.sync_chat_commands(4242, "partner_wwc")           # статус сменился: «cabinet …»
+    await asyncio.sleep(0)
+    gate.set()
+    await stages_tg.flush_background()
+    assert seen == ["start", "cabinet"]
+    assert stages_tg._synced_commands.get(key) == "partner_wwc"       # итог старого вызова новый статус не затёр
+
