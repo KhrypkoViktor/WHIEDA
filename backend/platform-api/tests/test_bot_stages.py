@@ -790,11 +790,57 @@ async def test_both_messengers_of_the_person_are_confirmed_together(confirm_worl
     assert confirm_world.announced == [("telegram", 8800), ("max", 9900)]
 
 
-async def test_a_database_failure_on_yes_is_answered_and_nothing_is_announced(confirm_world, whieda_tenant, monkeypatch):
+def cleared(world) -> int:
+    """Сколько раз с сообщения-вопроса снимали кнопки «Да» / «Нет»."""
+    return len([1 for method, payload in world.calls if method == "editMessageReplyMarkup" and payload["reply_markup"] == {"inline_keyboard": []}])
+
+
+async def test_a_database_failure_on_yes_keeps_the_buttons_and_the_second_yes_works(confirm_world, whieda_tenant, monkeypatch):
+    healthy = confirm.promote  # запись статуса из фикстуры confirm_world; ниже её подменяет сбой базы
     monkeypatch.setattr("app.bot_stages.confirm.promote", AsyncMock(side_effect=RuntimeError("db down")))
     result = await press_confirm(confirm_world, whieda_tenant, True)
     assert result["status"] == "error" and result["ok"] is False
     assert confirm_world.announced == [] and confirm_world.sent[-1][1] == "Не получилось. Попробуйте ещё раз чуть позже."
+    assert cleared(confirm_world) == 0  # запись не удалась — кнопки на месте, ведущий может нажать ещё раз
+    assert confirm_world.promoted == {}
+    monkeypatch.setattr("app.bot_stages.confirm.promote", healthy)  # база ожила
+    again = await press_confirm(confirm_world, whieda_tenant, True)
+    assert again["status"] == "confirmed" and confirm_world.promoted == {("telegram", 8800): "partner_whieda"}
+    assert cleared(confirm_world) == 1 and confirm_world.announced == [("telegram", 8800)]
+    third = await press_confirm(confirm_world, whieda_tenant, True)  # и повторное «Да» после успеха идемпотентно
+    assert third["status"] == "already" and confirm_world.announced == [("telegram", 8800)]
+
+
+async def test_a_failure_for_the_second_person_keeps_the_buttons_and_does_not_greet_the_first_twice(confirm_world, whieda_tenant, monkeypatch):
+    confirm_world.card = stage_link.CardInfo(CARD_ID, "Иван Петров", "partner", HOST, (("telegram", 8800), ("max", 9900)))
+    healthy = confirm.promote
+    fail_max = {"on": True}
+
+    async def promote(tenant_id, channel, user_id, stage):
+        if channel == "max" and fail_max["on"]:
+            raise RuntimeError("db down")
+        return await healthy(tenant_id, channel, user_id, stage)
+
+    monkeypatch.setattr("app.bot_stages.confirm.promote", promote)
+    first = await press_confirm(confirm_world, whieda_tenant, True)
+    assert first["status"] == "error" and first["persons"] == 1
+    assert confirm_world.announced == [("telegram", 8800)] and cleared(confirm_world) == 0
+    fail_max["on"] = False
+    second = await press_confirm(confirm_world, whieda_tenant, True)
+    assert second["status"] == "confirmed" and second["persons"] == 1
+    assert confirm_world.announced == [("telegram", 8800), ("max", 9900)]  # первому второе поздравление не ушло
+    assert cleared(confirm_world) == 1
+
+
+async def test_no_and_an_obsolete_card_clear_the_buttons_because_nothing_is_left_to_retry(confirm_world, whieda_tenant):
+    await press_confirm(confirm_world, whieda_tenant, False)
+    assert cleared(confirm_world) == 1
+    confirm_world.card = stage_link.CardInfo(CARD_ID, "Иван Петров", "deciding", HOST, (("telegram", 8800),))
+    await press_confirm(confirm_world, whieda_tenant, True)
+    assert cleared(confirm_world) == 2
+    before = cleared(confirm_world)
+    await press_confirm(confirm_world, whieda_tenant, True, user=9999)  # чужой кнопки с вопроса ведущего не снимает
+    assert cleared(confirm_world) == before
 
 
 # ---- слово владельца «партнёр @ник» -----------------------------------------------------------------------

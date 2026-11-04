@@ -8,7 +8,8 @@
   «Нет»  ничего не меняется, ведущий видит «Хорошо, статус не меняю».
 
 Повторное «Да» ничего не дублирует: человек уже партнёр — ведущему отвечаем «уже партнёр», человеку не пишем второй раз.
-Отвечать может хозяин карточки и владелец бота; чужой партнёр кнопку нажать не может. Кнопки с вопроса снимаются.
+Отвечать может хозяин карточки и владелец бота; чужой партнёр кнопку нажать не может. Кнопки с вопроса снимаются только после
+успешной записи статуса (и после «Нет»): сбой базы кнопки оставляет, ведущий может нажать «Да» ещё раз.
 В логи имён не попадает.
 """
 
@@ -88,32 +89,40 @@ async def handle_confirm_callback(
         await send_reply(callback.chat_id, Reply(texts.STAGE_CONFIRM_FORBIDDEN))
         return {**base, "ok": False, "status": "forbidden"}
     name = card.name or "Человек"
-    await _clear_buttons(callback)
     if not yes:
+        await _clear_buttons(callback)
         await send_reply(callback.chat_id, Reply(texts.STAGE_CONFIRM_DECLINED.format(name=name)))
         return {**base, "status": "declined"}
     if card.status != stage_link.PARTNER_STATUS:
+        await _clear_buttons(callback)
         await send_reply(callback.chat_id, Reply(texts.STAGE_CONFIRM_MOVED.format(name=name)))
         return {**base, "status": "card_moved"}
     if not card.persons:
+        await _clear_buttons(callback)
         await send_reply(callback.chat_id, Reply(texts.STAGE_CONFIRM_NO_BOT.format(name=name)))
         return {**base, "status": "no_bot"}
-    try:
-        changed = [
-            person
-            for person in card.persons
-            if await promote(tenant.tenant_id, person[0], person[1], STAGE_PARTNER_WHIEDA) == "changed"
-        ]
-    except Exception as exc:  # noqa: BLE001 — ведущему отвечаем, даже если база не отозвалась; нажать «Да» можно ещё раз
-        logger.warning("bot_stage_confirm_failed", extra={"trace_id": trace_id, **safe_error(exc)})
+    changed: list[tuple[str, int]] = []
+    delivered = False
+    failed = False
+    for channel, user_id in card.persons:
+        try:
+            outcome = await promote(tenant.tenant_id, channel, user_id, STAGE_PARTNER_WHIEDA)
+        except Exception as exc:  # noqa: BLE001 — ведущему отвечаем, даже если база не отозвалась
+            logger.warning("bot_stage_confirm_failed", extra={"trace_id": trace_id, **safe_error(exc)})
+            failed = True
+            continue
+        if outcome == "changed":
+            changed.append((channel, user_id))
+            # Поздравление сразу после записи: при повторе «Да» этот человек уже «already» и второго не получит.
+            delivered = await announce_partner_whieda(tenant.tenant_id, channel, user_id) or delivered
+    if failed:
+        # Статус записан не у всех: кнопки остаются, «Да» можно нажать ещё раз (записанные станут «уже партнёр»).
         await send_reply(callback.chat_id, Reply(texts.GUEST_ERROR))
-        return {**base, "ok": False, "status": "error"}
+        return {**base, "ok": False, "status": "error", "persons": len(changed)}
+    await _clear_buttons(callback)
     if not changed:
         await send_reply(callback.chat_id, Reply(texts.STAGE_CONFIRM_ALREADY.format(name=name)))
         return {**base, "status": "already"}
-    delivered = False
-    for channel, user_id in changed:
-        delivered = await announce_partner_whieda(tenant.tenant_id, channel, user_id) or delivered
     line = texts.STAGE_CONFIRM_DONE if delivered else texts.STAGE_CONFIRM_DONE_UNDELIVERED
     await send_reply(callback.chat_id, Reply(line.format(name=name)))
     await _tell_owner(callback, name)
