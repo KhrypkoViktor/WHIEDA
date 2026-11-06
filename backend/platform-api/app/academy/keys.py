@@ -156,6 +156,23 @@ async def actor_ids_for_telegram(conn: Any, tenant_id: str, telegram_user_id: in
     return [str(row["actor_id"]) for row in rows]
 
 
+async def author_role_actor_ids(conn: Any, tenant_id: str, telegram_user_id: int) -> list[str]:
+    """Actor-строки человека в роли автора: свои и владельцы витрин, где он соавтор
+    (``support.coauthor_telegram_ids``, Виктор 06.11.2026: у ALMIRA два автора). Клуб, покупки и партнёрские
+    ссылки этим не расширяются: там ``actor_ids_for_telegram``, личность самого человека."""
+    own = await actor_ids_for_telegram(conn, tenant_id, telegram_user_id)
+    rows = await fetch_all(
+        conn,
+        """
+        select owner_actor_id from academy_showcases
+        where tenant_id = %s and status = 'active' and owner_actor_id is not null
+          and support -> 'coauthor_telegram_ids' @> to_jsonb(%s::bigint)
+        """,
+        (tenant_id, int(telegram_user_id)),
+    )
+    return sorted({*own, *(str(row["owner_actor_id"]) for row in rows)})
+
+
 async def issue_keys(
     tenant_id: str,
     course_slug: str,
@@ -247,7 +264,7 @@ async def issue_keys(
 
 async def author_actor_ids(tenant_id: str, telegram_user_id: int) -> list[str]:
     async with tenant_connection(tenant_id) as conn:
-        return await actor_ids_for_telegram(conn, tenant_id, telegram_user_id)
+        return await author_role_actor_ids(conn, tenant_id, telegram_user_id)
 
 
 async def issue_keys_for_telegram(

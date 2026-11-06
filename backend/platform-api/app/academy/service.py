@@ -55,7 +55,7 @@ from urllib.parse import urlencode
 import psycopg
 
 from app.academy.content import media_refs, resolve_media, sanitize_html
-from app.academy.keys import actor_ids_for_telegram
+from app.academy.keys import actor_ids_for_telegram, author_role_actor_ids
 from app.academy.media_service import load_media, media_links, media_summary
 from app.academy.quiz import grade_quiz, public_quiz, retry_after_min, retry_at
 from app.academy.showcases import (
@@ -450,7 +450,7 @@ async def _access_row(conn: Any, tenant_id: str, course_id: str, telegram_user_i
 
 
 async def viewer_actor_ids(conn: Any, tenant_id: str, telegram_user_id: int) -> list[str]:
-    return await actor_ids_for_telegram(conn, tenant_id, telegram_user_id)
+    return await author_role_actor_ids(conn, tenant_id, telegram_user_id)
 
 
 def is_staff_for(course: dict[str, Any], viewer: AcademyViewer, actor_ids: list[str]) -> bool:

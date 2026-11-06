@@ -454,6 +454,59 @@ def _probe(path) -> dict:
 
 
 @pytest.mark.integration
+def test_showcase_coauthor_is_an_author_of_its_courses_only(monkeypatch, tmp_path):
+    """Соавтор витрины (06.11.2026): все уроки и ключи курсов витрины; чужие курсы и личность без изменений."""
+    _env(monkeypatch, tmp_path)
+    now = datetime.now(timezone.utc)
+    coauthor_uid = 9101
+    with temporary_database("whieda_academy_coauthor") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(PEOPLE)
+            _seed_course(conn, now)
+            conn.execute(
+                "insert into academy_showcases (tenant_id, showcase_id, owner_actor_id, brand_name, academy_title, support)"
+                " values ('whieda', 'almira', 'almira', 'ALMIRA', 'ALMIRA', %s::jsonb)",
+                (json.dumps({"coauthor_telegram_ids": [coauthor_uid]}),),
+            )
+            conn.execute(
+                "insert into academy_courses (tenant_id, slug, title, access_rule, author_actor_id, status)"
+                " values ('whieda', 'chuzhoy', 'Чужой курс', 'purchase', 'masha', 'published')"
+            )
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy.keys import actor_ids_for_telegram, author_actor_ids, issue_keys_for_telegram
+            from app.academy.service import AcademyError, _course_view, course_outline, lesson_detail, load_viewer
+            from app.db import tenant_connection
+
+            coauthor = await load_viewer("whieda", coauthor_uid)
+            outline = await course_outline("whieda", "akvarel", coauthor, allow_locked=True)
+            assert not outline["course"]["locked"]
+            assert {row["locked"] for row in outline["lessons"]} == {False}
+            assert (await lesson_detail("whieda", "akvarel", "d", coauthor))["lesson"]["slug"] == "d"
+            assert await author_actor_ids("whieda", coauthor_uid) == ["almira"]
+            issued = await issue_keys_for_telegram("whieda", "akvarel", coauthor_uid, 1, is_admin=False)
+            assert len(issued.codes) == 1
+
+            async with tenant_connection("whieda") as conn:
+                assert (await _course_view(conn, "whieda", "akvarel", coauthor)).staff is True
+                assert (await _course_view(conn, "whieda", "chuzhoy", coauthor)).staff is False
+                # Личность человека (клуб, покупки, партнёрские ссылки) соавторство не меняет.
+                assert await actor_ids_for_telegram(conn, "whieda", coauthor_uid) == []
+
+            with pytest.raises(AcademyError) as foreign:
+                await course_outline("whieda", "chuzhoy", coauthor)
+            assert foreign.value.code == "purchase_required"
+
+            stranger = await load_viewer("whieda", STRANGER)
+            async with tenant_connection("whieda") as conn:
+                assert (await _course_view(conn, "whieda", "akvarel", stranger)).staff is False
+
+        db.run_with_app(proof)
+
+
+@pytest.mark.integration
 def test_media_upload_state_machine_and_transcode(monkeypatch, tmp_path):
     media_dir = tmp_path / "media"
     media_dir.mkdir()
