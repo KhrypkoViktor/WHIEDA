@@ -100,7 +100,7 @@ def test_me_in_one_transaction_matches_four_separate_ones():
             assert body["partner_paid"] is True
             assert body["subscription_status"] == "active"
             assert body["account"]["balance"] == {"currency": "WWC$", "amount_minor": 600}
-            assert [method["provider"] for method in body["login_methods"]] == ["telegram", "google"]
+            assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram", "google"]
             assert body["lead_email"] == "leads@example.org"
 
             # То же самое, как оно считалось раньше: по транзакции на каждое чтение.
@@ -109,7 +109,12 @@ def test_me_in_one_transaction_matches_four_separate_ones():
             subscription = await resolve_partner_subscription_by_telegram_user_id("whieda", USER, on_ambiguous="best")
             account = await load_site_account("whieda", USER)
             old_way = format_me_payload(session, partner_subscription=subscription, account=account)
-            old_way["login_methods"] = await list_login_methods("whieda", USER)
+            from app.login_identities.rules import login_methods_state
+            from app.login_identities.service import providers_enabled
+
+            old_way["login_methods"] = login_methods_state(
+                await list_login_methods("whieda", USER), enabled=providers_enabled(), passkeys=0
+            )
             old_way["lead_email"] = await lead_email_of("whieda", USER)
             assert body == jsonable_encoder(old_way)
 
@@ -129,7 +134,7 @@ def test_broken_login_methods_read_leaves_the_account_and_the_lead_email_intact(
             counting = _CountingPool(get_pool())
             body, checkouts = await _me(counting)
 
-            assert body["login_methods"] == [{"provider": "telegram", "label": "Telegram", "linked_at": None}]
+            assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram"]
             assert body["partner_paid"] is True
             assert body["account"]["balance"]["amount_minor"] == 600
             assert body["lead_email"] == "leads@example.org"  # через отдельное чтение

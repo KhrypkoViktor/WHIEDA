@@ -11,7 +11,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-PROVIDERS = ("google", "max")
+PROVIDERS = ("google", "max", "yandex", "vk")
+# Провайдеры с входом по OAuth (в «Max» вход идёт через мини-приложение).
+OAUTH_PROVIDERS = ("google", "yandex", "vk")
 # Telegram — всегда и не отвязывается: на нём держится человек в ядре.
 REVOCABLE_PROVIDERS = frozenset(PROVIDERS)
 
@@ -28,6 +30,16 @@ GOOGLE_ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_SCOPE = "openid email profile"
+
+YANDEX_AUTH_URL = "https://oauth.yandex.ru/authorize"
+YANDEX_TOKEN_URL = "https://oauth.yandex.ru/token"
+YANDEX_INFO_URL = "https://login.yandex.ru/info"
+YANDEX_SCOPE = "login:info login:email"
+
+VK_AUTH_URL = "https://id.vk.com/authorize"
+VK_TOKEN_URL = "https://id.vk.com/oauth2/auth"
+VK_USER_INFO_URL = "https://id.vk.com/oauth2/user_info"
+VK_SCOPE = "email"
 
 LINK_FRAGMENT = "wwc-link"
 LINK_ERROR_FRAGMENT = "wwc-link-error"
@@ -61,6 +73,17 @@ ERROR_STATUS = {
     "google_denied": 400,
     "google_state_invalid": 400,
     "google_token_invalid": 400,
+    "yandex_disabled": 503,
+    "yandex_denied": 400,
+    "yandex_state_invalid": 400,
+    "yandex_token_invalid": 400,
+    "vk_disabled": 503,
+    "vk_denied": 400,
+    "vk_state_invalid": 400,
+    "vk_token_invalid": 400,
+    "passkey_unsupported": 400,
+    "passkey_failed": 401,
+    "passkey_not_found": 404,
     "email_unverified": 400,
     "invalid_provider": 400,
     "provider_not_revocable": 400,
@@ -229,13 +252,15 @@ def pkce_pair() -> tuple[str, str]:
 
 # ---- кабинет: способы входа -----------------------------------------------------------------------
 
-PROVIDER_TITLES = {"telegram": "Telegram", "google": "Google", "max": "Max"}
+PROVIDER_TITLES = {"telegram": "Telegram", "google": "Google", "max": "Max", "yandex": "Яндекс ID", "vk": "VK ID"}
 
 
 def method_label(provider: str, row: dict[str, Any] | None = None) -> str:
     row = row or {}
-    if provider == "google":
-        return str(row.get("email") or "").strip() or "Google"
+    if provider in ("google", "yandex"):
+        return str(row.get("email") or row.get("display_name") or "").strip() or PROVIDER_TITLES[provider]
+    if provider == "vk":
+        return str(row.get("display_name") or row.get("email") or "").strip() or PROVIDER_TITLES["vk"]
     if provider == "max":
         return str(row.get("display_name") or "").strip() or "Max"
     return "Telegram"
@@ -256,11 +281,35 @@ def login_methods_payload(identities: list[dict[str, Any]]) -> list[dict[str, An
     return methods
 
 
+def login_methods_state(
+    methods: list[dict[str, Any]], *, enabled: dict[str, bool], passkeys: int = 0
+) -> dict[str, Any]:
+    """Способы входа для кабинета (``GET /me`` → ``login_methods``): объект по провайдерам.
+
+    {telegram|max|google|yandex|vk: {enabled, linked, label, linked_at}, passkeys: N}.
+    ``methods`` — результат ``login_methods_payload`` (Telegram и активные привязки); ``enabled`` — заданы
+    ключи провайдера в настройках (Max — токен бота); Telegram всегда включён и привязан."""
+    by_provider = {str(m["provider"]): m for m in methods}
+    state: dict[str, Any] = {
+        "telegram": {"enabled": True, "linked": True, "label": "Telegram", "linked_at": None}
+    }
+    for provider in PROVIDERS:
+        row = by_provider.get(provider)
+        state[provider] = {
+            "enabled": bool(enabled.get(provider)),
+            "linked": row is not None,
+            "label": row["label"] if row else PROVIDER_TITLES[provider],
+            "linked_at": row.get("linked_at") if row else None,
+        }
+    state["passkeys"] = int(passkeys)
+    return state
+
+
 # ---- команды владельца в Telegram-боте ------------------------------------------------------------
 
 _CODE_CMD_RE = re.compile(r"^(?:код\s+входа|/logincode)\s+(.+)$", re.IGNORECASE | re.DOTALL)
 _METHODS_CMD_RE = re.compile(r"^(?:способы\s+входа|/loginmethods)\s+(.+)$", re.IGNORECASE | re.DOTALL)
-_UNLINK_CMD_RE = re.compile(r"^(?:отвязать|/unlink)\s+(google|max)\s+(.+)$", re.IGNORECASE | re.DOTALL)
+_UNLINK_CMD_RE = re.compile(r"^(?:отвязать|/unlink)\s+(google|max|yandex|vk)\s+(.+)$", re.IGNORECASE | re.DOTALL)
 
 
 def parse_owner_command(text: str) -> tuple[str, str | None, str] | None:

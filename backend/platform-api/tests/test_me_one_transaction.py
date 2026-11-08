@@ -16,7 +16,8 @@ import app.content_access.account as account_module
 from app.content_access.account import load_site_account
 from app.content_access.service import format_me_payload
 from app.lead_email.service import lead_email_of
-from app.login_identities.service import list_login_methods
+from app.login_identities.rules import login_methods_state
+from app.login_identities.service import list_login_methods, providers_enabled
 from app.subscriptions.service import resolve_partner_subscription_by_telegram_user_id
 from tests.fake_db import FakeDb
 
@@ -103,7 +104,9 @@ async def _four_separate_transactions(session: dict) -> dict:
     subscription = await resolve_partner_subscription_by_telegram_user_id("whieda", USER, on_ambiguous="best")
     account = await load_site_account("whieda", USER)
     payload = format_me_payload(session, partner_subscription=subscription, account=account)
-    payload["login_methods"] = await list_login_methods("whieda", USER)
+    payload["login_methods"] = login_methods_state(
+        await list_login_methods("whieda", USER), enabled=providers_enabled(), passkeys=0
+    )
     payload["lead_email"] = await lead_email_of("whieda", USER)
     return jsonable_encoder(payload)
 
@@ -113,10 +116,10 @@ async def test_me_reads_everything_in_one_transaction(client, db):
     body = await _get_me(client, _session())
 
     assert db.opened == 1
-    assert len(db.statements) == 5  # подписка, to_regclass (раз за процесс), счёт, способы входа, почта
+    assert len(db.statements) == 6  # подписка, to_regclass (раз за процесс), счёт, способы входа, почта, число ключей доступа
     assert body["partner_paid"] is True
     assert body["account"]["balance"] == {"currency": "WWC$", "amount_minor": 600}
-    assert [method["provider"] for method in body["login_methods"]] == ["telegram", "google"]
+    assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram", "google"]
     assert body["lead_email"] == "leads@example.org"
     assert "telegram_user_id" not in body
 
@@ -166,7 +169,7 @@ async def test_me_without_telegram_id_opens_no_transaction(client, db):
     assert db.opened == 0
     assert body["account"] is None
     assert body["subscription_status"] == "no_subscription"
-    assert body["login_methods"] == [{"provider": "telegram", "label": "Telegram", "linked_at": None}]
+    assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram"]
     assert body["lead_email"] is None
 
 
@@ -176,7 +179,7 @@ async def test_me_survives_a_failing_lead_email_read(client, db):
         body = await _get_me(client, _session())
 
     assert body["lead_email"] is None
-    assert [method["provider"] for method in body["login_methods"]] == ["telegram", "google"]
+    assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram", "google"]
     assert body["partner_paid"] is True
     assert db.opened == 1
 
@@ -188,7 +191,7 @@ async def test_failing_login_methods_do_not_take_the_lead_email_down_with_them(c
 
     body = await _get_me(client, _session())
 
-    assert body["login_methods"] == [{"provider": "telegram", "label": "Telegram", "linked_at": None}]
+    assert [name for name in ("telegram", "max", "google", "yandex", "vk") if body["login_methods"][name]["linked"]] == ["telegram"]
     assert body["lead_email"] == "leads@example.org"
     assert body["partner_paid"] is True
     assert db.opened == 2  # общая транзакция и отдельное чтение почты

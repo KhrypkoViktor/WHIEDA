@@ -30,6 +30,13 @@
          429 code_locked | 409 identity_taken | 404 pending_invalid | 410 pending_expired.
   DELETE …/login/identities/{google|max}  (нужна сессия)
        → 200 {ok, provider, revoked: n}; 400 invalid_provider | provider_not_revocable.
+  GET  …/login/yandex/start | /callback, …/login/vk/start | /callback — тот же поток, что у Google
+       (ошибки: yandex_disabled | yandex_denied | yandex_token_invalid, vk_disabled | vk_denied | vk_token_invalid).
+       VK в callback присылает device_id — он нужен при обмене кода.
+  GET  …/login/methods (без сессии) → {passkey: true, google|yandex|vk: {enabled}} — какие кнопки рисовать гостю.
+  Ключ доступа (WebAuthn), префикс …/login/passkey/:
+       POST register/options | register/verify (под сессией), POST auth/options | auth/verify (без сессии:
+       → {ok, return_to} + cookie сессии), GET …/login/passkeys и DELETE …/login/passkeys/{id} (под сессией).
   GET  …/me → поле login_methods: [{provider, label, linked_at}] (в content_access/routes.py).
 """
 
@@ -41,10 +48,12 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-from app.content_access.cookies import set_session_cookie
+from app.content_access import devices
+from app.content_access.cookies import read_session_cookie, set_session_cookie
 from app.content_access.routes import _current_session
 from app.cookie_domain import cookie_domain_for
-from app.login_identities import service
+from app.content_access.service import sanitize_return_to, validate_content_session
+from app.login_identities import passkeys, service
 from app.login_identities.rules import OAUTH_COOKIE_NAME, OAUTH_COOKIE_TTL_SEC, LoginIdentityError
 from app.settings import get_settings
 from app.tenancy import get_request_tenant, require_entitlement
@@ -101,25 +110,39 @@ class LinkBody(BaseModel):
     browser_key: str | None = None
 
 
-# ---- Google ---------------------------------------------------------------------------------------
+# ---- Google, Яндекс ID, VK ID (один поток: start → callback → #wwc-login | #wwc-link) -----------------
 
 
-async def _google_start(
-    request: Request, return_to: str | None, visitor_session_id: str | None, browser_key: str | None
+async def _session_user(request: Request, tenant_id: str) -> int | None:
+    """Человек с действующей сессией сайта (привязка из кабинета без кода владельца) или None."""
+    raw = read_session_cookie(request)
+    if not raw:
+        return None
+    try:
+        session = await validate_content_session(tenant_id, raw)
+    except Exception:
+        return None
+    user_id = (session or {}).get("telegram_user_id")
+    return int(user_id) if user_id is not None else None
+
+
+async def _oauth_start(
+    provider: str, request: Request, return_to: str | None, visitor_session_id: str | None, browser_key: str | None
 ) -> Response:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
     host = service.request_host(request.headers)
     try:
-        url, cookie_key = await service.google_start(
+        url, cookie_key = await getattr(service, f"{provider}_start")(
             tenant.tenant_id,
             host=host,
             return_to=return_to or "/",
             visitor_session_id=visitor_session_id,
             site_key=browser_key,
+            session_user_id=await _session_user(request, tenant.tenant_id),
         )
     except LoginIdentityError as exc:
-        if exc.code not in {"google_disabled", "invalid_return_to", "browser_key_required"}:
+        if exc.code not in {f"{provider}_disabled", "invalid_return_to", "browser_key_required"}:
             raise _http(exc) from exc
         # Сюда приходит браузер, не XHR: JSON человек увидел бы текстом — возвращаем на страницу с кодом ошибки.
         try:
@@ -134,27 +157,27 @@ async def _google_start(
     return response
 
 
-@router.get(f"{API}/google/start")
-@router.get(f"{V1}/google/start")
-async def google_start(
+async def _oauth_callback(
+    provider: str,
     request: Request,
-    return_to: str | None = None,
-    visitor_session_id: str | None = None,
-    browser_key: str | None = None,
+    state: str | None,
+    code: str | None,
+    error: str | None,
+    extra: dict[str, str] | None = None,
 ) -> Response:
-    return await _google_start(request, return_to, visitor_session_id, browser_key)
-
-
-async def _google_callback(request: Request, state: str | None, code: str | None, error: str | None) -> Response:
     tenant = get_request_tenant(request)
     require_entitlement(tenant, "structure_basic")
+    kwargs: dict[str, Any] = {}
+    if extra:
+        kwargs["extra"] = extra
     try:
-        result = await service.google_callback(
+        result = await getattr(service, f"{provider}_callback")(
             tenant.tenant_id,
             state=state or "",
             code=code,
             oauth_error=error,
             cookie_key=_oauth_cookie(request),
+            **kwargs,
         )
     except LoginIdentityError as exc:
         raise _http(exc) from exc
@@ -163,6 +186,11 @@ async def _google_callback(request: Request, state: str | None, code: str | None
         return _redirect(service.link_error_url(return_to, str(result["error"])))
     if result["outcome"] == "link_required":
         return _redirect(service.link_url(return_to, str(result["link_token"])))
+    if result["outcome"] == "linked":
+        # Привязка у вошедшего: сессия уже есть, входить заново не нужно — просто вернуть на страницу.
+        response = _redirect(return_to)
+        _clear_oauth_cookie(response, request)
+        return response
     telegram_user_id = int(result["telegram_user_id"])
     # Только #wwc-login=<одноразовый>: сайту нужен явный сигнал входа, сессию создаёт он сам, погасив
     # ссылку (BotLogin.astro). Cookie сессии здесь не ставится — одна сессия на вход, не две.
@@ -172,12 +200,89 @@ async def _google_callback(request: Request, state: str | None, code: str | None
     return response
 
 
+@router.get(f"{API}/google/start")
+@router.get(f"{V1}/google/start")
+async def google_start(
+    request: Request,
+    return_to: str | None = None,
+    visitor_session_id: str | None = None,
+    browser_key: str | None = None,
+) -> Response:
+    return await _oauth_start("google", request, return_to, visitor_session_id, browser_key)
+
+
 @router.get(f"{API}/google/callback")
 @router.get(f"{V1}/google/callback")
 async def google_callback(
     request: Request, state: str | None = None, code: str | None = None, error: str | None = None
 ) -> Response:
-    return await _google_callback(request, state, code, error)
+    return await _oauth_callback("google", request, state, code, error)
+
+
+@router.get(f"{API}/yandex/start")
+@router.get(f"{V1}/yandex/start")
+async def yandex_start(
+    request: Request,
+    return_to: str | None = None,
+    visitor_session_id: str | None = None,
+    browser_key: str | None = None,
+) -> Response:
+    return await _oauth_start("yandex", request, return_to, visitor_session_id, browser_key)
+
+
+@router.get(f"{API}/yandex/callback")
+@router.get(f"{V1}/yandex/callback")
+async def yandex_callback(
+    request: Request, state: str | None = None, code: str | None = None, error: str | None = None
+) -> Response:
+    return await _oauth_callback("yandex", request, state, code, error)
+
+
+@router.get(f"{API}/vk/start")
+@router.get(f"{V1}/vk/start")
+async def vk_start(
+    request: Request,
+    return_to: str | None = None,
+    visitor_session_id: str | None = None,
+    browser_key: str | None = None,
+) -> Response:
+    return await _oauth_start("vk", request, return_to, visitor_session_id, browser_key)
+
+
+@router.get(f"{API}/vk/callback")
+@router.get(f"{V1}/vk/callback")
+async def vk_callback(
+    request: Request,
+    state: str | None = None,
+    code: str | None = None,
+    error: str | None = None,
+    device_id: str | None = None,
+) -> Response:
+    # device_id VK присылает в callback вместе с code: без него обмен кода не пройдёт.
+    return await _oauth_callback("vk", request, state, code, error, extra={"device_id": device_id or ""})
+
+
+# ---- какие способы входа включены (публично, для гостя) ----------------------------------------------
+
+
+async def _methods(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant = get_request_tenant(request)
+    require_entitlement(tenant, "structure_basic")
+    enabled = service.providers_enabled()
+    # Ключ доступа работает без ключей провайдеров: браузер сам решает, умеет ли он WebAuthn.
+    return {
+        "passkey": True,
+        "google": {"enabled": enabled["google"]},
+        "yandex": {"enabled": enabled["yandex"]},
+        "vk": {"enabled": enabled["vk"]},
+    }
+
+
+@router.get(f"{API}/methods")
+@router.get(f"{V1}/methods")
+async def methods(request: Request, response: Response) -> dict[str, Any]:
+    return await _methods(request, response)
 
 
 # ---- экран кода после Google --------------------------------------------------------------------------
@@ -219,7 +324,9 @@ async def _link(body: LinkBody, request: Request, response: Response) -> dict[st
         tenant.tenant_id,
         telegram_user_id=int(linked["telegram_user_id"]),
         visitor_session_id=linked.get("visitor_session_id"),
-        source="google_login",
+        source=f"{linked.get('provider') or 'google'}_login",
+        user_agent=request.headers.get("user-agent", ""),
+        client_ip_value=devices.client_ip(request.headers, request.client.host if request.client else None),
     )
     set_session_cookie(response, raw_session, request)
     _clear_oauth_cookie(response, request)
@@ -258,3 +365,145 @@ async def _revoke(provider: str, request: Request, response: Response) -> dict[s
 @router.delete(f"{V1}/identities/{{provider}}")
 async def revoke(provider: str, request: Request, response: Response) -> dict[str, Any]:
     return await _revoke(provider, request, response)
+
+
+# ---- ключи доступа (WebAuthn) ---------------------------------------------------------------------------
+
+
+class PasskeyBody(BaseModel):
+    """Ответ браузера (``credential.toJSON()``) — либо в ``credential``, либо прямо в теле."""
+
+    model_config = {"extra": "allow"}
+
+    credential: dict[str, Any] | None = None
+    label: str | None = None
+    return_to: str | None = None
+
+
+def _passkey_body(body: PasskeyBody) -> dict[str, Any]:
+    return body.model_dump(exclude={"return_to"}, exclude_none=True)
+
+
+async def _person(request: Request) -> tuple[Any, int]:
+    session = await _current_session(request)
+    tenant = get_request_tenant(request)
+    telegram_user_id = session.get("telegram_user_id")
+    if telegram_user_id is None:
+        raise HTTPException(status_code=401, detail={"error": "content_session_invalid"})
+    return tenant, int(telegram_user_id)
+
+
+async def _passkey_register_options(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant, user_id = await _person(request)
+    try:
+        return await passkeys.registration_options(
+            tenant.tenant_id, telegram_user_id=user_id, host=service.request_host(request.headers)
+        )
+    except LoginIdentityError as exc:
+        raise _http(exc) from exc
+
+
+async def _passkey_register_verify(body: PasskeyBody, request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant, user_id = await _person(request)
+    try:
+        saved = await passkeys.register(
+            tenant.tenant_id,
+            telegram_user_id=user_id,
+            body=_passkey_body(body),
+            user_agent=request.headers.get("user-agent", ""),
+        )
+    except LoginIdentityError as exc:
+        raise _http(exc) from exc
+    return {"ok": True, **saved}
+
+
+async def _passkey_auth_options(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant = get_request_tenant(request)
+    require_entitlement(tenant, "structure_basic")
+    return await passkeys.authentication_options(tenant.tenant_id, host=service.request_host(request.headers))
+
+
+async def _passkey_auth_verify(body: PasskeyBody, request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant = get_request_tenant(request)
+    require_entitlement(tenant, "structure_basic")
+    try:
+        person = await passkeys.authenticate(tenant.tenant_id, body=_passkey_body(body))
+    except LoginIdentityError as exc:
+        raise _http(exc) from exc
+    return_to = "/"
+    if body.return_to:
+        try:
+            return_to = sanitize_return_to(body.return_to)
+        except HTTPException:
+            return_to = "/"
+    _, raw_session = await service.session_for(
+        tenant.tenant_id,
+        telegram_user_id=int(person["telegram_user_id"]),
+        visitor_session_id=None,
+        source="passkey_login",
+        user_agent=request.headers.get("user-agent", ""),
+        client_ip_value=devices.client_ip(request.headers, request.client.host if request.client else None),
+    )
+    set_session_cookie(response, raw_session, request)
+    return {"ok": True, "return_to": return_to}
+
+
+async def _passkeys_list(request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant, user_id = await _person(request)
+    return {"ok": True, "passkeys": await passkeys.list_passkeys(tenant.tenant_id, user_id)}
+
+
+async def _passkey_delete(passkey_id: str, request: Request, response: Response) -> dict[str, Any]:
+    response.headers["Cache-Control"] = NO_STORE
+    tenant, user_id = await _person(request)
+    if not await passkeys.delete_passkey(tenant.tenant_id, telegram_user_id=user_id, passkey_id=passkey_id):
+        raise HTTPException(status_code=404, detail={"error": "passkey_not_found"})
+    return {"ok": True}
+
+
+PK = "/passkey"
+
+
+@router.post(f"{API}{PK}/register/options")
+@router.post(f"{V1}{PK}/register/options")
+async def passkey_register_options(request: Request, response: Response) -> dict[str, Any]:
+    return await _passkey_register_options(request, response)
+
+
+@router.post(f"{API}{PK}/register/verify")
+@router.post(f"{V1}{PK}/register/verify")
+async def passkey_register_verify(body: PasskeyBody, request: Request, response: Response) -> dict[str, Any]:
+    return await _passkey_register_verify(body, request, response)
+
+
+@router.post(f"{API}{PK}/auth/options")
+@router.post(f"{V1}{PK}/auth/options")
+async def passkey_auth_options(request: Request, response: Response) -> dict[str, Any]:
+    return await _passkey_auth_options(request, response)
+
+
+@router.post(f"{API}{PK}/auth/verify")
+@router.post(f"{V1}{PK}/auth/verify")
+async def passkey_auth_verify(body: PasskeyBody, request: Request, response: Response) -> dict[str, Any]:
+    return await _passkey_auth_verify(body, request, response)
+
+
+@router.get(f"{API}/passkeys")
+@router.get(f"{V1}/passkeys")
+@router.get(f"{API}{PK}/passkeys")
+@router.get(f"{V1}{PK}/passkeys")
+async def passkeys_list(request: Request, response: Response) -> dict[str, Any]:
+    return await _passkeys_list(request, response)
+
+
+@router.delete(f"{API}/passkeys/{{passkey_id}}")
+@router.delete(f"{V1}/passkeys/{{passkey_id}}")
+@router.delete(f"{API}{PK}/passkeys/{{passkey_id}}")
+@router.delete(f"{V1}{PK}/passkeys/{{passkey_id}}")
+async def passkey_delete(passkey_id: str, request: Request, response: Response) -> dict[str, Any]:
+    return await _passkey_delete(passkey_id, request, response)

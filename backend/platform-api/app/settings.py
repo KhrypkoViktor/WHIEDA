@@ -129,6 +129,34 @@ class Settings(BaseSettings):
         validation_alias="PLATFORM_GOOGLE_OAUTH_REDIRECT",
         description="Полный адрес callback, например https://wwc.best/api/v1/content-access/login/google/callback.",
     )
+    # Яндекс ID (V35, 08.11.2026): веб-сервис на oauth.yandex.ru. Все три пустые → вход выключен (yandex_disabled).
+    platform_yandex_oauth_client_id: str | None = Field(
+        default=None, validation_alias="PLATFORM_YANDEX_OAUTH_CLIENT_ID"
+    )
+    platform_yandex_oauth_client_secret: str | None = Field(
+        default=None, validation_alias="PLATFORM_YANDEX_OAUTH_CLIENT_SECRET"
+    )
+    platform_yandex_oauth_redirect: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_YANDEX_OAUTH_REDIRECT",
+        description="Например https://wwc.best/api/v1/content-access/login/yandex/callback.",
+    )
+    # VK ID (V35, 08.11.2026): приложение «Web» на id.vk.com, OAuth 2.1 с PKCE. Пустые → vk_disabled.
+    platform_vk_id_client_id: str | None = Field(default=None, validation_alias="PLATFORM_VK_ID_CLIENT_ID")
+    platform_vk_id_client_secret: str | None = Field(default=None, validation_alias="PLATFORM_VK_ID_CLIENT_SECRET")
+    platform_vk_id_redirect: str | None = Field(
+        default=None,
+        validation_alias="PLATFORM_VK_ID_REDIRECT",
+        description="Например https://wwc.best/api/v1/content-access/login/vk/callback.",
+    )
+    # Ключи доступа (WebAuthn, V35): RP id и точный список origin (маска *.wwc.best в WebAuthn недопустима).
+    platform_webauthn_rp_id: str = Field(default="wwc.best", validation_alias="PLATFORM_WEBAUTHN_RP_ID")
+    platform_webauthn_rp_name: str = Field(default="WWC", validation_alias="PLATFORM_WEBAUTHN_RP_NAME")
+    platform_webauthn_origins: str = Field(
+        default="https://wwc.best,https://www.wwc.best",
+        validation_alias="PLATFORM_WEBAUTHN_ORIGINS",
+        description="Через запятую, точные origin без слэша; партнёрские поддомены не входят.",
+    )
     # Коды входа (6 цифр) хранятся HMAC-SHA256 с этим секретом; пусто → PLATFORM_MEDIA_SIGNING_SECRET;
     # оба пустые → обычный sha256 (только локальная разработка). Смена секрета гасит выданные коды.
     platform_login_code_secret: str | None = Field(
@@ -598,6 +626,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="PLATFORM_ADMIN_SOURCE_TITLE_SERVICE_CENTERS",
     )
+
+    def parsed_webauthn_origins(self) -> tuple[str, ...]:
+        return tuple(
+            part.strip().rstrip("/") for part in str(self.platform_webauthn_origins or "").split(",") if part.strip()
+        )
 
     def parsed_super_admin_telegram_ids(self) -> frozenset[int]:
         ids: set[int] = set()

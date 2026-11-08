@@ -12,7 +12,9 @@ from app.content_access.cookies import (
     read_session_cookie,
     set_session_cookie,
 )
+from app.content_access import devices
 from app.content_access.service import (
+    _evict_cached_session,
     create_content_challenge,
     format_me_payload,
     load_material,
@@ -24,8 +26,9 @@ from app.content_access.service import (
 from app.content_access.webapp_login import webapp_login_url
 from app.db import tenant_connection
 from app.lead_email.service import lead_email_of
-from app.login_identities.rules import login_methods_payload
-from app.login_identities.service import list_login_methods
+from app.login_identities.passkeys import count_passkeys
+from app.login_identities.rules import login_methods_payload, login_methods_state
+from app.login_identities.service import list_login_methods, providers_enabled
 from app.max.webapp import max_webapp
 from app.public_cache import no_store_error
 from app.subscriptions.repeat_prices import load_repeat_price_catalog
@@ -111,6 +114,8 @@ async def _poll(
             tenant.tenant_id,
             challenge_id=challenge_id,
             browser_nonce=x_browser_nonce,
+            user_agent=request.headers.get("user-agent", ""),
+            client_ip_value=devices.client_ip(request.headers, request.client.host if request.client else None),
         )
     except HTTPException as exc:
         return await no_store_error(request, exc)
@@ -149,6 +154,7 @@ async def _me(request: Request, response: Response) -> dict:
     # Способы входа (V34, 15.10.2026): Telegram всегда; Google (e-mail) и Max (имя) — если привязаны.
     # Кабинет не ломается из-за этого списка: сбой → только Telegram и предупреждение в логе.
     login_methods = login_methods_payload([])
+    passkeys_count = 0
     # Почта для заявок (17.10.2026): адрес, куда сайт шлёт заявки вместе с Telegram; null — не задан или сайта нет.
     # Только чтение — задаётся командой в боте. Сбой поиска кабинет не ломает.
     lead_email = None
@@ -176,13 +182,19 @@ async def _me(request: Request, response: Response) -> dict:
                     lead_email = await lead_email_of(tenant.tenant_id, user_id, conn=conn)
                 except Exception:
                     logger.warning("lead_email_unavailable", exc_info=True)
+                # Ключи доступа (V35): сколько у человека; сбой (например, миграция ещё не применена) кабинет не ломает.
+                try:
+                    passkeys_count = await count_passkeys(conn, tenant.tenant_id, user_id)
+                except Exception:
+                    logger.warning("passkeys_count_unavailable", exc_info=True)
         if not lead_email_read:
             try:
                 lead_email = await lead_email_of(tenant.tenant_id, user_id)
             except Exception:
                 logger.warning("lead_email_unavailable", exc_info=True)
     payload = format_me_payload(session, partner_subscription=subscription, account=account)
-    payload["login_methods"] = login_methods
+    # Способы входа (V35): объект по провайдерам {enabled, linked, label, linked_at} + passkeys: N.
+    payload["login_methods"] = login_methods_state(login_methods, enabled=providers_enabled(), passkeys=passkeys_count)
     payload["lead_email"] = lead_email
     return payload
 
@@ -242,6 +254,60 @@ async def logout_v1(request: Request, response: Response) -> dict:
 @router.post("/api/v1/content-access/logout")
 async def logout_site(request: Request, response: Response) -> dict:
     return await _logout(request, response)
+
+
+# ---- устройства (V35, 08.11.2026): не больше двух активных сессий на человека -----------------------
+
+
+def _person_of(session: dict[str, Any]) -> int:
+    telegram_user_id = session.get("telegram_user_id")
+    if telegram_user_id is None:
+        raise HTTPException(status_code=401, detail={"error": "content_session_invalid"})
+    return int(telegram_user_id)
+
+
+async def _sessions(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "private, no-store"
+    session = await _current_session(request)
+    tenant = get_request_tenant(request)
+    async with tenant_connection(tenant.tenant_id) as conn:
+        items = await devices.list_active_sessions(
+            conn, tenant.tenant_id, _person_of(session), current_session_id=str(session.get("session_id") or "")
+        )
+    return {"ok": True, "limit": devices.MAX_ACTIVE_SESSIONS, "sessions": items}
+
+
+@router.get("/v1/content-access/sessions")
+async def sessions_v1(request: Request, response: Response) -> dict:
+    return await _sessions(request, response)
+
+
+@router.get("/api/v1/content-access/sessions")
+async def sessions_site(request: Request, response: Response) -> dict:
+    return await _sessions(request, response)
+
+
+async def _revoke_others(request: Request, response: Response) -> dict:
+    response.headers["Cache-Control"] = "private, no-store"
+    session = await _current_session(request)
+    tenant = get_request_tenant(request)
+    async with tenant_connection(tenant.tenant_id) as conn:
+        hashes = await devices.revoke_other_sessions(
+            conn, tenant.tenant_id, _person_of(session), current_session_id=str(session.get("session_id") or "")
+        )
+    for session_hash in hashes:
+        _evict_cached_session(tenant.tenant_id, session_hash)
+    return {"ok": True, "revoked": len(hashes)}
+
+
+@router.post("/v1/content-access/sessions/revoke-others")
+async def revoke_others_v1(request: Request, response: Response) -> dict:
+    return await _revoke_others(request, response)
+
+
+@router.post("/api/v1/content-access/sessions/revoke-others")
+async def revoke_others_site(request: Request, response: Response) -> dict:
+    return await _revoke_others(request, response)
 
 
 class WebAppLoginBody(BaseModel):
