@@ -74,7 +74,7 @@ def test_v22_twice_seeds_the_catalog_and_the_pilot_is_for_the_owner_only(monkeyp
             assert online["cta"]["start"] == "shop_kurs-online-start"
             gemini = guest["items"][1]
             assert gemini["cta"] == {"kind": "bot", "start": "gemini", "url": "https://t.me/WHIEDA_Advisor_bot?start=gemini"}
-            assert gemini["price_text"] == "6 мес — 3 990 ₽ · 18 мес — 4 490 ₽"
+            assert gemini["price_text"] == "6 мес — 4 990 ₽"
             assert not any("share" in key for key in gemini)
             owner = await public_catalog("whieda", viewer_id=OWNER)
             assert owner["preview"] is True and len(owner["items"]) == 8

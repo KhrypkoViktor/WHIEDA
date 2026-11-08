@@ -183,8 +183,8 @@ insert into shop_items (
     'Gemini Pro — лицензия',
     'Gemini Pro, генерация картинок и видео, 2 ТБ Google Drive',
     'В подписку входит нейросеть Gemini Pro, Nanobanana (картинки), VEO3 (видео) и 2 ТБ Google Drive.' || chr(10) || chr(10)
-      || 'Лицензия на 6 месяцев — 3 990 ₽, на 18 месяцев — 4 490 ₽. Подключение — через бота.',
-    3990, 399000, '6 мес — 3 990 ₽ · 18 мес — 4 490 ₽', null, '?start=gemini',
+      || 'Лицензия на 6 месяцев — 4 990 ₽. Подключение — через бота.',
+    4990, 499000, '6 мес — 4 990 ₽', null, '?start=gemini',
     'services_admin', 'published', 70,
     null, null
   )

@@ -22,8 +22,7 @@ create table if not exists service_tariffs (
 
 insert into service_tariffs (tenant_id, offer_code, retail_minor, wholesale_direct_minor, wholesale_partner_minor, partner_share_wusd_minor)
 values
-  ('whieda', 'gemini_6m', 399000, 299000, 249000, 500),
-  ('whieda', 'gemini_18m', 399000, 299000, 249000, 500)
+  ('whieda', 'gemini_6m', 499000, 299000, 249000, 500)
 on conflict (tenant_id, offer_code) do nothing;
 
 create table if not exists service_sales (

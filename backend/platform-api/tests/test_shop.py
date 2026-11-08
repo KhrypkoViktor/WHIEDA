@@ -61,8 +61,8 @@ SERVICE = _item(code="snyat-blok", kind="service", category="services", title="�
                 subtitle="1,5 часа онлайн", price_wusd_minor=10000, price_rub_minor=1000000, file_media_id=None,
                 delivery_note="Напишите здесь 2–3 удобных времени для встречи.")
 GEMINI = _item(code="gemini", kind="external", category="tools", title="Gemini Pro — лицензия", status="published",
-               price_wusd_minor=3990, price_rub_minor=399000, external_url="?start=gemini", file_media_id=None,
-               price_text="6 мес — 3 990 ₽ · 18 мес — 4 490 ₽", confirmer="services_admin")
+               price_wusd_minor=4990, price_rub_minor=499000, external_url="?start=gemini", file_media_id=None,
+               price_text="6 мес — 4 990 ₽", confirmer="services_admin")
 
 
 def _order(**over) -> dict:
@@ -163,7 +163,7 @@ def test_public_card_has_no_partner_share_and_renders_markdown():
     assert card["description_html"] == "<p>Презентация в <strong>PDF</strong>: 21 слайд.</p>"
     assert card["prices"] == {"wusd": 5, "rub": 500, "byn": 17.5} and card["available"] is True
     assert public_item(_item(kind="course", course_slug=None), cover_url=None, bot_username="b")["available"] is False
-    assert public_item(GEMINI, cover_url=None, bot_username="b")["price_text"] == "6 мес — 3 990 ₽ · 18 мес — 4 490 ₽"
+    assert public_item(GEMINI, cover_url=None, bot_username="b")["price_text"] == "6 мес — 4 990 ₽"
 
 
 def test_course_without_slug_is_not_for_sale():
