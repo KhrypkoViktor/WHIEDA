@@ -42,7 +42,6 @@ def test_sale_lifecycle_deposit_and_partner_share():
             # 1. Seeded tariff; the owner changes it by command.
             tariff = await get_tariff("whieda", "gemini_6m")
             assert (tariff["retail_minor"], tariff["wholesale_direct_minor"], tariff["wholesale_partner_minor"], tariff["partner_share_wusd_minor"]) == (399000, 299000, 249000, 500)
-            await set_tariff("whieda", offer_code="gemini_18m", retail_minor=399000, wholesale_direct_minor=299000, wholesale_partner_minor=249000, partner_share_wusd_minor=500, updated_by=OWNER)
 
             # 2. Deposit: a top-up counts only after the administrator confirms it.
             pending = await add_topup("whieda", admin_telegram_user_id=KARINA, amount_minor=2000000, sent_by=OWNER)

@@ -44,8 +44,8 @@ def _ticket(**over) -> dict:
         "ticket_id": "11111111-1111-1111-1111-111111111111",
         "ticket_no": 1042,
         "channel_code": "gemini",
-        "offer_code": "gemini_18m",
-        "offer_title": OFFERS["gemini_18m"].title,
+        "offer_code": "gemini_6m",
+        "offer_title": OFFERS["gemini_6m"].title,
         "user_telegram_user_id": USER,
         "user_chat_id": USER,
         "user_display": "Ольга (@olga)",
@@ -91,7 +91,7 @@ async def test_services_word_shows_gemini_card_with_three_buttons(whieda_tenant,
     kwargs = send.await_args.kwargs
     assert kwargs["text"] == SERVICES_TEXT
     buttons = [row[0]["text"] for row in kwargs["reply_markup"]["inline_keyboard"]]
-    assert buttons == ["Gemini Pro 4 490 ₽", "Gemini Pro 3 990 ₽", "Поддержка", "Как это работает?"]
+    assert buttons == ["Gemini Pro 3 990 ₽", "Поддержка", "Как это работает?"]
 
 
 @pytest.mark.asyncio
@@ -122,13 +122,13 @@ async def test_start_gemini_from_the_site_button_shows_the_card(whieda_tenant, w
 async def test_order_asks_for_confirmation_with_the_offer_card(whieda_tenant, whieda_bot_binding, support_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
     with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()):
-        result = await process_core_telegram_update(whieda_tenant, _callback("svc:order:gemini_18m"), "t2", binding=whieda_bot_binding)
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:order:gemini_6m"), "t2", binding=whieda_bot_binding)
     assert result["status"] == "confirm_requested"
     kwargs = send.await_args.kwargs
-    assert "Лицензия на 18 месяцев" in kwargs["text"] and "4 490 ₽" in kwargs["text"] and "Оформить заказ?" in kwargs["text"]
+    assert "Лицензия на 6 месяцев" in kwargs["text"] and "3 990 ₽" in kwargs["text"] and "Оформить заказ?" in kwargs["text"]
     row = kwargs["reply_markup"]["inline_keyboard"][0]
     assert [b["text"] for b in row] == ["Заказать", "Отменить"]
-    assert row[0]["callback_data"] == "svc:confirm:gemini_18m"
+    assert row[0]["callback_data"] == "svc:confirm:gemini_6m"
 
 
 @pytest.mark.asyncio
@@ -141,16 +141,16 @@ async def test_confirm_opens_ticket_and_tells_both_sides(whieda_tenant, whieda_b
     ), patch("app.telegram.support.open_or_reuse_ticket", open_ticket), patch(
         "app.telegram.support.record_relayed_message", record
     ):
-        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "t3", binding=whieda_bot_binding)
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_6m"), "t3", binding=whieda_bot_binding)
     assert result["status"] == "ticket_opened" and result["ticket"] == "#S-1042"
     open_ticket.assert_awaited_once()
     assert open_ticket.await_args.kwargs["admin_telegram_user_id"] == ADMIN
-    assert open_ticket.await_args.kwargs["offer_code"] == "gemini_18m"
+    assert open_ticket.await_args.kwargs["offer_code"] == "gemini_6m"
     # Admin gets the header with a Reply hint and a Close button; the user gets the receipt.
     to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(ADMIN)]
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert len(to_admin) == 1 and len(to_user) == 1
-    assert "Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев — 4 490 ₽" in to_admin[0]["text"]
+    assert "Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 3 990 ₽" in to_admin[0]["text"]
     # The administrator never sees the person: no name, no @username, no link.
     assert "Ольга" not in to_admin[0]["text"] and "@olga" not in to_admin[0]["text"]
     assert "Reply" in to_admin[0]["text"]
@@ -372,9 +372,9 @@ async def test_registration_moves_open_tickets_into_topics_with_history(whieda_t
             whieda_tenant, _forum_message("/forum", user=ADMIN, thread_id=None), "f1b", binding=whieda_bot_binding
         )
     assert result["status"] == "registered" and result["moved"] == 1
-    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 6 месяцев"
     replay = [c.kwargs for c in send.await_args_list if c.kwargs.get("message_thread_id") == 78][0]
-    assert replay["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев")
+    assert replay["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев")
     assert "Клиент: Хочу за 4490" in replay["text"] and "Администратор: Добрый день" in replay["text"]
     assert "Ольга" not in replay["text"]
     assert "перенесены в темы: 1" in send.await_args_list[-1].kwargs["text"]
@@ -418,14 +418,14 @@ async def test_new_ticket_opens_a_topic_and_header_goes_into_it(whieda_tenant, w
     ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=_ticket())), patch(
         "app.telegram.support.create_forum_topic", create_topic
     ), patch("app.telegram.support.attach_forum_topic", attach), patch("app.telegram.support.record_relayed_message", record):
-        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "f3", binding=whieda_bot_binding)
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_6m"), "f3", binding=whieda_bot_binding)
     assert result["status"] == "ticket_opened"
     assert create_topic.await_args.kwargs["chat_id"] == str(FORUM)
-    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    assert create_topic.await_args.kwargs["name"] == "#S-1042 · Gemini Pro, лицензия на 6 месяцев"
     assert attach.await_args.kwargs == {"ticket_id": "11111111-1111-1111-1111-111111111111", "forum_chat_id": FORUM, "forum_thread_id": 77}
     to_forum = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(FORUM)]
     assert len(to_forum) == 1 and to_forum[0]["message_thread_id"] == 77
-    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 18 месяцев — 4 490 ₽")
+    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 3 990 ₽")
     assert "Пишите в эту тему" in to_forum[0]["text"] and "Ольга" not in to_forum[0]["text"]
     # Nothing goes to the administrator's private chat.
     assert not [c for c in send.await_args_list if c.kwargs["chat_id"] == str(KARINA)]
@@ -440,7 +440,7 @@ async def test_topic_failure_falls_back_to_private_admin_chat(whieda_tenant, whi
     ), patch("app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=_ticket(admin_telegram_user_id=KARINA))), patch(
         "app.telegram.support.create_forum_topic", AsyncMock(return_value={"ok": False, "status_code": 400})
     ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
-        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_18m"), "f4", binding=whieda_bot_binding)
+        result = await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_6m"), "f4", binding=whieda_bot_binding)
     assert result["status"] == "ticket_opened"
     to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(KARINA)]
     assert len(to_admin) == 1 and "Reply" in to_admin[0]["text"]
@@ -511,7 +511,7 @@ async def test_closing_from_the_topic_closes_the_ticket_and_the_topic(whieda_ten
     assert result["status"] == "closed"
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert "Обращение #S-1042 закрыто" in to_user[0]["text"]
-    assert edit_topic.await_args.kwargs["name"] == "✅ #S-1042 · Gemini Pro, лицензия на 18 месяцев"
+    assert edit_topic.await_args.kwargs["name"] == "✅ #S-1042 · Gemini Pro, лицензия на 6 месяцев"
     assert close_topic.await_args.kwargs == {"chat_id": str(FORUM), "message_thread_id": 77, "bot_token": close_topic.await_args.kwargs["bot_token"]}
 
 

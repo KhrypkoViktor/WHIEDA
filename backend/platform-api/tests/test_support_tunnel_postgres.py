@@ -29,7 +29,7 @@ def test_ticket_lifecycle_and_reply_routing():
 
             # 1. An order opens a ticket; a second order from the same person joins it.
             first = await open_or_reuse_ticket(
-                "whieda", channel_code="gemini", offer_code="gemini_18m", offer_title="Gemini Pro, 18 мес",
+                "whieda", channel_code="gemini", offer_code="gemini_6m", offer_title="Gemini Pro, 6 мес",
                 user_telegram_user_id=60001, user_chat_id=60001, user_display="Ольга (@olga)",
                 admin_telegram_user_id=688931415,
             )
@@ -74,7 +74,7 @@ def test_ticket_lifecycle_and_reply_routing():
             assert closed["status"] == "closed"
             assert await get_open_ticket_for_user("whieda", user_telegram_user_id=60001) is None
             fresh = await open_or_reuse_ticket(
-                "whieda", channel_code="gemini", offer_code="gemini_18m", offer_title="Gemini Pro, 18 мес",
+                "whieda", channel_code="gemini", offer_code="gemini_6m", offer_title="Gemini Pro, 6 мес",
                 user_telegram_user_id=60001, user_chat_id=60001, user_display="Ольга (@olga)",
                 admin_telegram_user_id=688931415,
             )

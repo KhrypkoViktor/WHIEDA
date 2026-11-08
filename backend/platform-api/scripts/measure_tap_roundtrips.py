@@ -6,7 +6,7 @@
 с log_statement=all — одна строка лога = одно обращение к серверу по проводу (BEGIN, set_config,
 запросы, COMMIT — каждое отдельно, как у psycopg без конвейера). Bot API подменён, секретов нет.
 
-Сценарии: svc:card:gemini, svc:order:gemini_18m, svc:confirm:gemini_18m, site:skip (два шага подряд);
+Сценарии: svc:card:gemini, svc:order:gemini_6m, svc:confirm:gemini_6m, site:skip (два шага подряд);
 плюс привязка бота (resolve_bot_binding_context), которая идёт в вебхуке до обработки.
 В выводе: на сценарий — транзакции, запросы, обращения по проводу (по логу сервера), вызовы Bot API
 по порядку и таблица «кто открыл транзакцию».
@@ -37,8 +37,8 @@ CACHES = sys.argv[2] if len(sys.argv) > 2 else "warm"
 # остальные — другие семьи кнопок бота, чтобы видеть, где в цепочке больше всего обращений.
 SCENARIOS = (
     ("svc:card:gemini", "svc:card:gemini", 100),
-    ("svc:order:gemini_18m", "svc:order:gemini_18m", 101),
-    ("svc:confirm:gemini_18m", "svc:confirm:gemini_18m", 102),
+    ("svc:order:gemini_6m", "svc:order:gemini_6m", 101),
+    ("svc:confirm:gemini_6m", "svc:confirm:gemini_6m", 102),
     ("site:skip (шаг фото)", "site:skip", 103),
     ("site:skip (шаг текст)", "site:skip", 104),
     ("acad:home", "acad:home", 105),

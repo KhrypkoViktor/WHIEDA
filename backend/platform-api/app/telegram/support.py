@@ -156,21 +156,7 @@ class Offer:
 
 
 OFFERS: dict[str, Offer] = {
-    "gemini_18m": Offer(
-        code="gemini_18m",
-        button="Gemini Pro 4 490 ₽",
-        title="Gemini Pro, лицензия на 18 месяцев",
-        price_text="4 490 ₽",
-        card=(
-            "Gemini тариф Pro\n"
-            "Лицензия на 18 месяцев\n"
-            "Гарантия 1 месяц. Если лицензия «слетит», производим переподключение за свой счёт.\n"
-            "В целом, подобные лицензии работают спокойно без сбоев у наших клиентов с начала 2026 года.\n\n"
-            "Стоимость подключения — 4 490 ₽"
-        ),
-    ),
-    # Owner, 15.09.2026: the 1-year licence with a full-term guarantee is not
-    # available now; the second offer is 6 months for 3 990 ₽.
+    # Owner, 08.11.2026: the only offer is 6 months (the 18-month one is removed).
     "gemini_6m": Offer(
         code="gemini_6m",
         button="Gemini Pro 3 990 ₽",
@@ -190,9 +176,8 @@ SERVICES_TEXT = (
     "Gemini Pro\n"
     "В подписку входит нейросеть Gemini Pro + Nanobanana (генерация картинок) + "
     "VEO3 (видео) + 2 TB Google Drive (облачное хранилище).\n\n"
-    "Тариф Pro, лицензия на 18 месяцев — 4 490 ₽, гарантия 1 месяц.\n"
     "Тариф Pro, лицензия на 6 месяцев — 3 990 ₽, гарантия на весь срок подписки.\n\n"
-    "Выберите вариант или напишите администратору."
+    "Нажмите кнопку ниже или напишите администратору."
 )
 
 
@@ -214,7 +199,6 @@ HOW_IT_WORKS_TEXT = "\n".join(
 def services_keyboard() -> dict[str, Any]:
     return {
         "inline_keyboard": [
-            [{"text": OFFERS["gemini_18m"].button, "callback_data": "svc:order:gemini_18m"}],
             [{"text": OFFERS["gemini_6m"].button, "callback_data": "svc:order:gemini_6m"}],
             [{"text": "Поддержка", "callback_data": f"svc:support:{CHANNEL_GEMINI}"}],
             [{"text": "Как это работает?", "callback_data": f"svc:how:{CHANNEL_GEMINI}"}],

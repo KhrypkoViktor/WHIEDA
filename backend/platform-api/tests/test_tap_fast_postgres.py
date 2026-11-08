@@ -112,8 +112,8 @@ def test_transactions_per_tap_for_the_four_scenarios(tap_env, monkeypatch):
                 _fresh()
                 await warm()
                 assert (await measured(lambda: _tap("svc:card:gemini", update_id=1, message_id=10)))[0] == 0
-                assert (await measured(lambda: _tap("svc:order:gemini_18m", update_id=2, message_id=11)))[0] == 0
-                assert (await measured(lambda: _tap("svc:confirm:gemini_18m", update_id=3, message_id=12)))[0] == 3
+                assert (await measured(lambda: _tap("svc:order:gemini_6m", update_id=2, message_id=11)))[0] == 0
+                assert (await measured(lambda: _tap("svc:confirm:gemini_6m", update_id=3, message_id=12)))[0] == 3
                 assert (await measured(lambda: _tap("site:skip", update_id=4, message_id=13)))[0] == 1
                 assert (await measured(lambda: _tap("site:skip", update_id=5, message_id=14)))[0] == 1
 
@@ -124,7 +124,7 @@ def test_transactions_per_tap_for_the_four_scenarios(tap_env, monkeypatch):
                 conn.execute("update support_tickets set status = 'closed'")
             with kit.TransactionCounter() as counter:
                 _fresh()
-                cold_confirm = (await measured(lambda: _tap("svc:confirm:gemini_18m", update_id=6, message_id=22)))[0]
+                cold_confirm = (await measured(lambda: _tap("svc:confirm:gemini_6m", update_id=6, message_id=22)))[0]
                 _fresh()
                 cold_skip = (await measured(lambda: _tap("site:skip", update_id=7, message_id=23)))[0]
             assert cold_confirm <= 4 and cold_skip <= 2
@@ -200,8 +200,8 @@ def test_double_tap_on_confirm_makes_one_order(tap_env, monkeypatch):
 
             _fresh()
             binding = kit.whieda_binding()
-            first = kit.callback_update("svc:confirm:gemini_18m", update_id=1, message_id=300, query_id="tap-1")
-            second = kit.callback_update("svc:confirm:gemini_18m", update_id=2, message_id=300, query_id="tap-2")
+            first = kit.callback_update("svc:confirm:gemini_6m", update_id=1, message_id=300, query_id="tap-1")
+            second = kit.callback_update("svc:confirm:gemini_6m", update_id=2, message_id=300, query_id="tap-2")
             await asyncio.gather(
                 _process_telegram_update(binding, first, "trace-1"),
                 _process_telegram_update(binding, second, "trace-2"),
@@ -248,7 +248,7 @@ def test_typing_is_sent_and_a_telegram_failure_does_not_break_the_tap(tap_env, m
             # Telegram не отвечает на «печатает…» — кнопка всё равно отрабатывает.
             fake.calls.clear()
             fake.fail_methods.add("sendChatAction")
-            await _tap("svc:order:gemini_18m", update_id=2, message_id=11)
+            await _tap("svc:order:gemini_6m", update_id=2, message_id=11)
             assert len(fake.sent("sendChatAction")) == 1
             assert fake.sent("answerCallbackQuery") and any("Оформить заказ?" in t for t in _texts(fake))
 

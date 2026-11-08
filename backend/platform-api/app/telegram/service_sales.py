@@ -44,8 +44,9 @@ _REPORT_WORDS = {"отчёт", "отчет", "/report"}
 _BALANCE_WORDS = {"баланс", "депозит", "хвосты", "/deposit"}
 SERVICE_COMMAND_TOKENS = {"перевёл", "перевел", "пополнил", "депозит", "баланс", "хвосты", "отчёт", "отчет", "тариф", "/report", "/deposit"}
 
-OFFER_TITLES = {"gemini_6m": "Gemini Pro, 6 мес", "gemini_18m": "Gemini Pro, 18 мес"}
-OFFER_MONTHS = {"gemini_6m": 6, "gemini_18m": 18}
+OFFER_TITLES = {"gemini_6m": "Gemini Pro, 6 мес"}
+OFFER_MONTHS = {"gemini_6m": 6, "gemini_18m": 18}  # 18m — только старые продажи (снято с витрины 08.11.2026)
+_LEGACY_TITLES = {**OFFER_TITLES, "gemini_18m": "Gemini Pro, 18 мес"}
 
 
 # ----------------------------------------------------------------------------
@@ -159,7 +160,7 @@ async def try_handle_service_sale_callback(
             return {"ok": False, "route": "service_sale", "status": "no_ticket", "trace_id": trace_id}
         existing = await get_sale_for_ticket(tenant.tenant_id, ticket_id=arg)
         if existing:
-            await _send(chat, f"Продажа по {ticket_label(ticket)} уже записана: {OFFER_TITLES.get(existing['offer_code'], existing['offer_code'])}.",
+            await _send(chat, f"Продажа по {ticket_label(ticket)} уже записана: {_LEGACY_TITLES.get(existing['offer_code'], existing['offer_code'])}.",
                         reply_markup=_activate_keyboard(existing) if existing["status"] == "paid" else None, thread_id=thread)
             return {"ok": True, "route": "service_sale", "status": "already_recorded", "trace_id": trace_id}
         await _send(chat, f"{ticket_label(ticket)}: что оплачено?", reply_markup=_offer_keyboard(arg), thread_id=thread)
@@ -178,7 +179,7 @@ async def try_handle_service_sale_callback(
         rows.append([{"text": "Виктор (напрямую)", "callback_data": f"sale:seller:{arg}:{offer}:owner"}])
         rows.append([{"text": "Отмена", "callback_data": f"sale:cancel:{arg}"}])
         hint = "Клиента привёл партнёр — подтвердите, кто продал." if suggestion else "Партнёр у клиента не найден — продажа прямая."
-        await _send(chat, f"{ticket_label(ticket)} · {OFFER_TITLES.get(offer, offer)}. {hint}", reply_markup={"inline_keyboard": rows}, thread_id=thread)
+        await _send(chat, f"{ticket_label(ticket)} · {_LEGACY_TITLES.get(offer, offer)}. {hint}", reply_markup={"inline_keyboard": rows}, thread_id=thread)
         return {"ok": True, "route": "service_sale", "status": "seller_requested", "trace_id": trace_id}
 
     if action == "seller":
@@ -222,7 +223,7 @@ async def try_handle_service_sale_callback(
             return {"ok": True, "route": "service_sale", "status": "already_activated", "trace_id": trace_id}
         when = until.strftime("%d.%m.%Y")
         if ticket:
-            await _send(int(ticket["user_chat_id"]), f"Лицензия {OFFER_TITLES.get(sale['offer_code'], sale['offer_code'])} активна до {when}. За неделю до окончания напомним.")
+            await _send(int(ticket["user_chat_id"]), f"Лицензия {_LEGACY_TITLES.get(sale['offer_code'], sale['offer_code'])} активна до {when}. За неделю до окончания напомним.")
             from app.telegram import support as support_mod  # local import: support imports this module
 
             await support_mod._close_ticket_everywhere(tenant, str(ticket["ticket_id"]), ticket, reply_chat=chat, trace_id=trace_id)
@@ -243,7 +244,7 @@ def _plus_months(start: datetime, months: int) -> datetime:
 async def _sale_summary(tenant_id: str, ticket: dict[str, Any], sale: dict[str, Any]) -> str:
     who = "Виктор (напрямую)" if sale["seller"] == "owner" else f"партнёр {await partner_label(tenant_id, sale['partner_ref'])}"
     lines = [
-        f"Продажа {ticket_label(ticket)} · {OFFER_TITLES.get(sale['offer_code'], sale['offer_code'])} · {_rub(sale['retail_minor'])}",
+        f"Продажа {ticket_label(ticket)} · {_LEGACY_TITLES.get(sale['offer_code'], sale['offer_code'])} · {_rub(sale['retail_minor'])}",
         f"Продал: {who}",
         f"Списано с депозита: {_rub(sale['owed_admin_minor'])}. Остаток депозита: {_rub(sale['deposit_balance_minor'])}",
     ]
@@ -268,7 +269,7 @@ async def _notify_after_sale(tenant: TenantContext, ticket: dict[str, Any], sale
         )
     if bonus:
         label = await partner_label(tenant.tenant_id, sale["partner_ref"])
-        await post_bonus_feed(tenant, f"{datetime.now(timezone.utc).strftime('%d.%m')} · {label} · +{wwc(int(bonus['amount_minor']))} · {ticket_label(ticket)} · {OFFER_TITLES.get(sale['offer_code'], sale['offer_code'])}")
+        await post_bonus_feed(tenant, f"{datetime.now(timezone.utc).strftime('%d.%m')} · {label} · +{wwc(int(bonus['amount_minor']))} · {ticket_label(ticket)} · {_LEGACY_TITLES.get(sale['offer_code'], sale['offer_code'])}")
     owner = _owner_id()
     if owner and owner != chat:
         await _send(owner, await _sale_summary(tenant.tenant_id, ticket, sale))

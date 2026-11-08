@@ -39,8 +39,8 @@ def test_fingerprint_same_button_under_a_new_message_differs():
 
 
 def test_fingerprint_other_button_same_message_differs():
-    assert build_message_fingerprint(callback_data="svc:order:gemini_18m", message_id=7) != build_message_fingerprint(
-        callback_data="svc:order:gemini_6m", message_id=7
+    assert build_message_fingerprint(callback_data="svc:order:gemini_6m", message_id=7) != build_message_fingerprint(
+        callback_data="svc:support:gemini", message_id=7
     )
 
 
@@ -72,7 +72,7 @@ async def test_second_tap_on_the_same_button_is_dropped_while_the_first_runs():
         ran.append("second")
         return "second"
 
-    fingerprint = build_message_fingerprint(callback_data="svc:confirm:gemini_18m", message_id=9)
+    fingerprint = build_message_fingerprint(callback_data="svc:confirm:gemini_6m", message_id=9)
     task = asyncio.create_task(
         seq.run_ordered("c", 1, first, message_fingerprint=fingerprint, drop_inflight_duplicate=True)
     )
@@ -139,7 +139,7 @@ async def test_other_button_waits_for_the_chat_queue_and_runs_after_the_first():
 
 async def test_failed_first_tap_does_not_block_the_retry():
     seq = ChatUpdateSequencer()
-    fingerprint = build_message_fingerprint(callback_data="svc:confirm:gemini_18m", message_id=9)
+    fingerprint = build_message_fingerprint(callback_data="svc:confirm:gemini_6m", message_id=9)
 
     async def boom() -> None:
         raise RuntimeError("boom")
@@ -313,13 +313,13 @@ async def test_typing_is_not_sent_for_messages_groups_showcase_other_tenants_or_
 
 async def test_duplicate_tap_is_answered_without_text_and_not_processed(whieda_bot_binding, telegram_calls):
     seen, body = _body_recorder()
-    first = callback_update("svc:confirm:gemini_18m", update_id=20, message_id=55, query_id="first")
-    again = callback_update("svc:confirm:gemini_18m", update_id=21, message_id=55, query_id="again")
+    first = callback_update("svc:confirm:gemini_6m", update_id=20, message_id=55, query_id="first")
+    again = callback_update("svc:confirm:gemini_6m", update_id=21, message_id=55, query_id="again")
     with patch.object(routes, "_process_telegram_update_body", body):
         await routes._process_telegram_update(whieda_bot_binding, first, "t")
         await routes._process_telegram_update(whieda_bot_binding, again, "t")
     await _settle()
-    assert seen == ["svc:confirm:gemini_18m"]
+    assert seen == ["svc:confirm:gemini_6m"]
     answers = telegram_calls.sent("answerCallbackQuery")
     assert [call.payload for call in answers] == [{"callback_query_id": "again"}]  # без text: «часики» сняты
 

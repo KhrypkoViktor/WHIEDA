@@ -82,7 +82,7 @@ async def test_paid_button_asks_the_offer_then_who_sold_with_the_partner_suggest
         second = await process_core_telegram_update(whieda_tenant, _callback(f"sale:offer:{TICKET}:gemini_6m"), "s2", binding=whieda_bot_binding)
     assert first["status"] == "offer_requested" and second["status"] == "seller_requested"
     offers = [b["text"] for row in send.await_args_list[0].kwargs["reply_markup"]["inline_keyboard"] for b in row]
-    assert offers == ["Gemini Pro, 6 мес", "Gemini Pro, 18 мес", "Отмена"]
+    assert offers == ["Gemini Pro, 6 мес", "Отмена"]
     who = [b["text"] for row in send.await_args_list[1].kwargs["reply_markup"]["inline_keyboard"] for b in row]
     assert who == ["Партнёр: olga@example.com", "Виктор (напрямую)", "Отмена"]
     assert send.await_args_list[1].kwargs["message_thread_id"] == 77
