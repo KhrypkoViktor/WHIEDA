@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from fastapi import HTTPException
 
 from app.academy.showcases import is_showcase_host, warm_hosts
+from app.content_access.devices import device_label, enforce_device_limit, ip_hint
 from app.cookie_domain import shared_cookie_domains
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.settings import get_settings
@@ -396,6 +397,8 @@ async def poll_content_challenge(
     *,
     challenge_id: str,
     browser_nonce: str,
+    user_agent: str | None = None,
+    client_ip_value: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     try:
         uuid.UUID(challenge_id)
@@ -481,10 +484,10 @@ async def poll_content_challenge(
                 """
                 insert into content_access_sessions (
                   session_id, tenant_id, visitor_session_id, session_hash,
-                  telegram_user_id, scope, expires_at
+                  telegram_user_id, scope, expires_at, device_label, created_ip_hint
                 ) values (
                   %s::uuid, %s, %s::uuid, %s,
-                  %s, %s, %s
+                  %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -495,8 +498,14 @@ async def poll_content_challenge(
                     claimed["telegram_user_id"],
                     claimed.get("requested_scope") or "telegram_verified",
                     session_expires,
+                    device_label(user_agent) if user_agent is not None else None,
+                    ip_hint(client_ip_value),
                 ),
             )
+        limited = await enforce_device_limit(conn, tenant_id, int(claimed["telegram_user_id"]))
+        # Кэш проверки сессии держится 30 секунд — вытесненные входом сессии выбрасываем из него сразу.
+        for evicted in limited:
+            _evict_cached_session(tenant_id, evicted)
 
     return {
         "ok": True,
@@ -512,6 +521,8 @@ async def create_session_for_user(
     visitor_session_id: str | None = None,
     source: str = "login_identity",
     scope: str = "telegram_verified",
+    user_agent: str | None = None,
+    client_ip_value: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Сессия сайта для уже подтверждённого человека — без заявки и без бота.
 
@@ -553,11 +564,19 @@ async def create_session_for_user(
                 """
                 insert into content_access_sessions (
                   session_id, tenant_id, visitor_session_id, session_hash,
-                  telegram_user_id, scope, expires_at
-                ) values (%s::uuid, %s, %s::uuid, %s, %s, %s, %s)
+                  telegram_user_id, scope, expires_at, device_label, created_ip_hint
+                ) values (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s)
                 """,
-                (session_id, tenant_id, session_raw, _hash_value(raw_session), int(telegram_user_id), scope, session_expires),
+                (
+                    session_id, tenant_id, session_raw, _hash_value(raw_session), int(telegram_user_id), scope,
+                    session_expires, device_label(user_agent) if user_agent is not None else None,
+                    ip_hint(client_ip_value),
+                ),
             )
+        # Не больше двух активных устройств на человека: самые давно не виденные отзываются (V35).
+        limited = await enforce_device_limit(conn, tenant_id, int(telegram_user_id))
+    for evicted in limited:
+        _evict_cached_session(tenant_id, evicted)
     return {"ok": True, "status": "authenticated", "expires_at": session_expires.isoformat()}, raw_session
 
 
