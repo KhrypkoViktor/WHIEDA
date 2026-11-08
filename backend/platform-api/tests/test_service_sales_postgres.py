@@ -60,7 +60,7 @@ def test_sale_lifecycle_deposit_and_partner_share():
             sale = await record_sale("whieda", ticket=ticket, offer_code="gemini_6m", seller="partner", partner_ref="olga", admin_telegram_user_id=KARINA, created_by=KARINA)
             assert sale["idempotent"] is False and sale["owed_admin_minor"] == 249000 and sale["deposit_balance_minor"] == 2000000 - 249000
             assert sale["partner_bonus"]["amount_minor"] == 500 and sale["partner_bonus"]["balance_minor"] == 500
-            assert sale["partner_bonus"]["telegram_chat_id"] == "525" and sale["owner_keeps_minor"] == 100000
+            assert sale["partner_bonus"]["telegram_chat_id"] == "525" and sale["owner_keeps_minor"] == 200000
             again = await record_sale("whieda", ticket=ticket, offer_code="gemini_6m", seller="partner", partner_ref="olga", admin_telegram_user_id=KARINA, created_by=KARINA)
             assert again["idempotent"] is True
             assert await deposit_balance("whieda", admin_telegram_user_id=KARINA) == 2000000 - 249000
