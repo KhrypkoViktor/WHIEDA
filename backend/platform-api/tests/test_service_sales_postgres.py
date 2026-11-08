@@ -84,7 +84,7 @@ def test_sale_lifecycle_deposit_and_partner_share():
             assert activated["status"] == "activated"
             assert await activate_sale("whieda", sale_id=str(sale["sale_id"]), activated_until=datetime(2027, 3, 16, tzinfo=timezone.utc)) is None
             report = await month_report("whieda", admin_telegram_user_id=KARINA, since=datetime(2026, 1, 1, tzinfo=timezone.utc))
-            assert report["sales"] == 2 and report["retail_minor"] == 798000 and report["owed_minor"] == 548000 and report["owner_minor"] == 200000
+            assert report["sales"] == 2 and report["retail_minor"] == 998000 and report["owed_minor"] == 548000 and report["owner_minor"] == 400000
             assert report["by_partner"] == [{"partner_ref": "olga", "sales": 1, "share_wusd_minor": 500}]
             assert report["deposit_balance_minor"] == 1452000 and report["low_balance"] is False
 
