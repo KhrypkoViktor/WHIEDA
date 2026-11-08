@@ -163,6 +163,9 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "account_identities",
             "login_link_codes",
             "login_pending",
+            # Ключи доступа (WebAuthn) и лимит устройств (platform_login_devices_v35.sql, 08.11.2026).
+            "passkey_credentials",
+            "passkey_challenges",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

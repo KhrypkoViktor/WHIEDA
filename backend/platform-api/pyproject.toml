@@ -22,6 +22,8 @@ dependencies = [
   "nh3>=0.3.0",
   # Range в FileResponse (видео Академии через API до nginx) — с Starlette 0.39.
   "starlette>=0.39.0",
+  # Ключи доступа (WebAuthn / passkey) для входа на сайт (08.11.2026): py_webauthn.
+  "webauthn>=2.5,<4",
 ]
 
 [project.optional-dependencies]
