@@ -1,6 +1,6 @@
 """Лимит устройств, ключи доступа, Яндекс ID и VK ID (V35, 08.11.2026) на настоящем PostgreSQL.
 
-  * platform_login_devices_v35.sql применяется дважды, провайдеры yandex/vk проходят проверки таблиц V34;
+  * platform_login_devices_v51.sql применяется дважды, провайдеры yandex/vk проходят проверки таблиц V34;
   * лимит: третья сессия выбивает самую давно не виденную (revoked_by = 'device_limit'), чужие сессии
     не трогаются, десять параллельных входов оставляют не больше двух; список «Устройства» и
     «выйти на других устройствах»; подпись устройства и префикс IP сохраняются при входе по challenge;
@@ -29,7 +29,7 @@ IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605
 WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 ANDROID = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
 OTHER_USER = 701
-V35 = "platform_login_devices_v35.sql"
+V35 = "platform_login_devices_v51.sql"
 
 
 def _migrations():

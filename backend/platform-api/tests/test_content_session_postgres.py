@@ -14,7 +14,7 @@ import pytest
 
 from tests.postgres_testkit import MIGRATIONS, temporary_database
 
-SESSION_MIGRATIONS = (*MIGRATIONS, "platform_identity_journey_v1.sql", "platform_content_access_v1.sql", "platform_login_devices_v35.sql")
+SESSION_MIGRATIONS = (*MIGRATIONS, "platform_identity_journey_v1.sql", "platform_content_access_v1.sql", "platform_login_devices_v51.sql")
 LONG_AGO = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
 
 
