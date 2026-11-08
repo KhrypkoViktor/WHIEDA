@@ -364,7 +364,7 @@ async def try_handle_service_command(
             rows = await list_tariffs(tenant.tenant_id)
             lines = ["Тарифы (цена · Карине при прямой · Карине при партнёрской · партнёру WWC$):"]
             lines += [f"{r['offer_code']}: {_rub(r['retail_minor'])} · {_rub(r['wholesale_direct_minor'])} · {_rub(r['wholesale_partner_minor'])} · {wwc(int(r['partner_share_wusd_minor']))}" for r in rows]
-            lines.append("Изменить: тариф gemini_6m 3990 2990 2490 5")
+            lines.append("Изменить: тариф gemini_6m 4990 2990 2490 5")
             await _send(chat, "\n".join(lines), thread_id=thread)
             return {"ok": True, "route": "service_command", "status": "tariffs", "trace_id": trace_id}
         if msg.user_id != _owner_id():

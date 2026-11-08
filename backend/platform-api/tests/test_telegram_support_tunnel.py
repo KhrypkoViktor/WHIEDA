@@ -91,7 +91,7 @@ async def test_services_word_shows_gemini_card_with_three_buttons(whieda_tenant,
     kwargs = send.await_args.kwargs
     assert kwargs["text"] == SERVICES_TEXT
     buttons = [row[0]["text"] for row in kwargs["reply_markup"]["inline_keyboard"]]
-    assert buttons == ["Gemini Pro 3 990 ₽", "Поддержка", "Как это работает?"]
+    assert buttons == ["Gemini Pro 4 990 ₽", "Поддержка", "Как это работает?"]
 
 
 @pytest.mark.asyncio
@@ -125,7 +125,7 @@ async def test_order_asks_for_confirmation_with_the_offer_card(whieda_tenant, wh
         result = await process_core_telegram_update(whieda_tenant, _callback("svc:order:gemini_6m"), "t2", binding=whieda_bot_binding)
     assert result["status"] == "confirm_requested"
     kwargs = send.await_args.kwargs
-    assert "Лицензия на 6 месяцев" in kwargs["text"] and "3 990 ₽" in kwargs["text"] and "Оформить заказ?" in kwargs["text"]
+    assert "Лицензия на 6 месяцев" in kwargs["text"] and "4 990 ₽" in kwargs["text"] and "Оформить заказ?" in kwargs["text"]
     row = kwargs["reply_markup"]["inline_keyboard"][0]
     assert [b["text"] for b in row] == ["Заказать", "Отменить"]
     assert row[0]["callback_data"] == "svc:confirm:gemini_6m"
@@ -150,7 +150,7 @@ async def test_confirm_opens_ticket_and_tells_both_sides(whieda_tenant, whieda_b
     to_admin = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(ADMIN)]
     to_user = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
     assert len(to_admin) == 1 and len(to_user) == 1
-    assert "Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 3 990 ₽" in to_admin[0]["text"]
+    assert "Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 4 990 ₽" in to_admin[0]["text"]
     # The administrator never sees the person: no name, no @username, no link.
     assert "Ольга" not in to_admin[0]["text"] and "@olga" not in to_admin[0]["text"]
     assert "Reply" in to_admin[0]["text"]
@@ -425,7 +425,7 @@ async def test_new_ticket_opens_a_topic_and_header_goes_into_it(whieda_tenant, w
     assert attach.await_args.kwargs == {"ticket_id": "11111111-1111-1111-1111-111111111111", "forum_chat_id": FORUM, "forum_thread_id": 77}
     to_forum = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(FORUM)]
     assert len(to_forum) == 1 and to_forum[0]["message_thread_id"] == 77
-    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 3 990 ₽")
+    assert to_forum[0]["text"].startswith("Клиент WWC · Заявка #S-1042 · Заказ: Gemini Pro, лицензия на 6 месяцев — 4 990 ₽")
     assert "Пишите в эту тему" in to_forum[0]["text"] and "Ольга" not in to_forum[0]["text"]
     # Nothing goes to the administrator's private chat.
     assert not [c for c in send.await_args_list if c.kwargs["chat_id"] == str(KARINA)]

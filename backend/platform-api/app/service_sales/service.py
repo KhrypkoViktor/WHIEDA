@@ -5,7 +5,7 @@ owner keeps a prepaid deposit with the service administrator, every sale is
 written off that deposit. The partner who sold gets WWC$ on the bonus ledger;
 nobody is paid money.
 
-    retail 3 990 ₽ → sold by the owner: deposit −2 990
+    retail 4 990 ₽ → sold by the owner: deposit −2 990
                    → sold by a partner: deposit −2 490, partner +5 WWC$
 
 The numbers live in ``service_tariffs`` and change by a bot command.

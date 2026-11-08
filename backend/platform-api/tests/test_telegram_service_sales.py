@@ -17,7 +17,7 @@ CLIENT = 60001
 FORUM = -1001234567890
 TICKET = "11111111-1111-1111-1111-111111111111"
 SALE = "22222222-2222-2222-2222-222222222222"
-TARIFF = {"offer_code": "gemini_6m", "retail_minor": 399000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500}
+TARIFF = {"offer_code": "gemini_6m", "retail_minor": 499000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500}
 
 
 def _callback(data: str, *, user: int = KARINA, thread: int | None = 77) -> dict:
@@ -61,8 +61,8 @@ def sales_env(monkeypatch: pytest.MonkeyPatch):
 def test_split_sale_direct_and_partner():
     direct = split_sale(TARIFF, "owner")
     partner = split_sale(TARIFF, "partner")
-    assert direct == {"retail_minor": 399000, "owed_admin_minor": 299000, "partner_share_wusd_minor": 0, "owner_keeps_minor": 100000}
-    assert partner == {"retail_minor": 399000, "owed_admin_minor": 249000, "partner_share_wusd_minor": 500, "owner_keeps_minor": 100000}
+    assert direct == {"retail_minor": 499000, "owed_admin_minor": 299000, "partner_share_wusd_minor": 0, "owner_keeps_minor": 200000}
+    assert partner == {"retail_minor": 499000, "owed_admin_minor": 249000, "partner_share_wusd_minor": 500, "owner_keeps_minor": 200000}
 
 
 def test_plus_months_keeps_the_day_when_possible():
@@ -95,8 +95,8 @@ async def test_partner_sale_writes_off_deposit_credits_wwc_and_feeds_the_bonuses
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
     recorded = {
         "sale_id": SALE, "ticket_id": TICKET, "offer_code": "gemini_6m", "seller": "partner", "partner_ref": "olga-samtsova",
-        "retail_minor": 399000, "owed_admin_minor": 249000, "partner_share_wusd_minor": 500, "status": "paid",
-        "idempotent": False, "deposit_balance_minor": 1751000, "owner_keeps_minor": 100000,
+        "retail_minor": 499000, "owed_admin_minor": 249000, "partner_share_wusd_minor": 500, "status": "paid",
+        "idempotent": False, "deposit_balance_minor": 1751000, "owner_keeps_minor": 200000,
         "partner_bonus": {"actor_id": "olga-samtsova", "amount_minor": 500, "balance_minor": 4600, "telegram_chat_id": "525317405", "idempotent": False},
     }
     record = AsyncMock(return_value=recorded)
@@ -113,10 +113,10 @@ async def test_partner_sale_writes_off_deposit_credits_wwc_and_feeds_the_bonuses
     for c in send.await_args_list:
         by_chat.setdefault(c.kwargs["chat_id"], []).append(c.kwargs)
     topic = [m for m in by_chat[str(FORUM)] if m.get("message_thread_id") == 77][0]
-    assert "Продажа #S-7 · Gemini Pro, 6 мес · 3 990 ₽" in topic["text"]
+    assert "Продажа #S-7 · Gemini Pro, 6 мес · 4 990 ₽" in topic["text"]
     assert "Продал: партнёр olga@example.com" in topic["text"]
     assert "Списано с депозита: 2 490 ₽. Остаток депозита: 17 510 ₽" in topic["text"]
-    assert "Партнёру: 5 WWC$" in topic["text"] and "Виктору: 1 000 ₽" in topic["text"]
+    assert "Партнёру: 5 WWC$" in topic["text"] and "Виктору: 2 000 ₽" in topic["text"]
     assert topic["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == f"sale:until:{SALE}:6"
     partner_push = by_chat["525317405"][0]["text"]
     assert "+5 WWC$ за Gemini клиента #S-7" in partner_push and "Баланс: 46 WWC$" in partner_push
@@ -130,8 +130,8 @@ async def test_direct_sale_has_no_partner_share_and_warns_on_low_deposit(whieda_
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
     recorded = {
         "sale_id": SALE, "ticket_id": TICKET, "offer_code": "gemini_6m", "seller": "owner", "partner_ref": None,
-        "retail_minor": 399000, "owed_admin_minor": 299000, "partner_share_wusd_minor": 0, "status": "paid",
-        "idempotent": False, "deposit_balance_minor": 100000, "owner_keeps_minor": 100000, "partner_bonus": None,
+        "retail_minor": 499000, "owed_admin_minor": 299000, "partner_share_wusd_minor": 0, "status": "paid",
+        "idempotent": False, "deposit_balance_minor": 100000, "owner_keeps_minor": 200000, "partner_bonus": None,
     }
     with patch("app.telegram.service_sales.send_telegram_text", send), patch(
         "app.telegram.service_sales.get_ticket", AsyncMock(return_value=_ticket())
@@ -220,13 +220,13 @@ async def test_report_lists_partners_by_email_and_the_deposit(whieda_tenant, whi
 @pytest.mark.asyncio
 async def test_tariff_command_updates_prices_and_explains_the_split(whieda_tenant, whieda_bot_binding, sales_env):
     send = AsyncMock(return_value={"ok": True, "message_id": 1})
-    new = {**TARIFF, "retail_minor": 399000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500}
+    new = {**TARIFF, "retail_minor": 499000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500}
     with patch("app.telegram.service_sales.send_telegram_text", send), patch("app.telegram.service_sales.set_tariff", AsyncMock(return_value=new)) as set_t:
-        result = await process_core_telegram_update(whieda_tenant, _forum_message("тариф gemini_6m 3990 2990 2490 5"), "s11", binding=whieda_bot_binding)
+        result = await process_core_telegram_update(whieda_tenant, _forum_message("тариф gemini_6m 4990 2990 2490 5"), "s11", binding=whieda_bot_binding)
     assert result["status"] == "tariff_set"
-    assert set_t.await_args.kwargs == {"offer_code": "gemini_6m", "retail_minor": 399000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500, "updated_by": OWNER}
+    assert set_t.await_args.kwargs == {"offer_code": "gemini_6m", "retail_minor": 499000, "wholesale_direct_minor": 299000, "wholesale_partner_minor": 249000, "partner_share_wusd_minor": 500, "updated_by": OWNER}
     text = send.await_args.kwargs["text"]
-    assert "прямая — Карине 2 990 ₽, Виктору 1 000 ₽" in text and "партнёрская — Карине 2 490 ₽, партнёру 5 WWC$, Виктору 1 000 ₽" in text
+    assert "прямая — Карине 2 990 ₽, Виктору 2 000 ₽" in text and "партнёрская — Карине 2 490 ₽, партнёру 5 WWC$, Виктору 2 000 ₽" in text
 
 
 @pytest.mark.asyncio
