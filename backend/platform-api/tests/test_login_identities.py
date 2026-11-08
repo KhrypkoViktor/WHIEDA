@@ -110,7 +110,7 @@ def test_browser_key_rules_and_email_masking():
     ("отвязать google volkova", ("unlink", "google", "volkova")),
     ("Отвязать MAX Евгения", ("unlink", "max", "Евгения")),
     ("код входа", None),
-    ("отвязать vk volkova", None),
+    ("отвязать icq volkova", None),
     ("привет, код входа?", None),
 ])
 def test_owner_commands_are_recognised(text, expected):
@@ -312,7 +312,7 @@ async def test_issue_code_gives_up_after_five_clashes(conn):
 
 
 def test_telegram_cannot_be_revoked_and_unknown_providers_are_rejected():
-    for provider, code in (("telegram", "invalid_provider"), ("vk", "invalid_provider")):
+    for provider, code in (("telegram", "invalid_provider"), ("icq", "invalid_provider")):
         with pytest.raises(LoginIdentityError) as info:
             rules.normalize_provider(provider)
         assert info.value.code == code
@@ -388,12 +388,12 @@ async def test_google_start_redirects_to_google_with_pkce_state_and_a_browser_co
     assert "SameSite=lax" in cookie and "Max-Age=900" in cookie and "Secure" in cookie
     key = cookie.split(";", 1)[0].split("=", 1)[1]
     (sql, params) = start_db[0]
-    assert sql.startswith("insert into login_pending")
-    assert params[1] == rules.sha256_hex(query["state"][0]) and params[2] == rules.sha256_hex(query["nonce"][0])
-    assert params[4] == "samtsova.wwc.best" and params[5] == "https://samtsova.wwc.best/price/"
-    assert params[6] == "11111111-1111-1111-1111-111111111111"
-    assert params[7] == rules.sha256_hex(key), "the pending row remembers the browser that started"
-    assert params[8] is None, "no site key on a family host"
+    assert sql.startswith("insert into login_pending") and params[1] == "google"
+    assert params[2] == rules.sha256_hex(query["state"][0]) and params[3] == rules.sha256_hex(query["nonce"][0])
+    assert params[5] == "samtsova.wwc.best" and params[6] == "https://samtsova.wwc.best/price/"
+    assert params[7] == "11111111-1111-1111-1111-111111111111"
+    assert params[8] == rules.sha256_hex(key), "the pending row remembers the browser that started"
+    assert params[9] is None, "no site key on a family host"
     assert "secret-1" not in response.headers["location"]
 
 
@@ -407,8 +407,8 @@ async def test_query_key_never_becomes_the_cookie_on_a_family_host(client, googl
     cookie_value = response.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
     assert cookie_value != KEY and rules.normalize_browser_key(cookie_value) == cookie_value
     params = start_db[0][1]
-    assert params[7] == rules.sha256_hex(cookie_value) and params[7] != rules.sha256_hex(KEY)
-    assert params[8] is None, "a client key is not stored at all on a family host"
+    assert params[8] == rules.sha256_hex(cookie_value) and params[8] != rules.sha256_hex(KEY)
+    assert params[9] is None, "a client key is not stored at all on a family host"
 
 
 @pytest.fixture
@@ -429,7 +429,7 @@ async def test_showcase_start_keeps_the_site_key_apart_and_sets_no_cookie(client
     assert response.status_code == 302 and urlparse(response.headers["location"]).netloc == "accounts.google.com"
     assert not any(c.startswith(f"{OAUTH_COOKIE_NAME}=") for c in response.headers.get_list("set-cookie"))
     params = start_db[0][1]
-    assert params[4] == "site.other.test" and params[7] is None and params[8] == rules.sha256_hex(KEY)
+    assert params[5] == "site.other.test" and params[8] is None and params[9] == rules.sha256_hex(KEY)
 
 
 @pytest.mark.asyncio
@@ -600,7 +600,7 @@ async def test_me_lists_login_methods(client):
          patch("app.content_access.routes.load_site_account", AsyncMock(return_value=None)), \
          patch("app.content_access.routes.list_login_methods", AsyncMock(return_value=methods)) as listing:
         response = await client.get("/api/v1/content-access/me", headers=HOST)
-    assert response.status_code == 200 and response.json()["login_methods"] == methods
+    assert response.status_code == 200 and response.json()["login_methods"]["google"] == {"enabled": False, "linked": True, "label": "e@x.com", "linked_at": "2026-10-15T10:00:00+00:00"}
     listing.assert_awaited_once()
     assert listing.await_args.args == ("whieda", 700)  # и открытая «/me» транзакция в conn
 
@@ -615,7 +615,7 @@ async def test_me_survives_a_broken_methods_lookup_with_telegram_only(client):
          patch("app.content_access.routes.list_login_methods", AsyncMock(side_effect=RuntimeError("no pool"))):
         response = await client.get("/api/v1/content-access/me", headers=HOST)
     assert response.status_code == 200
-    assert response.json()["login_methods"] == [{"provider": "telegram", "label": "Telegram", "linked_at": None}]
+    assert [name for name in ("telegram", "max", "google", "yandex", "vk") if response.json()["login_methods"][name]["linked"]] == ["telegram"]
 
 
 @pytest.mark.asyncio
@@ -624,7 +624,7 @@ async def test_revoke_needs_a_session_and_revokes_only_google_or_max(client):
     assert response.status_code == 401
     with patch("app.content_access.routes.read_session_cookie", return_value="raw"), \
          patch("app.content_access.routes.validate_content_session", AsyncMock(return_value=SESSION)):
-        for provider, error in (("telegram", "invalid_provider"), ("vk", "invalid_provider")):
+        for provider, error in (("telegram", "invalid_provider"), ("icq", "invalid_provider")):
             response = await client.delete(f"/api/v1/content-access/login/identities/{provider}", headers=HOST)
             assert response.status_code == 400 and response.json()["error"] == error, provider
         with patch.object(service, "revoke_identity", AsyncMock(return_value=1)) as revoke:

@@ -30,7 +30,7 @@ from tests.test_login_identities import _claims, _jwt
 
 # Сессии сайта: visitor_sessions (identity_journey) и content_access_sessions — на бою есть, в базовом
 # наборе testkit их нет.
-LOGIN_MIGRATIONS = (*MIGRATIONS, "platform_identity_journey_v1.sql", "platform_content_access_v1.sql")
+LOGIN_MIGRATIONS = (*MIGRATIONS, "platform_identity_journey_v1.sql", "platform_content_access_v1.sql", "platform_login_devices_v35.sql")
 
 OWNER, EVGENIA, PETROVA, STRANGER = 2, 700, 701, 702
 MAX_ID = 5001

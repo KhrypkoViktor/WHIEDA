@@ -34,11 +34,14 @@ from app.content_access.service import (
 from app.cookie_domain import shared_cookie_domains
 from app.db import fetch_all, fetch_one, get_pool, tenant_connection
 from app.login_identities import google as google_oauth
+from app.login_identities import vk as vk_oauth
+from app.login_identities import yandex as yandex_oauth
 from app.login_identities.rules import (
     BROWSER_LOGIN_TTL_MINUTES,
     LINK_ERROR_FRAGMENT,
     LINK_FRAGMENT,
     MAX_CODE_ATTEMPTS,
+    OAUTH_PROVIDERS,
     REVOCABLE_PROVIDERS,
     LoginIdentityError,
     browser_key_matches,
@@ -640,7 +643,7 @@ async def redeem_max_code(
     return result
 
 
-# ---- Google: start → callback → код ---------------------------------------------------------------
+# ---- Google, Яндекс ID, VK ID: start → callback → код ----------------------------------------------
 
 
 def _absolute_return_to(host: str, return_to: str) -> str:
@@ -675,29 +678,85 @@ def request_host(headers: Any) -> str:
     return host.split(":", 1)[0]
 
 
-def cookie_mode(config: google_oauth.GoogleOAuthConfig, target_host: str) -> bool:
+def provider_config(provider: str) -> Any:
+    """Настройки OAuth-провайдера или LoginIdentityError('<provider>_disabled')."""
+    if provider == "google":
+        return google_oauth.require_google_config()
+    if provider == "yandex":
+        return yandex_oauth.require_yandex_config()
+    if provider == "vk":
+        return vk_oauth.require_vk_config()
+    raise error("invalid_provider")
+
+
+def providers_enabled() -> dict[str, bool]:
+    """{provider: заданы ли ключи} для всех способов входа; Max — по токену бота."""
+    settings = get_settings()
+    return {
+        "google": google_oauth.google_config() is not None,
+        "yandex": yandex_oauth.yandex_config() is not None,
+        "vk": vk_oauth.vk_config() is not None,
+        "max": bool(str(settings.max_bot_token or "").strip()),
+    }
+
+
+def _auth_url(provider: str, config: Any, *, state: str, nonce: str, code_challenge: str) -> str:
+    if provider == "google":
+        return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=code_challenge)
+    if provider == "yandex":
+        return yandex_oauth.build_auth_url(config, state=state, code_challenge=code_challenge)
+    return vk_oauth.build_auth_url(config, state=state, code_challenge=code_challenge)
+
+
+async def _exchange_claims(
+    provider: str, config: Any, *, code: str, pending: dict[str, Any], state: str, extra: dict[str, str]
+) -> dict[str, Any]:
+    """Обмен кода и профиль → {sub, email, name}; LoginIdentityError с кодом провайдера."""
+    verifier = str(pending["code_verifier"])
+    if provider == "google":
+        tokens = await google_oauth.exchange_code(config, code=code, code_verifier=verifier)
+        return check_id_token_claims(
+            decode_jwt_payload(str(tokens.get("id_token") or "")),
+            client_id=config.client_id,
+            nonce_hash=str(pending["nonce_hash"]),
+        )
+    if provider == "yandex":
+        tokens = await yandex_oauth.exchange_code(config, code=code, code_verifier=verifier)
+        return await yandex_oauth.fetch_profile(str(tokens["access_token"]))
+    device_id = str(extra.get("device_id") or "").strip()
+    if not device_id:
+        raise error("vk_token_invalid", reason="device_id")
+    tokens = await vk_oauth.exchange_code(config, code=code, code_verifier=verifier, device_id=device_id, state=state)
+    return await vk_oauth.fetch_profile(config, tokens)
+
+
+def cookie_mode(config: Any, target_host: str) -> bool:
     """Хост входа в семье cookie callback-хоста (redirect из настроек): браузер подтверждает cookie
     wwc_oauth. Иначе (витрина на своём домене) cookie до callback не дойдёт — подтверждает ключ сайта."""
     callback_host = (urlparse(config.redirect_uri).hostname or "").lower()
     return same_cookie_family(callback_host, target_host)
 
 
-async def google_start(
+async def oauth_start(
+    provider: str,
     tenant_id: str,
     *,
     host: str,
     return_to: str,
     visitor_session_id: str | None,
     site_key: str | None = None,
+    session_user_id: int | None = None,
 ) -> tuple[str, str | None]:
-    """(адрес Google, ключ для cookie wwc_oauth или None). Состояние — строка login_pending.
+    """(адрес провайдера, ключ для cookie wwc_oauth или None). Состояние — строка login_pending.
 
     Хост входа в семье cookie: ключ генерирует сервер, он уходит в cookie; ``site_key`` от клиента
     игнорируется (иначе чужая страница навязала бы браузеру жертвы известный ей ключ).
+    ``session_user_id`` — человек с действующей сессией сайта: он привязывает провайдера к себе из кабинета, код
+    владельца не нужен (на хосте вне семьи cookie не гарантирует браузер — там привязка идёт по коду, как раньше).
     Хост вне семьи: нужен ``site_key`` (сайт держит его в sessionStorage), хранится отдельно
     (site_key_hash), cookie не ставится. Нет или негодный — ``browser_key_required``.
     """
-    config = google_oauth.require_google_config()
+    config = provider_config(provider)
     await warm_hosts(tenant_id)
     target = _absolute_return_to(host, return_to)
     target_host = urlparse(target).hostname or ""
@@ -721,16 +780,29 @@ async def google_start(
                 """
                 insert into login_pending
                   (tenant_id, provider, status, state_hash, nonce_hash, code_verifier, host, return_to,
-                   visitor_session_id, browser_key_hash, site_key_hash, expires_at)
-                values (%s, 'google', 'started', %s, %s, %s, %s, %s, %s::uuid, %s, %s, %s)
+                   visitor_session_id, browser_key_hash, site_key_hash, expires_at, telegram_user_id)
+                values (%s, %s, 'started', %s, %s, %s, %s, %s, %s::uuid, %s, %s, %s, %s)
                 """,
                 (
-                    tenant_id, sha256_hex(state), sha256_hex(nonce), verifier,
+                    tenant_id, provider, sha256_hex(state), sha256_hex(nonce), verifier,
                     urlparse(target).netloc, target, _uuid_or_none(session_raw), browser_key_hash,
                     site_key_hash, pending_expires_at(),
+                    int(session_user_id) if session_user_id is not None and cookie_key else None,
                 ),
             )
-    return google_oauth.build_auth_url(config, state=state, nonce=nonce, code_challenge=challenge), cookie_key
+    return _auth_url(provider, config, state=state, nonce=nonce, code_challenge=challenge), cookie_key
+
+
+async def google_start(tenant_id: str, **kwargs: Any) -> tuple[str, str | None]:
+    return await oauth_start("google", tenant_id, **kwargs)
+
+
+async def yandex_start(tenant_id: str, **kwargs: Any) -> tuple[str, str | None]:
+    return await oauth_start("yandex", tenant_id, **kwargs)
+
+
+async def vk_start(tenant_id: str, **kwargs: Any) -> tuple[str, str | None]:
+    return await oauth_start("vk", tenant_id, **kwargs)
 
 
 def presented_key(pending: dict[str, Any], *, cookie_key: str | None, body_key: str | None) -> tuple[str | None, str | None]:
@@ -761,6 +833,7 @@ async def _new_awaiting(
     status: str,
     pending: dict[str, Any],
     claims: dict[str, Any],
+    provider: str = "google",
 ) -> str:
     """Строка «ждёт код» / «ждёт подтверждения браузера» с тем же ключом браузера; возвращает link token."""
     link_token = secrets.token_urlsafe(24)
@@ -770,10 +843,10 @@ async def _new_awaiting(
             insert into login_pending
               (tenant_id, provider, status, host, return_to, visitor_session_id, browser_key_hash,
                site_key_hash, external_id, email, display_name, link_token_hash, expires_at)
-            values (%s, 'google', %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                tenant_id, status, str(pending["host"]), str(pending["return_to"]),
+                tenant_id, provider, status, str(pending["host"]), str(pending["return_to"]),
                 _uuid_or_none(str(pending.get("visitor_session_id") or "")), pending.get("browser_key_hash"),
                 pending.get("site_key_hash"), claims["sub"], claims["email"], claims["name"],
                 sha256_hex(link_token), pending_expires_at(),
@@ -782,13 +855,15 @@ async def _new_awaiting(
     return link_token
 
 
-async def google_callback(
+async def oauth_callback(
+    provider: str,
     tenant_id: str,
     *,
     state: str,
     code: str | None,
     oauth_error: str | None,
     cookie_key: str | None,
+    extra: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Результат callback для ручки.
 
@@ -797,30 +872,31 @@ async def google_callback(
         claim=True — Google уже привязан, но хост вне семьи cookie: сайт подтверждает браузер ключом
         через POST /login/link без кода.
     {"outcome": "error", error, host, return_to}
-    LoginIdentityError: google_state_invalid (неизвестный/просроченный/повторный state),
+    LoginIdentityError: <provider>_state_invalid (неизвестный/просроченный/повторный state),
     oauth_browser_mismatch (callback открыт не в том браузере, где начали вход) — хоста для возврата нет.
 
     Хост в семье cookie: ``cookie_key`` (cookie wwc_oauth) обязан совпасть. Хост вне семьи: cookie не
     смотрится вовсе — браузер подтверждается ключом сайта на шаге /login/link.
     """
-    config = google_oauth.require_google_config()
+    config = provider_config(provider)
+    extra = extra or {}
     state_hash = sha256_hex(str(state or "").strip())
     async with tenant_connection(tenant_id) as conn:
         pending = await fetch_one(
             conn,
             """
             select pending_id, status, nonce_hash, code_verifier, host, return_to, visitor_session_id,
-                   browser_key_hash, site_key_hash, expires_at
+                   browser_key_hash, site_key_hash, expires_at, telegram_user_id
             from login_pending
-            where tenant_id = %s and provider = 'google' and state_hash = %s
+            where tenant_id = %s and provider = %s and state_hash = %s
             limit 1
             """,
-            (tenant_id, state_hash),
+            (tenant_id, provider, state_hash),
         )
         if not pending or pending.get("status") != "started":
-            raise error("google_state_invalid")
+            raise error(f"{provider}_state_invalid")
         if pending["expires_at"] < utcnow():
-            raise error("google_state_invalid", reason="expired")
+            raise error(f"{provider}_state_invalid", reason="expired")
         # state одноразовый: повторный callback с тем же state — ошибка, а не второй вход.
         await _fail_pending(conn, str(pending["pending_id"]))
     host, return_to = str(pending["host"]), str(pending["return_to"])
@@ -830,7 +906,7 @@ async def google_callback(
     if pending.get("browser_key_hash"):
         if not browser_key_matches(cookie_key, pending["browser_key_hash"]):
             reason = "cookie" if cookie_key else "no_cookie"
-            logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": reason})
+            logger.info(f"login_{provider}_browser_mismatch", extra={"tenant_id": tenant_id, "reason": reason})
             raise error("oauth_browser_mismatch")
         deferred = False
     elif pending.get("site_key_hash"):
@@ -838,20 +914,23 @@ async def google_callback(
     else:
         raise error("oauth_browser_mismatch")
     if oauth_error or not code:
-        logger.info("login_google_denied", extra={"tenant_id": tenant_id, "reason": str(oauth_error or "no_code")[:40]})
-        return {"outcome": "error", "error": "google_denied", **base}
+        logger.info(
+            f"login_{provider}_denied", extra={"tenant_id": tenant_id, "reason": str(oauth_error or "no_code")[:40]}
+        )
+        return {"outcome": "error", "error": f"{provider}_denied", **base}
     try:
-        tokens = await google_oauth.exchange_code(config, code=str(code), code_verifier=str(pending["code_verifier"]))
-        claims = check_id_token_claims(
-            decode_jwt_payload(str(tokens.get("id_token") or "")),
-            client_id=config.client_id,
-            nonce_hash=str(pending["nonce_hash"]),
+        claims = await _exchange_claims(
+            provider, config, code=str(code), pending=pending, state=str(state or ""), extra=extra
         )
     except LoginIdentityError as exc:
-        logger.info("login_google_failed", extra={"tenant_id": tenant_id, "reason": exc.code, **exc.details})
+        logger.info(f"login_{provider}_failed", extra={"tenant_id": tenant_id, "reason": exc.code, **exc.details})
         return {"outcome": "error", "error": exc.code, **base}
     async with tenant_connection(tenant_id) as conn:
-        state_name, telegram_user_id = await identity_state(conn, tenant_id, "google", claims["sub"])
+        if pending.get("telegram_user_id") is not None and not deferred:
+            return await _link_for_session(
+                conn, tenant_id, provider, claims, int(pending["telegram_user_id"]), pending, base
+            )
+        state_name, telegram_user_id = await identity_state(conn, tenant_id, provider, claims["sub"])
         if state_name == "active" and telegram_user_id is not None:
             if not deferred:
                 return {
@@ -860,14 +939,71 @@ async def google_callback(
                     "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
                     **base,
                 }
-            link_token = await _new_awaiting(conn, tenant_id, status="awaiting_claim", pending=pending, claims=claims)
+            link_token = await _new_awaiting(
+                conn, tenant_id, status="awaiting_claim", pending=pending, claims=claims, provider=provider
+            )
             return {"outcome": "link_required", "link_token": link_token, "claim": True, **base}
-        if await _locked(conn, tenant_id, "google", claims["sub"]):
-            # Пять неверных кодов подряд: новый вход через Google в том же окне попыток не добавляет.
-            _log_code_failed(tenant_id, "google", "code_locked")
+        if await _locked(conn, tenant_id, provider, claims["sub"]):
+            # Пять неверных кодов подряд: новый вход через провайдера в том же окне попыток не добавляет.
+            _log_code_failed(tenant_id, provider, "code_locked")
             return {"outcome": "error", "error": "code_locked", **base}
-        link_token = await _new_awaiting(conn, tenant_id, status="awaiting_code", pending=pending, claims=claims)
+        link_token = await _new_awaiting(
+            conn, tenant_id, status="awaiting_code", pending=pending, claims=claims, provider=provider
+        )
     return {"outcome": "link_required", "link_token": link_token, "claim": False, **base}
+
+
+async def _link_for_session(
+    conn: Any, tenant_id: str, provider: str, claims: dict[str, Any], telegram_user_id: int, pending: dict[str, Any],
+    base: dict[str, Any],
+) -> dict[str, Any]:
+    """Привязка у вошедшего человека (из кабинета), без кода владельца.
+
+    Исходы: {"outcome": "linked"} — привязано (или уже было у него же); {"outcome": "error", "error":
+    "identity_taken"} — этот аккаунт провайдера у другого человека; аккаунт, отвязанный не самим человеком
+    (владелец отозвал), без кода владельца не возвращается: идём прежней дорогой «ввести код»."""
+    state_name, owner = await identity_state(conn, tenant_id, provider, claims["sub"])
+    if state_name == "active":
+        if owner == telegram_user_id:
+            return {"outcome": "linked", "already_linked": True, "telegram_user_id": telegram_user_id, **base}
+        _log_code_failed(tenant_id, provider, "identity_taken")
+        return {"outcome": "error", "error": "identity_taken", **base}
+    if state_name == "revoked":
+        foreign = await fetch_one(
+            conn,
+            """
+            select 1 as present from account_identities
+            where tenant_id = %s and provider = %s and external_id = %s
+              and (revoked_by is null or revoked_by not like 'self:%%')
+            limit 1
+            """,
+            (tenant_id, provider, str(claims["sub"])),
+        )
+        if foreign:
+            link_token = await _new_awaiting(
+                conn, tenant_id, status="awaiting_code", pending=pending, claims=claims, provider=provider,
+            )
+            return {"outcome": "link_required", "link_token": link_token, "claim": False, **base}
+    try:
+        await _insert_identity(
+            conn, tenant_id, telegram_user_id=telegram_user_id, provider=provider, external_id=str(claims["sub"]),
+            email=claims.get("email"), display_name=claims.get("name"), linked_by=f"self:{telegram_user_id}",
+        )
+    except LoginIdentityError as exc:
+        return {"outcome": "error", "error": exc.code, **base}
+    return {"outcome": "linked", "already_linked": False, "telegram_user_id": telegram_user_id, **base}
+
+
+async def google_callback(tenant_id: str, **kwargs: Any) -> dict[str, Any]:
+    return await oauth_callback("google", tenant_id, **kwargs)
+
+
+async def yandex_callback(tenant_id: str, **kwargs: Any) -> dict[str, Any]:
+    return await oauth_callback("yandex", tenant_id, **kwargs)
+
+
+async def vk_callback(tenant_id: str, **kwargs: Any) -> dict[str, Any]:
+    return await oauth_callback("vk", tenant_id, **kwargs)
 
 
 async def _awaiting_row(conn: Any, tenant_id: str, link_token: str) -> dict[str, Any]:
@@ -923,7 +1059,7 @@ async def link_pending(
     if not browser_key_matches(provided, stored):
         # Закрыть — отдельной транзакцией, потом ошибка (внутри блока откат стёр бы закрытие).
         await _fail_pending_committed(tenant_id, pending_id)
-        logger.info("login_google_browser_mismatch", extra={"tenant_id": tenant_id, "reason": "link"})
+        logger.info("login_browser_mismatch", extra={"tenant_id": tenant_id, "provider": str(pending["provider"]), "reason": "link"})
         raise error("oauth_browser_mismatch")
     provider, external_id = str(pending["provider"]), str(pending["external_id"])
     if pending["status"] == "awaiting_claim":
@@ -938,6 +1074,7 @@ async def link_pending(
             "telegram_user_id": telegram_user_id,
             "identity_id": None,
             "already_linked": True,
+            "provider": provider,
             "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
         }
     if not str(code or "").strip():
@@ -963,6 +1100,7 @@ async def link_pending(
         await _mark_pending_linked(conn, pending_id)
     return {
         **result,
+        "provider": provider,
         "visitor_session_id": str(pending.get("visitor_session_id") or "") or None,
     }
 
@@ -985,6 +1123,18 @@ async def purge_expired_login_rows(tenant_ids: list[str]) -> int:
                     deleted += len(rows)
         except Exception:
             logger.warning("login_cleanup_failed", extra={"tenant_id": tenant_id}, exc_info=True)
+        try:
+            # Одноразовые challenge ключей доступа (V35) — отдельной транзакцией: до применения миграции
+            # таблицы нет, и это не должно отменять чистку выше.
+            async with tenant_connection(tenant_id) as conn:
+                rows = await fetch_all(
+                    conn,
+                    f"delete from passkey_challenges where tenant_id = %s and expires_at < now() - interval '{PURGE_AFTER}' returning 1 as n",
+                    (tenant_id,),
+                )
+                deleted += len(rows)
+        except Exception:
+            logger.warning("passkey_cleanup_failed", extra={"tenant_id": tenant_id}, exc_info=True)
     return deleted
 
 
@@ -1039,7 +1189,20 @@ def link_error_url(return_to: str, code: str) -> str:
     return f"{return_to.split('#', 1)[0]}#{LINK_ERROR_FRAGMENT}={code}"
 
 
-async def session_for(tenant_id: str, *, telegram_user_id: int, visitor_session_id: str | None, source: str):
+async def session_for(
+    tenant_id: str,
+    *,
+    telegram_user_id: int,
+    visitor_session_id: str | None,
+    source: str,
+    user_agent: str | None = None,
+    client_ip_value: str | None = None,
+):
     return await create_session_for_user(
-        tenant_id, telegram_user_id=int(telegram_user_id), visitor_session_id=visitor_session_id, source=source
+        tenant_id,
+        telegram_user_id=int(telegram_user_id),
+        visitor_session_id=visitor_session_id,
+        source=source,
+        user_agent=user_agent,
+        client_ip_value=client_ip_value,
     )
