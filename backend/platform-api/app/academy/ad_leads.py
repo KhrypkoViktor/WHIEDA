@@ -722,7 +722,7 @@ async def ad_leads_step(
     tenant_ids: set[str], bindings: dict[str, Any], *, now: float | None = None, clock: datetime | None = None,
 ) -> int:
     """Новые строки таблиц заявок витрин → алерты администраторам. Возвращает число новых алертов."""
-    from app.academy.showcases import load_showcases
+    from app.academy.showcases import is_blocked, load_showcases
     from app.db import tenant_connection
     from app.jobs.outbox import enqueue_outbox_event
     from app.telegram.showcase_support import KIND_ADMIN, support_targets
@@ -761,6 +761,8 @@ async def ad_leads_step(
                     opened = opened_for(lead, opens, series)
                     if opened is None and lead.created is not None and wall - lead.created < OPEN_GRACE:
                         continue  # бота обычно открывают сразу после формы — ждём, чтобы отметка была верной
+                    if opened is not None and is_blocked(showcase.support, opened.telegram_user_id):
+                        continue  # алерты по заявке заблокированного администратору не уходят
                     row = await enqueue_outbox_event(
                         conn,
                         tenant_id=tenant_id,

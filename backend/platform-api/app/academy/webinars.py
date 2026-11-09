@@ -907,7 +907,7 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
     """Подтверждения даты, напоминания и списки для администратора, время которых пришло.
     Возвращает число новых сообщений."""
     from app.academy.ad_leads import BOT_TAG, match_lead
-    from app.academy.showcases import load_showcases
+    from app.academy.showcases import is_blocked, load_showcases
     from app.academy.webinar_gift import course_id_by_slug, grant_hours  # webinar_gift импортирует нас
     from app.db import fetch_all, tenant_connection
     from app.jobs.outbox import enqueue_outbox_event
@@ -940,6 +940,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                 conn: Any, key: str, chat_id: int, text: str, markup: dict[str, Any] | None = None,
                 photos: tuple[str, ...] = (), video_note: str = "", login: bool = False,
             ) -> int:
+                if is_blocked(showcase.support, chat_id):
+                    return 0  # заблокированному не уходит ничего: ни напоминание, ни прогрев, ни копия рассылки
                 payload: dict[str, Any] = {"chat_id": str(int(chat_id)), "text": text, "binding_id": binding_id}
                 if markup:
                     payload["reply_markup"] = markup
@@ -1180,6 +1182,8 @@ async def webinar_step(tenant_ids: set[str], bindings: dict[str, Any], *, clock:
                                 continue  # предложение после эфира оплатившим не шлём
                             if came is not None and (opened.telegram_user_id in came) != (due.audience == "came"):
                                 continue  # сегмент: были / записаны, но не были
+                            if is_blocked(showcase.support, opened.telegram_user_id):
+                                continue  # и подарок доступа ему не выдаём: сообщение с ним не уйдёт
                             key = f"{prefix}:{kind}:{opened.telegram_user_id}"
                             if due.grant is None or course_id is None:
                                 sent += await enqueue(

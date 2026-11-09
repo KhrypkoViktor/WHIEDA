@@ -42,6 +42,22 @@ _ASSET_KEYS = ("logo_url", "logo_alt", "favicon_url", "icon_url", "theme_color")
 _LINK_KEYS = ("home_url", "contact_url", "contact_label", "contact_telegram", "privacy_url", "support_url", "offer_url")
 
 
+def blocked_ids(support: dict[str, Any] | None) -> frozenset[int]:
+    """``support.blocked_telegram_ids`` — целые числа; всё прочее (не список, строки, bool) пропускается."""
+    raw = (support or {}).get("blocked_telegram_ids")
+    if not isinstance(raw, (list, tuple)):
+        return frozenset()
+    return frozenset(int(x) for x in raw if isinstance(x, int) and not isinstance(x, bool))
+
+
+def is_blocked(support: dict[str, Any] | None, telegram_user_id: Any) -> bool:
+    """Заблокирован ли человек в боте витрины: бот не отвечает ему и ничего не шлёт."""
+    try:
+        return int(telegram_user_id) in blocked_ids(support)
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class Showcase:
     tenant_id: str

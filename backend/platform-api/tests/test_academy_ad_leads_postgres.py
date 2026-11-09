@@ -143,3 +143,45 @@ def test_alert_waits_for_bot_open_and_carries_the_flag(monkeypatch):
             assert "⚠️ Бот не открыт — свяжитесь напрямую" in texts["ad_lead:almira:333"]
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_no_alert_about_a_blocked_person(monkeypatch):
+    """Мария заблокирована (``support.blocked_telegram_ids``): её заявка администратору не уходит, остальные — как раньше."""
+    monkeypatch.setenv("PLATFORM_ACADEMY_OPEN", "true")
+    with temporary_database("whieda_ad_blocked") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = support || '{\"blocked_telegram_ids\": [777]}'::jsonb")
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from datetime import datetime, timezone
+
+            from app.academy import ad_leads
+            from app.academy import showcases as sc
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            sc._reset_cache()
+            ad_leads._last_poll.clear()
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(ad_leads, "fetch_leads", fake_fetch)
+            bindings = {"almira-academy-bot": object()}
+            await ad_leads.record_open(
+                "whieda", "almira", telegram_user_id=777, username="maria_i", name="Мария Иванова", tag="ig_web24",
+                lead_id="222",
+            )
+            early = datetime(2026, 10, 16, 14, 11, tzinfo=timezone.utc)
+            assert await ad_leads.ad_leads_step({"whieda"}, bindings, now=100.0, clock=early) == 0
+            late = datetime(2026, 10, 16, 14, 14, tzinfo=timezone.utc)
+            assert await ad_leads.ad_leads_step({"whieda"}, bindings, now=300.0, clock=late) == 1
+            async with tenant_connection("whieda") as conn:
+                keys = [r["idempotency_key"] for r in await fetch_all(conn, "select idempotency_key from platform_outbox")]
+            assert keys == ["ad_lead:almira:333"]
+
+        db.run_with_app(proof)

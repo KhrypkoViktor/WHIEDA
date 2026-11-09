@@ -63,7 +63,7 @@ from app.academy.webinars import (
     why_config,
     why_markup,
 )
-from app.academy.showcases import Showcase
+from app.academy.showcases import Showcase, is_blocked
 from app.referral_bonus.service import ensure_telegram_actor
 from app.telegram.academy import handle_course_start_token, show_academy_home, try_handle_academy_callback, try_handle_academy_text
 from app.telegram.bindings import current_bot_binding
@@ -746,9 +746,23 @@ async def show_welcome(tenant: TenantContext, msg: Any, showcase: Showcase, *, t
     return {"ok": True, "route": "showcase_welcome", "showcase": showcase.showcase_id, **result, "trace_id": trace_id}
 
 
+def update_sender_id(update: dict[str, Any]) -> int | None:
+    """Кто прислал обновление: ``from`` в сообщении, правке, нажатии кнопки и прочих видах обновлений."""
+    for body in update.values():
+        sender = body.get("from") if isinstance(body, dict) else None
+        if isinstance(sender, dict) and isinstance(sender.get("id"), int):
+            return int(sender["id"])
+    return None
+
+
 async def process_showcase_bot_update(
     tenant: TenantContext, update: dict[str, Any], trace_id: str, showcase: Showcase
 ) -> dict[str, Any]:
+    sender = update_sender_id(update)
+    if sender is not None and is_blocked(showcase.support, sender):
+        # Одна проверка раньше всего: ни ответа, ни пересылки администратору, ни алерта. Имя и текст в лог не идут.
+        logger.info("showcase_blocked_update_ignored", extra={"showcase": showcase.showcase_id, "trace_id": trace_id})
+        return {"ok": True, "route": "showcase_blocked", "trace_id": trace_id}
     content = await try_handle_content_access(update, trace_id=trace_id)
     if content is not None:
         if content.get("ok"):

@@ -632,3 +632,77 @@ async def test_row_of_another_course_is_named_not_reported_missing(whieda_tenant
     admin = sent.await_args_list[-1]
     assert admin.kwargs["text"].endswith("— в боте, ссылку на эфир получит здесь. В таблице — заявка (анатомия), напоминания придут по ней.")
     assert "reply_markup" not in admin.kwargs
+
+
+BLOCKED = replace(ALMIRA, support={"blocked_telegram_ids": [300, "x", True, 1.5]})
+
+
+def test_blocked_ids_reads_only_integers():
+    from app.academy.showcases import blocked_ids, is_blocked
+
+    assert blocked_ids(BLOCKED.support) == frozenset({300})
+    assert is_blocked(BLOCKED.support, 300) and is_blocked(BLOCKED.support, "300")
+    assert not is_blocked(BLOCKED.support, 301) and not is_blocked(BLOCKED.support, None)
+    for support in (None, {}, {"blocked_telegram_ids": []}, {"blocked_telegram_ids": "300"}, {"blocked_telegram_ids": None}):
+        assert not is_blocked(support, 300)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "update",
+    [
+        _private("привет"),
+        _private("/start"),
+        _private("/start ig_web24"),
+        {"message": {"message_id": 6, "photo": [{"file_id": "f"}], "chat": {"id": 300, "type": "private"}, "from": {"id": 300}}},
+        {"edited_message": {"message_id": 5, "text": "правка", "chat": {"id": 300, "type": "private"}, "from": {"id": 300}}},
+        {"callback_query": {"id": "cb", "data": "shs:open:admin", "from": {"id": 300},
+                            "message": {"message_id": 7, "chat": {"id": 300, "type": "private"}}}},
+    ],
+)
+async def test_blocked_user_gets_no_answer_and_nothing_is_forwarded(whieda_tenant, almira_binding, update):
+    with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=BLOCKED)), patch(
+        "app.telegram.showcase_bot.send_telegram_text", AsyncMock()
+    ) as sent, patch("app.telegram.showcase_bot.answer_callback_query", AsyncMock()) as answered, patch(
+        "app.telegram.showcase_bot.try_handle_content_access", AsyncMock(return_value=None)
+    ) as content, patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()) as actor, patch(
+        "app.telegram.showcase_bot.try_handle_private_message", AsyncMock()
+    ) as relay, patch("app.telegram.showcase_bot.try_handle_support_callback", AsyncMock()) as support_cb, patch(
+        "app.telegram.showcase_bot.show_academy_home", AsyncMock()
+    ) as home, patch("app.jobs.outbox.enqueue_outbox_event", AsyncMock()) as outbox:
+        result = await process_core_telegram_update(whieda_tenant, update, "t", binding=almira_binding)
+    assert result["route"] == "showcase_blocked"
+    for mock in (sent, answered, content, actor, relay, support_cb, home, outbox):
+        mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_blocked_log_line_has_no_name_or_text(whieda_tenant, almira_binding, caplog):
+    import logging
+
+    update = {"message": {"message_id": 5, "text": "секретный текст", "chat": {"id": 300, "type": "private"},
+                          "from": {"id": 300, "first_name": "Грубиян", "username": "rude"}}}
+    with caplog.at_level(logging.INFO), patch(
+        "app.telegram.processor.showcase_for_binding", AsyncMock(return_value=BLOCKED)
+    ):
+        await process_core_telegram_update(whieda_tenant, update, "t", binding=almira_binding)
+    lines = [r for r in caplog.records if r.getMessage() == "showcase_blocked_update_ignored"]
+    assert len(lines) == 1 and lines[0].levelno == logging.INFO
+    dumped = " ".join(f"{r.getMessage()} {r.__dict__}" for r in caplog.records)
+    assert "секретный" not in dumped and "Грубиян" not in dumped and "rude" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_other_people_and_missing_setting_are_unaffected(whieda_tenant, almira_binding):
+    other = replace(ALMIRA, support={"blocked_telegram_ids": [999]})
+    for showcase in (ALMIRA, other):  # настройки нет / заблокирован кто-то другой
+        with patch("app.telegram.processor.showcase_for_binding", AsyncMock(return_value=showcase)), patch(
+            "app.telegram.showcase_bot.try_handle_content_access", AsyncMock(return_value=None)
+        ), patch("app.telegram.showcase_bot.ensure_telegram_actor", AsyncMock()), patch(
+            "app.telegram.showcase_bot.try_handle_private_message", AsyncMock(return_value=None)
+        ), patch("app.telegram.showcase_bot.try_handle_academy_text", AsyncMock(return_value=None)), patch(
+            "app.telegram.showcase_bot.show_welcome", AsyncMock(return_value={"ok": True, "route": "showcase_welcome"})
+        ) as welcome:
+            result = await process_core_telegram_update(whieda_tenant, _private("привет"), "t", binding=almira_binding)
+        assert result["route"] == "showcase_welcome"
+        welcome.assert_awaited_once()

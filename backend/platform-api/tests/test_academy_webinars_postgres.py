@@ -681,3 +681,39 @@ def test_admin_links_an_entrant_without_row_and_the_sheet_says_yes(monkeypatch):
             assert "705" in (await ad_leads.lead_flags("whieda", showcase))["not_in_bot"]
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_blocked_person_gets_no_reminders_and_no_copy_is_lost_for_others(monkeypatch):
+    """Борис заблокирован: напоминания идут одной Анне; копия рассылки администратору (в ``broadcast_copy``) — как раньше."""
+    support = {**NO_LINK, "blocked_telegram_ids": [BORIS], "broadcast_copy": [ADMIN]}
+    with temporary_database("whieda_webinars_blocked") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            conn.execute(SEED)
+            conn.execute("update academy_showcases set support = %s::jsonb", (json.dumps(support, ensure_ascii=False),))
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy import showcases as sc
+            from app.academy import webinars
+            from app.academy.ad_leads import parse_leads
+            from app.db import fetch_all, tenant_connection
+
+            async def fake_fetch(config):
+                return parse_leads(CSV)
+
+            monkeypatch.setattr(webinars, "fetch_leads", fake_fetch)
+            bindings = {"almira-academy-bot": object()}
+            sc._reset_cache()
+            await webinars.webinar_step({"whieda"}, bindings, clock=at(24, 15, 31))  # за 2 часа
+            sc._reset_cache()
+            await webinars.webinar_step({"whieda"}, bindings, clock=at(24, 17, 1))  # «Не в боте»
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(conn, "select idempotency_key, payload from platform_outbox where event_type = %s", (webinars.EVENT,))
+            chats = {r["idempotency_key"]: (r["payload"] if isinstance(r["payload"], dict) else json.loads(r["payload"]))["chat_id"] for r in rows}
+            assert f"webinar:almira:ig_web24:two_hours:{ANNA}" in chats
+            assert f"webinar:almira:ig_web24:two_hours:copy:{ADMIN}" in chats
+            assert str(BORIS) not in chats.values() and not [k for k in chats if k.endswith(f":{BORIS}")]
+
+        db.run_with_app(proof)
