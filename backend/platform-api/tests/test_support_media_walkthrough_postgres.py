@@ -125,6 +125,7 @@ def test_partner_attachments_reach_the_team_step_by_step(monkeypatch: pytest.Mon
                     "to_user": [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(user)],
                     "to_topic": [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(SITE_FORUM)],
                     "copied": [(c.kwargs["chat_id"], c.kwargs["from_chat_id"]) for c in copy.await_args_list],
+                "captions": [c.kwargs.get("caption") for c in copy.await_args_list],
                     "reacted": [c.kwargs["chat_id"] for c in react.await_args_list],
                 }
                 steps.append(
@@ -146,7 +147,8 @@ def test_partner_attachments_reach_the_team_step_by_step(monkeypatch: pytest.Mon
                 assert first["copied"] == into_topic and first["reacted"] == [nata]
                 assert first["to_user"] == [OPENED_TEXT]
                 assert "Бот открыл обращение сам: пришло фото без «Поддержки»." in first["to_topic"][0]
-                assert first["to_topic"][1].endswith("(вложение выше)")
+                # 09.11.2026: вложение — одним сообщением, наша строка стала подписью копии.
+                assert len(first["to_topic"]) == 1 and first["captions"][0].startswith("#S-1 ·")
 
                 again = await step("2 кнопка «Поддержка»", _private(NATA, 11, text="поддержка"))
                 assert again["result"]["status"] == "ticket_opened" and "снова нажал" in again["to_topic"][0]
@@ -165,14 +167,16 @@ def test_partner_attachments_reach_the_team_step_by_step(monkeypatch: pytest.Mon
                     out = await step(name, update)
                     assert out["result"]["route"] == "support_relay", name
                     assert out["copied"] == into_topic and out["reacted"] == [nata] and not out["to_user"], name
+                assert not out["to_topic"] and out["captions"][0], name
 
                 voice = await step("8 голосовое", _private(NATA, 18, voice={"file_id": "voice-1", "duration": 12}))
                 assert voice["result"]["route"] == "support_relay" and voice["copied"] == into_topic
-                assert voice["to_topic"][0].endswith("(голосовое выше)")
+                assert not voice["to_topic"] and voice["captions"][0].startswith("#S-1 ·")
                 video = await step("9 видео", _private(NATA, 19, video={"file_id": "video-1", "duration": 5}))
-                assert video["copied"] == into_topic and video["to_topic"][0].endswith("(видео выше)")
+                assert video["copied"] == into_topic and not video["to_topic"] and video["captions"][0]
                 circle = await step("9b кружок", _private(NATA, 20, video_note={"file_id": "note-1", "length": 240, "duration": 4}))
-                assert circle["copied"] == into_topic and circle["to_topic"][0].endswith("(видеокружок выше)")
+                assert circle["copied"] == into_topic and circle["to_topic"][0].endswith("(видеокружок выше)")  # кружок без подписи
+                assert circle["captions"] == [None]
 
                 owner_photo = await step("10 владелец: фото в тему", _group(SITE_FORUM, OWNER, 77, 300, photo=_photo("ph-owner")))
                 assert owner_photo["copied"] == [(nata, forum)]

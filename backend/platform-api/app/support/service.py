@@ -255,6 +255,39 @@ async def record_relayed_message(
     return {"duplicate": row is None, "message_id": str(row["message_id"]) if row else None}
 
 
+async def has_recent_system_message(
+    tenant_id: str, *, ticket_id: str, markers: tuple[str, ...], hours: int = 24
+) -> bool:
+    """Была ли в тикете за последние ``hours`` часов служебная запись, чей текст содержит один из маркеров."""
+    patterns = [f"%{marker}%" for marker in markers]
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select 1 as found from support_messages
+            where tenant_id = %s and ticket_id = %s::uuid and direction = 'system'
+              and text like any(%s) and created_at > now() - make_interval(hours => %s)
+            limit 1
+            """,
+            (tenant_id, str(ticket_id), patterns, int(hours)),
+        )
+    return row is not None
+
+
+async def user_file_count(tenant_id: str, *, ticket_id: str) -> int:
+    """Сколько файлов клиент уже прислал в тикет (для разового «Спасибо, чек получили!»)."""
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(
+            conn,
+            """
+            select count(*)::int as n from support_messages
+            where tenant_id = %s and ticket_id = %s::uuid and direction = 'user_to_admin' and telegram_file_id is not null
+            """,
+            (tenant_id, str(ticket_id)),
+        )
+    return int(row["n"]) if row else 0
+
+
 async def is_duplicate_source(tenant_id: str, *, source_chat_id: int, source_message_id: int) -> bool:
     async with tenant_connection(tenant_id) as conn:
         row = await fetch_one(

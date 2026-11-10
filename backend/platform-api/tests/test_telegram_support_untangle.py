@@ -273,7 +273,9 @@ async def test_pressing_order_again_adds_one_line_not_a_second_header(whieda_ten
     send = AsyncMock(return_value={"ok": True, "message_id": 950})
     with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()), patch(
         "app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=existing)
-    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})):
+    ), patch("app.telegram.support.has_recent_system_message", AsyncMock(return_value=False)), patch(
+        "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
+    ):
         await process_core_telegram_update(whieda_tenant, _callback("svc:confirm:gemini_6m"), "u9", binding=whieda_bot_binding)
     to_forum = [c.kwargs for c in send.await_args_list if c.kwargs["chat_id"] == str(SERVICES_FORUM)]
     assert len(to_forum) == 1

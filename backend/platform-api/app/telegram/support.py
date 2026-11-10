@@ -59,6 +59,7 @@ from app.support.service import (
     get_message_by_source,
     get_open_ticket_for_user,
     get_ticket,
+    has_recent_system_message,
     is_duplicate_source,
     list_open_tickets_for_admin,
     list_ticket_messages,
@@ -119,6 +120,9 @@ SUPPORT_INVITE_TEXT = (
     "фото, текст о себе — или задайте вопрос. Всё, что пришлёте сюда, попадёт к команде WWC; "
     "ответ придёт в этот чат."
 )
+# Карточки «снова нажал …» узнаём по этим словам (они пишутся в журнал тикета как служебные записи).
+_AGAIN_MARKERS = ("снова нажал", "снова открыл вопрос")
+
 # Вложение без «Поддержки» (06.10.2026: фото Лебедевич пропало молча): бот сам
 # открывает обращение. Стикер и GIF обращения не открывают — это не просьба.
 _ATTACHMENT_WORDS = {
@@ -126,6 +130,8 @@ _ATTACHMENT_WORDS = {
     "animation": "GIF", "sticker": "стикер",
 }
 _NO_AUTO_TICKET = frozenset({"animation", "sticker"})
+# Эти вложения Telegram не принимает с подписью при copyMessage.
+_NO_CAPTION_MEDIA = frozenset({"video_note", "sticker"})
 
 
 def attachment_word(msg: TelegramMessage) -> str:
@@ -589,7 +595,13 @@ async def _open_tunnel(
         again = "партнёр снова нажал «Поддержка»" if kind == FORUM_KIND_SITE else (
             f"клиент снова нажал «Заказать»: {offer.title} — {offer.price_text}" if offer else "клиент снова открыл вопрос"
         )
-        delivered = await _send_to_admin(ticket, f"{client} · {again}")
+        again_text = f"{client} · {again}"
+        if await has_recent_system_message(tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), markers=_AGAIN_MARKERS):
+            # Не чаще одной карточки «снова нажал» на тикет в сутки (09.11.2026: у #S-68 их было пять).
+            await _send(source.chat_id, user_text)
+            return {"ok": True, "route": route, "status": "ticket_reused", "kind": kind, "ticket": label, "trace_id": trace_id}
+        header = again_text
+        delivered = await _send_to_admin(ticket, again_text)
     elif kind == FORUM_KIND_SITE:
         delivered = await _send_site_header(ticket, header + "\n\n" + hint)
     else:
@@ -805,15 +817,27 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
     markup = None
     attachment = msg.attachment_id
     if attachment:
-        # A photo, file, voice or video: copy it (no forward header, no contact
-        # leak), then a text line the admin can Reply to.
-        await copy_telegram_message(
-            chat_id=str(admin), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
-            bot_token=current_bot_binding().bot_token,
-            message_thread_id=int(ticket["forum_thread_id"]) if _in_forum(ticket) else None,
-        )
-        what = "вложение" if msg.file_id else attachment_word(msg)
-        delivered = await _send_to_admin(ticket, f"{header}\n({what} выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
+        # A photo, file, voice or video: copy it (no forward header, no contact leak). Одним
+        # сообщением (09.11.2026): наша строка — подпись копии, клиентская подпись следом; админ
+        # отвечает Reply на саму копию. Кружок и стикер подписи не принимают, слишком длинная
+        # подпись не влезает в 1024 знака — для них прежняя пара «копия + строка».
+        thread = int(ticket["forum_thread_id"]) if _in_forum(ticket) else None
+        caption = f"{header}\n{msg.text}" if msg.text else header
+        delivered = None
+        if msg.media_kind not in _NO_CAPTION_MEDIA and len(caption) <= 1024:
+            copied = await copy_telegram_message(
+                chat_id=str(admin), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
+                bot_token=current_bot_binding().bot_token, message_thread_id=thread, caption=caption,
+            )
+            if copied.get("ok") and copied.get("message_id") is not None:
+                delivered = copied
+        if delivered is None:
+            await copy_telegram_message(
+                chat_id=str(admin), from_chat_id=str(msg.chat_id), message_id=msg.message_id,
+                bot_token=current_bot_binding().bot_token, message_thread_id=thread,
+            )
+            what = "вложение" if msg.file_id else attachment_word(msg)
+            delivered = await _send_to_admin(ticket, f"{header}\n({what} выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
     else:
         delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=markup)
     result = await record_relayed_message(

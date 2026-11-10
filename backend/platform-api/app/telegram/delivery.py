@@ -338,13 +338,15 @@ async def copy_telegram_message(
 ) -> dict[str, Any]:
     """Copy a proof message to the administrator without exposing a download URL.
 
-    ``caption`` replaces the original caption (media only; Telegram ignores it for plain text)."""
+    ``caption`` replaces the original caption (media only; Telegram ignores it for plain text);
+    the same small HTML subset as in send_telegram_text (a link to the person for «site» tickets)."""
     url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
     payload: dict[str, Any] = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
     if message_thread_id is not None:
         payload["message_thread_id"] = int(message_thread_id)
     if caption is not None:
-        payload["caption"] = caption[:1024]
+        payload["caption"] = format_telegram_html(caption)
+        payload["parse_mode"] = "HTML"
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.post(url, json=payload)
     data = response.json() if response.text else {}
