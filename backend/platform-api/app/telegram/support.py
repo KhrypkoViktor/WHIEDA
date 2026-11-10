@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.referral_bonus.service import ensure_telegram_actor
-from app.renewal_requests.service import get_open_renewal_request
+from app.renewal_requests.service import get_open_renewal_request, renewal_is_fresh
 from app.settings import get_settings
 from app.site_requests.service import get_open_site_request
 from app.support.service import (
@@ -59,6 +59,7 @@ from app.support.service import (
     get_message_by_source,
     get_open_ticket_for_user,
     get_ticket,
+    is_duplicate_source,
     list_open_tickets_for_admin,
     list_ticket_messages,
     list_user_burst,
@@ -77,6 +78,7 @@ from app.telegram.delivery import (
     copy_telegram_message,
     create_forum_topic,
     edit_forum_topic,
+    edit_message_reply_markup,
     send_telegram_text,
     set_message_reaction,
 )
@@ -90,7 +92,7 @@ from app.telegram.service_sales import (
     try_handle_service_command,
     try_handle_service_sale_callback,
 )
-from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage
+from app.telegram.update_parser import TelegramCallbackQuery, TelegramMessage, parse_telegram_message
 from app.tenancy import TenantContext
 
 logger = logging.getLogger(__name__)
@@ -99,7 +101,7 @@ CHANNEL_GEMINI = "gemini"
 _SERVICES_RE = re.compile(r"^(?:сервисы|/services|gemini|джемини)$", re.IGNORECASE)
 # The menu button / command «Поддержка» (app/telegram/navigation.py) and the bare word.
 _SUPPORT_RE = re.compile(r"^(?:поддержка|/support(?:@\w+)?)$", re.IGNORECASE)
-_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how|move):([A-Za-z0-9_-]+)$")
+_CALLBACK_RE = re.compile(r"^svc:(order|confirm|cancel|support|close|card|how|move|pay):([A-Za-z0-9_-]+)$")
 _USERNAME_IN_DISPLAY = re.compile(r"@([A-Za-z0-9_]{4,32})")
 # Ответ (Reply) на сообщение клиента в теме Gemini этими словами переносит его
 # в поддержку WWC (владелец, 27.09.2026: кнопок под сообщениями не нужно).
@@ -390,11 +392,13 @@ def _first_token(text: str) -> str:
 
 
 async def _send(
-    chat_id: int, text: str, *, reply_markup: dict | None = None, thread_id: int | None = None
+    chat_id: int, text: str, *, reply_markup: dict | None = None, thread_id: int | None = None,
+    reply_to_message_id: int | None = None,
 ) -> dict[str, Any]:
+    extra = {"reply_to_message_id": reply_to_message_id} if reply_to_message_id is not None else {}
     return await send_telegram_text(
         chat_id=str(chat_id), text=text, bot_token=current_bot_binding().bot_token,
-        reply_markup=reply_markup, message_thread_id=thread_id,
+        reply_markup=reply_markup, message_thread_id=thread_id, **extra,
     )
 
 
@@ -663,6 +667,9 @@ async def try_handle_support_callback(
 
     if action == "move":
         return await _move_to_site_support(tenant, callback, arg, trace_id=trace_id)
+
+    if action == "pay":
+        return await _resolve_payment_choice(tenant, callback, arg, trace_id=trace_id)
 
     if action == "close":
         existing = await get_ticket(tenant.tenant_id, ticket_id=arg)
@@ -1179,6 +1186,8 @@ async def try_handle_support_message(
     if admin_result is not None:
         return admin_result
     if msg.file_id and not is_support_admin(msg.user_id):
+        if await _payment_choice_needed(tenant, msg):
+            return await _ask_payment_target(msg, trace_id=trace_id)
         if await _request_waits_for_file(tenant, msg):
             return None  # чек или фото анкеты — заявке (renewal / site_request в processor)
         return await try_relay_user_message(tenant, msg, trace_id=trace_id)
@@ -1192,13 +1201,15 @@ _SITE_FILE_STEPS = frozenset({"awaiting_photo", "awaiting_payment"})
 async def _request_waits_for_file(tenant: TenantContext, msg: TelegramMessage) -> bool:
     """Анкета ждёт фото, заявка на сайт или продление — чек: вложение идёт
     туда, даже если открыто обращение (30.09.2026: чек Татьяны ушёл в #S-11
-    без «Подтвердить», оплату никто не увидел)."""
+    без «Подтвердить», оплату никто не увидел). Заявка продления ждёт чек только
+    пока она свежая — не старше 6 часов (09.11.2026: чек за Gemini ушёл в забытое
+    продление двухдневной давности); старее — файл идёт в обращение по услуге."""
     try:
         actor_id = await ensure_telegram_actor(
             tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id, raw_update=msg.raw
         )
         renewal = await get_open_renewal_request(tenant.tenant_id, actor_id)
-        if renewal and renewal["status"] == "awaiting_payment":
+        if renewal and renewal["status"] == "awaiting_payment" and renewal_is_fresh(renewal):
             return True
         site = await get_open_site_request(tenant.tenant_id, actor_id)
     except RuntimeError as exc:
@@ -1206,6 +1217,71 @@ async def _request_waits_for_file(tenant: TenantContext, msg: TelegramMessage) -
             return False
         raise
     return bool(site) and str(site["status"]) in _SITE_FILE_STEPS
+
+
+async def _payment_choice_needed(tenant: TenantContext, msg: TelegramMessage) -> bool:
+    """Свежая заявка продления ждёт чек и одновременно открыто обращение по услуге (Gemini):
+    не угадываем, куда файл — спрашиваем человека кнопками."""
+    try:
+        actor_id = await ensure_telegram_actor(
+            tenant.tenant_id, telegram_user_id=msg.user_id, telegram_chat_id=msg.chat_id, raw_update=msg.raw
+        )
+        renewal = await get_open_renewal_request(tenant.tenant_id, actor_id)
+        if not (renewal and renewal["status"] == "awaiting_payment" and renewal_is_fresh(renewal)):
+            return False
+        ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id, channel_code=CHANNEL_GEMINI)
+    except RuntimeError as exc:
+        if "database pool is not initialized" in str(exc):
+            return False
+        raise
+    return ticket is not None
+
+
+PAYMENT_CHOICE_TEXT = "Это оплата за:"
+
+
+async def _ask_payment_target(msg: TelegramMessage, *, trace_id: str) -> dict[str, Any]:
+    # Вопрос — ответом на файл: из callback_query.message.reply_to_message бот берёт сам файл,
+    # ничего не храня в базе (copyMessage по message_id, file_id из того же сообщения).
+    await _send(
+        msg.chat_id,
+        PAYMENT_CHOICE_TEXT,
+        reply_markup={"inline_keyboard": [[
+            {"text": "Gemini Pro", "callback_data": "svc:pay:t"},
+            {"text": "Продление сайта и клуба", "callback_data": "svc:pay:r"},
+        ]]},
+        reply_to_message_id=msg.message_id,
+    )
+    return {"ok": True, "route": "services", "status": "payment_choice_asked", "trace_id": trace_id}
+
+
+async def _resolve_payment_choice(
+    tenant: TenantContext, callback: TelegramCallbackQuery, arg: str, *, trace_id: str
+) -> dict[str, Any]:
+    pressed = ((callback.raw or {}).get("callback_query") or {}).get("message") or {}
+    original = pressed.get("reply_to_message")
+    msg = parse_telegram_message({"message": original}) if isinstance(original, dict) else None
+    if msg is None or msg.user_id != callback.user_id or not msg.file_id or arg not in {"t", "r"}:
+        await _send(callback.chat_id, "Не нашёл файл. Пришлите чек ещё раз, пожалуйста.")
+        return {"ok": False, "route": "services", "status": "payment_choice_lost", "trace_id": trace_id}
+    try:  # кнопки больше не нужны: второе нажатие не должно пересылать чек повторно
+        await edit_message_reply_markup(
+            chat_id=str(callback.chat_id), message_id=int(pressed.get("message_id") or 0), bot_token=current_bot_binding().bot_token
+        )
+    except Exception:
+        logger.warning("payment_choice_markup_failed", exc_info=True)
+    if await is_duplicate_source(tenant.tenant_id, source_chat_id=msg.chat_id, source_message_id=msg.message_id):
+        return {"ok": True, "route": "services", "status": "payment_choice_duplicate", "trace_id": trace_id}
+    if arg == "t":
+        ticket = await get_open_ticket_for_user(tenant.tenant_id, user_telegram_user_id=msg.user_id, channel_code=CHANNEL_GEMINI)
+        if ticket is None:
+            await _send(callback.chat_id, "Заявка по Gemini уже закрыта. Откройте «Сервисы» и оформите заново.")
+            return {"ok": False, "route": "services", "status": "payment_choice_no_ticket", "trace_id": trace_id}
+        return await _relay_user_to_admin(tenant, msg, ticket, trace_id=trace_id)
+    from app.telegram.renewal_requests import try_handle_renewal_message
+
+    result = await try_handle_renewal_message(tenant, msg, trace_id=trace_id)
+    return result or {"ok": False, "route": "services", "status": "payment_choice_no_renewal", "trace_id": trace_id}
 
 
 # «Написать в поддержку» с сайта (кабинет /me/, 02.10.2026): t.me/<бот>?start=support.

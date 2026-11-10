@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db import fetch_all, fetch_one, tenant_connection
@@ -23,6 +24,39 @@ _OFFER_FILTER = """
 
 class RenewalRequestError(ValueError):
     pass
+
+
+# Чек ждёт заявка продления только пока она свежая (09.11.2026: чек Татьяны за Gemini ушёл в
+# забытое продление двухдневной давности). Старше — файл идёт в обращение по услуге.
+PROOF_FRESH_FOR = timedelta(hours=6)
+# Заявка продления в awaiting_* без движения дольше суток закрывается сама, человеку ничего не пишем.
+STALE_CANCEL_AFTER_HOURS = 24
+
+
+def renewal_is_fresh(request: dict[str, Any], *, now: datetime | None = None) -> bool:
+    """Двигалась ли заявка последние 6 часов (по updated_at, иначе created_at)."""
+    updated = request.get("updated_at") or request.get("created_at")
+    if not isinstance(updated, datetime):
+        return True  # не знаем возраста — поведение прежнее
+    return (now or datetime.now(timezone.utc)) - updated <= PROOF_FRESH_FOR
+
+
+async def cancel_stale_renewal_requests(tenant_id: str, *, hours: int = STALE_CANCEL_AFTER_HOURS) -> int:
+    """awaiting_* без движения дольше ``hours`` -> cancelled. Отдельной колонки «кем отменено» в таблице нет
+    (миграцию ради этого не заводили): отличить такую отмену можно по updated_at старше суток и статусу."""
+    async with tenant_connection(tenant_id) as conn:
+        rows = await fetch_all(
+            conn,
+            """
+            update partner_renewal_requests
+            set status = 'cancelled', updated_at = now()
+            where tenant_id = %s and status in ('awaiting_period', 'awaiting_country', 'awaiting_payment')
+              and updated_at < now() - make_interval(hours => %s)
+            returning request_id
+            """,
+            (tenant_id, int(hours)),
+        )
+    return len(rows)
 
 
 async def get_open_renewal_request(tenant_id: str, actor_id: str) -> dict[str, Any] | None:

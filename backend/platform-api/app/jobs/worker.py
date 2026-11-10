@@ -56,6 +56,8 @@ LOGIN_CLEANUP_INTERVAL_SEC = 3600.0
 # Напоминание незаконченным заявкам на сайт (24.10.2026): раз в сутки в 10:00 МСК, проверка раз в 5 минут
 # (app/site_requests/nudge.py: время, ключ дня в service_notice_log и «только бой» решает сам шаг).
 SITE_NUDGE_INTERVAL_SEC = 300.0
+# Брошенные заявки продления (09.11.2026): awaiting_* без движения больше суток -> cancelled, раз в час.
+RENEWAL_STALE_INTERVAL_SEC = 3600.0
 # Сбой очереди (база ушла в read-only, моргнул пулер — 23.10.2026 это дало 14 перезапусков
 # контейнера подряд): цикл живёт, а пауза между проходами растёт 2 → 4 → 8 … ≤ 60 с,
 # чтобы не молотить базу. Удачный проход сбрасывает паузу.
@@ -579,7 +581,7 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
     last_due = last_plan = float("-inf")
     # Академия v2: перекодирование видео — фоном, одна задача; цикл уведомлений не ждёт ffmpeg.
     transcode = TranscodeSlot()
-    last_cleanup = last_club = last_login_cleanup = last_site_nudge = last_no_bot = float("-inf")
+    last_cleanup = last_club = last_login_cleanup = last_site_nudge = last_no_bot = last_renewal_stale = float("-inf")
     outbox_backoff = FailureBackoff()
     while True:
         pause = poll_interval_sec
@@ -649,6 +651,15 @@ async def worker_loop(poll_interval_sec: float = 2.0) -> None:
                 await site_request_nudge_step()
             except Exception:
                 logger.exception("site_request_nudge_failed")
+        if now - last_renewal_stale >= RENEWAL_STALE_INTERVAL_SEC:
+            last_renewal_stale = now
+            beat()
+            try:
+                from app.renewal_requests.stale import renewal_stale_step
+
+                await renewal_stale_step()
+            except Exception:
+                logger.exception("renewal_stale_step_failed")
         await asyncio.sleep(pause)
 
 

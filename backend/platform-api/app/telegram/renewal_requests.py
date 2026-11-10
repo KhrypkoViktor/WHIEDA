@@ -277,7 +277,7 @@ async def try_handle_renewal_message(
                             "Оплата услуги.",
                             f"Партнёр: {request['ref_code']}",
                             f"Что: {what}",
-                            f"Оплата: {_amount(int(request['amount_minor']), str(request['currency']))}",
+                            f"Ожидаем {_amount(int(request['amount_minor']), str(request['currency']))} — сверьте с чеком",
                             "Чек выше.",
                         ]
                     ),

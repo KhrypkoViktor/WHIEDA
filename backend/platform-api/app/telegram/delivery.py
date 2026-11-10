@@ -130,6 +130,7 @@ async def send_telegram_text(
     timeout_sec: float = 10.0,
     reply_markup: dict | None = None,
     message_thread_id: int | None = None,
+    reply_to_message_id: int | None = None,
 ) -> dict[str, Any]:
     if not text.strip():
         return {"ok": False, "skipped": True}
@@ -152,6 +153,8 @@ async def send_telegram_text(
     }
     if message_thread_id is not None:
         payload["message_thread_id"] = int(message_thread_id)
+    if reply_to_message_id is not None:
+        payload["reply_parameters"] = {"message_id": int(reply_to_message_id), "allow_sending_without_reply": True}
     # The bot uses Telegram's compact command menu. Remove any legacy reply
     # keyboard whenever a plain response does not need its own inline controls.
     payload["reply_markup"] = (
@@ -331,12 +334,17 @@ async def copy_telegram_message(
     bot_token: str,
     timeout_sec: float = 10.0,
     message_thread_id: int | None = None,
+    caption: str | None = None,
 ) -> dict[str, Any]:
-    """Copy a proof message to the administrator without exposing a download URL."""
+    """Copy a proof message to the administrator without exposing a download URL.
+
+    ``caption`` replaces the original caption (media only; Telegram ignores it for plain text)."""
     url = f"https://api.telegram.org/bot{bot_token}/copyMessage"
     payload: dict[str, Any] = {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id}
     if message_thread_id is not None:
         payload["message_thread_id"] = int(message_thread_id)
+    if caption is not None:
+        payload["caption"] = caption[:1024]
     async with httpx.AsyncClient(timeout=timeout_sec) as client:
         response = await client.post(url, json=payload)
     data = response.json() if response.text else {}
@@ -361,6 +369,15 @@ async def _call_telegram(method: str, payload: dict[str, Any], *, bot_token: str
         )
         return {"ok": False, "status_code": response.status_code, "detail": data, "description": data.get("description")}
     return {"ok": True, "result": data.get("result")}
+
+
+async def edit_message_reply_markup(*, chat_id: str, message_id: int, bot_token: str, reply_markup: dict | None = None) -> dict[str, Any]:
+    """Убрать (или заменить) кнопки под сообщением бота."""
+    return await _call_telegram(
+        "editMessageReplyMarkup",
+        {"chat_id": chat_id, "message_id": int(message_id), "reply_markup": reply_markup or {"inline_keyboard": []}},
+        bot_token=bot_token,
+    )
 
 
 async def create_forum_topic(*, chat_id: str, name: str, bot_token: str) -> dict[str, Any]:
