@@ -89,6 +89,7 @@ def test_transactions_per_tap_for_the_four_scenarios(tap_env, monkeypatch):
         _seed(db)
 
         async def proof() -> None:
+            from app.academy.showcases import showcase_default
             from app.support.service import FORUM_KIND_SERVICES, FORUM_KIND_SITE, get_forum
             from app.telegram.bindings import resolve_bot_binding_context
 
@@ -101,6 +102,8 @@ def test_transactions_per_tap_for_the_four_scenarios(tap_env, monkeypatch):
                 await resolve_bot_binding_context(kit.BINDING_ID)
                 for kind in (FORUM_KIND_SERVICES, FORUM_KIND_SITE):
                     await get_forum("whieda", binding_id=kit.BINDING_ID, kind=kind)
+                # Реквизиты услуг для ответа после «Заказать» лежат в настройках витрины (кэш 60 с).
+                await showcase_default("whieda")
 
             with kit.TransactionCounter() as counter:
                 # До обработки: привязка бота в вебхуке — одна транзакция, дальше из кэша.
@@ -127,7 +130,8 @@ def test_transactions_per_tap_for_the_four_scenarios(tap_env, monkeypatch):
                 cold_confirm = (await measured(lambda: _tap("svc:confirm:gemini_6m", update_id=6, message_id=22)))[0]
                 _fresh()
                 cold_skip = (await measured(lambda: _tap("site:skip", update_id=7, message_id=23)))[0]
-            assert cold_confirm <= 4 and cold_skip <= 2
+            # «Заказать» на холодном кэше читает ещё и настройки витрины (реквизиты услуг, 09.11.2026): +1 к прежним 4.
+            assert cold_confirm <= 5 and cold_skip <= 2
 
         db.run_with_app(proof)
     assert fake.calls  # Bot API подменён: в сеть ничего не ушло
@@ -212,18 +216,18 @@ def test_double_tap_on_confirm_makes_one_order(tap_env, monkeypatch):
             texts = _texts(fake)
             assert sum("Заказ: Gemini Pro" in t for t in texts) == 1  # администратору — одно сообщение о заказе
             assert not any("снова нажал" in t for t in texts)  # повторной «шапки» нет
-            assert sum("принята" in t for t in texts) == 1  # человеку — одно подтверждение
+            assert sum("получили вашу заявку" in t for t in texts) == 1  # человеку — одно подтверждение
             # Оба нажатия получили ответ, оба без текста; «часики» сняты и у дубля.
             answered = sorted(call.payload["callback_query_id"] for call in fake.sent("answerCallbackQuery"))
             assert answered == ["tap-1", "tap-2"]
             assert all("text" not in call.payload for call in fake.sent("answerCallbackQuery"))
-            # Дубль получил ответ сразу, а не после того, как первый тап дошёл до конца: «принята» уходит последней.
+            # Дубль получил ответ сразу, а не после того, как первый тап дошёл до конца: подтверждение заявки уходит последним.
             order = [
                 call.payload.get("callback_query_id") or str(call.payload.get("text") or "")
                 for call in fake.calls
                 if call.method in {"answerCallbackQuery", "sendMessage"}
             ]
-            accepted_at = next(i for i, item in enumerate(order) if "принята" in item)
+            accepted_at = next(i for i, item in enumerate(order) if "получили вашу заявку" in item)
             assert order.index("tap-2") < accepted_at
 
         db.run_with_app(proof)
