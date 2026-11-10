@@ -156,7 +156,9 @@ async def test_confirm_opens_ticket_and_tells_both_sides(whieda_tenant, whieda_b
     assert "Reply" in to_admin[0]["text"]
     buttons = [b["callback_data"] for row in to_admin[0]["reply_markup"]["inline_keyboard"] for b in row]
     assert any(b.startswith("svc:close:") for b in buttons) and any(b.startswith("sale:paid:") for b in buttons)
-    assert "Заявка #S-1042 принята" in to_user[0]["text"]
+    # 09.11.2026: человеку уходит автоответ по заявке (цена и срок из OFFERS), без реквизитов в настройках — строка про администратора.
+    assert "Мы получили вашу заявку на Gemini Pro на 6 месяцев — 4 990 ₽" in to_user[0]["text"]
+    assert "Реквизиты для оплаты пришлёт администратор в этом чате." in to_user[0]["text"]
     # The admin-side header is stored with its delivered message id for Reply routing.
     assert record.await_args.kwargs["delivered_message_id"] == 501
 

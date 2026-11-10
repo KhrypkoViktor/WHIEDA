@@ -58,6 +58,13 @@ def is_blocked(support: dict[str, Any] | None, telegram_user_id: Any) -> bool:
         return False
 
 
+def services_payment_text(support: dict[str, Any] | None) -> str:
+    """``support.services.payment_text`` — реквизиты для оплаты услуг (Gemini) в ответе бота клиенту."""
+    services = (support or {}).get("services")
+    text = services.get("payment_text") if isinstance(services, dict) else None
+    return text.strip() if isinstance(text, str) else ""
+
+
 @dataclass(frozen=True)
 class Showcase:
     tenant_id: str
@@ -174,6 +181,42 @@ async def load_showcases(tenant_id: str, *, fresh: bool = False) -> list[Showcas
     showcases = [_from_row(row) for row in rows]
     _cache[tenant_id] = (time.monotonic(), showcases)
     return showcases
+
+
+async def get_services_payment_text(tenant_id: str) -> str:
+    """Реквизиты услуг из настроек основной витрины; пусто, если не заданы или витрина недоступна."""
+    return services_payment_text((await showcase_default(tenant_id)).support)
+
+
+async def set_services_payment_text(tenant_id: str, text: str | None) -> bool:
+    """Записать реквизиты услуг в ``support.services.payment_text`` основной витрины (None — убрать).
+    False, если основной витрины в базе нет. Сам текст в журнал не пишем."""
+    async with tenant_connection(tenant_id) as conn:
+        if text is None:
+            row = await fetch_one(
+                conn,
+                """
+                update academy_showcases set support = support #- '{services,payment_text}', updated_at = now()
+                where tenant_id = %s and is_default and status = 'active' returning showcase_id
+                """,
+                (tenant_id,),
+            )
+        else:
+            row = await fetch_one(
+                conn,
+                """
+                update academy_showcases
+                set support = jsonb_set(
+                      support, '{services}',
+                      coalesce(case when jsonb_typeof(support->'services') = 'object' then support->'services' end, '{}'::jsonb)
+                        || jsonb_build_object('payment_text', %s::text), true),
+                    updated_at = now()
+                where tenant_id = %s and is_default and status = 'active' returning showcase_id
+                """,
+                (text, tenant_id),
+            )
+    _reset_cache()
+    return row is not None
 
 
 async def warm_hosts(tenant_id: str) -> None:

@@ -48,3 +48,27 @@ def test_recent_system_note_and_first_file_lookups():
             assert await user_file_count("whieda", ticket_id=tid) == 1
 
         db.run_with_app(proof)
+
+
+@pytest.mark.integration
+def test_services_payment_text_is_saved_in_default_showcase_and_cleared():
+    with temporary_database("whieda_services_payment") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn, twice=True)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.academy.showcases import get_services_payment_text, load_showcases, set_services_payment_text
+
+            showcases = await load_showcases("whieda", fresh=True)
+            assert any(s.is_default for s in showcases)
+            assert await get_services_payment_text("whieda") == ""
+            assert await set_services_payment_text("whieda", "Карта Т-Банк 1234\nПолучатель В. Х.") is True
+            assert await get_services_payment_text("whieda") == "Карта Т-Банк 1234\nПолучатель В. Х."
+            # Остальные настройки обращений не затронуты: добавляется только ключ services.
+            showcase = next(s for s in await load_showcases("whieda") if s.is_default)
+            assert showcase.support["services"] == {"payment_text": "Карта Т-Банк 1234\nПолучатель В. Х."}
+            assert await set_services_payment_text("whieda", None) is True
+            assert await get_services_payment_text("whieda") == ""
+
+        db.run_with_app(proof)

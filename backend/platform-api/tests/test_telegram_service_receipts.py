@@ -200,7 +200,9 @@ async def test_attachment_goes_as_one_message_with_our_line_in_front_of_the_clie
     record = AsyncMock(return_value={"duplicate": False, "message_id": "m"})
     with patch("app.telegram.support.copy_telegram_message", copy), patch("app.telegram.support.send_telegram_text", send), patch(
         "app.telegram.support.record_relayed_message", record
-    ), patch("app.telegram.support.set_message_reaction", AsyncMock()), binding_context_scope(whieda_bot_binding):
+    ), patch("app.telegram.support.set_message_reaction", AsyncMock()), patch(
+        "app.telegram.support.user_file_count", AsyncMock(return_value=1)
+    ), binding_context_scope(whieda_bot_binding):
         await support._relay_user_to_admin(whieda_tenant, _photo_message(caption="Оплатила, чек"), _forum_ticket(), trace_id="b1")
     copy.assert_awaited_once()
     assert copy.await_args.kwargs["caption"] == "Клиент WWC · Заявка #S-1043\nОплатила, чек"
@@ -214,7 +216,9 @@ async def test_attachment_without_caption_gets_only_our_line_and_falls_back_when
     send = AsyncMock(return_value={"ok": True, "message_id": 9})
     with patch("app.telegram.support.copy_telegram_message", copy), patch("app.telegram.support.send_telegram_text", send), patch(
         "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
-    ), patch("app.telegram.support.set_message_reaction", AsyncMock()), binding_context_scope(whieda_bot_binding):
+    ), patch("app.telegram.support.set_message_reaction", AsyncMock()), patch(
+        "app.telegram.support.user_file_count", AsyncMock(return_value=1)
+    ), binding_context_scope(whieda_bot_binding):
         await support._relay_user_to_admin(whieda_tenant, _photo_message(), _forum_ticket(), trace_id="b2")
     assert copy.await_args_list[0].kwargs["caption"] == "Клиент WWC · Заявка #S-1043"
     assert "caption" not in copy.await_args_list[1].kwargs
@@ -255,3 +259,138 @@ async def test_repeat_order_card_is_sent_once_per_ticket_per_day(whieda_tenant, 
     to_forum = [c for c in send.await_args_list if c.kwargs["chat_id"] == "-100123"]
     assert len(to_forum) == 1 and "снова нажал" in to_forum[0].kwargs["text"]
     assert len([c for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]) == 2  # клиенту отвечаем оба раза
+
+
+# ----------------------------------------------------------------------------
+# C: автоответы Gemini
+# ----------------------------------------------------------------------------
+
+def _offer_callback():
+    return parse_telegram_callback({"callback_query": {
+        "id": "c", "data": "svc:confirm:gemini_6m", "from": {"id": USER, "first_name": "Ольга"},
+        "message": {"message_id": 5, "chat": {"id": USER, "type": "private"}},
+    }})
+
+
+async def _order(whieda_tenant, whieda_bot_binding, requisites: str) -> str:
+    created = _gemini_ticket(ticket_no=68, forum_chat_id=-100123, forum_thread_id=68, created=True)
+    send = AsyncMock(return_value={"ok": True, "message_id": 950})
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.answer_callback_query", AsyncMock()), patch(
+        "app.telegram.support.open_or_reuse_ticket", AsyncMock(return_value=created)
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})), patch(
+        "app.telegram.support._site_card", AsyncMock(return_value=None)
+    ), patch("app.telegram.support.get_services_payment_text", AsyncMock(return_value=requisites)), binding_context_scope(whieda_bot_binding):
+        await support.try_handle_support_callback(whieda_tenant, _offer_callback(), trace_id="c1")
+    return [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)][0]
+
+
+@pytest.mark.asyncio
+async def test_c1_order_reply_carries_price_term_and_requisites(whieda_tenant, whieda_bot_binding, two_admins):
+    text = await _order(whieda_tenant, whieda_bot_binding, "Карта Т-Банк 0000 1111 2222 3333, получатель В. Х.")
+    assert text.startswith("Здравствуйте! Мы получили вашу заявку на Gemini Pro на 6 месяцев — 4 990 ₽.")
+    assert "Nano Banana (картинки), Veo 3 (видео) и 2 ТБ на Google Диске" in text
+    assert "Пришлите сюда, пожалуйста, вашу почту Gmail." in text
+    assert "Карта Т-Банк 0000 1111 2222 3333, получатель В. Х." in text
+    assert "Реквизиты для оплаты пришлёт" not in text
+    assert text.endswith("После оплаты пришлите сюда скрин чека — администратор проверит и подключит вас.")
+
+
+@pytest.mark.asyncio
+async def test_c1_without_requisites_says_the_admin_will_send_them(whieda_tenant, whieda_bot_binding, two_admins):
+    text = await _order(whieda_tenant, whieda_bot_binding, "")
+    assert "Реквизиты для оплаты пришлёт администратор в этом чате." in text
+
+
+@pytest.mark.asyncio
+async def test_c2_first_file_gets_one_thanks_and_second_does_not(whieda_tenant, whieda_bot_binding, two_admins):
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    count = AsyncMock(side_effect=[0, 1])
+    with patch("app.telegram.support.copy_telegram_message", AsyncMock(return_value={"ok": True, "message_id": 5})), patch(
+        "app.telegram.support.send_telegram_text", send
+    ), patch("app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})), patch(
+        "app.telegram.support.set_message_reaction", AsyncMock()
+    ), patch("app.telegram.support.user_file_count", count), binding_context_scope(whieda_bot_binding):
+        await support._relay_user_to_admin(whieda_tenant, _photo_message(message_id=41), _forum_ticket(), trace_id="c2")
+        await support._relay_user_to_admin(whieda_tenant, _photo_message(message_id=42), _forum_ticket(), trace_id="c3")
+    thanks = [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
+    assert thanks == ["Спасибо, чек получили! Администратор проверит оплату и подключит вас — ожидайте сообщения здесь. Обычно это в течение дня."]
+
+
+def _topic_message(text: str, *, user: int, thread: int = 68):
+    parsed = parse_telegram_message({"message": {
+        "message_id": 900, "text": text, "chat": {"id": -100123, "type": "supergroup", "is_forum": True},
+        "from": {"id": user, "first_name": "Карина"}, "is_topic_message": True, "message_thread_id": thread,
+    }})
+    assert parsed is not None
+    return parsed
+
+
+async def _done(whieda_tenant, whieda_bot_binding, user: int):
+    ticket = _gemini_ticket(forum_chat_id=-100123, forum_thread_id=68)
+    send = AsyncMock(return_value={"ok": True, "message_id": 1})
+    close = AsyncMock(return_value={**ticket, "status": "closed"})
+    relay = AsyncMock(return_value={"ok": True, "route": "support_relay", "direction": "admin_to_user"})
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.close_ticket", close), patch(
+        "app.telegram.support.find_ticket_by_forum_thread", AsyncMock(return_value=ticket)
+    ), patch("app.telegram.support.try_handle_service_command", AsyncMock(return_value=None)), patch(
+        "app.telegram.support.record_relayed_message", AsyncMock(return_value={"duplicate": False, "message_id": "m"})
+    ), patch("app.telegram.support.set_message_reaction", AsyncMock(return_value={"ok": True})), patch(
+        "app.telegram.support.edit_forum_topic", AsyncMock()
+    ), patch("app.telegram.support.close_forum_topic", AsyncMock()), patch("app.telegram.support._site_card", AsyncMock(return_value=None)), patch(
+        "app.telegram.support._relay_admin_to_user", relay
+    ), binding_context_scope(whieda_bot_binding):
+        result = await support.try_handle_support_forum_message(whieda_tenant, _topic_message("Готово", user=user), trace_id="c4")
+    return result, send, close, relay
+
+
+@pytest.mark.asyncio
+async def test_c3_done_from_the_service_admin_sends_the_final_message_and_closes(whieda_tenant, whieda_bot_binding, two_admins):
+    result, send, close, relay = await _done(whieda_tenant, whieda_bot_binding, KARINA)
+    assert result["status"] == "done"
+    close.assert_awaited_once()
+    relay.assert_not_awaited()
+    to_user = [c.kwargs["text"] for c in send.await_args_list if c.kwargs["chat_id"] == str(USER)]
+    assert to_user == [support.GEMINI_DONE_TEXT]
+    assert "Готово, подписка подключена 🎉" in to_user[0] and "https://youtu.be/LHcPcKTReug" in to_user[0]
+
+
+@pytest.mark.asyncio
+async def test_c3_done_works_for_the_owner_too(whieda_tenant, whieda_bot_binding, two_admins):
+    result, _send, close, _relay = await _done(whieda_tenant, whieda_bot_binding, OWNER)
+    assert result["status"] == "done"
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_c3_done_from_anyone_else_is_a_plain_message(whieda_tenant, whieda_bot_binding, two_admins):
+    result, send, close, relay = await _done(whieda_tenant, whieda_bot_binding, 123456)
+    close.assert_not_awaited()
+    relay.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_text_command_is_owner_only_and_never_logged(whieda_tenant, whieda_bot_binding, two_admins, caplog):
+    def private(user: int, text: str):
+        parsed = parse_telegram_message({"message": {
+            "message_id": 7, "text": text, "chat": {"id": user, "type": "private"}, "from": {"id": user},
+        }})
+        assert parsed is not None
+        return parsed
+
+    send, setter = AsyncMock(return_value={"ok": True}), AsyncMock(return_value=True)
+    getter = AsyncMock(return_value="Карта 1234")
+    with patch("app.telegram.support.send_telegram_text", send), patch("app.telegram.support.set_services_payment_text", setter), patch(
+        "app.telegram.support.get_services_payment_text", getter
+    ), binding_context_scope(whieda_bot_binding):
+        # не владелец (в том числе администратор услуг) — команда не срабатывает
+        assert await support.try_handle_payment_text_command(whieda_tenant, private(KARINA, "реквизиты услуг Карта 999"), trace_id="p1") is None
+        setter.assert_not_awaited()
+        saved = await support.try_handle_payment_text_command(whieda_tenant, private(OWNER, "реквизиты услуг Карта 1234\nПолучатель В. Х."), trace_id="p2")
+        assert saved["status"] == "payment_text_saved"
+        setter.assert_awaited_once_with("whieda", "Карта 1234\nПолучатель В. Х.")
+        shown = await support.try_handle_payment_text_command(whieda_tenant, private(OWNER, "реквизиты услуг"), trace_id="p3")
+        assert shown["status"] == "payment_text_shown" and "Карта 1234" in send.await_args.kwargs["text"]
+        cleared = await support.try_handle_payment_text_command(whieda_tenant, private(OWNER, "реквизиты услуг очистить"), trace_id="p4")
+        assert cleared["status"] == "payment_text_cleared"
+        assert setter.await_args.args == ("whieda", None)
+    assert "Карта 1234" not in caplog.text

@@ -40,6 +40,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.academy.showcases import get_services_payment_text, set_services_payment_text
 from app.referral_bonus.service import ensure_telegram_actor
 from app.renewal_requests.service import get_open_renewal_request, renewal_is_fresh
 from app.settings import get_settings
@@ -61,6 +62,7 @@ from app.support.service import (
     get_ticket,
     has_recent_system_message,
     is_duplicate_source,
+    user_file_count,
     list_open_tickets_for_admin,
     list_ticket_messages,
     list_user_burst,
@@ -150,7 +152,7 @@ def attachment_opened_text(label: str, word: str) -> str:
 # Owner commands the support admin may also use on staging; never relayed.
 _OWNER_COMMAND_TOKENS = {
     "оплата", "/pay", "статус", "/status", "/due", "бонусы", "/bonuses", "реферер", "/referrer",
-    "корректировка-бонусов", "/bonus-adjust", "цена", "/price",
+    "корректировка-бонусов", "/bonus-adjust", "цена", "/price", "реквизиты",
 } | SERVICE_COMMAND_TOKENS
 
 
@@ -161,6 +163,7 @@ class Offer:
     title: str
     price_text: str
     card: str
+    term_text: str = ""  # «на 6 месяцев» — для ответа клиенту после «Заказать»
 
 
 OFFERS: dict[str, Offer] = {
@@ -170,6 +173,7 @@ OFFERS: dict[str, Offer] = {
         button="Gemini Pro 4 990 ₽",
         title="Gemini Pro, лицензия на 6 месяцев",
         price_text="4 990 ₽",
+        term_text="на 6 месяцев",
         card=(
             "Gemini тариф Pro\n"
             "Лицензия на 6 месяцев\n"
@@ -179,6 +183,39 @@ OFFERS: dict[str, Offer] = {
         ),
     ),
 }
+
+# Автоответы клиенту Gemini (09.11.2026, по образцу приёма заявки сайта). Цена и срок — из OFFERS.
+GEMINI_ORDER_TEXT = (
+    "Здравствуйте! Мы получили вашу заявку на Gemini Pro {term} — {price}.\n"
+    "Что входит: нейросеть Gemini Pro, Nano Banana (картинки), Veo 3 (видео) и 2 ТБ на Google Диске. "
+    "Гарантия на весь срок: если подписка слетит — подключим заново.\n\n"
+    "Как подключаем: приглашение в семейную подписку Google на вашу почту. "
+    "Пришлите сюда, пожалуйста, вашу почту Gmail.\n\n"
+    "{requisites}\n\n"
+    "После оплаты пришлите сюда скрин чека — администратор проверит и подключит вас."
+)
+NO_REQUISITES_TEXT = "Реквизиты для оплаты пришлёт администратор в этом чате."
+GEMINI_RECEIPT_TEXT = (
+    "Спасибо, чек получили! Администратор проверит оплату и подключит вас — ожидайте сообщения здесь. "
+    "Обычно это в течение дня."
+)
+GEMINI_DONE_TEXT = (
+    "Готово, подписка подключена 🎉\n"
+    "Как пользоваться:\n"
+    "1. Откройте gemini.google.com с включённым VPN (страны: Швеция, Эстония, Латвия, Литва, Польша, Канада, Германия — "
+    "если пишет «страна не поддерживается», переключите по очереди).\n"
+    "2. Проверка: в профиле радужный ободок и надпись Pro — значит тариф подключён.\n"
+    "3. Язык: myaccount.google.com/language. Пишите по-русски — Gemini ответит так же.\n"
+    "4. Короткий обзор возможностей: https://youtu.be/LHcPcKTReug\n"
+    "Если подписка пропадёт — напишите сюда и пришлите скрин, где видна почта аккаунта. Продуктивного пользования 🙌"
+)
+
+
+def gemini_order_text(offer: Offer, requisites: str) -> str:
+    return GEMINI_ORDER_TEXT.format(
+        term=offer.term_text, price=offer.price_text, requisites=(requisites or "").strip() or NO_REQUISITES_TEXT
+    )
+
 
 SERVICES_TEXT = (
     "Gemini Pro\n"
@@ -565,10 +602,7 @@ async def _open_tunnel(
         who = "партнёру"
     elif offer:
         header = f"{client} · Заказ: {offer.title} — {offer.price_text}"
-        user_text = (
-            f"Заявка {label} принята: {offer.title} — {offer.price_text}.\n"
-            "Администратор ответит здесь же, в этом чате. Всё, что вы напишете сюда, уйдёт ему."
-        )
+        user_text = gemini_order_text(offer, await get_services_payment_text(tenant.tenant_id))
         who = "клиенту"
     else:
         header = f"{client} · Вопрос по Gemini"
@@ -788,7 +822,8 @@ async def _move_row_to_site_support(
 
 
 async def _close_ticket_everywhere(
-    tenant: TenantContext, ticket_id: str, existing: dict[str, Any] | None, *, reply_chat: int, trace_id: str
+    tenant: TenantContext, ticket_id: str, existing: dict[str, Any] | None, *, reply_chat: int, trace_id: str,
+    user_text: str | None = None,
 ) -> dict[str, Any]:
     ticket = await close_ticket(tenant.tenant_id, ticket_id=ticket_id, closed_by="admin")
     thread = int(existing["forum_thread_id"]) if existing and _in_forum(existing) and reply_chat == int(existing["forum_chat_id"]) else None
@@ -797,7 +832,7 @@ async def _close_ticket_everywhere(
         return {"ok": True, "route": "services", "status": "already_closed", "trace_id": trace_id}
     label = ticket_label(ticket)
     reopen = "нажмите «Поддержка» в меню" if _is_site(ticket) else "откройте «Сервисы» и нажмите «Поддержка»"
-    await _send(int(ticket["user_chat_id"]), f"Обращение {label} закрыто. Если появятся вопросы — {reopen}.")
+    await _send(int(ticket["user_chat_id"]), user_text or f"Обращение {label} закрыто. Если появятся вопросы — {reopen}.")
     await _send(reply_chat, f"{label} закрыто.", thread_id=thread)
     if _in_forum(ticket):
         token = current_bot_binding().bot_token
@@ -840,6 +875,7 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
             delivered = await _send_to_admin(ticket, f"{header}\n({what} выше)" + (f"\n{msg.text}" if msg.text else ""), reply_markup=markup)
     else:
         delivered = await _send_to_admin(ticket, f"{header}\n{msg.text}", reply_markup=markup)
+    first_receipt = bool(msg.file_id) and not _is_site(ticket) and await user_file_count(tenant.tenant_id, ticket_id=str(ticket["ticket_id"])) == 0
     result = await record_relayed_message(
         tenant.tenant_id,
         ticket_id=str(ticket["ticket_id"]),
@@ -853,6 +889,9 @@ async def _relay_user_to_admin(tenant: TenantContext, msg: TelegramMessage, tick
     )
     if attachment and not result["duplicate"]:
         await _attachment_receipt(msg)
+        if first_receipt:
+            # Первый файл (чек) в тикете услуги — клиенту один раз «чек получили» (09.11.2026).
+            await _send(int(ticket["user_chat_id"]), GEMINI_RECEIPT_TEXT)
     return {"ok": True, "route": "support_relay", "direction": "user_to_admin", "ticket": label, "duplicate": result["duplicate"], "trace_id": trace_id}
 
 
@@ -925,6 +964,36 @@ async def try_relay_user_message(
 # ----------------------------------------------------------------------------
 # Administrator side
 # ----------------------------------------------------------------------------
+
+_DONE_WORDS = frozenset({"готово"})
+
+
+def _is_done_command(msg: TelegramMessage, ticket: dict[str, Any]) -> bool:
+    """«готово» от админа услуг или владельца в тикете услуги (Gemini): завершающее сообщение + закрытие."""
+    if msg.attachment_id or _is_site(ticket) or not (is_support_admin(msg.user_id) or _is_owner(msg.user_id)):
+        return False
+    return msg.text.strip().lower().rstrip(".!") in _DONE_WORDS
+
+
+async def _relay_or_done(tenant: TenantContext, msg: TelegramMessage, ticket: dict[str, Any], *, trace_id: str) -> dict[str, Any]:
+    if not _is_done_command(msg, ticket):
+        return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
+    in_topic = _in_forum(ticket) and msg.chat_id == int(ticket["forum_chat_id"])
+    closed = await _close_ticket_everywhere(
+        tenant, str(ticket["ticket_id"]), ticket, reply_chat=msg.chat_id, trace_id=trace_id, user_text=GEMINI_DONE_TEXT
+    )
+    if closed.get("status") == "closed":
+        await record_relayed_message(
+            tenant.tenant_id, ticket_id=str(ticket["ticket_id"]), direction="admin_to_user", text="готово",
+            source_chat_id=msg.chat_id, source_message_id=msg.message_id,
+        )
+        if in_topic:
+            await set_message_reaction(
+                chat_id=str(msg.chat_id), message_id=msg.message_id, emoji="👍", bot_token=current_bot_binding().bot_token
+            )
+        return {**closed, "route": "support_relay", "status": "done"}
+    return closed
+
 
 async def _relay_admin_to_user(tenant: TenantContext, msg: TelegramMessage, ticket: dict[str, Any], *, trace_id: str) -> dict[str, Any]:
     label = ticket_label(ticket)
@@ -1075,7 +1144,7 @@ async def try_handle_support_forum_message(
         return await _move_row_to_site_support(
             tenant, row, chat_id=msg.chat_id, user_id=msg.user_id, reply_thread=msg.thread_id, trace_id=trace_id
         )
-    return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
+    return await _relay_or_done(tenant, msg, ticket, trace_id=trace_id)
 
 
 _PARTNER_ID_RE = re.compile(r"\bid (\d{5,15})\b")
@@ -1174,7 +1243,7 @@ async def try_handle_support_admin_message(
         if ticket["status"] != "open":
             await _send(msg.chat_id, _closed_note(ticket))
             return {"ok": False, "route": "support_relay", "status": "closed", "trace_id": trace_id}
-        return await _relay_admin_to_user(tenant, msg, ticket, trace_id=trace_id)
+        return await _relay_or_done(tenant, msg, ticket, trace_id=trace_id)
     if not admin:
         return None
 
@@ -1182,13 +1251,43 @@ async def try_handle_support_admin_message(
     if not open_tickets:
         return None  # not support traffic — let the rest of the bot handle it
     if len(open_tickets) == 1:
-        return await _relay_admin_to_user(tenant, msg, open_tickets[0], trace_id=trace_id)
+        return await _relay_or_done(tenant, msg, open_tickets[0], trace_id=trace_id)
     lines = ["Открыто несколько обращений — ответьте через Reply на сообщение нужного:"]
     lines += [
         f"{_client_label(t)}" + (f" · {t['offer_title']}" if t.get("offer_title") else "") for t in open_tickets
     ]
     await _send(msg.chat_id, "\n".join(lines))
     return {"ok": False, "route": "support_relay", "status": "ambiguous", "trace_id": trace_id}
+
+
+_PAYMENT_TEXT_RE = re.compile(r"^реквизиты\s+услуг(?:\s+(.*))?$", re.IGNORECASE | re.DOTALL)
+PAYMENT_TEXT_LIMIT = 1500
+
+
+async def try_handle_payment_text_command(tenant: TenantContext, msg: TelegramMessage, *, trace_id: str) -> dict[str, Any] | None:
+    """Владелец, в личке: ``реквизиты услуг <текст>`` — сохранить, ``реквизиты услуг`` — показать,
+    ``реквизиты услуг очистить`` — убрать. Текст реквизитов не проверяем и в журнал не пишем."""
+    if msg.chat_type != "private" or not _is_owner(msg.user_id):
+        return None
+    match = _PAYMENT_TEXT_RE.match(str(msg.text or "").strip())
+    if not match:
+        return None
+    arg = (match.group(1) or "").strip()
+    route = "service_command"
+    if not arg:
+        current = await get_services_payment_text(tenant.tenant_id)
+        await _send(msg.chat_id, ("Реквизиты услуг сейчас:\n" + current) if current else "Реквизиты услуг не заданы: клиенту уйдёт «" + NO_REQUISITES_TEXT + "»")
+        return {"ok": True, "route": route, "status": "payment_text_shown", "trace_id": trace_id}
+    if arg.lower() == "очистить":
+        saved = await set_services_payment_text(tenant.tenant_id, None)
+        await _send(msg.chat_id, "Реквизиты услуг убраны." if saved else "Не нашёл основную витрину в базе.")
+        return {"ok": saved, "route": route, "status": "payment_text_cleared", "trace_id": trace_id}
+    if len(arg) > PAYMENT_TEXT_LIMIT:
+        await _send(msg.chat_id, f"Слишком длинно: {len(arg)} знаков, можно до {PAYMENT_TEXT_LIMIT}.")
+        return {"ok": False, "route": route, "status": "payment_text_too_long", "trace_id": trace_id}
+    saved = await set_services_payment_text(tenant.tenant_id, arg)
+    await _send(msg.chat_id, "Реквизиты услуг сохранены. Клиент увидит их в ответе после «Заказать»." if saved else "Не нашёл основную витрину в базе.")
+    return {"ok": saved, "route": route, "status": "payment_text_saved", "trace_id": trace_id}
 
 
 async def try_handle_support_message(
@@ -1206,6 +1305,9 @@ async def try_handle_support_message(
     command_result = await try_handle_service_command(tenant, msg, trace_id=trace_id)
     if command_result is not None:
         return command_result
+    payment_result = await try_handle_payment_text_command(tenant, msg, trace_id=trace_id)
+    if payment_result is not None:
+        return payment_result
     admin_result = await try_handle_support_admin_message(tenant, msg, trace_id=trace_id)
     if admin_result is not None:
         return admin_result
