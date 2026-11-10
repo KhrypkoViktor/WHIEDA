@@ -172,11 +172,12 @@ async def test_every_step_of_a_pass_beats(monkeypatch):
     monkeypatch.setattr(worker, "login_cleanup_step", AsyncMock())
     monkeypatch.setattr("app.telegram.club_meetings.club_meetings_step", AsyncMock())
     monkeypatch.setattr("app.site_requests.nudge.site_request_nudge_step", AsyncMock(return_value=0))
+    monkeypatch.setattr("app.renewal_requests.stale.renewal_stale_step", AsyncMock(return_value=0))
     monkeypatch.setattr(worker, "asyncio", SimpleNamespace(sleep=sleep))
     with pytest.raises(_Stop):
         await worker.worker_loop(2.0)
-    # очередь, перекодирование, плановые, Академия, клуб, загрузки, входы, заявки на сайт
-    assert len(beats) == 8
+    # очередь, перекодирование, плановые, Академия, клуб, загрузки, входы, заявки на сайт, брошенные продления
+    assert len(beats) == 9
 
 
 @pytest.mark.asyncio

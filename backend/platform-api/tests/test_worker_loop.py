@@ -69,6 +69,8 @@ class _Harness:
         monkeypatch.setattr("app.telegram.club_meetings.club_meetings_step", AsyncMock())
         self.site_nudge = AsyncMock(return_value=0)
         monkeypatch.setattr("app.site_requests.nudge.site_request_nudge_step", self.site_nudge)
+        self.renewal_stale = AsyncMock(return_value=0)
+        monkeypatch.setattr("app.renewal_requests.stale.renewal_stale_step", self.renewal_stale)
         # Only the module-level name is replaced: the real asyncio.sleep stays intact for the test runner.
         monkeypatch.setattr(worker, "asyncio", SimpleNamespace(sleep=sleep))
 
@@ -153,3 +155,14 @@ async def test_no_bot_alert_is_planned_once_a_minute_within_the_30_second_notifi
     await harness.run()
     assert [call.kwargs["plan_no_bot"] for call in step.await_args_list] == [True, False, True, False]
     assert [call.kwargs["plan_crm"] for call in step.await_args_list] == [True, False, False, False]
+
+
+@pytest.mark.asyncio
+async def test_renewal_stale_step_runs_hourly_and_its_failure_does_not_stop_the_loop(monkeypatch, caplog):
+    harness = _Harness(monkeypatch, [0, 0, 0])
+    harness.renewal_stale.side_effect = RuntimeError("db down")
+    with caplog.at_level(logging.ERROR, logger="app.jobs.worker"):
+        await harness.run()
+    assert harness.outbox_calls == 3
+    assert harness.renewal_stale.await_count == 1  # три прохода подряд — шаг раз в час, не на каждом
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == ["renewal_stale_step_failed"]

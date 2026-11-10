@@ -968,6 +968,7 @@ class TicketWorld:
         monkeypatch.setattr(support, "_send_to_admin", self.to_admin)
         monkeypatch.setattr(support, "_send_site_header", self.header)
         monkeypatch.setattr(support, "record_relayed_message", AsyncMock(return_value={"duplicate": False}))
+        monkeypatch.setattr(support, "has_recent_system_message", AsyncMock(return_value=False))
         self.support = support
 
 
