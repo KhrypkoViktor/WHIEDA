@@ -568,6 +568,15 @@ class Settings(BaseSettings):
             "without a partner (ad lead), after the card of PLATFORM_ORGANIC_OWNER_ID."
         ),
     )
+    platform_own_network_refs: str = Field(
+        default="",
+        validation_alias="PLATFORM_OWN_NETWORK_REFS",
+        description=(
+            "Comma-separated ref codes / owner ids that count as the own network (live meetings and the personal "
+            "review are offered only to guests of the own network). Fallback next to "
+            "referral_profiles.public_profile->>'own_network' (app/funnel/network.py); empty by default."
+        ),
+    )
     platform_consult_hosts: str = Field(
         default='{"viktor":"viktor","elena":"onlineelena"}',
         validation_alias="PLATFORM_CONSULT_HOSTS",
@@ -655,6 +664,14 @@ class Settings(BaseSettings):
     def parsed_meeting_ad_card_refs(self) -> tuple[str, ...]:
         seen: list[str] = []
         for part in self.platform_meeting_ad_card_refs.split(","):
+            code = part.strip().lower()
+            if code and code not in seen:
+                seen.append(code)
+        return tuple(seen)
+
+    def parsed_own_network_refs(self) -> tuple[str, ...]:
+        seen: list[str] = []
+        for part in self.platform_own_network_refs.split(","):
             code = part.strip().lower()
             if code and code not in seen:
                 seen.append(code)
