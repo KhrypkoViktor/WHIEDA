@@ -20,13 +20,19 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
                 """
                 insert into lead_actors (actor_id, tenant_id, display_name, telegram_chat_id) values
                   ('proof-inviter', 'whieda', 'Олеся', '5001'),
-                  ('proof-new', 'whieda', 'Анастасия', '5002');
+                  ('proof-new', 'whieda', 'Анастасия', '5002'),
+                  ('proof-club', 'whieda', 'Клуб', '5004'),
+                  ('proof-course', 'whieda', 'Курс', '5005');
+                insert into academy_courses (tenant_id, slug, title, access_rule, status)
+                  values ('whieda', 'online-start-4w', 'Онлайн-старт: 4 недели практики', 'purchase', 'published');
                 insert into referral_profiles (ref_code, tenant_id, owner_id, display_mode) values
                   ('olesya', 'whieda', 'proof-inviter', 'named');
                 insert into partner_referral_attributions (tenant_id, invitee_actor_id, inviter_actor_id, invite_code, source) values
                   ('whieda', 'proof-new', 'proof-inviter', null, 'admin_manual');
                 alter table lead_actors add column if not exists telegram_user_id bigint;
                 update lead_actors set telegram_user_id = 5002 where actor_id = 'proof-new';
+                update lead_actors set telegram_user_id = 5004 where actor_id = 'proof-club';
+                update lead_actors set telegram_user_id = 5005 where actor_id = 'proof-course';
                 """
             )
             db.grant_api_role(conn)
@@ -115,5 +121,35 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             await confirm_site_request("whieda", request_id=str(req2["request_id"]), admin_telegram_user_id=1)
             ledger2 = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'kira2' order by product_code")
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger2] == [("platform_subscription", 300_000, 3), ("site_setup", 300_000, 0)]
+
+            # Прайс 11.11.2026: «сайт + клуб» на 6 месяцев и «сайт + курс» на 3 (в БД — коды site/bundle, вариант по сумме).
+            async def order(actor: str, sub: str, plan: str, chat: int, msg: int) -> dict:
+                await begin_site_request("whieda", actor)
+                await set_site_request_name("whieda", actor, "Иван Петров")
+                await set_site_request_subdomain("whieda", actor, sub)
+                await set_site_request_lang("whieda", actor, "ru")
+                await set_site_request_photo("whieda", actor, "f")
+                await set_site_request_intro("whieda", actor, "Помогаю людям спокойно разбираться в продуктах и привычках.")
+                await set_site_request_contacts("whieda", actor, "нет")
+                paid = await set_site_request_plan("whieda", actor, plan)
+                paid = await submit_site_payment_proof("whieda", actor, chat_id=chat, message_id=msg, file_id="r")
+                return await confirm_site_request("whieda", request_id=str(paid["request_id"]), admin_telegram_user_id=1)
+
+            club = await order("proof-club", "klub6", "club_6", 5004, 79)
+            assert club["plan"] == "club_6" and club["course_access_granted"] is False
+            led = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'klub6' order by product_code")
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in led] == [
+                ("club_subscription", 2_400_000, 6), ("platform_subscription", 540_000, 6), ("site_setup", 200_000, 0),
+            ]
+            assert (await rows("select received_amount_minor from partner_payments where ref_code = 'klub6'"))[0]["received_amount_minor"] == 3_140_000
+
+            course = await order("proof-course", "kurs3", "course_3", 5005, 80)
+            assert course["plan"] == "course_3" and course["course_access_granted"] is True
+            led = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'kurs3' order by product_code")
+            assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in led] == [
+                ("course_academy", 1_000_000, 0), ("platform_subscription", 300_000, 3), ("site_setup", 300_000, 0),
+            ]
+            acc = await rows("select telegram_user_id, source from academy_access where telegram_user_id = 5005")
+            assert acc == [{"telegram_user_id": 5005, "source": "purchase"}]
 
         db.run_with_app(proof)

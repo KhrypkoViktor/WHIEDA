@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.site_requests.contacts import parse_contacts
@@ -17,25 +18,71 @@ from app.subscriptions.service import (
 )
 from app.theme_access.service import ISSUED_SUBDOMAIN_TO_REF
 
-# Что оформляют (владелец; цены с 02.10.2026). Суммы в minor: WWC$ ×100, ₽ ×100.
-#   site   — PRO 3 мес + подключение сайта: 30 + 30 WWC$ = 3 000 + 3 000 ₽
-#   bundle — акция ноября (владелец, 04.11.2026; в октябре было 150): PRO 30 на 3 мес +
-#            клуб 60 вместо 80 на 2 мес + подключение 20 вместо 30 = 110 WWC$ = 11 000 ₽
-PLANS: dict[str, dict[str, Any]] = {
-    "site": {
-        "label": "Сайт на 3 месяца + настройка",
-        "lines": (("platform_subscription", 3_000, 3, False, ""), ("site_setup", 3_000, 0, False, "")),
-    },
-    "bundle": {
-        "label": "Платформа + Клуб: сайт на 3 месяца, клуб на 2",
+logger = logging.getLogger(__name__)
+
+# Прайс владельца 11.11.2026 (единый для всех, ₽; страница цен сайта). Это единственное место с ценами воронки
+# «Заказать сайт»: кнопки, тексты оплаты и ledger берут суммы отсюда. Значения — в рублях целиком.
+SITE_SETUP_RUB = 3_000                        # подключение сайта, один раз
+SITE_SETUP_WITH_CLUB_RUB = 2_000              # подключение со скидкой при сайте + клуб
+SITE_TERM_RUB = {3: 3_000, 6: 5_400, 12: 9_600}  # сайт на N месяцев
+CLUB_MONTH_RUB = 4_000                        # клуб, в месяц
+COURSE_RUB = 10_000                           # курс онлайн-запуска; участникам клуба 7 500 (в боте не применяется)
+TERMS = (3, 6, 12)
+# Курс Академии, который открывает вариант «сайт + курс» (владелец: «онлайн-запуск: нейросети для партнёра,
+# контент-завод, SMM, возражения и продажи»). Слаг — курс первого потока «WWC : AI \ SMM» (course_groups.py).
+COURSE_SLUG = "online-start-4w"
+COURSE_PRODUCT = "course_academy"
+# Акция ноября (владелец, 04.11.2026): сайт 3 мес 3 000 + клуб 2 мес 6 000 (вместо 8 000) + подключение 2 000
+# (вместо 3 000) = 11 000 ₽. Кнопка — по 30.11.2026 включительно (МСК).
+BUNDLE_RUB = 11_000
+BUNDLE_LAST_DAY = date(2026, 11, 30)
+MSK = timezone(timedelta(hours=3))
+
+_PROMO_CLUB = "пакет PRO + клуб (акция ноября)"
+# plan_code: site_N | club_N | course_N | bundle; «site» — старый код открытых заявок (= site_N при N=3).
+PLANS: dict[str, dict[str, Any]] = {}
+for _n in TERMS:
+    PLANS[f"site_{_n}"] = {
+        "kind": "site", "months": _n,
+        "lines": (("platform_subscription", SITE_TERM_RUB[_n], _n, False, ""), ("site_setup", SITE_SETUP_RUB, 0, False, "")),
+    }
+    PLANS[f"club_{_n}"] = {
+        "kind": "club", "months": _n,
         "lines": (
-            ("platform_subscription", 3_000, 3, False, ""),
-            ("club_subscription", 6_000, 2, True, "пакет PRO + клуб (акция ноября)"),
-            ("site_setup", 2_000, 0, True, "пакет PRO + клуб (акция ноября)"),
+            ("platform_subscription", SITE_TERM_RUB[_n], _n, False, ""),
+            ("club_subscription", CLUB_MONTH_RUB * _n, _n, False, ""),
+            ("site_setup", SITE_SETUP_WITH_CLUB_RUB, 0, True, "сайт + клуб: подключение со скидкой"),
         ),
-    },
+    }
+    PLANS[f"course_{_n}"] = {
+        "kind": "course", "months": _n,
+        "lines": (
+            ("platform_subscription", SITE_TERM_RUB[_n], _n, False, ""),
+            (COURSE_PRODUCT, COURSE_RUB, 0, False, ""),
+            ("site_setup", SITE_SETUP_RUB, 0, False, ""),
+        ),
+    }
+PLANS["bundle"] = {
+    "kind": "bundle", "months": 3,
+    "lines": (
+        ("platform_subscription", SITE_TERM_RUB[3], 3, False, ""),
+        ("club_subscription", 6_000, 2, True, _PROMO_CLUB),
+        ("site_setup", SITE_SETUP_WITH_CLUB_RUB, 0, True, _PROMO_CLUB),
+    ),
 }
+PLANS["site"] = PLANS["site_3"]
+LEGACY_PLAN_CODES = {"site"}
 RUB_PER_WWC = 100
+
+# Колонка partner_site_requests.plan_code ограничена значениями ('site', 'bundle') (V10, check-ограничение).
+# Миграций в этом срезе нет, поэтому в БД ложится «site»/«bundle», а точный вариант восстанавливается по
+# сумме заявки (resolve_plan_code; суммы всех вариантов различаются). Расширите check — и db_plan_code
+# начнёт писать полный код: достаточно добавить новые коды в DB_PLAN_CODES.
+DB_PLAN_CODES = frozenset({"site", "bundle"})
+
+
+def db_plan_code(plan_code: str) -> str:
+    return plan_code if plan_code in DB_PLAN_CODES else "site"
 
 
 def plan_lines(plan_code: str, currency: str) -> list[PaymentLine]:
@@ -50,10 +97,70 @@ def plan_total_minor(plan_code: str, currency: str) -> int:
     return sum(line.amount_minor for line in plan_lines(plan_code, currency))
 
 
+def resolve_plan_code(stored_code: Any, total_minor: Any, currency: str = "RUB") -> str:
+    """Точный вариант по записи заявки: код из БД + сумма. Старые заявки («site», «bundle») — как раньше."""
+    stored = str(stored_code or "site")
+    if stored in PLANS and stored not in LEGACY_PLAN_CODES and stored != "bundle":
+        return stored
+    if total_minor is None:
+        return stored if stored in PLANS else "site"
+    for code in PLANS:
+        if code in LEGACY_PLAN_CODES or db_plan_code(code) != stored:
+            continue
+        if plan_total_minor(code, currency) == int(total_minor):
+            return code
+    raise SiteRequestError("Сумма заявки не совпадает с прайсом. Заявку нужно проверить вручную.")
+
+
+def request_plan_code(request: dict[str, Any]) -> str:
+    return resolve_plan_code(request.get("plan_code"), request.get("total_amount_minor"), str(request.get("currency") or "RUB"))
+
+
+def plan_has_product(plan_code: str, product_code: str) -> bool:
+    return any(line[0] == product_code for line in PLANS[plan_code]["lines"])
+
+
+def bundle_available(now: datetime | None = None) -> bool:
+    """Акция ноября показывается до 30.11.2026 включительно по Москве."""
+    current = (now or datetime.now(timezone.utc)).astimezone(MSK)
+    return current.date() <= BUNDLE_LAST_DAY
+
+
+def _months_word(n: int) -> str:
+    return f"{n} месяц" if n == 1 else f"{n} месяца" if n in (2, 3, 4) else f"{n} месяцев"
+
+
+def _fmt_rub(minor: int) -> str:
+    return f"{minor // 100:,}".replace(",", " ") + " ₽"
+
+
+def plan_breakdown(plan_code: str, currency: str = "RUB") -> list[str]:
+    """Состав пакета по строкам ledger: «сайт на 3 месяца — 3 000 ₽»."""
+    names = {
+        "platform_subscription": "сайт на {m}", "club_subscription": "клуб на {m}",
+        COURSE_PRODUCT: "курс онлайн-запуска (нейросети, контент-завод, SMM, возражения и продажи)",
+        "site_setup": "подключение сайта",
+    }
+    out = []
+    for line in plan_lines(plan_code, currency):
+        text = names[line.product_code].format(m=_months_word(line.access_months))
+        if line.promo and line.product_code == "site_setup":
+            text += " со скидкой"
+        out.append(f"{text} — {_fmt_rub(line.amount_minor)}")
+    return out
+
+
+def plan_summary(plan_code: str, currency: str = "RUB") -> str:
+    head = "Акция ноября: " if plan_code == "bundle" else ""
+    return head + "; ".join(plan_breakdown(plan_code, currency))
+
+
 async def set_site_request_plan(tenant_id: str, actor_id: str, plan_code: str) -> dict[str, Any]:
     plan = str(plan_code or "").strip().lower()
     if plan not in PLANS:
         raise SiteRequestError("Выберите вариант кнопкой.")
+    if plan == "bundle" and not bundle_available():
+        raise SiteRequestError("Акция ноября закончилась. Выберите другой вариант.")
     async with tenant_connection(tenant_id) as conn:
         request = await fetch_one(
             conn,
@@ -74,7 +181,7 @@ async def set_site_request_plan(tenant_id: str, actor_id: str, plan_code: str) -
             where tenant_id = %s and actor_id = %s and status = 'awaiting_plan'
             returning *
             """,
-            (plan, plan_total_minor(plan, currency), subscription, currency, tenant_id, actor_id),
+            (db_plan_code(plan), plan_total_minor(plan, currency), subscription, currency, tenant_id, actor_id),
         )
     if not row:
         raise SiteRequestError("Не удалось сохранить выбор.")
@@ -498,6 +605,19 @@ async def submit_site_payment_proof(
     return row
 
 
+async def _grant_course(conn: Any, tenant_id: str, ref_code: str, payment_ref: str) -> bool:
+    import psycopg
+
+    from app.academy.service import grant_course_access
+
+    try:
+        async with conn.transaction():
+            return await grant_course_access(conn, tenant_id, ref_code, COURSE_SLUG, payment_ref) is not None
+    except psycopg.Error:
+        logger.warning("site_request_course_grant_failed", extra={"tenant_id": tenant_id, "ref_code": ref_code}, exc_info=True)
+        return False
+
+
 async def confirm_site_request(
     tenant_id: str,
     *,
@@ -569,8 +689,8 @@ async def confirm_site_request(
         # Одна оплата — несколько строк (сайт + настройка или сайт + клуб + настройка): так же, как
         # владелец записывает вручную через «оплата ref:… / пакет …». Настройка сайта
         # раньше в ledger не попадала, и 2 000 ₽ терялись в отчётах.
-        plan = str(request.get("plan_code") or "site")
         currency = str(request["currency"])
+        plan = resolve_plan_code(request.get("plan_code"), request.get("total_amount_minor"), currency)
         result = await record_payment_lines_in_connection(
             conn,
             tenant_id=tenant_id,
@@ -582,6 +702,13 @@ async def confirm_site_request(
             telegram_message_id=int(request["proof_message_id"]),
             telegram_user_id=int(request["telegram_user_id"]),
         )
+        # Курс из варианта «сайт + курс»: открываем курс онлайн-запуска штатной выдачей Академии. Она же вызывается
+        # из платёжной строки по course_slug тарифа, но у тарифа course_academy слаг может быть пуст, поэтому
+        # курс назначаем явно (повтор безопасен). Сбой выдачи платёж не откатывает — владелец увидит «не выдан».
+        course_granted = False
+        course_line = next((l for l in result["lines"] if l["product_code"] == COURSE_PRODUCT), None)
+        if course_line and not result.get("idempotent"):
+            course_granted = await _grant_course(conn, tenant_id, str(request["requested_subdomain"]), str(course_line["payment_id"]))
         pro = next((l for l in result["lines"] if l["product_code"] == "platform_subscription"), result["lines"][0])
         payment = {**pro, "referral_bonus": result.get("referral_bonus"), "club_paid_until": result.get("club_paid_until")}
         updated = await fetch_one(
@@ -595,7 +722,7 @@ async def confirm_site_request(
             """,
             (payment["payment_id"], admin_telegram_user_id, tenant_id, request_id),
         )
-    return {**updated, "payment": payment, "idempotent": False}
+    return {**updated, "payment": payment, "idempotent": False, "plan": plan, "course_access_granted": course_granted}
 
 
 async def reject_site_request(

@@ -14,12 +14,20 @@ from app.referral_bonus.service import (
 from app.settings import get_settings
 from app.site_requests.service import (
     SITE_LANGS,
+    BUNDLE_RUB,
+    BUNDLE_LAST_DAY,
     SiteRequestError,
+    TERMS,
     begin_site_request,
+    bundle_available,
     confirm_site_request,
     get_open_site_request,
     reject_site_request,
+    plan_has_product,
+    plan_summary,
+    plan_total_minor,
     request_is_stale,
+    request_plan_code,
     set_site_request_contacts,
     set_site_request_country,
     set_site_request_intro,
@@ -76,7 +84,7 @@ def _callback_as_message(callback: TelegramCallbackQuery) -> TelegramMessage:
     )
 
 _CALLBACK_RE = re.compile(
-    r"^site:(create|accept|skip|country:(?:BY|RU)|lang:(?:ru|en|de)|plan:(?:site|bundle)|confirm|reject)(?::([0-9a-f]{32}))?$"
+    r"^site:(create|accept|skip|country:(?:BY|RU)|lang:(?:ru|en|de)|plan:(?:site|bundle|(?:site|club|course)_(?:3|6|12))|kind:(?:site|club|course)|plans|confirm|reject)(?::([0-9a-f]{32}))?$"
 )
 
 
@@ -177,20 +185,49 @@ async def _notify_owner_step(
 
 def _payment_text(request: dict[str, Any]) -> str:
     total = both(int(request["total_amount_minor"]), str(request["currency"]))
-    rub = request["currency"] == "RUB"
-    if str(request.get("plan_code") or "site") == "bundle":
-        what = (
-            "Платформа + Клуб по акции ноября (сайт на 3 месяца 3 000 ₽ + клуб на 2 месяца 6 000 ₽ вместо 8 000 + подключение 2 000 ₽ вместо 3 000)"
-            if rub else
-            "Платформа + Клуб по акции ноября (сайт на 3 месяца 30 WWC$ + клуб на 2 месяца 60 WWC$ вместо 80 + подключение 20 WWC$ вместо 30)"
-        )
-    else:
-        what = (
-            "Сайт на 3 месяца (PRO 3 000 ₽) и его подключение (3 000 ₽)"
-            if rub else
-            "Сайт на 3 месяца (PRO 30 WWC$) и его подключение (30 WWC$)"
-        )
-    return f"{what}: {total}.\n{PAYMENT_RU}\nПосле перевода пришлите сюда скриншот чека."
+    try:
+        what = plan_summary(request_plan_code(request), str(request["currency"]))
+    except SiteRequestError:
+        what = "Сайт и его подключение"
+    return f"{what}.\nИтого: {total}.\n{PAYMENT_RU}\nПосле перевода пришлите сюда скриншот чека."
+
+
+_KIND_TITLES = {"site": "Сайт", "club": "Сайт + клуб", "course": "Сайт + курс онлайн-запуска"}
+
+
+def _kind_keyboard() -> dict:
+    rows = [[{"text": title, "callback_data": f"site:kind:{kind}"}] for kind, title in _KIND_TITLES.items()]
+    if bundle_available():
+        rows.append([{
+            "text": f"Акция ноября — {BUNDLE_RUB:,} ₽ (до {BUNDLE_LAST_DAY.day}.{BUNDLE_LAST_DAY.month:02d})".replace(",", " "),
+            "callback_data": "site:plan:bundle",
+        }])
+    return {"inline_keyboard": rows}
+
+
+def _terms_keyboard(kind: str) -> dict:
+    rows = [
+        [{"text": f"{n} мес — {money(plan_total_minor(f'{kind}_{n}', 'RUB'), 'RUB')}", "callback_data": f"site:plan:{kind}_{n}"}]
+        for n in TERMS
+    ]
+    rows.append([{"text": "Назад", "callback_data": "site:plans"}])
+    return {"inline_keyboard": rows}
+
+
+def _terms_text(kind: str) -> str:
+    parts = {
+        "site": "Сайт на выбранный срок и подключение сайта (3 000 ₽, один раз).",
+        "club": "Сайт на выбранный срок, клуб на тот же срок (4 000 ₽ в месяц) и подключение сайта со скидкой (2 000 ₽).",
+        "course": "Сайт на выбранный срок, курс онлайн-запуска (10 000 ₽) и подключение сайта (3 000 ₽).",
+    }[kind]
+    return f"{_KIND_TITLES[kind]}.\n{parts}\n\nНа какой срок?"
+
+
+def _owner_plan_text(request: dict[str, Any]) -> str:
+    try:
+        return plan_summary(request_plan_code(request), str(request["currency"]))
+    except SiteRequestError:
+        return f"{request.get('plan_code') or 'site'} (состав не определён, сверьте по сумме)"
 
 
 async def _deliver(chat_id: int, text: str, *, reply_markup: dict | None = None, thread_id: int | None = None) -> None:
@@ -355,15 +392,7 @@ async def _prompt_for_request(chat_id: int, request: dict[str, Any]) -> None:
             reply_markup=SKIP_KEYBOARD,
         )
     elif status == "awaiting_plan":
-        rub = True  # только рубли (09.10.2026), и для анкет, начатых с «Беларусью»
-        await _deliver(
-            chat_id,
-            "Что оформляем?",
-            reply_markup={"inline_keyboard": [
-                [{"text": "Сайт + подключение — 6 000 ₽" if rub else "Сайт + подключение — 60 WWC$", "callback_data": "site:plan:site"}],
-                [{"text": "Платформа + Клуб — 11 000 ₽" if rub else "Платформа + Клуб — 110 WWC$", "callback_data": "site:plan:bundle"}],
-            ]},
-        )
+        await _deliver(chat_id, "Что оформляем?", reply_markup=_kind_keyboard())
     elif status == "awaiting_payment":
         await _deliver(chat_id, _payment_text(request))
     elif status == "pending_confirmation":
@@ -454,10 +483,18 @@ async def try_handle_site_request_callback(
                 await _deliver(
                     int(request["proof_chat_id"]),
                     "Оплата подтверждена. Данные приняты в работу. Напишем, когда "
-                    f"{request['requested_subdomain']}.wwc.best будет готов.",
+                    f"{request['requested_subdomain']}.wwc.best будет готов."
+                    + (" Курс онлайн-запуска открыт в вашей Академии." if request.get("course_access_granted") else ""),
                 )
                 await _welcome_to_club_and_channel(request, trace_id)
-            await _deliver(callback.chat_id, "Оплата записана. Заявка добавлена в очередь создания сайта.", thread_id=reply_thread)
+            owner_note = ""
+            if not request.get("idempotent") and plan_has_product(request.get("plan") or "site", "course_academy"):
+                owner_note = (
+                    " Доступ к курсу онлайн-запуска открыт."
+                    if request.get("course_access_granted")
+                    else " Доступ к курсу автоматически не выдан — откройте его вручную."
+                )
+            await _deliver(callback.chat_id, "Оплата записана. Заявка добавлена в очередь создания сайта." + owner_note, thread_id=reply_thread)
             return {"ok": True, "route": "site_request_confirm", "trace_id": trace_id}
 
         if action == "skip":
@@ -490,6 +527,16 @@ async def try_handle_site_request_callback(
                 )
                 return {"ok": True, "route": "site_request", "status": "consent_required", "trace_id": trace_id}
             request = await begin_site_request(tenant.tenant_id, actor_id)
+        elif action == "plans" or action.startswith("kind:"):
+            open_request = await get_open_site_request(tenant.tenant_id, actor_id)
+            if not open_request or open_request["status"] != "awaiting_plan":
+                raise SiteRequestError("Сейчас выбор пакета не ожидается.")
+            if action == "plans":
+                await _prompt_for_request(callback.chat_id, open_request)
+            else:
+                kind = action.split(":", 1)[1]
+                await _deliver(callback.chat_id, _terms_text(kind), reply_markup=_terms_keyboard(kind))
+            return {"ok": True, "route": "site_request", "status": "awaiting_plan", "trace_id": trace_id}
         elif action.startswith("plan:"):
             request = await set_site_request_plan(tenant.tenant_id, actor_id, action.rsplit(":", 1)[1])
         elif action.startswith("lang:"):
@@ -510,7 +557,7 @@ async def _welcome_to_club_and_channel(request: dict[str, Any], trace_id: str) -
     """Пакет с клубом — ссылка в группу клуба; всем — официальный канал."""
     chat_id = int(request["proof_chat_id"])
     try:
-        if str(request.get("plan_code") or "") == "bundle":
+        if plan_has_product(request_plan_code(request), "club_subscription"):
             await invite_to_club(chat_id, chat_id, str(request.get("requested_subdomain") or ""))
         else:
             await _deliver(chat_id, NEWS_CHANNEL_TEXT)
@@ -607,7 +654,7 @@ async def try_handle_site_request_message(
                             f"Имя: {request.get('partner_name') or '—'}",
                             f"Адрес: {request['requested_subdomain']}.wwc.best",
                             f"Язык сайта: {SITE_LANGS.get(str(request.get('site_lang') or 'ru'), 'Русский')}",
-                            f"Пакет: {'Платформа + Клуб' if str(request.get('plan_code') or 'site') == 'bundle' else 'сайт + настройка'}",
+                            f"Пакет: {_owner_plan_text(request)}",
                             f"Оплата: {money(int(request['total_amount_minor']), str(request['currency']))}",
                             "Чек выше.",
                         ]
