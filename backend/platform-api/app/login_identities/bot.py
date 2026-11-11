@@ -14,7 +14,13 @@ from zoneinfo import ZoneInfo
 
 from app.db import tenant_connection
 from app.login_identities import service
-from app.login_identities.rules import PROVIDER_TITLES, LoginIdentityError, method_label, parse_owner_command
+from app.login_identities.rules import (
+    PROVIDER_TITLES,
+    LoginIdentityError,
+    is_self_code_text,
+    method_label,
+    parse_owner_command,
+)
 from app.telegram.bindings import current_bot_binding
 from app.telegram.delivery import send_telegram_text
 from app.telegram.update_parser import TelegramMessage
@@ -145,3 +151,66 @@ async def try_handle_login_identity_message(
     except LoginIdentityError as exc:
         await _deliver(msg.chat_id, error_text(exc))
         return {**base, "ok": False, "status": exc.code}
+
+
+# ---- «код входа» для себя: партнёр сам, без владельца ------------------------------------------------
+
+
+def self_code_text(issued: dict[str, Any]) -> str:
+    return (
+        f"Ваш код для входа на сайт: {issued['code_display']}. Действует 24 часа, один раз. "
+        "На сайте после Яндекс ID, VK ID или Google введите эти 6 цифр — дальше вход в одно касание. "
+        "Никому не пересылайте этот код."
+    )
+
+
+def self_code_error_text(exc: LoginIdentityError) -> str:
+    if exc.code == "code_rate_limited":
+        return "Код уже выдавали несколько раз сегодня. Попробуйте завтра или напишите в поддержку."
+    if exc.code == "partner_not_found":
+        return "Не нашёл вас среди партнёров. Напишите в поддержку — подключим."
+    return "Не получилось выдать код. Попробуйте чуть позже или напишите в поддержку."
+
+
+async def self_code_answer(tenant_id: str, telegram_user_id: int) -> tuple[str, str]:
+    """(текст, статус): код тому, кто просит, для себя. Не бросает LoginIdentityError."""
+    try:
+        issued = await service.issue_self_code(tenant_id, telegram_user_id=int(telegram_user_id))
+    except LoginIdentityError as exc:
+        return self_code_error_text(exc), exc.code
+    return self_code_text(issued), "issued"
+
+
+async def handle_self_code_request(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str | None = None
+) -> dict[str, Any]:
+    """Общая точка для слова «код входа» и /start login_code. В группе код не шлём и ничего не отвечаем."""
+    base = {"ok": True, "route": "login_self_code", "trace_id": trace_id}
+    if msg.chat_type != "private":
+        return {**base, "status": "private_chat_required"}
+    text, status = await self_code_answer(tenant.tenant_id, msg.user_id)
+    await _deliver(msg.chat_id, text)
+    return {**base, "ok": status == "issued", "status": status}
+
+
+async def try_handle_self_code_message(
+    tenant: TenantContext, msg: TelegramMessage, *, trace_id: str | None = None
+) -> dict[str, Any] | None:
+    """«код входа» / «код для входа» без цели — любому, включая владельца (свой код). С целью — не здесь."""
+    if not is_self_code_text(msg.text):
+        return None
+    return await handle_self_code_request(tenant, msg, trace_id=trace_id)
+
+
+async def max_self_code_answer(tenant_id: str, max_user_id: int) -> tuple[str, str]:
+    """То же в Max: только если этот Max подтверждённо связан с человеком (account_identities, provider max)."""
+    from app.max.webapp import _telegram_id_for_max
+
+    async with tenant_connection(tenant_id) as conn:
+        telegram_user_id = await _telegram_id_for_max(conn, tenant_id, int(max_user_id))
+    if telegram_user_id is None:
+        return (
+            "Не вижу, чей это Max. Напишите «код входа» в Telegram-боте — пришлю код там.",
+            "not_linked",
+        )
+    return await self_code_answer(tenant_id, telegram_user_id)

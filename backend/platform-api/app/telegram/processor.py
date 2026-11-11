@@ -54,7 +54,12 @@ from app.crm.telegram_import import (
     try_handle_crm_shared,
 )
 from app.lead_email.bot import try_handle_lead_email_message
-from app.login_identities.bot import try_handle_login_identity_message
+from app.login_identities.bot import (
+    handle_self_code_request,
+    try_handle_login_identity_message,
+    try_handle_self_code_message,
+)
+from app.login_identities.rules import is_self_code_start_token
 from app.referral_bonus.service import (
     accept_referral_start,
     inviter_card,
@@ -861,6 +866,11 @@ async def _process_core_telegram_update_scoped(
     if login_identity_result is not None:
         return login_identity_result
 
+    # «код входа» / «код для входа» без цели — код тому, кто пишет (партнёр сам, без владельца; 11.11.2026).
+    self_code_result = await try_handle_self_code_message(tenant, msg, trace_id=trace_id)
+    if self_code_result is not None:
+        return self_code_result
+
     # «почта <адрес>» / «почта для заявок …» — адрес для заявок с сайта (партнёр) и «… <кто> <адрес>» (владелец).
     # После диалогов заявок и поддержки: открытый вопрос анкеты или обращение забирает текст раньше.
     lead_email_result = await try_handle_lead_email_message(tenant, msg, trace_id=trace_id)
@@ -885,6 +895,9 @@ async def _process_core_telegram_update_scoped(
         bind_ref = parse_bind_start_token(start_token, current_bot_binding().webhook_secret)
         if bind_ref is not None:
             return await handle_bind_start_token(tenant, msg, bind_ref, trace_id=trace_id)
+        if is_self_code_start_token(start_token):
+            # Кнопка «Получить код» на сайте: /start login_code -> код входа тому же человеку.
+            return await handle_self_code_request(tenant, msg, trace_id=trace_id)
         if parse_site_start_token(start_token) is not None:
             return await handle_site_start_token(tenant, msg, start_token, trace_id)
         if parse_referral_start_token(start_token) is not None:

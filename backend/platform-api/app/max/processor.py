@@ -32,6 +32,8 @@ from app.funnel.system_word import CALLBACK_PREFIX as FUNNEL_CALLBACK_PREFIX
 from app.funnel.system_word import handle_system_word_max, is_system_word, max_funnel_callback
 from app.leads.channels import accept_channel_referral_start, ensure_channel_actor
 from app.leads.start_sources import parse_source_start_token, register_start_source, unknown_source_start
+from app.login_identities.bot import max_self_code_answer
+from app.login_identities.rules import is_self_code_text
 from app.max.client import answer_max_callback, send_max_text
 from app.max.my_leads import is_my_leads_text, my_leads_answer
 from app.max.update_parser import MaxCallbackEvent, MaxEvent
@@ -167,6 +169,11 @@ async def handle_max_message(tenant: TenantContext, event: MaxEvent, trace_id: s
     )
     if not event.text:
         return {"ok": True, "route": "max_message", "status": "empty", "trace_id": trace_id}
+    if is_self_code_text(event.text):
+        # «код входа» в Max — только если этот Max подтверждённо связан с человеком (account_identities).
+        text, status = await max_self_code_answer(tenant.tenant_id, event.user_id)
+        await _reply(event, text)
+        return {"ok": status == "issued", "route": "max_login_code", "status": status, "trace_id": trace_id}
     if is_my_leads_text(event.text):
         text, status = await my_leads_answer(tenant, event.user_id)
         await _reply(event, text)

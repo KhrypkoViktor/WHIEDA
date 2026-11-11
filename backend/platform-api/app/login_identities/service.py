@@ -70,6 +70,8 @@ logger = logging.getLogger("whieda.login_identities")
 # Просроченные строки pending/кодов старше суток удаляет worker (login_cleanup_step).
 PURGE_AFTER = "1 day"
 _CODE_GENERATION_TRIES = 5
+# Самостоятельные коды партнёра («код входа» в боте): не больше 5 за сутки.
+SELF_CODE_LIMIT = 5
 
 
 # ---- кто может выдавать коды ----------------------------------------------------------------------
@@ -172,6 +174,56 @@ async def resolve_person(conn: Any, tenant_id: str, target: str) -> dict[str, An
 # ---- коды владельца -------------------------------------------------------------------------------
 
 
+async def _issue_for_person(
+    conn: Any, tenant_id: str, *, person: dict[str, Any], issued_by: int
+) -> dict[str, Any]:
+    """Общая часть выдачи: гасит прежний активный код, генерирует без коллизий, пишет хеш, логирует без кода."""
+    telegram_user_id = int(person["telegram_user_id"])
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            update login_link_codes set revoked_at = now()
+            where tenant_id = %s and telegram_user_id = %s and used_at is null and revoked_at is null
+            """,
+            (tenant_id, telegram_user_id),
+        )
+    code = ""
+    for _ in range(_CODE_GENERATION_TRIES):
+        candidate = generate_code()
+        clash = await fetch_one(
+            conn,
+            """
+            select code_id from login_link_codes
+            where tenant_id = %s and code_hash = %s and used_at is null and revoked_at is null
+            limit 1
+            """,
+            (tenant_id, _code_hash(tenant_id, candidate)),
+        )
+        if not clash:
+            code = candidate
+            break
+    if not code:
+        raise error("code_unavailable")
+    expires_at = code_expires_at()
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                insert into login_link_codes (tenant_id, code_hash, telegram_user_id, issued_by, expires_at)
+                values (%s, %s, %s, %s, %s)
+                """,
+                (tenant_id, _code_hash(tenant_id, code), telegram_user_id, int(issued_by), expires_at),
+            )
+    except psycopg.errors.UniqueViolation as exc:
+        # Одновременная выдача тому же человеку или тот же код у соседа — транзакция откатится.
+        raise error("code_unavailable") from exc
+    logger.info(
+        "login_code_issued",
+        extra={"tenant_id": tenant_id, "telegram_user_id": telegram_user_id, "issued_by": int(issued_by)},
+    )
+    return {"code": code, "code_display": format_code(code), "person": person, "expires_at": expires_at}
+
+
 async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str, Any]:
     """Код входа партнёру: 6 цифр, 24 часа, один раз; прежний активный код гасится.
 
@@ -183,50 +235,34 @@ async def issue_code(tenant_id: str, *, issued_by: int, target: str) -> dict[str
         raise error("forbidden")
     async with tenant_connection(tenant_id) as conn:
         person = await resolve_person(conn, tenant_id, target)
-        telegram_user_id = int(person["telegram_user_id"])
-        async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                update login_link_codes set revoked_at = now()
-                where tenant_id = %s and telegram_user_id = %s and used_at is null and revoked_at is null
-                """,
-                (tenant_id, telegram_user_id),
-            )
-        code = ""
-        for _ in range(_CODE_GENERATION_TRIES):
-            candidate = generate_code()
-            clash = await fetch_one(
-                conn,
-                """
-                select code_id from login_link_codes
-                where tenant_id = %s and code_hash = %s and used_at is null and revoked_at is null
-                limit 1
-                """,
-                (tenant_id, _code_hash(tenant_id, candidate)),
-            )
-            if not clash:
-                code = candidate
-                break
-        if not code:
-            raise error("code_unavailable")
-        expires_at = code_expires_at()
-        try:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    insert into login_link_codes (tenant_id, code_hash, telegram_user_id, issued_by, expires_at)
-                    values (%s, %s, %s, %s, %s)
-                    """,
-                    (tenant_id, _code_hash(tenant_id, code), telegram_user_id, int(issued_by), expires_at),
-                )
-        except psycopg.errors.UniqueViolation as exc:
-            # Одновременная выдача тому же человеку или тот же код у соседа — транзакция откатится.
-            raise error("code_unavailable") from exc
-    logger.info(
-        "login_code_issued",
-        extra={"tenant_id": tenant_id, "telegram_user_id": telegram_user_id, "issued_by": int(issued_by)},
-    )
-    return {"code": code, "code_display": format_code(code), "person": person, "expires_at": expires_at}
+        return await _issue_for_person(conn, tenant_id, person=person, issued_by=issued_by)
+
+
+async def issue_self_code(tenant_id: str, *, telegram_user_id: int) -> dict[str, Any]:
+    """Код входа тому, кто пишет боту, — для себя (без владельца). issued_by = он сам.
+
+    Человек — по lead_actors (нет записи → ``partner_not_found``). Не больше SELF_CODE_LIMIT самостоятельных
+    кодов за сутки (строки login_link_codes с issued_by = он сам, по created_at; коды владельца лимит
+    не расходуют), иначе ``code_rate_limited``.
+    """
+    tid = int(telegram_user_id)
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(conn, _ACTOR_BY_TELEGRAM_SQL, (tenant_id, tid))
+        if not row:
+            raise error("partner_not_found", target=str(tid))
+        used = await fetch_one(
+            conn,
+            """
+            select count(*) as issued from login_link_codes
+            where tenant_id = %s and telegram_user_id = %s and issued_by = %s
+              and created_at > now() - interval '24 hours'
+            """,
+            (tenant_id, tid, tid),
+        )
+        if int((used or {}).get("issued") or 0) >= SELF_CODE_LIMIT:
+            logger.info("login_self_code_rate_limited", extra={"tenant_id": tenant_id, "telegram_user_id": tid})
+            raise error("code_rate_limited")
+        return await _issue_for_person(conn, tenant_id, person=dict(row), issued_by=tid)
 
 
 async def _claim_code(conn: Any, tenant_id: str, code: str, provider: str) -> dict[str, Any]:

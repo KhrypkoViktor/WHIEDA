@@ -695,6 +695,196 @@ async def test_owner_gets_the_code_once_and_nothing_goes_to_the_partner(sent):
     assert len(sent) == 1 and "Евгения Волкова (volkova): 483 921" in sent[0] and "24 часа" in sent[0]
 
 
+@pytest.mark.parametrize(("text", "expected"), [
+    ("код входа", True), ("Код для входа", True), ("  код   входа  ", True), ("/logincode", True), ("код входа!", True),
+    ("код входа Иван", False), ("код входа volkova", False), ("код входа не приходит", False), ("код", False),
+    ("промокод", False), ("привет, код входа?", False), ("", False),
+])
+def test_self_code_words(text, expected):
+    assert rules.is_self_code_text(text) is expected
+    # слова без цели не команда владельца с целью
+    assert rules.parse_owner_command(text) is None or not expected
+
+
+def test_self_code_start_token():
+    assert rules.is_self_code_start_token("login_code") and rules.is_self_code_start_token(" Login_Code ")
+    assert not rules.is_self_code_start_token("login") and not rules.is_self_code_start_token("src_login_code")
+
+
+@pytest.mark.asyncio
+async def test_partner_gets_their_own_code_and_it_goes_to_them(sent):
+    issued = {"code": "483921", "code_display": "483 921", "person": PERSON, "expires_at": datetime.now(timezone.utc)}
+    with patch.object(service, "issue_self_code", AsyncMock(return_value=issued)) as issue, \
+         patch.object(service, "issue_code", AsyncMock()) as owner_issue:
+        out = await bot.try_handle_self_code_message(TENANT, _msg("код для входа", user_id=700), trace_id="t")
+    assert out["status"] == "issued" and out["route"] == "login_self_code"
+    issue.assert_awaited_once_with("whieda", telegram_user_id=700)
+    owner_issue.assert_not_awaited()
+    assert sent == [
+        "Ваш код для входа на сайт: 483 921. Действует 24 часа, один раз. "
+        "На сайте после Яндекс ID, VK ID или Google введите эти 6 цифр — дальше вход в одно касание. "
+        "Никому не пересылайте этот код."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_owner_without_a_target_gets_their_own_code_and_with_a_target_the_old_flow(sent):
+    issued = {"code": "111222", "code_display": "111 222", "person": PERSON, "expires_at": datetime.now(timezone.utc)}
+    with patch.object(service, "issue_self_code", AsyncMock(return_value=issued)) as self_issue, \
+         patch.object(service, "issue_code", AsyncMock(return_value=issued)) as owner_issue:
+        assert await bot.try_handle_login_identity_message(TENANT, _msg("код входа"), trace_id="t") is None
+        assert (await bot.try_handle_self_code_message(TENANT, _msg("код входа"), trace_id="t"))["status"] == "issued"
+        assert await bot.try_handle_self_code_message(TENANT, _msg("код входа Иван"), trace_id="t") is None
+        assert (await bot.try_handle_login_identity_message(TENANT, _msg("код входа Иван"), trace_id="t"))["status"] == "issued"
+    self_issue.assert_awaited_once_with("whieda", telegram_user_id=OWNER)
+    owner_issue.assert_awaited_once_with("whieda", issued_by=OWNER, target="Иван")
+
+
+@pytest.mark.asyncio
+async def test_someone_elses_code_is_not_given_to_a_non_owner(sent):
+    with patch.object(service, "issue_self_code", AsyncMock()) as self_issue, patch.object(service, "issue_code", AsyncMock()) as owner_issue:
+        assert await bot.try_handle_login_identity_message(TENANT, _msg("код входа Иван", user_id=700), trace_id="t") is None
+        assert await bot.try_handle_self_code_message(TENANT, _msg("код входа Иван", user_id=700), trace_id="t") is None
+    self_issue.assert_not_awaited()
+    owner_issue.assert_not_awaited()
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_group_never_gets_a_code(sent):
+    with patch.object(service, "issue_self_code", AsyncMock()) as self_issue:
+        out = await bot.try_handle_self_code_message(TENANT, _msg("код входа", user_id=700, chat_type="supergroup"), trace_id="t")
+        start = await bot.handle_self_code_request(TENANT, _msg("/start login_code", user_id=700, chat_type="group"), trace_id="t")
+    assert out["status"] == start["status"] == "private_chat_required"
+    self_issue.assert_not_awaited()
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_self_code_errors_are_explained_to_the_person(sent):
+    with patch.object(service, "issue_self_code", AsyncMock(side_effect=rules.error("code_rate_limited"))):
+        out = await bot.try_handle_self_code_message(TENANT, _msg("код входа", user_id=700), trace_id="t")
+    assert out["ok"] is False and out["status"] == "code_rate_limited"
+    assert sent == ["Код уже выдавали несколько раз сегодня. Попробуйте завтра или напишите в поддержку."]
+    sent.clear()
+    with patch.object(service, "issue_self_code", AsyncMock(side_effect=rules.error("partner_not_found", target="700"))):
+        out = await bot.try_handle_self_code_message(TENANT, _msg("код входа", user_id=700), trace_id="t")
+    assert out["status"] == "partner_not_found" and "поддержку" in sent[0]
+
+
+class _SelfCodeConn:
+    def __init__(self, issued_today: int, known: bool = True):
+        self.issued_today, self.known, self.executed = issued_today, known, []
+
+    def cursor(self):
+        conn = self
+
+        class Cursor:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                return False
+
+            async def execute(self, query, params=None):
+                conn.executed.append((" ".join(query.split()), params))
+
+        return Cursor()
+
+    async def fetch_one(self, _conn, query, params=()):
+        q = " ".join(query.split())
+        if "from lead_actors la" in q:
+            return {"ref_code": "volkova", "telegram_user_id": params[1], "display_name": "Е"} if self.known else None
+        if q.startswith("select count(*) as issued from login_link_codes"):
+            assert params[1] == params[2], "the limit counts codes issued by the person themselves"
+            return {"issued": self.issued_today}
+        if q.startswith("select code_id from login_link_codes"):
+            return None
+        raise AssertionError(q[:80])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("issued_today", "ok"), [(0, True), (4, True), (5, False), (9, False)])
+async def test_self_code_limit_is_five_per_day(google_env, issued_today, ok):
+    conn = _SelfCodeConn(issued_today)
+
+    @asynccontextmanager
+    async def connection(_tenant):
+        yield conn
+
+    with patch.object(service, "tenant_connection", connection), patch.object(service, "fetch_one", conn.fetch_one):
+        if ok:
+            issued = await service.issue_self_code("whieda", telegram_user_id=700)
+            inserts = [p for q, p in conn.executed if q.startswith("insert into login_link_codes")]
+            assert len(inserts) == 1 and inserts[0][2] == 700 and inserts[0][3] == 700, "issued_by is the person themselves"
+            assert any(q.startswith("update login_link_codes set revoked_at") for q, _ in conn.executed), "the earlier code is voided"
+            assert len(issued["code"]) == 6
+        else:
+            with pytest.raises(LoginIdentityError) as info:
+                await service.issue_self_code("whieda", telegram_user_id=700)
+            assert info.value.code == "code_rate_limited"
+            assert not any(q.startswith(("insert", "update")) for q, _ in conn.executed)
+
+
+@pytest.mark.asyncio
+async def test_self_code_for_an_unknown_person_is_partner_not_found(google_env):
+    conn = _SelfCodeConn(0, known=False)
+
+    @asynccontextmanager
+    async def connection(_tenant):
+        yield conn
+
+    with patch.object(service, "tenant_connection", connection), patch.object(service, "fetch_one", conn.fetch_one):
+        with pytest.raises(LoginIdentityError) as info:
+            await service.issue_self_code("whieda", telegram_user_id=12345)
+    assert info.value.code == "partner_not_found" and not conn.executed
+
+
+_PROCESSOR_PATCHES = (
+    "_link_partner_chat", "try_handle_wish_message", "try_handle_profile_reject_reason", "try_handle_shop_message",
+    "try_handle_support_message", "try_handle_renewal_message", "try_handle_site_request_message",
+    "try_start_renewal_by_text", "try_handle_billing_message", "try_handle_referral_admin_message",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", ["код входа", "/start login_code"])
+async def test_processor_gives_a_partner_their_own_code(whieda_tenant, whieda_bot_binding, google_env, sent, text):
+    from contextlib import ExitStack
+
+    update = {"message": {"message_id": 5, "text": text, "chat": {"id": 700, "type": "private"}, "from": {"id": 700}}}
+    issued = {"code": "483921", "code_display": "483 921", "person": PERSON, "expires_at": datetime.now(timezone.utc)}
+    with ExitStack() as stack:
+        for name in _PROCESSOR_PATCHES:
+            stack.enter_context(patch(f"app.telegram.processor.{name}", AsyncMock(return_value=None)))
+        issue = stack.enter_context(patch.object(service, "issue_self_code", AsyncMock(return_value=issued)))
+        result = await process_core_telegram_update(whieda_tenant, update, "t1", binding=whieda_bot_binding)
+    assert result["route"] == "login_self_code" and result["status"] == "issued"
+    issue.assert_awaited_once_with(whieda_tenant.tenant_id, telegram_user_id=700)
+    assert len(sent) == 1 and "483 921" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_max_code_needs_a_confirmed_link(google_env):
+    @asynccontextmanager
+    async def connection(_tenant):
+        yield object()
+
+    with patch("app.login_identities.bot.tenant_connection", connection), \
+         patch("app.max.webapp._telegram_id_for_max", AsyncMock(return_value=None)), \
+         patch.object(service, "issue_self_code", AsyncMock()) as issue:
+        text, status = await bot.max_self_code_answer("whieda", 6001)
+    assert status == "not_linked" and "Telegram" in text
+    issue.assert_not_awaited()
+    issued = {"code": "483921", "code_display": "483 921", "person": PERSON, "expires_at": datetime.now(timezone.utc)}
+    with patch("app.login_identities.bot.tenant_connection", connection), \
+         patch("app.max.webapp._telegram_id_for_max", AsyncMock(return_value=700)), \
+         patch.object(service, "issue_self_code", AsyncMock(return_value=issued)) as issue:
+        text, status = await bot.max_self_code_answer("whieda", 6001)
+    assert status == "issued" and "483 921" in text
+    issue.assert_awaited_once_with("whieda", telegram_user_id=700)
+
+
 @pytest.mark.asyncio
 async def test_ambiguous_and_missing_targets_are_explained(sent):
     candidates = [PERSON, {"ref_code": "evgenia2", "telegram_user_id": 701, "display_name": "Евгения Петрова"}]

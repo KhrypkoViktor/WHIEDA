@@ -95,6 +95,7 @@ ERROR_STATUS = {
     "browser_key_required": 400,
     "code_required": 400,
     "code_unavailable": 503,
+    "code_rate_limited": 429,
 }
 
 
@@ -310,6 +311,20 @@ def login_methods_state(
 _CODE_CMD_RE = re.compile(r"^(?:код\s+входа|/logincode)\s+(.+)$", re.IGNORECASE | re.DOTALL)
 _METHODS_CMD_RE = re.compile(r"^(?:способы\s+входа|/loginmethods)\s+(.+)$", re.IGNORECASE | re.DOTALL)
 _UNLINK_CMD_RE = re.compile(r"^(?:отвязать|/unlink)\s+(google|max|yandex|vk)\s+(.+)$", re.IGNORECASE | re.DOTALL)
+
+
+# Партнёр просит код для себя: «код входа», «код для входа», «/logincode» — без цели. Голое «код» не берём:
+# оно может быть промокодом, кодом из письма и т.п. у других обработчиков.
+_SELF_CODE_RE = re.compile(r"^(?:код\s+входа|код\s+для\s+входа|/logincode)[.!]?$", re.IGNORECASE)
+SELF_CODE_START_TOKEN = "login_code"
+
+
+def is_self_code_text(text: str) -> bool:
+    return bool(_SELF_CODE_RE.fullmatch(" ".join(str(text or "").split())))
+
+
+def is_self_code_start_token(token: str) -> bool:
+    return str(token or "").strip().lower() == SELF_CODE_START_TOKEN
 
 
 def parse_owner_command(text: str) -> tuple[str, str | None, str] | None:

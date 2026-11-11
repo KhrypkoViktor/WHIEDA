@@ -374,6 +374,34 @@ def test_login_identities_end_to_end(monkeypatch):
                 cur = await conn.execute("select count(*) as n from account_identities where telegram_user_id = %s and revoked_at is null", (STRANGER,))
                 assert (await cur.fetchone())["n"] == 1
 
+            # --- «код входа» для себя (партнёр сам, без владельца) -----------------------------------------------
+            owner_made = await service.issue_code("whieda", issued_by=OWNER, target=str(PETROVA))
+            mine = await service.issue_self_code("whieda", telegram_user_id=PETROVA)
+            assert mine["person"]["telegram_user_id"] == PETROVA and mine["person"]["ref_code"] == "petrova"
+            assert mine["code"] != owner_made["code"] and len(mine["code"]) == 6
+            async with tenant_connection("whieda") as conn:
+                cur = await conn.execute(
+                    "select code_hash, issued_by, revoked_at from login_link_codes where telegram_user_id = %s and code_hash in (%s, %s)",
+                    (PETROVA, rules.code_hash("whieda", mine["code"], CODE_SECRET), rules.code_hash("whieda", owner_made["code"], CODE_SECRET)),
+                )
+                rows = {r["code_hash"]: r for r in await cur.fetchall()}
+            own = rows[rules.code_hash("whieda", mine["code"], CODE_SECRET)]
+            assert own["issued_by"] == PETROVA and own["revoked_at"] is None, "self code: issued_by is the person, active"
+            assert rows[rules.code_hash("whieda", owner_made["code"], CODE_SECRET)]["revoked_at"] is not None, "the earlier code is voided"
+            with pytest.raises(LoginIdentityError) as info:
+                await service.issue_self_code("whieda", telegram_user_id=99999)
+            assert info.value.code == "partner_not_found"
+            for _ in range(4):
+                await service.issue_self_code("whieda", telegram_user_id=PETROVA)  # вместе с первым — пять за сутки
+            with pytest.raises(LoginIdentityError) as info:
+                await service.issue_self_code("whieda", telegram_user_id=PETROVA)
+            assert info.value.code == "code_rate_limited" and info.value.status_code == 429
+            await service.issue_self_code("whieda", telegram_user_id=EVGENIA)  # лимит — на человека
+            await service.issue_code("whieda", issued_by=OWNER, target=str(PETROVA))  # владельца лимит не касается
+            async with tenant_connection("whieda") as conn:
+                await conn.execute("update login_link_codes set created_at = now() - interval '25 hours' where issued_by = %s", (PETROVA,))
+            await service.issue_self_code("whieda", telegram_user_id=PETROVA)  # через сутки снова можно
+
             # --- чистка worker --------------------------------------------------------------------------------
             async with tenant_connection("whieda") as conn:
                 cur = await conn.execute("select count(*) as n from login_pending")
