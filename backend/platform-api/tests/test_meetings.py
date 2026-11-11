@@ -180,30 +180,39 @@ def test_impossible_date_or_time_is_refused(day, month, hour, minute):
     assert excinfo.value.code == "bad_time"
 
 
-def test_default_slots_are_the_next_wednesdays_and_fridays_at_1930_moscow():
-    slots = service.default_slots(NOW, 4)  # пятница 30.10, 15:00 МСК — сегодняшняя пятница 19:30 ещё впереди
-    assert slots == [msk(2026, 10, 30), msk(2026, 11, 4), msk(2026, 11, 6), msk(2026, 11, 11)]
-    assert [s.weekday() for s in slots] == [4, 2, 4, 2]
+def wed(year, month, day, hour=19, minute=0) -> dt.datetime:
+    return msk(year, month, day, hour, minute)
+
+
+def test_default_slots_are_the_next_wednesdays_at_1900_moscow():
+    slots = service.default_slots(NOW, 4)  # пятница 30.10, 15:00 МСК
+    assert slots == [wed(2026, 11, 4), wed(2026, 11, 11), wed(2026, 11, 18), wed(2026, 11, 25)]
+    assert [s.weekday() for s in slots] == [2, 2, 2, 2]
     assert all(s.utcoffset() == dt.timedelta(hours=3) for s in slots)
-    assert [s.astimezone(UTC).strftime("%H:%M") for s in slots] == ["16:30"] * 4
+    assert [s.astimezone(UTC).strftime("%H:%M") for s in slots] == ["16:00"] * 4
+
+
+def test_default_schedule_constants_are_wednesday_1900():
+    assert service.DEFAULT_SLOT_WEEKDAYS == (2,)
+    assert service.DEFAULT_SLOT_TIME == dt.time(19, 0)
 
 
 def test_default_slots_start_strictly_after_the_given_moment():
-    wednesday = msk(2026, 11, 4)
+    wednesday = wed(2026, 11, 4)
     assert service.default_slots(wednesday - dt.timedelta(minutes=1), 1) == [wednesday]
-    assert service.default_slots(wednesday, 1) == [msk(2026, 11, 6)]
+    assert service.default_slots(wednesday, 1) == [wed(2026, 11, 11)]
     assert service.default_slots(msk(2026, 11, 4, 8, 0), 1) == [wednesday]   # утром в среду — сегодняшняя
-    assert service.default_slots(msk(2026, 11, 4, 20, 0), 1) == [msk(2026, 11, 6)]
+    assert service.default_slots(msk(2026, 11, 4, 20, 0), 1) == [wed(2026, 11, 11)]
 
 
 def test_default_slots_count_by_moscow_day_not_utc_day():
     # вторник 03.11, 21:30 UTC = среда 04.11, 00:30 МСК: ближайшая — эта же среда вечером
-    assert service.default_slots(dt.datetime(2026, 11, 3, 21, 30, tzinfo=UTC), 1) == [msk(2026, 11, 4)]
+    assert service.default_slots(dt.datetime(2026, 11, 3, 21, 30, tzinfo=UTC), 1) == [wed(2026, 11, 4)]
 
 
 def test_default_slots_cross_the_year_and_treat_naive_time_as_moscow():
-    # среда 30.12.2026 12:00 МСК → сегодня вечером, пятница 01.01, среда 06.01
-    assert service.default_slots(dt.datetime(2026, 12, 30, 12, 0), 3) == [msk(2026, 12, 30), msk(2027, 1, 1), msk(2027, 1, 6)]
+    # среда 30.12.2026 12:00 МСК → сегодня вечером, затем 06.01 и 13.01
+    assert service.default_slots(dt.datetime(2026, 12, 30, 12, 0), 3) == [wed(2026, 12, 30), wed(2027, 1, 6), wed(2027, 1, 13)]
 
 
 @pytest.mark.parametrize(("count", "expected_len"), [(0, 0), (-3, 0), (1, 1), (10, 10)])
@@ -506,28 +515,28 @@ async def test_create_schedule_makes_the_nearest_slots_and_is_safe_to_repeat(own
     result = await say("встречи создать 4")
     assert result["status"] == "slots_created" and result["created"] == [1, 2, 3, 4]
     assert [r["starts_at"] for r in fake.rows] == [
-        dt.datetime(2026, 10, 30, 16, 30, tzinfo=UTC), dt.datetime(2026, 11, 4, 16, 30, tzinfo=UTC),
-        dt.datetime(2026, 11, 6, 16, 30, tzinfo=UTC), dt.datetime(2026, 11, 11, 16, 30, tzinfo=UTC),
+        dt.datetime(2026, 11, 4, 16, 0, tzinfo=UTC), dt.datetime(2026, 11, 11, 16, 0, tzinfo=UTC),
+        dt.datetime(2026, 11, 18, 16, 0, tzinfo=UTC), dt.datetime(2026, 11, 25, 16, 0, tzinfo=UTC),
     ]
     assert all((r["kind"], r["title"], r["join_url"]) == ("live", "Живая встреча", None) for r in fake.rows)
     assert sent[-1] == (
-        "Создано 4: #1 пт 30.10 19:30 · #2 ср 04.11 19:30 · #3 пт 06.11 19:30 · #4 ср 11.11 19:30 (МСК).\n"
+        "Создано 4: #1 ср 04.11 19:00 · #2 ср 11.11 19:00 · #3 ср 18.11 19:00 · #4 ср 25.11 19:00 (МСК).\n"
         "Ссылки добавьте: ссылка встречи <номер> https://…"
     )
     again = await say("встречи создать 4")
     assert again["status"] == "slots_exist" and again["created"] == [] and len(fake.rows) == 4
-    assert sent[-1].startswith("Новых нет: ближайшие слоты уже созданы — #1 пт 30.10 19:30")
+    assert sent[-1].startswith("Новых нет: ближайшие слоты уже созданы — #1 ср 04.11 19:00")
 
 
 @pytest.mark.asyncio
 async def test_create_schedule_skips_only_the_slots_that_already_exist(owner_env, fake, sent):
-    await say("встреча 04.11 19:30 Своё название")
+    await say("встреча 04.11 19:00 Своё название")
     result = await say("встречи создать 3")
     assert result["created"] == [2, 3]
-    assert [r["starts_at"].astimezone(MSK).strftime("%d.%m") for r in fake.rows] == ["04.11", "30.10", "06.11"]
+    assert [r["starts_at"].astimezone(MSK).strftime("%d.%m") for r in fake.rows] == ["04.11", "11.11", "18.11"]
     assert sent[-1] == (
-        "Создано 2: #2 пт 30.10 19:30 · #3 пт 06.11 19:30 (МСК).\n"
-        "Уже были, пропустил: #1 ср 04.11 19:30."
+        "Создано 2: #2 ср 11.11 19:00 · #3 ср 18.11 19:00 (МСК).\n"
+        "Уже были, пропустил: #1 ср 04.11 19:00."
     )
 
 

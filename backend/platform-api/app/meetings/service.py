@@ -35,9 +35,9 @@ MAX_URL_LEN = 500
 LIST_LIMIT_MAX = 50
 PUBLIC_LIMIT_MAX = 10
 
-# Расписание по умолчанию: вторник и четверг, 19:30 по Москве.
-DEFAULT_SLOT_WEEKDAYS = (2, 4)  # datetime.weekday(): 0 — понедельник; среда и пятница 19:30 МСК (владелец 31.10: вт/чт заняты выступлениями Лены)
-DEFAULT_SLOT_TIME = dt.time(19, 30)
+# Расписание по умолчанию: среда, 19:00 по Москве (владелец, 11.11.2026; встречи ведут Виктор Хрипко и Елена Дацкевич).
+DEFAULT_SLOT_WEEKDAYS = (2,)  # datetime.weekday(): 0 — понедельник, 2 — среда
+DEFAULT_SLOT_TIME = dt.time(19, 0)
 DEFAULT_SLOTS_MAX = 52
 
 _WEEKDAYS_RU = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
@@ -81,7 +81,7 @@ def as_msk(value: dt.datetime) -> dt.datetime:
 
 
 def default_slots(from_dt: dt.datetime, count: int) -> list[dt.datetime]:
-    """Ближайшие ``count`` вторников и четвергов 19:30 МСК строго после ``from_dt`` (по возрастанию)."""
+    """Ближайшие ``count`` слотов расписания по умолчанию (среды 19:00 МСК) строго после ``from_dt`` (по возрастанию)."""
     wanted = max(0, min(int(count), DEFAULT_SLOTS_MAX))
     start = as_msk(from_dt)
     day = start.date()

@@ -143,7 +143,7 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                 assert sent[-1] == "Ближайших встреч нет. Создать: встреча 05.11 19:30 или встречи создать 4"
 
                 # 2. «встреча 05.11 19:30» — строка в базе: UTC, живая, название по умолчанию, автор.
-                assert (await say("встреча 04.11 19:30"))["meeting_id"] == 1
+                assert (await say("встреча 04.11 19:00"))["meeting_id"] == 1
                 row = await one(
                     "select kind, title, status, duration_min, join_url, hosts, created_by, "
                     "starts_at at time zone 'UTC' as utc from meetings where meeting_id = 1"
@@ -151,12 +151,12 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                 assert row == {
                     "kind": "live", "title": "Живая встреча", "status": "planned", "duration_min": 60,
                     "join_url": None, "hosts": [], "created_by": f"telegram:{OWNER}",
-                    "utc": dt.datetime(2026, 11, 4, 16, 30),
+                    "utc": dt.datetime(2026, 11, 4, 16, 0),
                 }
-                assert sent[-1].startswith("Создана встреча #1 · ср 04.11 19:30 МСК · Живая встреча · ссылка нет")
+                assert sent[-1].startswith("Создана встреча #1 · ср 04.11 19:00 МСК · Живая встреча · ссылка нет")
 
                 # 3. Со ссылкой и названием; кавычки и SQL в названии — просто текст.
-                assert (await say("встреча 06.11 19:30 https://zoom.us/j/2 Разбор: О'Нил \"кавычки\"; drop table meetings;--"))[
+                assert (await say("встреча 11.11 19:00 https://zoom.us/j/2 Разбор: О'Нил \"кавычки\"; drop table meetings;--"))[
                     "meeting_id"
                 ] == 2
                 assert await one("select title, join_url from meetings where meeting_id = 2") == {
@@ -164,15 +164,15 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                 }
 
                 # 4. Тот же момент второй раз — не дубль.
-                assert (await say("встреча 04.11 19:30 Ещё раз"))["status"] == "duplicate"
+                assert (await say("встреча 04.11 19:00 Ещё раз"))["status"] == "duplicate"
                 assert (await one("select count(*) as n from meetings"))["n"] == 2
 
-                # 5. Слоты (ср/пт): 30.10 и 11.11 новые, 04.11 и 06.11 уже есть (и ручная, и с названием).
+                # 5. Слоты (среды 19:00): 18.11 и 25.11 новые, 04.11 и 11.11 уже есть (и ручная, и с названием).
                 result = await say("встречи создать 4")
                 assert result["created"] == [3, 4]
                 assert sent[-1] == (
-                    "Создано 2: #3 пт 30.10 19:30 · #4 ср 11.11 19:30 (МСК).\n"
-                    "Уже были, пропустил: #1 ср 04.11 19:30 · #2 пт 06.11 19:30."
+                    "Создано 2: #3 ср 18.11 19:00 · #4 ср 25.11 19:00 (МСК).\n"
+                    "Уже были, пропустил: #1 ср 04.11 19:00 · #2 ср 11.11 19:00."
                 )
                 again = await say("встречи создать 4")
                 assert again["status"] == "slots_exist" and (await one("select count(*) as n from meetings"))["n"] == 4
@@ -181,10 +181,10 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                 await say("встречи")
                 assert sent[-1].splitlines() == [
                     "Ближайшие встречи:",
-                    "#3 · пт 30.10 19:30 МСК · Живая встреча · ссылка нет",
-                    "#1 · ср 04.11 19:30 МСК · Живая встреча · ссылка нет",
-                    "#2 · пт 06.11 19:30 МСК · Разбор: О'Нил \"кавычки\"; drop table meetings;-- · ссылка есть",
-                    "#4 · ср 11.11 19:30 МСК · Живая встреча · ссылка нет",
+                    "#1 · ср 04.11 19:00 МСК · Живая встреча · ссылка нет",
+                    "#2 · ср 11.11 19:00 МСК · Разбор: О'Нил \"кавычки\"; drop table meetings;-- · ссылка есть",
+                    "#3 · ср 18.11 19:00 МСК · Живая встреча · ссылка нет",
+                    "#4 · ср 25.11 19:00 МСК · Живая встреча · ссылка нет",
                 ]
 
                 # 7. Ссылка: задать и заменить; updated_at двигается.
@@ -196,13 +196,13 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                 assert all("zoom.us" not in text for text in sent)
 
                 # 8. Отмена: пропала из списка, освободила слот для «встречи создать».
-                assert (await say("отменить встречу 3"))["status"] == "cancelled"
-                assert (await say("отменить встречу 3"))["status"] == "bad_status"
+                assert (await say("отменить встречу 1"))["status"] == "cancelled"
+                assert (await say("отменить встречу 1"))["status"] == "bad_status"
                 await say("встречи")
-                assert "#3" not in sent[-1]
+                assert "#1 " not in sent[-1]
                 recreated = await say("встречи создать 1")
                 assert recreated["created"] == [5]
-                assert (await one("select status from meetings where meeting_id = 3"))["status"] == "cancelled"
+                assert (await one("select status from meetings where meeting_id = 1"))["status"] == "cancelled"
                 assert (await one("select status from meetings where meeting_id = 5"))["status"] == "planned"
 
                 # 9. «Прошла»: пропала из списка; ссылку у прошедшей не меняем.
@@ -237,8 +237,8 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
             assert (consult["title"], consult["duration_min"], consult["hosts"]) == ("Консультация эксперта", 90, ["Виктор", "Ольга"])
             async with tenant_connection("whieda") as conn:
                 live = await service.list_upcoming(conn, "whieda", "live", 10, now=NOW)
-            # Идёт сейчас, 30.10 19:30 (#5), 04.11 (#1), 06.11 (#2); закончившаяся, отменённая (#3) и прошедшая (#4) — нет.
-            assert [r["meeting_id"] for r in live] == [ongoing["meeting_id"], 5, 1, 2]
+            # Идёт сейчас, 04.11 (#5, пересозданный слот), 11.11 (#2), 18.11 (#3); закончившаяся, отменённая (#1) и прошедшая (#4) — нет.
+            assert [r["meeting_id"] for r in live] == [ongoing["meeting_id"], 5, 2, 3]
             assert ended["meeting_id"] not in [r["meeting_id"] for r in live]
             async with tenant_connection("whieda") as conn:
                 both = await service.list_upcoming(conn, "whieda", None, 50, now=NOW)
