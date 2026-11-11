@@ -63,7 +63,7 @@ def test_click_consent_for_site_order_and_site_login():
         async def proof() -> None:
             from app.db import fetch_all, fetch_one, tenant_connection
             from app.telegram.bindings import BotBindingContext
-            from app.telegram.consent import CLICK_CONSENT_VERSION, CONSENT_POLICY_VERSION
+            from app.telegram.consent import CLICK_CONSENT_VERSION, CONSENT_POLICY_VERSION, MARKETING_CONSENT_VERSION
             from app.telegram.processor import process_core_telegram_update
             from app.tenancy import TenantContext
 
@@ -178,7 +178,9 @@ def test_click_consent_for_site_order_and_site_login():
                 await process_core_telegram_update(tenant, _login(NEW, "tokB"), "login", binding=binding)
                 rows = await consents(NEW)
                 assert rows[login_version]["consented_at"] == stamp
-                assert set(rows) == {CONSENT_POLICY_VERSION, order_version, login_version}
+                # Вход через бота — первый полезный шаг: вопрос о рассылке задан один раз (11.11.2026), метка — строка telegram_consents.
+                asked_version = f"marketing_asked:{MARKETING_CONSENT_VERSION}"
+                assert set(rows) == {CONSENT_POLICY_VERSION, order_version, login_version, asked_version}
 
                 # 6а. Бот витрины ALMIRA: тот же вход, но документы WWC не показываем и не записываем.
                 from dataclasses import replace

@@ -6,7 +6,7 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from tests.postgres_testkit import temporary_database
+from tests.postgres_testkit import MIGRATIONS, temporary_database
 from tests.test_crm_postgres import LEAD_TABLES
 
 SEED = """
@@ -79,7 +79,7 @@ def test_the_newsletter_question_is_asked_once_with_the_marker_row():
 
     with temporary_database("whieda_marketing_once") as db:
         with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
-            db.apply_migrations(conn)
+            db.apply_migrations(conn, (*MIGRATIONS, "platform_telegram_consent_v1.sql"))
             db.grant_api_role(conn)
 
         async def proof() -> None:
