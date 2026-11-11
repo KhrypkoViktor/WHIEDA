@@ -1403,3 +1403,31 @@ async def test_an_outdated_result_does_not_overwrite_the_newer_stage_of_the_chat
     assert seen == ["start", "cabinet"]
     assert stages_tg._synced_commands.get(key) == "partner_wwc"       # итог старого вызова новый статус не затёр
 
+
+# ---- партнёр WHIEDA чужой структуры: встреч и разбора нет (11.11.2026) -------------------------------------
+
+
+def _row_data(reply):
+    return [data for row in reply.rows for _, data in row]
+
+
+def test_partner_whieda_menu_drops_the_consult_meet_row_without_offers():
+    from app.bot_stages import menus
+    from app.funnel import texts
+
+    full = menus.partner_whieda_reply(channel="telegram", example_url=None)
+    assert texts.FUNNEL_CONSULT_CALLBACK in _row_data(full) and texts.FUNNEL_MEET_CALLBACK in _row_data(full)
+    plain = menus.partner_whieda_reply(channel="telegram", example_url=None, offers=False)
+    assert texts.FUNNEL_CONSULT_CALLBACK not in _row_data(plain) and texts.FUNNEL_MEET_CALLBACK not in _row_data(plain)
+    assert [r for r in full.rows if r not in plain.rows] == [
+        [(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK), (texts.STAGE_MEET_BUTTON, texts.FUNNEL_MEET_CALLBACK)]
+    ]
+    assert plain.rows[-1][0][0] == texts.STAGE_PW_SUPPORT_BUTTON  # поддержка на месте
+
+
+async def test_announce_to_a_foreign_partner_whieda_has_no_consult_meet_row(world, monkeypatch):
+    monkeypatch.setattr("app.bot_stages.telegram.offers_blocked_for", AsyncMock(return_value=True))
+    assert await stages_tg.announce_partner_whieda("whieda", "telegram", 8800) is True
+    menu = [markup for chat, text, markup in world.sent if chat == "8800" and text.startswith("Вы партнёр WHIEDA.")][0]
+    data = [b["callback_data"] for row in menu["inline_keyboard"] for b in row if "callback_data" in b]
+    assert "funnel:consult" not in data and "funnel:meet" not in data

@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.bot_stages.service import inviter_actor_id
+from app.bot_stages.service import STAGE_GUEST, STAGE_PARTNER_WHIEDA, inviter_actor_id, resolve_stage, stages_enabled
 from app.crm.service import safe_error
 from app.db import fetch_one, tenant_connection
 from app.funnel import texts
@@ -66,12 +66,21 @@ async def guest_inviter_owner(conn: Any, tenant_id: str, channel: str, channel_u
     return lead_owner or await inviter_actor_id(conn, tenant_id, channel, channel_user_id)
 
 
-async def guest_offers_blocked(tenant_id: str, channel: str, channel_user_id: int) -> bool:
-    """Гость чужого партнёра: встречи и «Личный разбор» ему не предлагаются (кнопки, ответы на старые кнопки).
-    Не гость (партнёр и все остальные) — ``False``: их меню не меняется. Сбой базы — ``True`` (см. описание модуля)."""
+async def offers_blocked_for(tenant_id: str, channel: str, channel_user_id: int) -> bool:
+    """Одна проверка для гостей и партнёров WHIEDA (11.11.2026): гостю и партнёру WHIEDA, пригласивший которого не из
+    своей сети, встречи и «Личный разбор» не предлагаются (кнопки, ответы на старые кнопки). Нет пригласившего — своя сеть.
+    Партнёры WWC (свой кабинет) и все остальные — ``False``: их меню не меняется. Сбой базы — ``True`` (см. модуль)."""
     try:
         async with tenant_connection(tenant_id) as conn:
-            guest = await resolve_guest(conn, tenant_id, channel, channel_user_id)
+            stage: str | None = None
+            if stages_enabled(tenant_id):
+                stage = await resolve_stage(conn, tenant_id, channel, channel_user_id)
+                if stage == STAGE_PARTNER_WHIEDA:
+                    owner = await inviter_actor_id(conn, tenant_id, channel, channel_user_id)
+                    return not await is_own_network(conn, tenant_id, owner_id=owner)
+                if stage != STAGE_GUEST:
+                    return False
+            guest = await resolve_guest(conn, tenant_id, channel, channel_user_id, stage=stage)
             if guest is None:
                 return False
             owner = await guest_inviter_owner(conn, tenant_id, channel, channel_user_id, guest.owner_actor_id)
@@ -79,6 +88,9 @@ async def guest_offers_blocked(tenant_id: str, channel: str, channel_user_id: in
     except Exception as exc:  # noqa: BLE001
         logger.warning("own_network_check_failed", extra={"channel": channel, **safe_error(exc)})
         return True
+
+
+guest_offers_blocked = offers_blocked_for  # прежнее имя: им пользуются обработчики гостя
 
 
 def partner_contact_reply() -> Reply:

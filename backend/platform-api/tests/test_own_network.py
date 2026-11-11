@@ -133,3 +133,51 @@ def test_partner_contact_reply_has_only_the_ask_button(monkeypatch):
     assert reply.rows == [[(texts.GUEST_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)]]
     monkeypatch.setattr(network, "_stages", lambda: True)
     assert network.partner_contact_reply().rows == [[(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)]]
+
+
+# ---- offers_blocked_for: гости и партнёры WHIEDA одной функцией --------------------------------------------
+
+
+def _patch_stage(monkeypatch, *, stage, owner="inviter-1", own=False, guest=None):
+    @asynccontextmanager
+    async def fake_connection(tenant_id):
+        yield object()
+
+    monkeypatch.setenv("PLATFORM_BOT_STAGES", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr(network, "tenant_connection", fake_connection)
+    monkeypatch.setattr(network, "resolve_stage", AsyncMock(return_value=stage))
+    monkeypatch.setattr(network, "inviter_actor_id", AsyncMock(return_value=owner))
+    monkeypatch.setattr(network, "resolve_guest", AsyncMock(return_value=guest))
+    flag = AsyncMock(return_value=own)
+    monkeypatch.setattr(network, "is_own_network", flag)
+    return flag
+
+
+async def test_partner_whieda_of_a_foreign_inviter_is_blocked(monkeypatch):
+    flag = _patch_stage(monkeypatch, stage="partner_whieda", own=False)
+    assert await network.offers_blocked_for(TENANT, "telegram", 5) is True
+    assert flag.await_args.kwargs == {"owner_id": "inviter-1"}
+    network.resolve_guest.assert_not_awaited()
+
+
+async def test_partner_whieda_of_the_own_network_or_without_inviter_is_not_blocked(monkeypatch):
+    _patch_stage(monkeypatch, stage="partner_whieda", own=True)
+    assert await network.offers_blocked_for(TENANT, "max", 5) is False
+    flag = _patch_stage(monkeypatch, stage="partner_whieda", owner=None, own=True)  # is_own_network(None) — своя сеть
+    assert await network.offers_blocked_for(TENANT, "max", 5) is False
+    assert flag.await_args.kwargs == {"owner_id": None}
+
+
+async def test_partner_wwc_is_never_blocked(monkeypatch):
+    flag = _patch_stage(monkeypatch, stage="partner_wwc", own=False)
+    assert await network.offers_blocked_for(TENANT, "telegram", 5) is False
+    flag.assert_not_awaited()
+
+
+async def test_a_guest_goes_the_guest_way_under_the_stages(monkeypatch):
+    flag = _patch_stage(monkeypatch, stage="guest", own=False, guest=SimpleNamespace(owner_actor_id="lead-owner"))
+    assert await network.offers_blocked_for(TENANT, "telegram", 5) is True
+    assert flag.await_args.kwargs == {"owner_id": "lead-owner"}
+    assert network.resolve_guest.await_args.kwargs["stage"] == "guest"
+    assert network.guest_offers_blocked is network.offers_blocked_for

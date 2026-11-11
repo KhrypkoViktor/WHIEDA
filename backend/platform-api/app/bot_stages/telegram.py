@@ -38,6 +38,7 @@ from app.db import tenant_connection
 from app.funnel import texts
 from app.funnel.guest import Reply, rows_to_max, rows_to_telegram
 from app.funnel.guest_bot import stage_menu
+from app.funnel.network import offers_blocked_for
 from app.referral_bonus.service import inviter_card
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
@@ -188,7 +189,10 @@ async def show_stage_menu(
         await send_reply(telegram_chat_id, guest_reply)
     elif stage == STAGE_PARTNER_WHIEDA:
         example = await example_site_url(tenant.tenant_id, "telegram", telegram_user_id)
-        await send_reply(telegram_chat_id, menus.partner_whieda_reply(channel=menus.TELEGRAM, example_url=example))
+        offers = not await offers_blocked_for(tenant.tenant_id, "telegram", telegram_user_id)
+        await send_reply(
+            telegram_chat_id, menus.partner_whieda_reply(channel=menus.TELEGRAM, example_url=example, offers=offers)
+        )
     else:
         await sync_chat_commands(telegram_chat_id, STAGE_PARTNER_WWC)
         return None
@@ -309,7 +313,8 @@ async def announce_partner_whieda(tenant_id: str, channel: str, user_id: int) ->
     """Поздравление и новое меню человеку, ставшему партнёром WHIEDA: два сообщения в его мессенджере (Telegram — ботом
     этого запроса, Max — ботом Max) и синяя кнопка «Меню» его чата. ``False`` — написать не удалось (закрыл чат)."""
     example = await example_site_url(tenant_id, channel, user_id)
-    menu = menus.partner_whieda_reply(channel=channel, example_url=example)
+    offers = not await offers_blocked_for(tenant_id, channel, user_id)
+    menu = menus.partner_whieda_reply(channel=channel, example_url=example, offers=offers)
     try:
         if channel == menus.TELEGRAM:
             await send_reply(user_id, Reply(texts.STAGE_PW_CONGRATS))

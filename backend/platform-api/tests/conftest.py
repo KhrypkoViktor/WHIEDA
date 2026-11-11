@@ -171,6 +171,8 @@ def own_network_by_default(request, monkeypatch):
         ("app.funnel.lead_start", "guest_inviter_owner", AsyncMock(return_value=None)),
         ("app.funnel.after_meeting", "is_own_network", AsyncMock(return_value=True)),
         ("app.funnel.after_meeting", "guest_inviter_owner", AsyncMock(return_value=None)),
+        ("app.bot_stages.telegram", "offers_blocked_for", AsyncMock(return_value=False)),
+        ("app.bot_stages.max", "offers_blocked_for", AsyncMock(return_value=False)),
         ("app.funnel.guest_bot", "is_own_network", AsyncMock(return_value=True)),
         ("app.funnel.guest_bot", "guest_inviter_owner", AsyncMock(return_value=None)),
         ("app.funnel.guest_bot", "guest_offers_blocked", AsyncMock(return_value=False)),

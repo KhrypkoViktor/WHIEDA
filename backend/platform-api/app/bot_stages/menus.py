@@ -65,9 +65,10 @@ def _links(channel: str) -> tuple[str, str, str]:
     return _SITE_ORDER_CALLBACK, ACADEMY_HOME_CALLBACK, SUPPORT_SITE_CALLBACK
 
 
-def partner_whieda_reply(*, channel: str, example_url: str | None) -> Reply:
+def partner_whieda_reply(*, channel: str, example_url: str | None, offers: bool = True) -> Reply:
     """Меню партнёра WHIEDA: «Что дальше», пример сайта партнёра (если есть адрес), заказ сайта, курс, личный разбор,
-    живая встреча, поддержка. Без баланса, реферальной ссылки, Gemini и калькулятора."""
+    живая встреча, поддержка. Без баланса, реферальной ссылки, Gemini и калькулятора.
+    ``offers=False`` — пригласивший не из своей сети (app/funnel/network.py): ряда «Личный разбор / Живая встреча» нет."""
     order, course, support = _links(channel)
     rows: Rows = [[(texts.STAGE_PW_NEXT_BUTTON, texts.STAGE_NEXT_CALLBACK)]]
     if example_url:
@@ -76,10 +77,11 @@ def partner_whieda_reply(*, channel: str, example_url: str | None) -> Reply:
         [
             [(texts.STAGE_PW_ORDER_BUTTON, order)],
             [(texts.STAGE_PW_COURSE_BUTTON, course)],
-            [(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK), (texts.STAGE_MEET_BUTTON, texts.FUNNEL_MEET_CALLBACK)],
-            [(texts.STAGE_PW_SUPPORT_BUTTON, support)],
         ]
     )
+    if offers:
+        rows.append([(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK), (texts.STAGE_MEET_BUTTON, texts.FUNNEL_MEET_CALLBACK)])
+    rows.append([(texts.STAGE_PW_SUPPORT_BUTTON, support)])
     return Reply(texts.STAGE_PW_INTRO, rows)
 
 

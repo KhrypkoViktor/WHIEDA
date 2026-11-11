@@ -33,6 +33,7 @@ from app.db import tenant_connection
 from app.funnel import texts
 from app.funnel.guest import Reply, rows_to_max
 from app.funnel.guest_bot import stage_menu, telegram_bot_url
+from app.funnel.network import offers_blocked_for
 from app.max.client import send_max_text
 from app.tenancy import TenantContext
 
@@ -58,7 +59,8 @@ async def show_stage_menu_max(tenant: TenantContext, event: Any, trace_id: str) 
             reply = guest_reply
         elif stage == STAGE_PARTNER_WHIEDA:
             example = await example_site_url(tenant.tenant_id, CHANNEL, event.user_id)
-            reply = menus.partner_whieda_reply(channel=menus.MAX, example_url=example)
+            offers = not await offers_blocked_for(tenant.tenant_id, CHANNEL, event.user_id)
+            reply = menus.partner_whieda_reply(channel=menus.MAX, example_url=example, offers=offers)
         elif stage == STAGE_PARTNER_WWC:
             async with tenant_connection(tenant.tenant_id) as conn:
                 site = await own_site_url(conn, tenant.tenant_id, CHANNEL, event.user_id)
