@@ -283,7 +283,7 @@ def test_meetings_service_commands_rls_and_public_view_on_live_schema(monkeypatc
                         conn,
                         "insert into meetings (tenant_id, kind, starts_at) values ('whieda', 'live', now()) returning meeting_id",
                     )
-            assert (await one("select status from meetings where meeting_id = 1"))["status"] == "planned"
+            assert (await one("select status from meetings where meeting_id = 2"))["status"] == "planned"
             assert (await one("select count(*) as n from meetings where tenant_id = 'other'", tenant_id="other"))["n"] == 1
 
         try:
