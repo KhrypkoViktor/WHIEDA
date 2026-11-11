@@ -13,7 +13,13 @@ from app.cookie_domain import shared_cookie_domains
 from app.max.webapp import MAXLINK_PREFIX, redeem_link_request
 from app.telegram.bindings import current_bot_binding
 from app.academy.showcases import showcase_for_binding
-from app.telegram.consent import SOURCE_SITE_LOGIN, record_click_consent, site_login_consent_line
+from app.telegram.consent import (
+    SOURCE_SITE_LOGIN,
+    TRIGGER_SITE_LOGIN,
+    offer_marketing_consent,
+    record_click_consent,
+    site_login_consent_line,
+)
 from app.telegram.delivery import send_telegram_text
 from app.telegram.update_parser import parse_start_token, parse_telegram_message
 
@@ -249,6 +255,15 @@ async def try_handle_content_access(
             _success_message(binding, docs),
             _return_markup(open_in_browser_url(result.get("return_to"))),
         )
+        if not binding.showcase_id:
+            # Первый полезный шаг — вход на сайт через бота: теперь можно один раз спросить о рассылке (11.11.2026).
+            await offer_marketing_consent(
+                binding.tenant.tenant_id,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+                trace_id=trace_id or "",
+                trigger=TRIGGER_SITE_LOGIN,
+            )
         return {
             **base,
             "ok": True,

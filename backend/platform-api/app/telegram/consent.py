@@ -5,9 +5,13 @@ Privacy notice: shown once per policy version and the fact is stored in
 never blocks the reply.
 
 Marketing opt-in (ФЗ «О рекламе» ст. 18, owner's decision 26.09.2026): a separate,
-optional question — «Хочу получать новости и предложения» — asked on /start until
-the person answers once (yes or no, both are recorded in
+optional question — «Хочу получать новости и предложения» (yes or no, both are recorded in
 ``telegram_marketing_consents``), plus ``/news``, ``/news_on``, ``/news_off``.
+Since 11.11.2026 it is asked ONCE and never together with the first greeting (people scrolled past it):
+after the first useful step — a confirmed site login through the bot (``site_login``), a finished
+«Заказать сайт» request (payment proof sent), a meeting registration — or on the second and later /start.
+«Asked once» is stored without a new table: a row in ``telegram_consents`` whose ``policy_version`` is
+``marketing_asked:<MARKETING_CONSENT_VERSION>`` (same encoding as ``site_order:<date>``).
 Broadcasts (n8n «WHIEDA Broadcast Delivery Worker») read ``opted_in`` only; a
 consultant's personal reply to a lead is not a broadcast and needs no opt-in.
 
@@ -53,6 +57,13 @@ MARKETING_CONSENT_VERSION = "2026-09-26"
 CLICK_CONSENT_VERSION = "2026-10-23"
 SOURCE_SITE_ORDER = "site_order"
 SOURCE_SITE_LOGIN = "site_login"
+# «The marketing question was shown once» marker in telegram_consents.policy_version (no schema change).
+MARKETING_ASKED_SOURCE = "marketing_asked"
+# Why the question is asked now (log only): the person's first useful step or a repeated /start.
+TRIGGER_REPEAT_START = "repeat_start"
+TRIGGER_SITE_LOGIN = "site_login"
+TRIGGER_SITE_REQUEST = "site_request"
+TRIGGER_MEETING_REGISTRATION = "meeting_registration"
 
 # Tenants without a published policy get no notice, no marketing question, no record.
 PRIVACY_POLICY_URLS: dict[str, str] = {
@@ -334,28 +345,59 @@ async def send_marketing_prompt(chat_id: int) -> None:
     await _send(chat_id, MARKETING_PROMPT, marketing_consent_keyboard())
 
 
+def marketing_asked_version() -> str:
+    """``marketing_asked:2026-09-26`` — marker «the question was shown once» in ``telegram_consents``."""
+    return f"{MARKETING_ASKED_SOURCE}:{MARKETING_CONSENT_VERSION}"
+
+
+async def marketing_prompt_was_shown(tenant_id: str, telegram_user_id: int) -> bool:
+    params = {"tenant_id": tenant_id, "user_id": int(telegram_user_id), "version": marketing_asked_version()}
+    async with tenant_connection(tenant_id) as conn:
+        row = await fetch_one(conn, _CLICK_STATE_SQL, params)
+    return row is not None
+
+
 async def offer_marketing_consent(
     tenant_id: str,
     *,
     telegram_user_id: int,
     telegram_chat_id: int,
     trace_id: str = "",
+    trigger: str = TRIGGER_REPEAT_START,
 ) -> bool:
-    """On /start: ask once — until the person has answered (yes or no). Never blocks."""
+    """Ask the marketing question ONCE (11.11.2026): not on the first /start, but after the first useful step or on the
+    second and later /start (``trigger`` is for the log). Nothing is asked when the person has already answered (yes or
+    no) or the question was shown before (marker row). Never blocks; a storage failure skips the question."""
     if not PRIVACY_POLICY_URLS.get(tenant_id):
         return False
     try:
         state = await marketing_consent_state(tenant_id, telegram_user_id)
         if state is not None:
             return False
+        if await marketing_prompt_was_shown(tenant_id, telegram_user_id):
+            return False
         await send_marketing_prompt(telegram_chat_id)
     except Exception:
         logger.warning(
             "telegram_marketing_consent_offer_failed",
-            extra={"trace_id": trace_id, "chat_id": chat_ref(telegram_chat_id)},
+            extra={"trace_id": trace_id, "chat_id": chat_ref(telegram_chat_id), "trigger": trigger},
             exc_info=True,
         )
         return False
+    try:
+        await record_telegram_consent(
+            tenant_id,
+            telegram_user_id=telegram_user_id,
+            telegram_chat_id=telegram_chat_id,
+            policy_version=marketing_asked_version(),
+        )
+    except Exception:
+        logger.warning(
+            "telegram_marketing_asked_record_failed",
+            extra={"trace_id": trace_id, "chat_id": chat_ref(telegram_chat_id), "trigger": trigger},
+            exc_info=True,
+        )
+    logger.info("telegram_marketing_consent_offered", extra={"trace_id": trace_id, "trigger": trigger})
     return True
 
 

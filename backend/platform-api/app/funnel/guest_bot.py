@@ -52,6 +52,7 @@ from app.max.client import send_max_text
 from app.referral_bonus.service import accept_referral_start
 from app.settings import get_settings
 from app.telegram.bindings import current_bot_binding
+from app.telegram.consent import TRIGGER_MEETING_REGISTRATION, offer_marketing_consent
 from app.telegram.delivery import _call_telegram, answer_callback_query, send_telegram_text
 from app.telegram.navigation import is_newcomer_panel_request, is_wwc_bot_request
 from app.telegram.support import open_site_support, try_relay_user_message
@@ -384,6 +385,15 @@ async def try_handle_guest_callback(
     await _send_telegram(callback.chat_id, result.reply)
     if result.clear_keyboard:
         await _clear_telegram_keyboard(callback, bot_token, trace_id)
+    if result.status == "registered":
+        # Первый полезный шаг — запись на встречу: теперь один раз спросим о рассылке (11.11.2026).
+        await offer_marketing_consent(
+            tenant.tenant_id,
+            telegram_user_id=callback.user_id,
+            telegram_chat_id=callback.chat_id,
+            trace_id=trace_id or "",
+            trigger=TRIGGER_MEETING_REGISTRATION,
+        )
     return {**base, "status": result.status}
 
 

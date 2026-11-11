@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+from contextvars import ContextVar
 from typing import Any
 
 from fastapi import HTTPException
@@ -133,6 +134,7 @@ from app.telegram.bindings import (
 )
 from app.telegram.log_safe import chat_ref
 from app.telegram.consent import (
+    TRIGGER_REPEAT_START,
     first_start_consent_notice,
     is_start_command,
     offer_marketing_consent,
@@ -492,6 +494,11 @@ async def handle_advisor_query(
     return {"ok": True, "route": "advisor", "answer_mode": mode, "trace_id": trace_id}
 
 
+# Вопрос о рассылке на повторном /start: обработчик /start кладёт сюда id человека и чата, а вопрос уходит
+# после основного ответа (process_core_telegram_update). Один контекст на одно обновление.
+_MARKETING_AFTER_REPLY: ContextVar[dict[str, Any] | None] = ContextVar("marketing_after_reply", default=None)
+
+
 async def process_core_telegram_update(
     tenant: TenantContext,
     update: dict[str, Any],
@@ -501,7 +508,22 @@ async def process_core_telegram_update(
 ) -> dict[str, Any]:
     """Full Core path with owner billing before generic callbacks and advisor routes."""
     with binding_context_scope(binding):
-        return await _process_core_telegram_update_scoped(tenant, update, trace_id)
+        pending: dict[str, Any] = {}
+        token = _MARKETING_AFTER_REPLY.set(pending)
+        try:
+            result = await _process_core_telegram_update_scoped(tenant, update, trace_id)
+        finally:
+            _MARKETING_AFTER_REPLY.reset(token)
+        if pending:
+            # Второй и последующие /start: вопрос о рассылке — после ответа на /start, а не вместе с ним (11.11.2026).
+            await offer_marketing_consent(
+                tenant.tenant_id,
+                telegram_user_id=pending["user_id"],
+                telegram_chat_id=pending["chat_id"],
+                trace_id=trace_id,
+                trigger=TRIGGER_REPEAT_START,
+            )
+        return result
 
 
 async def _link_partner_chat(tenant: TenantContext, msg: TelegramMessage, trace_id: str) -> None:
@@ -710,14 +732,14 @@ async def _process_core_telegram_update_scoped(
             )
             if notice:
                 await deliver_text(msg.chat_id, notice)
-            # Рассылка — отдельный необязательный вопрос, пока человек не ответил
-            # (владелец, 26.09.2026). Сбой здесь /start не ломает.
-            await offer_marketing_consent(
-                tenant.tenant_id,
-                telegram_user_id=msg.user_id,
-                telegram_chat_id=msg.chat_id,
-                trace_id=trace_id,
-            )
+            else:
+                # Рассылка — отдельный необязательный вопрос (владелец, 26.09.2026), один раз и не на первом /start
+                # (владелец, 11.11.2026: вместе с приветствием его пролистывали). Это не первый /start (уведомление
+                # уже показывали): спросим после ответа на него. После первого полезного шага — вход на сайт,
+                # заявка на сайт, запись на встречу — спросят их обработчики.
+                pending = _MARKETING_AFTER_REPLY.get()
+                if pending is not None:
+                    pending.update(user_id=msg.user_id, chat_id=msg.chat_id)
         else:
             # /news, /news_on, /news_off, «рассылка» — до всего остального:
             # отказ от рассылки должен срабатывать всегда.

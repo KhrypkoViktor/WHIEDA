@@ -70,3 +70,46 @@ def test_own_network_flag_is_read_from_the_profile_json(monkeypatch):
 
         db.run_with_app(proof)
     get_settings.cache_clear()
+
+
+@pytest.mark.integration
+def test_the_newsletter_question_is_asked_once_with_the_marker_row():
+    """«Спросили один раз» живёт строкой telegram_consents с версией marketing_asked:<дата> — без новой таблицы."""
+    from unittest.mock import AsyncMock, patch
+
+    with temporary_database("whieda_marketing_once") as db:
+        with psycopg.connect(db.admin_dsn, autocommit=True) as conn:
+            db.apply_migrations(conn)
+            db.grant_api_role(conn)
+
+        async def proof() -> None:
+            from app.db import fetch_all, tenant_connection
+            from app.telegram.consent import (
+                MARKETING_CONSENT_VERSION,
+                marketing_prompt_was_shown,
+                offer_marketing_consent,
+                record_marketing_consent,
+            )
+
+            with patch("app.telegram.consent.send_marketing_prompt", AsyncMock()) as prompt:
+                assert await marketing_prompt_was_shown("whieda", 501) is False
+                assert await offer_marketing_consent("whieda", telegram_user_id=501, telegram_chat_id=9, trigger="site_login") is True
+                assert await marketing_prompt_was_shown("whieda", 501) is True
+                # Второй шаг, второй /start, другой повод — вопрос не повторяется, пока человек молчит.
+                for trigger in ("repeat_start", "meeting_registration", "site_request"):
+                    assert await offer_marketing_consent("whieda", telegram_user_id=501, telegram_chat_id=9, trigger=trigger) is False
+                assert prompt.await_count == 1
+                # Другой человек спрашивается отдельно; ответивший — не спрашивается и без маркера.
+                assert await offer_marketing_consent("whieda", telegram_user_id=502, telegram_chat_id=9) is True
+                await record_marketing_consent("whieda", telegram_user_id=503, telegram_chat_id=9, opted_in=False)
+                assert await offer_marketing_consent("whieda", telegram_user_id=503, telegram_chat_id=9) is False
+                assert prompt.await_count == 2
+            async with tenant_connection("whieda") as conn:
+                rows = await fetch_all(
+                    conn, "select telegram_user_id, policy_version from telegram_consents order by telegram_user_id"
+                )
+            assert [(r["telegram_user_id"], r["policy_version"]) for r in rows] == [
+                (501, f"marketing_asked:{MARKETING_CONSENT_VERSION}"), (502, f"marketing_asked:{MARKETING_CONSENT_VERSION}"),
+            ]
+
+        db.run_with_app(proof)

@@ -39,8 +39,10 @@ from app.telegram.bindings import current_bot_binding
 from app.telegram.consent import (
     SITE_ORDER_CONSENT_STORAGE_FAILED_TEXT,
     SOURCE_SITE_ORDER,
+    TRIGGER_SITE_REQUEST,
     click_consent_urls,
     has_click_consent,
+    offer_marketing_consent,
     record_click_consent,
     site_order_consent_keyboard,
     site_order_consent_text,
@@ -565,6 +567,7 @@ async def try_handle_site_request_message(
         # Брошенная анкета не отвечает на всё подряд: сообщение идёт дальше
         # (советник, меню). Вернуться к ней — кнопкой «Заказать сайт».
         return None
+    completed = False
     try:
         status = str(request["status"])
         if status == "awaiting_name" and msg.text:
@@ -590,6 +593,7 @@ async def try_handle_site_request_message(
                 message_id=msg.message_id,
                 file_id=msg.file_id,
             )
+            completed = True
             owner_id = str(get_settings().platform_billing_owner_telegram_id or "").strip()
             if owner_id.isdigit():
                 # Чек — в тему «Заявки на сайты» группы WWC Support (27.09.2026);
@@ -617,6 +621,15 @@ async def try_handle_site_request_message(
             await _prompt_for_request(msg.chat_id, request)
             return {"ok": True, "route": "site_request", "status": status, "trace_id": trace_id}
         await _prompt_for_request(msg.chat_id, request)
+        if completed:
+            # Заявка «Заказать сайт» оформлена (чек отправлен) — первый полезный шаг: один раз спросим о рассылке (11.11.2026).
+            await offer_marketing_consent(
+                tenant.tenant_id,
+                telegram_user_id=msg.user_id,
+                telegram_chat_id=msg.chat_id,
+                trace_id=trace_id,
+                trigger=TRIGGER_SITE_REQUEST,
+            )
         return {"ok": True, "route": "site_request", "status": request["status"], "trace_id": trace_id}
     except SiteRequestError as exc:
         await _deliver(msg.chat_id, str(exc))

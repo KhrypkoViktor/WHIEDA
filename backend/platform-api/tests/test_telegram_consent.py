@@ -1,7 +1,8 @@
 """Consents in the bot.
 
 Privacy-policy notice on /start: shown once per user, recorded, never blocking.
-Marketing opt-in (38-ФЗ ст. 18, 26.09.2026): asked on /start until answered, buttons
+Marketing opt-in (38-ФЗ ст. 18, 26.09.2026): asked ONCE (11.11.2026) — not on the first /start but after the first
+useful step (site login, finished site request, meeting registration) or on the second and later /start; buttons
 and /news commands record yes or no, storage failure never breaks the reply.
 """
 
@@ -20,6 +21,7 @@ from app.telegram.consent import (
     MARKETING_PROMPT,
     MARKETING_STORAGE_FAILED_TEXT,
     MARKETING_YES,
+    TRIGGER_REPEAT_START,
     consent_notice,
     first_start_consent_notice,
     is_start_command,
@@ -102,8 +104,52 @@ async def test_start_sends_notice_before_panel(whieda_tenant, whieda_bot_binding
     assert result["route"] == "cabinet"
     notice.assert_awaited_once_with("whieda", telegram_user_id=200, telegram_chat_id=100, trace_id="t-consent")
     assert sent == [consent_notice("whieda")]
-    # Вопрос о рассылке — сразу после уведомления, до кабинета.
-    offer.assert_awaited_once_with("whieda", telegram_user_id=200, telegram_chat_id=100, trace_id="t-consent")
+    # Первый /start (уведомление показано): о рассылке НЕ спрашиваем — её пролистывали вместе с приветствием.
+    offer.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repeat_start_asks_about_the_newsletter_after_the_reply_not_before_it(whieda_tenant, whieda_bot_binding):
+    order: list[str] = []
+
+    async def fake_offer(*args, **kwargs):
+        order.append("offer")
+        return True
+
+    async def fake_cabinet(*args, **kwargs):
+        order.append("reply")
+        return {"ok": True, "route": "cabinet"}
+
+    with patch("app.telegram.processor.link_lead_actor_by_username", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.fill_lead_actor_user_id", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.merge_anonymous_actor_into_partner", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.first_start_consent_notice", AsyncMock(return_value=None)  # уведомление уже показывали
+    ), patch("app.telegram.processor.deliver_text", AsyncMock()), patch(
+        "app.telegram.processor.offer_marketing_consent", fake_offer
+    ), patch(
+        "app.telegram.processor._remove_legacy_reply_keyboard", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.show_referral_dashboard", fake_cabinet):
+        result = await process_core_telegram_update(
+            whieda_tenant, _start_update(), "t-repeat", binding=whieda_bot_binding
+        )
+    assert result["route"] == "cabinet"
+    assert order == ["reply", "offer"]
+
+
+@pytest.mark.asyncio
+async def test_repeat_start_offer_carries_the_person_the_chat_and_the_trigger(whieda_tenant, whieda_bot_binding):
+    offer = AsyncMock(return_value=True)
+    with patch("app.telegram.processor.link_lead_actor_by_username", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.fill_lead_actor_user_id", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.merge_anonymous_actor_into_partner", AsyncMock(return_value=None)), patch(
+        "app.telegram.processor.first_start_consent_notice", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.offer_marketing_consent", offer), patch(
+        "app.telegram.processor._remove_legacy_reply_keyboard", AsyncMock(return_value=None)
+    ), patch("app.telegram.processor.show_referral_dashboard", AsyncMock(return_value={"ok": True, "route": "cabinet"})):
+        await process_core_telegram_update(whieda_tenant, _start_update(), "t-repeat", binding=whieda_bot_binding)
+    offer.assert_awaited_once_with(
+        "whieda", telegram_user_id=200, telegram_chat_id=100, trace_id="t-repeat", trigger=TRIGGER_REPEAT_START
+    )
 
 
 @pytest.mark.asyncio
@@ -296,18 +342,60 @@ async def test_storage_failure_answers_without_raising(whieda_tenant):
 
 
 @pytest.mark.asyncio
-async def test_offer_asks_only_until_answered():
+async def test_offer_asks_only_until_answered_and_only_once():
+    record = AsyncMock(return_value=True)
     with patch("app.telegram.consent.marketing_consent_state", AsyncMock(return_value=None)), patch(
+        "app.telegram.consent.marketing_prompt_was_shown", AsyncMock(return_value=False)
+    ), patch("app.telegram.consent.record_telegram_consent", record), patch(
         "app.telegram.consent.send_marketing_prompt", AsyncMock()
     ) as prompt:
         assert await offer_marketing_consent("whieda", telegram_user_id=1, telegram_chat_id=1) is True
     prompt.assert_awaited_once_with(1)
+    # «Спрашивали» пишется строкой telegram_consents с версией marketing_asked:<дата> — без новой таблицы.
+    record.assert_awaited_once_with(
+        "whieda", telegram_user_id=1, telegram_chat_id=1, policy_version=f"marketing_asked:{MARKETING_CONSENT_VERSION}"
+    )
     for answered in (True, False):
         with patch("app.telegram.consent.marketing_consent_state", AsyncMock(return_value=answered)), patch(
-            "app.telegram.consent.send_marketing_prompt", AsyncMock()
-        ) as prompt:
+            "app.telegram.consent.marketing_prompt_was_shown", AsyncMock(return_value=False)
+        ), patch("app.telegram.consent.send_marketing_prompt", AsyncMock()) as prompt:
             assert await offer_marketing_consent("whieda", telegram_user_id=1, telegram_chat_id=1) is False
         prompt.assert_not_awaited()
+    # Вопрос уже показывали, ответа нет — второй раз сам не приходит (остаются /news и слово «рассылка»).
+    with patch("app.telegram.consent.marketing_consent_state", AsyncMock(return_value=None)), patch(
+        "app.telegram.consent.marketing_prompt_was_shown", AsyncMock(return_value=True)
+    ), patch("app.telegram.consent.send_marketing_prompt", AsyncMock()) as prompt:
+        assert await offer_marketing_consent("whieda", telegram_user_id=1, telegram_chat_id=1, trigger="site_login") is False
+    prompt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_asked_marker_does_not_hide_the_question_that_was_sent():
+    with patch("app.telegram.consent.marketing_consent_state", AsyncMock(return_value=None)), patch(
+        "app.telegram.consent.marketing_prompt_was_shown", AsyncMock(return_value=False)
+    ), patch("app.telegram.consent.record_telegram_consent", AsyncMock(side_effect=RuntimeError("db down"))), patch(
+        "app.telegram.consent.send_marketing_prompt", AsyncMock()
+    ) as prompt:
+        assert await offer_marketing_consent("whieda", telegram_user_id=1, telegram_chat_id=1) is True
+    prompt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_leaves_no_asked_marker_so_the_next_step_asks_again():
+    record = AsyncMock(return_value=True)
+    with patch("app.telegram.consent.marketing_consent_state", AsyncMock(return_value=None)), patch(
+        "app.telegram.consent.marketing_prompt_was_shown", AsyncMock(return_value=False)
+    ), patch("app.telegram.consent.record_telegram_consent", record), patch(
+        "app.telegram.consent.send_marketing_prompt", AsyncMock(side_effect=RuntimeError("telegram down"))
+    ):
+        assert await offer_marketing_consent("whieda", telegram_user_id=1, telegram_chat_id=1) is False
+    record.assert_not_awaited()
+
+
+def test_the_asked_marker_is_a_policy_version_row_with_a_date():
+    from app.telegram.consent import marketing_asked_version
+
+    assert marketing_asked_version() == f"marketing_asked:{MARKETING_CONSENT_VERSION}"
 
 
 @pytest.mark.asyncio
