@@ -13,8 +13,8 @@ RUB = "RUB"
 
 TOTALS = {
     "site_3": 6_000, "site_6": 8_400, "site_12": 12_600,
-    "club_3": 17_000, "club_6": 31_400, "club_12": 59_600,
-    "course_3": 16_000, "course_6": 18_400, "course_12": 22_600,
+    "club_3": 15_000, "club_6": 29_400, "club_12": 57_600,
+    "course_3": 13_000, "course_6": 15_400, "course_12": 19_600,
     "bundle": 11_000,
 }
 
@@ -34,13 +34,13 @@ def test_ledger_lines_of_each_kind():
 
     assert rows("site_6") == [("platform_subscription", 5_400, 6, False), ("site_setup", 3_000, 0, False)]
     assert rows("club_12") == [
-        ("platform_subscription", 9_600, 12, False), ("club_subscription", 48_000, 12, False), ("site_setup", 2_000, 0, True),
+        ("platform_subscription", 9_600, 12, False), ("club_subscription", 48_000, 12, False),
     ]
     assert rows("course_3") == [
-        ("platform_subscription", 3_000, 3, False), ("course_academy", 10_000, 0, False), ("site_setup", 3_000, 0, False),
+        ("platform_subscription", 3_000, 3, False), ("course_academy", 10_000, 0, False),
     ]
     assert rows("bundle") == [
-        ("platform_subscription", 3_000, 3, False), ("club_subscription", 6_000, 2, True), ("site_setup", 2_000, 0, True),
+        ("platform_subscription", 3_000, 3, False), ("club_subscription", 8_000, 2, True),
     ]
     # promo-строка обязана нести пометку (иначе в ledger «акция» без причины)
     assert all(l.note for code in TOTALS for l in sr.plan_lines(code, RUB) if l.promo)
@@ -73,7 +73,9 @@ def test_bundle_available_until_end_of_november_msk():
 
 def test_breakdown_texts():
     text = sr.plan_summary("club_6", RUB)
-    assert "сайт на 6 месяцев" in text and "клуб на 6 месяцев — 24" in text and "подключение сайта со скидкой" in text
+    assert "сайт на 6 месяцев" in text and "клуб на 6 месяцев — 24" in text and "подключение сайта — бесплатно" in text
+    assert "подключение сайта — бесплатно" in sr.plan_summary("course_12", RUB)
+    assert "бесплатно" not in sr.plan_summary("site_12", RUB) and "подключение сайта — бесплатно" in sr.plan_summary("bundle", RUB)
     assert "курс онлайн-запуска" in sr.plan_summary("course_3", RUB)
     assert sr.plan_summary("bundle", RUB).startswith("Акция ноября: ") and "клуб на 2 месяца" in sr.plan_summary("bundle", RUB)
 
@@ -83,15 +85,15 @@ def _request(plan_code, rub):
 
 
 def test_payment_text_lists_composition_and_total():
-    text = tg._payment_text(_request("site", 17_000))
-    assert "сайт на 3 месяца" in text and "клуб на 3 месяца" in text and "17" in text.split("Итого:")[1].splitlines()[0]
+    text = tg._payment_text(_request("site", 15_000))
+    assert "сайт на 3 месяца" in text and "клуб на 3 месяца" in text and "15" in text.split("Итого:")[1].splitlines()[0]
     assert "скриншот чека" in text
     legacy = tg._payment_text(_request("site", 6_000))
     assert "подключение сайта — 3" in legacy and "клуб" not in legacy
 
 
 def test_owner_text_has_composition():
-    assert "курс онлайн-запуска" in tg._owner_plan_text(_request("site", 16_000))
+    assert "курс онлайн-запуска" in tg._owner_plan_text(_request("site", 13_000))
 
 
 def test_first_keyboard_has_four_choices_and_bundle_only_in_november(monkeypatch):

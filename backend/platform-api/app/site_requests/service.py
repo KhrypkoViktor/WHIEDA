@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Прайс владельца 11.11.2026 (единый для всех, ₽; страница цен сайта). Это единственное место с ценами воронки
 # «Заказать сайт»: кнопки, тексты оплаты и ledger берут суммы отсюда. Значения — в рублях целиком.
 SITE_SETUP_RUB = 3_000                        # подключение сайта, один раз
-SITE_SETUP_WITH_CLUB_RUB = 2_000              # подключение со скидкой при сайте + клуб
+# Сайт + клуб и сайт + курс — подключение бесплатно на любой срок (владелец 11.11.2026): строки site_setup нет.
 SITE_TERM_RUB = {3: 3_000, 6: 5_400, 12: 9_600}  # сайт на N месяцев
 CLUB_MONTH_RUB = 4_000                        # клуб, в месяц
 COURSE_RUB = 10_000                           # курс онлайн-запуска; участникам клуба 7 500 (в боте не применяется)
@@ -32,13 +32,13 @@ TERMS = (3, 6, 12)
 # контент-завод, SMM, возражения и продажи»). Слаг — курс первого потока «WWC : AI \ SMM» (course_groups.py).
 COURSE_SLUG = "online-start-4w"
 COURSE_PRODUCT = "course_academy"
-# Акция ноября (владелец, 04.11.2026): сайт 3 мес 3 000 + клуб 2 мес 6 000 (вместо 8 000) + подключение 2 000
-# (вместо 3 000) = 11 000 ₽. Кнопка — по 30.11.2026 включительно (МСК).
+# Акция ноября (владелец 11.11.2026): клуб продаётся от 3 месяцев (12 000 ₽), первый месяц потока уже прошёл —
+# остаток 12 000 − 4 000 = 8 000 ₽ за 2 месяца; + сайт 3 мес 3 000; подключение бесплатно = 11 000 ₽.
+# Кнопка — по 30.11.2026 включительно (МСК).
 BUNDLE_RUB = 11_000
 BUNDLE_LAST_DAY = date(2026, 11, 30)
 MSK = timezone(timedelta(hours=3))
 
-_PROMO_CLUB = "пакет PRO + клуб (акция ноября)"
 # plan_code: site_N | club_N | course_N | bundle; «site» — старый код открытых заявок (= site_N при N=3).
 PLANS: dict[str, dict[str, Any]] = {}
 for _n in TERMS:
@@ -51,7 +51,6 @@ for _n in TERMS:
         "lines": (
             ("platform_subscription", SITE_TERM_RUB[_n], _n, False, ""),
             ("club_subscription", CLUB_MONTH_RUB * _n, _n, False, ""),
-            ("site_setup", SITE_SETUP_WITH_CLUB_RUB, 0, True, "сайт + клуб: подключение со скидкой"),
         ),
     }
     PLANS[f"course_{_n}"] = {
@@ -59,15 +58,13 @@ for _n in TERMS:
         "lines": (
             ("platform_subscription", SITE_TERM_RUB[_n], _n, False, ""),
             (COURSE_PRODUCT, COURSE_RUB, 0, False, ""),
-            ("site_setup", SITE_SETUP_RUB, 0, False, ""),
         ),
     }
 PLANS["bundle"] = {
     "kind": "bundle", "months": 3,
     "lines": (
         ("platform_subscription", SITE_TERM_RUB[3], 3, False, ""),
-        ("club_subscription", 6_000, 2, True, _PROMO_CLUB),
-        ("site_setup", SITE_SETUP_WITH_CLUB_RUB, 0, True, _PROMO_CLUB),
+        ("club_subscription", 8_000, 2, True, "акция ноября: клуб до конца потока, 2 из 3 месяцев"),
     ),
 }
 PLANS["site"] = PLANS["site_3"]
@@ -147,6 +144,8 @@ def plan_breakdown(plan_code: str, currency: str = "RUB") -> list[str]:
         if line.promo and line.product_code == "site_setup":
             text += " со скидкой"
         out.append(f"{text} — {_fmt_rub(line.amount_minor)}")
+    if PLANS[plan_code]["kind"] in ("club", "course", "bundle"):
+        out.append("подключение сайта — бесплатно")
     return out
 
 

@@ -84,7 +84,7 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             assert done["payment"]["club_paid_until"] is not None
             ledger = await rows("select product_code, amount_minor, access_months, promo_note from partner_payment_ledger where ref_code = 'anastasy' order by product_code")
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in ledger] == [
-                ("club_subscription", 600_000, 2), ("platform_subscription", 300_000, 3), ("site_setup", 200_000, 0),
+                ("club_subscription", 800_000, 2), ("platform_subscription", 300_000, 3),
             ]
             assert ledger[0]["promo_note"]
             header = await rows("select received_amount_minor, currency from partner_payments where ref_code = 'anastasy'")
@@ -139,15 +139,15 @@ def test_bundle_site_request_records_pro_and_club_and_pays_referrer():
             assert club["plan"] == "club_6" and club["course_access_granted"] is False
             led = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'klub6' order by product_code")
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in led] == [
-                ("club_subscription", 2_400_000, 6), ("platform_subscription", 540_000, 6), ("site_setup", 200_000, 0),
+                ("club_subscription", 2_400_000, 6), ("platform_subscription", 540_000, 6),
             ]
-            assert (await rows("select received_amount_minor from partner_payments where ref_code = 'klub6'"))[0]["received_amount_minor"] == 3_140_000
+            assert (await rows("select received_amount_minor from partner_payments where ref_code = 'klub6'"))[0]["received_amount_minor"] == 2_940_000
 
             course = await order("proof-course", "kurs3", "course_3", 5005, 80)
             assert course["plan"] == "course_3" and course["course_access_granted"] is True
             led = await rows("select product_code, amount_minor, access_months from partner_payment_ledger where ref_code = 'kurs3' order by product_code")
             assert [(r["product_code"], r["amount_minor"], r["access_months"]) for r in led] == [
-                ("course_academy", 1_000_000, 0), ("platform_subscription", 300_000, 3), ("site_setup", 300_000, 0),
+                ("course_academy", 1_000_000, 0), ("platform_subscription", 300_000, 3),
             ]
             acc = await rows("select telegram_user_id, source from academy_access where telegram_user_id = 5005")
             assert acc == [{"telegram_user_id": 5005, "source": "purchase"}]
