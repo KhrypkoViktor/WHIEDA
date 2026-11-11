@@ -123,23 +123,23 @@ def control_rows(registration_id: int) -> Rows:
     ]
 
 
-def menu_rows(*, academy: Button | None = None) -> Rows:
+def menu_rows(*, academy: Button | None = None, own_network: bool = True) -> Rows:
     """«Показ системы», «Личный разбор», «Задать вопрос» — каждая в своём ряду. Три меню включены и у гостя есть доступ
-    в Академии (``academy_button``) — между «Личным разбором» и «Задать вопрос» ещё «🎓 Академия»."""
+    в Академии (``academy_button``) — между «Личным разбором» и «Задать вопрос» ещё «🎓 Академия».
+    Гость чужого партнёра (``own_network=False``, ``app/funnel/network.py``): «Личного разбора» нет."""
     if _stages():
-        rows: Rows = [
-            [(texts.STAGE_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
-            [(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
-        ]
+        rows: Rows = [[(texts.STAGE_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)]]
+        if own_network:
+            rows.append([(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)])
         if academy is not None:
             rows.append([academy])
         rows.append([(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)])
         return rows
-    return [
-        [(texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)],
-        [(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)],
-        [(texts.GUEST_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)],
-    ]
+    rows = [[(texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)]]
+    if own_network:
+        rows.append([(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)])
+    rows.append([(texts.GUEST_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)])
+    return rows
 
 
 # ---- экраны ----------------------------------------------------------------------------------------
@@ -162,10 +162,13 @@ def guest_menu_reply(
     now: datetime | None = None,
     note: str | None = None,
     academy: Button | None = None,
+    own_network: bool = True,
 ) -> Reply:
     """Меню гостя. Есть активная запись — её дата и кнопки «Перенести» / «Отменить запись»; нет — ближайшие
     встречи кнопками «Записаться: …» (или строка, что встреч пока нет). Внизу всегда три кнопки меню.
-    ``note`` — строка под приветствием (например, что встреча из заявки уже прошла)."""
+    ``note`` — строка под приветствием (например, что встреча из заявки уже прошла).
+    Гость чужого партнёра (``own_network=False``): ни ближайших встреч, ни записи, ни «Личного разбора» — вместо них
+    «Ваш партнёр свяжется с вами» и «Задать вопрос»; запись, сделанную раньше, показываем как есть."""
     parts = [guest_header(inviter_name)]
     if note:
         parts.append(note)
@@ -174,25 +177,30 @@ def guest_menu_reply(
         reg, meeting = registration
         parts.append(texts.REGISTRATION_CONFIRMED.format(when=format_msk(meeting["starts_at"], now=now)))
         rows.extend(control_rows(reg.registration_id))
+    elif not own_network:
+        parts.append(texts.GUEST_PARTNER_WILL_CONTACT)
     elif open_meetings:
         parts.append(texts.GUEST_PICK_MEETING)
         rows.extend(register_rows(open_meetings, now=now))
     else:
         parts.append(texts.GUEST_NO_MEETINGS)
-    rows.extend(menu_rows(academy=academy))
+    rows.extend(menu_rows(academy=academy, own_network=own_network))
     return Reply("\n\n".join(parts), rows)
 
 
 async def load_guest_view(
-    conn: Any, tenant_id: str, channel: str, channel_user_id: int, *, now: datetime | None = None
+    conn: Any, tenant_id: str, channel: str, channel_user_id: int, *, now: datetime | None = None, own_network: bool = True
 ) -> tuple[ActiveRegistration | None, list[dict[str, Any]]]:
-    """Что показать гостю: ближайшая активная запись (тогда список встреч не нужен) либо две ближайшие встречи."""
+    """Что показать гостю: ближайшая активная запись (тогда список встреч не нужен) либо две ближайшие встречи.
+    Гость чужого партнёра (``own_network=False``): ближайших встреч не читаем — показываем только его прежнюю запись."""
     current = now or utcnow()
     active = await registrations.active_registrations(
         conn, tenant_id, channel=channel, channel_user_id=channel_user_id, limit=1, now=current
     )
     if active:
         return active[0], []
+    if not own_network:
+        return None, []
     return None, await registrations.open_meetings(conn, tenant_id, limit=MENU_MEETINGS, now=current)
 
 

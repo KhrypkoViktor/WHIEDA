@@ -154,3 +154,27 @@ def stages_on(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def own_network_by_default(request, monkeypatch):
+    """«Своя сеть» (app/funnel/network.py, 11.11.2026): прежние тесты гостя и тура писались под бота без этого признака
+    и подставляют базу подделками. По умолчанию гость — своя сеть (встречи и разбор предлагаются, как раньше), без
+    запроса профилей. Тесты признака (``test_own_network*``) подмену не получают и ставят свою."""
+    if request.node.fspath.basename.startswith("test_own_network"):
+        yield
+        return
+    from unittest.mock import AsyncMock
+
+    for module, name, value in (
+        ("app.funnel.lead_start", "is_own_network", AsyncMock(return_value=True)),
+        ("app.funnel.lead_start", "guest_inviter_owner", AsyncMock(return_value=None)),
+        ("app.funnel.after_meeting", "is_own_network", AsyncMock(return_value=True)),
+        ("app.funnel.after_meeting", "guest_inviter_owner", AsyncMock(return_value=None)),
+        ("app.funnel.guest_bot", "is_own_network", AsyncMock(return_value=True)),
+        ("app.funnel.guest_bot", "guest_inviter_owner", AsyncMock(return_value=None)),
+        ("app.funnel.guest_bot", "guest_offers_blocked", AsyncMock(return_value=False)),
+        ("app.funnel.system_word", "guest_offers_blocked", AsyncMock(return_value=False)),
+    ):
+        monkeypatch.setattr(f"{module}.{name}", value)
+    yield

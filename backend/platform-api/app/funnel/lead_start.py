@@ -30,6 +30,7 @@ from app.crm.service import safe_error
 from app.db import tenant_connection
 from app.funnel import texts
 from app.funnel.guest import Reply, academy_button, guest_menu_reply, load_guest_view, owner_card
+from app.funnel.network import guest_inviter_owner, is_own_network
 from app.leads.meeting_leads import card_registration_event, load_lead_by_public_id, mark_bot_opened
 from app.meetings import registrations
 from app.meetings.service import utcnow
@@ -125,7 +126,14 @@ async def start_from_lead(
                 await card_registration_event(
                     conn, tenant_id, lead.crm_card, "registered", starts_at=outcome.meeting["starts_at"], now=current
                 )
-        registration, open_meetings = await load_guest_view(conn, tenant_id, channel, channel_user_id, now=current)
+        # Партнёр заявки не из своей сети: ближайших встреч и «Личного разбора» гостю не предлагаем (запись из заявки
+        # он сделал сам, на сайте партнёра, — она остаётся).
+        own_network = await is_own_network(
+            conn, tenant_id, owner_id=await guest_inviter_owner(conn, tenant_id, channel, channel_user_id, lead.assigned_owner_id)
+        )
+        registration, open_meetings = await load_guest_view(
+            conn, tenant_id, channel, channel_user_id, now=current, own_network=own_network
+        )
         academy = await academy_button(conn, tenant_id, channel, channel_user_id)
 
     gone = outcome is not None and outcome.status in ("closed", "not_found")
@@ -137,6 +145,7 @@ async def start_from_lead(
         now=current,
         note=texts.GUEST_MEETING_GONE if gone else None,
         academy=academy,
+        own_network=own_network,
     )
     status: Literal["registered", "already", "closed", "menu"] = "menu"
     if outcome is not None:

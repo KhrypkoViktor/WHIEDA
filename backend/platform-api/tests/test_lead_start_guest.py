@@ -1417,3 +1417,162 @@ async def test_the_ids_in_max_buttons_must_be_numbers(mx, monkeypatch):
     assert result["status"] == "handled"
     action.assert_not_awaited()
     mx.text.assert_not_awaited()
+
+
+# ---- «своя сеть»: гостю чужого партнёра встречи и «Личный разбор» не предлагаются (11.11.2026) --------------------------
+
+
+def foreign_guest(monkeypatch, *, blocked: bool = True):
+    """Гость чужого партнёра: подменяем проверку признака на границе модулей бота."""
+    for module in (guest_bot, system_word):
+        monkeypatch.setattr(module, "guest_offers_blocked", AsyncMock(return_value=blocked))
+
+
+def test_a_guest_of_a_foreign_partner_sees_no_meetings_and_no_consult_but_the_partner_line_and_the_question():
+    reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE, THU], now=NOW, own_network=False)
+    assert reply.text == f"Вас пригласил партнёр: Игорь Волков.\n\n{texts.GUEST_PARTNER_WILL_CONTACT}"
+    assert "Ваш партнёр свяжется с вами" in reply.text
+    assert callback_data(reply.rows) == ["funnel:tour", "funnel:ask"]   # ни mreg:, ни funnel:consult
+    assert not any(data.startswith(("mreg:", "funnel:consult")) for data in callback_data(reply.rows))
+
+
+def test_the_own_network_menu_is_unchanged():
+    reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE], now=NOW)
+    assert callback_data(reply.rows)[0] == "mreg:11" and callback_data(reply.rows)[1:] == MENU_DATA
+    assert guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE], now=NOW, own_network=True) == reply
+
+
+def test_a_registration_made_earlier_is_still_shown_to_a_guest_of_a_foreign_partner(stages_on):
+    reply = guest_menu_reply("Игорь", registration=(make_registration(7, 12), THU), open_meetings=[], now=NOW, own_network=False)
+    assert "Вы записаны на Живую встречу: чт 05.11 19:30 МСК." in reply.text
+    assert reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
+    assert "funnel:consult" not in callback_data(reply.rows) and texts.GUEST_PARTNER_WILL_CONTACT not in reply.text
+
+
+def test_the_three_menus_variant_of_the_foreign_guest_screen(stages_on):
+    reply = guest_menu_reply("Игорь", registration=None, open_meetings=[TUE], now=NOW, own_network=False)
+    assert labels(reply.rows) == [texts.STAGE_TOUR_BUTTON, texts.STAGE_ASK_BUTTON]
+    assert texts.STAGE_GUEST_INTRO in reply.text and texts.GUEST_PARTNER_WILL_CONTACT in reply.text
+
+
+async def test_the_guest_view_of_a_foreign_guest_does_not_read_the_meetings(monkeypatch):
+    opened = AsyncMock(return_value=[TUE])
+    active = AsyncMock(return_value=[])
+    monkeypatch.setattr(guest.registrations, "open_meetings", opened)
+    monkeypatch.setattr(guest.registrations, "active_registrations", active)
+    assert await guest.load_guest_view(object(), "whieda", "telegram", USER, now=NOW, own_network=False) == (None, [])
+    opened.assert_not_awaited()
+    assert await guest.load_guest_view(object(), "whieda", "telegram", USER, now=NOW) == (None, [TUE])
+
+
+@pytest.mark.parametrize("data", ["mreg:12", "funnel:meet"])
+async def test_the_meeting_buttons_do_not_answer_a_guest_of_a_foreign_partner_in_telegram(tg, monkeypatch, data):
+    foreign_guest(monkeypatch)
+    register = run_action(monkeypatch, registration.ActionResult(Reply("ok"), "x"), "register")
+    listing = run_action(monkeypatch, registration.ActionResult(Reply("ok"), "x"), "list_meetings")
+    result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb(data), trace_id="t1")
+    assert result["status"] == "partner_contact"
+    register.assert_not_awaited()
+    listing.assert_not_awaited()
+    assert tg.text.await_args.kwargs["text"] == texts.GUEST_PARTNER_WILL_CONTACT
+    assert tg.text.await_args.kwargs["reply_markup"]["inline_keyboard"] == [[{"text": "Задать вопрос", "callback_data": "funnel:ask"}]]
+
+
+async def test_move_cancel_still_work_for_a_foreign_guest_who_registered_earlier(tg, monkeypatch):
+    foreign_guest(monkeypatch)
+    cancel = run_action(monkeypatch, registration.ActionResult(Reply("Отменено."), "cancelled"), "cancel")
+    result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("mcancel:7"), trace_id="t1")
+    assert result["status"] == "cancelled"
+    cancel.assert_awaited_once()
+
+
+async def test_the_tour_of_a_foreign_guest_is_sent_without_the_meeting_and_consult_buttons(tg, monkeypatch):
+    foreign_guest(monkeypatch)
+    await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:tour"), trace_id="t1")
+    tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1", offers=False)
+
+
+async def test_the_meeting_buttons_do_not_answer_a_guest_of_a_foreign_partner_in_max(mx, monkeypatch):
+    foreign_guest(monkeypatch)
+    register = run_action(monkeypatch, registration.ActionResult(Reply("ok"), "x"), "register")
+    await max_processor.process_max_event(TENANT, max_callback("mreg:12"), "t1")
+    register.assert_not_awaited()
+    assert mx.text.await_args.kwargs["text"] == texts.GUEST_PARTNER_WILL_CONTACT
+    await max_processor.process_max_event(TENANT, max_callback("funnel:tour"), "t1")
+    assert mx.tour.await_args.kwargs["offers"] is False
+
+
+async def test_the_consult_dialog_is_closed_to_a_guest_of_a_foreign_partner(monkeypatch, tg):
+    foreign_guest(monkeypatch)
+    monkeypatch.setattr(system_word, "send_telegram_text", tg.text)
+    monkeypatch.setattr(system_word, "answer_callback_query", tg.answer)
+    submit = AsyncMock()
+    monkeypatch.setattr(consult, "submit_request", submit)
+    for data in ("funnel:consult", "cq1:net", "cq2:net:money", "chost:net:money:viktor"):
+        result = await system_word.try_handle_funnel_callback(TENANT, tg_cb(data), trace_id="t1")
+        assert result["status"] == "partner_contact", data
+        assert tg.text.await_args.kwargs["text"] == texts.GUEST_PARTNER_WILL_CONTACT
+    submit.assert_not_awaited()
+    foreign_guest(monkeypatch, blocked=False)
+    result = await system_word.try_handle_funnel_callback(TENANT, tg_cb("funnel:consult"), trace_id="t1")
+    assert result["status"] == "consult"
+
+
+async def test_the_consult_dialog_in_max_is_closed_to_a_guest_of_a_foreign_partner(mx, monkeypatch):
+    foreign_guest(monkeypatch)
+    monkeypatch.setattr(system_word, "send_max_text", mx.text)
+    submit = AsyncMock()
+    monkeypatch.setattr(consult, "submit_request", submit)
+    await max_processor.process_max_event(TENANT, max_callback("chost:net:money:viktor"), "t1")
+    submit.assert_not_awaited()
+    assert mx.text.await_args.kwargs["text"] == texts.GUEST_PARTNER_WILL_CONTACT
+
+
+def test_the_tour_keyboard_has_no_meeting_and_consult_buttons_when_offers_are_off():
+    assert system_word.telegram_markup(offers=False) == {}
+    assert system_word.max_buttons(offers=False) == []
+    only_link = system_word.telegram_markup(presentation=True, offers=False)
+    assert [[b["text"] for b in row] for row in only_link["inline_keyboard"]] == [[texts.SYSTEM_TOUR_FALLBACK_BUTTON]]
+    assert len(system_word.telegram_markup()["inline_keyboard"]) == 2
+
+
+async def test_the_tour_without_offers_has_a_plain_caption_and_no_keyboard(monkeypatch, whieda_bot_binding):
+    send = AsyncMock(return_value={"ok": True, "kind": "video"})
+    monkeypatch.setattr(system_word, "send_media", send)
+    await system_word.send_tour_telegram(TENANT, USER, offers=False)
+    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION_PLAIN and send.await_args.kwargs["reply_markup"] is None
+    await system_word.send_tour_max(TENANT, chat_id=555, user_id=USER, trace_id="t1", offers=False)
+    assert send.await_args.kwargs["buttons"] is None and "встреч" not in send.await_args.kwargs["caption"].lower()
+    await system_word.send_tour_telegram(TENANT, USER)
+    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION and send.await_args.kwargs["reply_markup"]
+
+
+async def test_the_system_word_asks_the_own_network_check_with_the_users_id(monkeypatch, whieda_bot_binding):
+    blocked = AsyncMock(return_value=True)
+    monkeypatch.setattr(system_word, "guest_offers_blocked", blocked)
+    tour = AsyncMock(return_value={"ok": True})
+    monkeypatch.setattr(system_word, "send_tour_telegram", tour)
+    await system_word.try_handle_system_word(TENANT, tg_msg("система"), trace_id="t1")
+    blocked.assert_awaited_once_with("whieda", "telegram", USER)
+    assert tour.await_args.kwargs["offers"] is False
+
+
+async def test_a_lead_start_of_a_foreign_partner_shows_no_meetings_and_no_consult(start, monkeypatch):
+    start.lead = make_lead(meeting_id=None)
+    start.view = (None, [])
+    own = AsyncMock(return_value=False)
+    monkeypatch.setattr(lead_start, "is_own_network", own)
+    monkeypatch.setattr(lead_start, "academy_button", AsyncMock(return_value=None))
+    result = await start.run()
+    assert texts.GUEST_PARTNER_WILL_CONTACT in result.reply.text and "Вас пригласил партнёр: Игорь Волков." in result.reply.text
+    assert callback_data(result.reply.rows) == ["funnel:tour", "funnel:ask"]
+    assert start.guest_view.await_args.kwargs["own_network"] is False
+    own.assert_awaited_once()
+
+
+async def test_a_lead_start_of_the_own_network_is_unchanged(start, monkeypatch):
+    start.lead = make_lead(meeting_id=None)
+    start.view = (None, [TUE])
+    monkeypatch.setattr(lead_start, "academy_button", AsyncMock(return_value=None))
+    result = await start.run()
+    assert callback_data(result.reply.rows)[0] == "mreg:11" and callback_data(result.reply.rows)[1:] == MENU_DATA

@@ -44,6 +44,7 @@ from app.funnel.guest import (
     rows_to_telegram,
 )
 from app.funnel.lead_start import start_from_lead
+from app.funnel.network import guest_inviter_owner, guest_offers_blocked, is_own_network, partner_contact_reply
 from app.funnel.system_word import FUNNEL_TENANT_ID, send_tour_max, send_tour_telegram
 from app.leads.channels import accept_channel_referral_start
 from app.leads.meeting_leads import load_lead_by_channel_user, plain_no_links
@@ -79,6 +80,11 @@ GUEST_MAX_PREFIXES = (
     texts.FUNNEL_TOUR_CALLBACK,
     texts.FUNNEL_ASK_CALLBACK,
 )
+
+
+# Кнопки, которыми гостю предлагают встречи: «Записаться» и «Живая встреча». Гостю чужого партнёра они не отвечают
+# (app/funnel/network.py); перенос, отмена и «Присоединиться» работают у тех, кто записан.
+OFFER_KINDS = ("register", "meet")
 
 
 @dataclass(frozen=True)
@@ -144,14 +150,20 @@ async def _guest_menu(tenant_id: str, channel: str, user_id: int) -> Reply | Non
             guest = await resolve_guest(conn, tenant_id, channel, user_id)
             if guest is None:
                 return None
-            registration_view, open_meetings = await load_guest_view(conn, tenant_id, channel, user_id)
+            owner_id = await guest_inviter_owner(conn, tenant_id, channel, user_id, guest.owner_actor_id)
+            own_network = await is_own_network(conn, tenant_id, owner_id=owner_id)
+            registration_view, open_meetings = await load_guest_view(
+                conn, tenant_id, channel, user_id, own_network=own_network
+            )
             academy = await academy_button(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001 — партнёрам и всем остальным бот отвечает как прежде
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
-    return guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy)
+    return guest_menu_reply(
+        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network
+    )
 
 
 async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | None, Reply | None]:
@@ -165,14 +177,20 @@ async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | 
             guest = await resolve_guest(conn, tenant_id, channel, user_id, stage=stage)
             if guest is None:
                 return stage, None
-            registration_view, open_meetings = await load_guest_view(conn, tenant_id, channel, user_id)
+            owner_id = await guest_inviter_owner(conn, tenant_id, channel, user_id, guest.owner_actor_id)
+            own_network = await is_own_network(conn, tenant_id, owner_id=owner_id)
+            registration_view, open_meetings = await load_guest_view(
+                conn, tenant_id, channel, user_id, own_network=own_network
+            )
             academy = await academy_button(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None, None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
-    return stage, guest_menu_reply(inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy)
+    return stage, guest_menu_reply(
+        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network
+    )
 
 
 async def check_waiting_cards(tenant_id: str, channel: str, user_id: int) -> None:
@@ -334,7 +352,10 @@ async def try_handle_guest_callback(
     if callback.chat_type != "private":
         return {**base, "status": "private_chat_required"}
     if action.kind == "tour":
-        tour = await send_tour_telegram(tenant, callback.chat_id, trace_id=trace_id)
+        offers: dict[str, Any] = {}
+        if await guest_offers_blocked(tenant.tenant_id, "telegram", callback.user_id):
+            offers = {"offers": False}  # гость чужого партнёра: под туром нет «Живой встречи» и «Личного разбора»
+        tour = await send_tour_telegram(tenant, callback.chat_id, trace_id=trace_id, **offers)
         return {**base, "status": "tour", "tour": tour.get("status")}
     if action.kind == "ask":
         # «Задать вопрос» → обращение в поддержку у владельца: то же, что кнопка «Поддержка» (тема в форуме или
@@ -350,6 +371,10 @@ async def try_handle_guest_callback(
             await send_telegram_text(chat_id=str(callback.chat_id), text=texts.GUEST_ERROR, bot_token=bot_token)
             return {**base, "ok": False, "status": "error"}
         return {**base, "ok": bool(support.get("ok", True)), "status": "ask", "support": support.get("status")}
+    if action.kind in OFFER_KINDS and await guest_offers_blocked(tenant.tenant_id, "telegram", callback.user_id):
+        # Старая кнопка записи или «Живая встреча» у гостя чужого партнёра: встречи только для своей сети.
+        await _send_telegram(callback.chat_id, partner_contact_reply())
+        return {**base, "status": "partner_contact"}
     try:
         result = await _run_db_action(tenant.tenant_id, "telegram", callback.user_id, action)
     except Exception as exc:  # noqa: BLE001 — на кнопку надо ответить, даже если база не отозвалась
@@ -429,11 +454,17 @@ async def max_guest_callback(tenant: TenantContext, event: Any, trace_id: str) -
         return None
     chat_id = event.chat_id or None
     if action.kind == "tour":
-        await send_tour_max(tenant, chat_id=chat_id, user_id=event.user_id, trace_id=trace_id)
+        offers: dict[str, Any] = {}
+        if await guest_offers_blocked(tenant.tenant_id, "max", event.user_id):
+            offers = {"offers": False}
+        await send_tour_max(tenant, chat_id=chat_id, user_id=event.user_id, trace_id=trace_id, **offers)
         return None
     if action.kind == "ask":
         # Обращений в поддержку в Max нет (они живут на Telegram-id): ведём в Telegram-бота.
         await send_max_text(chat_id=chat_id, user_id=event.user_id, text=texts.ASK_MAX_TEXT.format(url=telegram_bot_url()))
+        return None
+    if action.kind in OFFER_KINDS and await guest_offers_blocked(tenant.tenant_id, "max", event.user_id):
+        await _send_max(chat_id, event.user_id, partner_contact_reply())
         return None
     try:
         result = await _run_db_action(tenant.tenant_id, "max", event.user_id, action)

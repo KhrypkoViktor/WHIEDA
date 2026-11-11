@@ -34,6 +34,7 @@ from app.crm.service import crm_url, load_viewer, lock_reason, safe_error
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.funnel import texts
 from app.funnel.guest import LIST_MEETINGS, Rows, register_rows
+from app.funnel.network import guest_inviter_owner, is_own_network
 from app.funnel.outbound import enqueue_guest_message
 from app.funnel.partner_card import OwnerCard, card_intro, card_rows, card_text, guest_cards
 from app.jobs.outbox import enqueue_outbox_event
@@ -151,18 +152,21 @@ def no_show_message(
     registered_ids: frozenset[int],
     *,
     now: datetime,
+    offer_meetings: bool = True,
 ) -> tuple[str, Rows]:
-    """Текст и кнопки гостю, который не пришёл: запись (если есть ссылка) и ближайшие встречи кнопками ``mreg:``."""
+    """Текст и кнопки гостю, который не пришёл: запись (если есть ссылка) и ближайшие встречи кнопками ``mreg:``.
+    ``offer_meetings=False`` — гость чужого партнёра (``app/funnel/network.py``): новых встреч ему не предлагаем."""
     text = texts.AFTER_NO_SHOW.format(when=format_msk(meeting["starts_at"], now=now))
     rows: Rows = []
     recording = normalize_join_url(meeting.get("recording_url"))
     if recording:
         rows.append([(texts.AFTER_NO_SHOW_RECORDING_BUTTON, recording)])
-    if upcoming:
-        text += "\n" + texts.AFTER_NO_SHOW_NEXT
-        rows.extend(register_rows(upcoming, registered_ids, now=now))
-    else:
-        text += "\n" + texts.GUEST_NO_MEETINGS
+    if offer_meetings:
+        if upcoming:
+            text += "\n" + texts.AFTER_NO_SHOW_NEXT
+            rows.extend(register_rows(upcoming, registered_ids, now=now))
+        else:
+            text += "\n" + texts.GUEST_NO_MEETINGS
     return text, rows
 
 
@@ -179,6 +183,7 @@ class _Pass:
     now: datetime
     cards: dict[str | None, tuple[list[OwnerCard], bool]] = field(default_factory=dict)
     upcoming: list[dict[str, Any]] | None = None
+    own: dict[str | None, bool] = field(default_factory=dict)
     counts: dict[str, int] = field(default_factory=lambda: {"attended": 0, "no_show": 0, "summaries": 0})
 
 
@@ -223,7 +228,12 @@ async def _send_no_show(conn: Any, ctx: _Pass, row: dict[str, Any]) -> None:
         conn, ctx.tenant_id, channel=str(row["channel"]), channel_user_id=int(row["channel_user_id"]), limit=10, now=ctx.now
     )
     registered = frozenset(int(meeting["meeting_id"]) for _, meeting in active)
-    text, rows = no_show_message(ctx.meeting, ctx.upcoming, registered, now=ctx.now)
+    owner = await guest_inviter_owner(
+        conn, ctx.tenant_id, str(row["channel"]), int(row["channel_user_id"]), row.get("assigned_owner_id")
+    )
+    if owner not in ctx.own:
+        ctx.own[owner] = await is_own_network(conn, ctx.tenant_id, owner_id=owner)
+    text, rows = no_show_message(ctx.meeting, ctx.upcoming, registered, now=ctx.now, offer_meetings=ctx.own[owner])
     await enqueue_guest_message(
         conn,
         tenant_id=ctx.tenant_id,

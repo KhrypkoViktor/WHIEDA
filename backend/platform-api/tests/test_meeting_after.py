@@ -432,6 +432,26 @@ async def test_a_guest_who_did_not_press_becomes_no_show_and_gets_the_recording_
     assert world.card_events == [("card-1", "no_show", START)]
 
 
+def test_the_no_show_message_of_a_foreign_guest_has_the_recording_but_no_new_meetings():
+    text, rows = no_show_message(meeting(), [NEXT_TUE], frozenset(), now=AFTER_NOW, offer_meetings=False)
+    assert text == "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли. Ничего страшного!"
+    assert rows == [[("▶️ Смотреть запись", RECORDING)]]
+    assert no_show_message(meeting(recording_url=None), [], frozenset(), now=AFTER_NOW, offer_meetings=False) == (
+        "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли. Ничего страшного!", []
+    )
+
+
+async def test_a_no_show_guest_of_a_foreign_partner_gets_no_next_meetings(world, monkeypatch):
+    own = AsyncMock(return_value=False)
+    monkeypatch.setattr(after_meeting, "is_own_network", own)
+    db = AfterDb([pending(8, "registered", channel="max", user=USER + 1)])
+    await run_meeting(world, db)
+    (message,) = world.messages
+    assert message["rows"] == [[("▶️ Смотреть запись", RECORDING)]]
+    assert "Ближайшие встречи" not in message["text"] and "mreg:" not in str(message["rows"])
+    assert own.await_args.kwargs["owner_id"] is None or isinstance(own.await_args.kwargs["owner_id"], str)
+
+
 async def test_a_guest_from_ads_gets_two_cards_in_a_row_viktor_first(world):
     db = AfterDb([pending(7, "joined", owner=None, name=None, card=None)])
     await run_meeting(world, db)
