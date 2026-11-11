@@ -166,6 +166,11 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             # Ключи доступа (WebAuthn) и лимит устройств (platform_login_devices_v51.sql, 08.11.2026).
             "passkey_credentials",
             "passkey_challenges",
+            # Трекер привычек в приложении /app/ (platform_habits_v52.sql, 11.11.2026).
+            "habits",
+            "habit_marks",
+            "habit_pauses",
+            "habit_profile",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

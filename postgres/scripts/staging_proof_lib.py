@@ -99,6 +99,7 @@ APPLY_ORDER = [
     "platform_identity_journey_v1.sql",
     "platform_content_access_v1.sql",
     "platform_login_devices_v51.sql",
+    "platform_habits_v52.sql",
     "platform_onboarding_v1.sql",
     "platform_user_memory_v1.sql",
     "platform_pilot_telemetry_v1.sql",

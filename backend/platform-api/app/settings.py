@@ -378,6 +378,16 @@ class Settings(BaseSettings):
             "forgotten variable never opens the diary to everyone."
         ),
     )
+    # Трекер привычек в приложении /app/ (11.11.2026): временный допуск, fail-closed.
+    platform_habits_allow: str = Field(
+        default="",
+        validation_alias="PLATFORM_HABITS_ALLOW",
+        description=(
+            "Who sees the habit tracker, fail-closed. Comma-separated Telegram user IDs: only they "
+            "(and the billing owner / super admins). '*': every signed-in person. Empty: owner only. "
+            "Others get GET /habits -> 200 enabled=false and 403 habits_disabled elsewhere."
+        ),
+    )
     platform_crm_lead_cards: bool = Field(
         default=False,
         validation_alias="PLATFORM_CRM_LEAD_CARDS",
@@ -652,6 +662,13 @@ class Settings(BaseSettings):
     def parsed_crm_pilot(self) -> frozenset[int] | None:
         """None — every partner with paid PRO ('*'); otherwise the listed IDs (empty = nobody)."""
         raw = self.platform_crm_pilot_telegram_ids.strip()
+        if raw == "*":
+            return None
+        return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
+
+    def parsed_habits_allow(self) -> frozenset[int] | None:
+        """None — every signed-in person ('*'); otherwise the listed IDs (empty = nobody but admins)."""
+        raw = self.platform_habits_allow.strip()
         if raw == "*":
             return None
         return frozenset(int(part.strip()) for part in raw.split(",") if part.strip().isdigit())
