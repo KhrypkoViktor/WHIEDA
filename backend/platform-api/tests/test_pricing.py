@@ -38,13 +38,14 @@ def test_bundle_line_expands_into_pro_and_promo_club():
 
 
 def test_november_offer_has_two_months_of_club():
-    # Акция ноября (V48): в боте комплект — 11 000 ₽, вручную владелец пишет те же три строки.
+    # Акция ноября (владелец 11.11.2026): сайт 3 мес + клуб до конца потока 8 000 (12 000 − прошедший месяц),
+    # подключение бесплатно = 11 000 ₽; вручную владелец пишет те же две строки.
     assert plan_total_minor("bundle", "RUB") == 1_100_000
     assert plan_total_minor("bundle", "WUSD") == 11_000
-    expected = [("platform_subscription", 3000, 3, False), ("club_subscription", 6000, 2, True), ("site_setup", 2000, 0, True)]
+    expected = [("platform_subscription", 3000, 3, False), ("club_subscription", 8000, 2, True)]
     assert [(l.product_code, l.amount_minor, l.access_months, l.promo) for l in plan_lines("bundle", "WUSD")] == expected
     parsed = parse_payment_command(
-        "оплата ref:zinaida\nPRO 30 WWC$ 3\nклуб 60 WWC$ 2 акция\nнастройка 20 WWC$ акция\nполучено 110 WWC$"
+        "оплата ref:zinaida\nPRO 30 WWC$ 3\nклуб 80 WWC$ 2 акция\nполучено 110 WWC$"
     )
     assert [(l.product_code, l.amount_minor, l.access_months, l.promo) for l in parsed.lines] == expected
     assert parsed.received_minor == 11_000
