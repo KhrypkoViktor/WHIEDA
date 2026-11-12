@@ -189,24 +189,21 @@ def test_the_owner_and_the_admins_are_always_a_wwc_partner(monkeypatch):
 # ---- меню как данные -------------------------------------------------------------------------------------
 
 
-def test_the_guest_menu_text_and_the_four_buttons(stages_on):
+def test_the_guest_menu_text_and_the_buttons(stages_on):
     reply = guest_menu_reply(None, registration=None, open_meetings=[TUE, THU], now=NOW)
-    assert reply.text.startswith(
-        "Вы в WWC: Whieda World Club — сообщество предпринимателей, которое выстроило систему развития МЛМ через интернет. С чего начать?"
-    )
-    # даты — как сейчас (две ближайшие встречи кнопками), под ними три кнопки меню
+    assert reply.text == texts.GREETING_AD and "МЛМ" not in reply.text
+    # есть даты — «Записаться на встречу» (ведёт к списку дат); значки — те, что уже были у этих кнопок; новых нет
     assert labels(reply.rows) == [
-        "📅 Записаться: вт 03.11 19:30", "📅 Записаться: чт 05.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос",
+        "▶ Карта системы", "📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA",
     ]
-    assert data(reply.rows) == ["mreg:11", "mreg:12", "funnel:tour", "funnel:consult", "funnel:ask"]
+    assert data(reply.rows) == ["funnel:tour", "funnel:meet", "funnel:consult", "funnel:ask", "funnel:partner"]
 
 
-def test_the_guest_menu_names_the_partner_before_the_wwc_line(stages_on):
+def test_the_guest_menu_names_the_partner_in_the_first_line(stages_on):
     reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[], now=NOW)
-    assert reply.text.splitlines()[0] == "Вас пригласил партнёр: Игорь Волков."
-    assert reply.text.splitlines()[1].startswith("Вы в WWC: Whieda World Club")
-    assert "Ближайших живых встреч пока нет" in reply.text
-    assert data(reply.rows) == ["funnel:tour", "funnel:consult", "funnel:ask"]
+    assert reply.text.startswith(texts.GREETING_PARTNER.format(name="Игорь Волков"))
+    assert reply.text.endswith(texts.GUEST_NO_MEETINGS)
+    assert data(reply.rows) == ["funnel:tour", "funnel:consult", "funnel:ask", "funnel:partner"]
 
 
 def test_a_registered_guest_keeps_move_and_cancel(stages_on):
@@ -217,10 +214,10 @@ def test_a_registered_guest_keeps_move_and_cancel(stages_on):
 
 
 def test_with_the_switch_off_the_guest_menu_is_the_old_one():
-    # прежние тесты идут с выключателем «выкл» (conftest): здесь то же, но явно — старые подписи и «Вы в WWC.»
+    # прежние тесты идут с выключателем «выкл» (conftest): здесь то же, но явно — подписи без значков
     reply = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW)
-    assert reply.text.startswith("Вы в WWC.\n\n")
-    assert labels(reply.rows) == ["Записаться: вт 03.11 19:30", "Показ системы", "Личный разбор", "Задать вопрос"]
+    assert reply.text == texts.GREETING_AD
+    assert labels(reply.rows) == ["Карта системы", "Записаться на встречу", "Личный разбор", "Задать вопрос", "Я уже партнёр WHIEDA"]
 
 
 @pytest.mark.parametrize("channel", ["telegram", "max"])
@@ -321,7 +318,7 @@ def test_the_max_menu_of_a_wwc_partner_is_links_and_one_question_button():
 
 def test_every_new_text_the_funnel_owner_waits_for_is_marked():
     source = open(texts.__file__, encoding="utf-8").read()
-    for name in ("STAGE_GUEST_INTRO", "STAGE_GUEST_FREE_TEXT", "STAGE_PW_INTRO", "STAGE_PW_NEXT_TEXT", "STAGE_PW_CONGRATS", "STAGE_CONFIRM_ASK",
+    for name in ("GREETING_PARTNER", "STAGE_GUEST_FREE_TEXT", "STAGE_PW_INTRO", "STAGE_PW_NEXT_TEXT", "STAGE_PW_CONGRATS", "STAGE_CONFIRM_ASK",
                  "STAGE_BONUS_LINE", "STAGE_INVITE_HEAD", "STAGE_MORE_TEXT", "STAGE_BACK_TEXT", "STAGE_MAX_PWWC_TEXT",
                  "STAGE_BACK_BUTTON", "SYSTEM_TOUR_PENDING", "SYSTEM_TOUR_FALLBACK_BUTTON"):
         before = source.split(f"\n{name} = ")[0].rsplit("\n", 4)[-4:]
@@ -345,8 +342,8 @@ async def test_telegram_start_of_a_guest_shows_the_guest_menu_and_sets_the_guest
     result = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     assert result["route"] == "guest_menu"
     chat, text, markup = world.sent[-1]
-    assert chat == str(USER) and text.startswith("Вас пригласил партнёр: Игорь Волков.\nВы в WWC: Whieda World Club")
-    assert tg_labels(markup)[-3:] == ["▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+    assert chat == str(USER) and text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert tg_labels(markup)[-4:] == ["📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
     method, payload = world.calls[-1]
     assert method == "setMyCommands" and payload["scope"] == {"type": "chat", "chat_id": USER}
     assert [item["command"] for item in payload["commands"]] == ["start", "support"]
@@ -385,12 +382,12 @@ async def test_telegram_cabinet_command_opens_the_menu_of_the_stage(world, whied
     )
     assert result["ok"]
     _, text, _ = world.sent[-1]
-    expected = {"guest": "Вы в WWC", "partner_whieda": "Вы партнёр WHIEDA", "partner_wwc": "Личный кабинет"}[stage]
+    expected = {"guest": "Здравствуйте. Это бот WWC", "partner_whieda": "Вы партнёр WHIEDA", "partner_wwc": "Личный кабинет"}[stage]
     assert text.startswith(expected)
 
 
 async def test_an_invite_request_of_a_guest_and_of_a_whieda_partner_shows_their_menu_not_a_link(world, whieda_tenant):
-    for stage, expected in (("guest", "Вы в WWC"), ("partner_whieda", "Вы партнёр WHIEDA")):
+    for stage, expected in (("guest", "Здравствуйте. Это бот WWC"), ("partner_whieda", "Вы партнёр WHIEDA")):
         world.stage = stage
         await referral_bonus.show_invitation(whieda_tenant, telegram_user_id=USER, telegram_chat_id=USER, raw_update={}, trace_id="t")
         text = world.sent[-1][1]
@@ -417,8 +414,8 @@ async def test_max_start_of_a_guest_shows_the_guest_menu(max_world):
     result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", ""), "t1")
     assert result["route"] == "max_stage_menu" and result["stage"] == "guest"
     text, buttons = max_world.max_sent[-1]
-    assert text.startswith("Вас пригласил партнёр: Игорь Волков.\nВы в WWC: Whieda World Club")
-    assert [b["text"] for row in buttons for b in row][-3:] == ["▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+    assert text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert [b["text"] for row in buttons for b in row][-4:] == ["📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
 
 
 async def test_max_start_of_a_whieda_partner_shows_his_menu_with_links(max_world):
@@ -441,7 +438,7 @@ async def test_max_start_of_a_wwc_partner_shows_text_and_links(max_world):
     assert [b["text"] for row in buttons for b in row] == ["Мой сайт", "Кабинет на сайте", "Открыть в Telegram", "✍️ Поддержка"]
 
 
-@pytest.mark.parametrize(("stage", "head"), [("guest", "Вы в WWC"), ("partner_whieda", "Вы партнёр WHIEDA"), ("partner_wwc", "Вы партнёр WWC")])
+@pytest.mark.parametrize(("stage", "head"), [("guest", "Здравствуйте. Это бот WWC"), ("partner_whieda", "Вы партнёр WHIEDA"), ("partner_wwc", "Вы партнёр WWC")])
 async def test_the_menu_word_in_max_opens_the_menu_of_the_stage(max_world, stage, head):
     max_world.stage = stage
     result = await max_processor.handle_max_message(MAX_TENANT, max_event("message", "меню"), "t1")
@@ -455,7 +452,7 @@ async def test_max_source_start_shows_the_guest_menu_and_not_the_old_welcome(max
     max_world.stage = "guest"
     result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", "src_vk"), "t1")
     assert result["status"] == "source" and parse_source_start_token("src_vk").tag == "vk"
-    assert max_world.max_sent[-1][0].startswith("Вы в WWC: Whieda World Club")
+    assert max_world.max_sent[-1][0].startswith("Здравствуйте. Это бот WWC")
     assert "Мои заявки" not in max_world.max_sent[-1][0]
 
 
@@ -468,7 +465,7 @@ async def test_max_referral_start_greets_then_shows_the_menu_and_checks_waiting_
     greeting, menu = max_world.max_sent[-2][0], max_world.max_sent[-1][0]
     assert greeting.splitlines()[0] == "Приглашение сохранено." and "Сайт партнёра: https://olga.wwc.best" in greeting
     assert "Напишите вопрос по товару" not in greeting and "Мои заявки" not in greeting  # совет советчика ушёл из приветствия
-    assert menu.startswith("Вы в WWC")
+    assert menu.startswith("Здравствуйте. Это бот WWC")
     stage_link.check_partner_cards.assert_awaited_once_with("whieda", "max", 9300)
 
 
@@ -495,7 +492,7 @@ async def test_src_tag_and_bare_start_open_the_guest_menu_not_the_cabinet(world,
     result = await start_telegram(world, whieda_tenant, whieda_bot_binding, text)
     assert result["route"] == "guest_menu"
     shown = world.sent[-1][1]
-    assert "Вы в WWC: Whieda World Club" in shown
+    assert "Это бот WWC, сообщества партнёров WHIEDA" in shown or "Дарю карту системы" in shown
     for gone in ("Личный кабинет", "Баланс", "WWC$", "Gemini", "ref_"):
         assert gone not in shown
     assert not any("Открываю личный кабинет" in line[1] for line in world.sent)
@@ -651,7 +648,7 @@ async def test_the_next_the_more_and_the_back_buttons(world, whieda_tenant):
     # устаревшая кнопка не по статусу: меню по статусу человека
     world.stage = "guest"
     assert (await stages_tg.try_handle_stage_callback(whieda_tenant, callback("stg:more"), trace_id="t"))["status"] == "menu"
-    assert world.sent[-1][1].startswith("Вы в WWC")
+    assert world.sent[-1][1].startswith("Здравствуйте. Это бот WWC")
 
 
 async def test_not_our_buttons_and_the_switch_off_leave_the_callback_alone(world, whieda_tenant, monkeypatch):
@@ -1119,17 +1116,19 @@ ACADEMY = ("🎓 Академия", "acad:home")
 def test_the_academy_button_sits_between_the_consult_and_the_question(stages_on):
     with_access = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW, academy=ACADEMY)
     assert labels(with_access.rows) == [
-        "📅 Записаться: вт 03.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос",
+        "▶ Карта системы", "📅 Записаться на встречу", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос", "Я уже партнёр WHIEDA",
     ]
-    assert data(with_access.rows) == ["mreg:11", "funnel:tour", "funnel:consult", "acad:home", "funnel:ask"]
+    assert data(with_access.rows) == ["funnel:tour", "funnel:meet", "funnel:consult", "acad:home", "funnel:ask", "funnel:partner"]
     without = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW)
     assert "🎓 Академия" not in labels(without.rows)
-    assert labels(without.rows) == ["📅 Записаться: вт 03.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+    assert labels(without.rows) == ["▶ Карта системы", "📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
 
 
 def test_with_the_switch_off_the_guest_menu_never_gets_the_academy_button():
     reply = guest_menu_reply(None, registration=None, open_meetings=[], now=NOW, academy=ACADEMY)
-    assert "🎓 Академия" not in labels(reply.rows) and data(reply.rows) == ["funnel:tour", "funnel:consult", "funnel:ask"]
+    assert "🎓 Академия" not in labels(reply.rows) and data(reply.rows) == [
+        "funnel:tour", "funnel:consult", "funnel:ask", "funnel:partner",
+    ]
 
 
 @pytest.fixture
@@ -1177,15 +1176,17 @@ async def test_a_guest_without_access_has_no_academy_button_in_telegram(world, w
     world.stage, world.academy = "guest", False
     result = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     assert result["route"] == "guest_menu"
-    assert tg_labels(world.sent[-1][2]) == ["📅 Записаться: вт 03.11 19:30", "📅 Записаться: чт 05.11 19:30", "▶ Показ системы", "🤝 Личный разбор", "✍️ Задать вопрос"]
+    assert tg_labels(world.sent[-1][2]) == [
+        "▶ Карта системы", "📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA",
+    ]
 
 
 async def test_a_guest_with_access_gets_the_academy_button_after_the_consult_in_telegram(world, whieda_tenant, whieda_bot_binding):
     world.stage, world.academy = "guest", True
     await start_telegram(world, whieda_tenant, whieda_bot_binding)
     markup = world.sent[-1][2]
-    assert tg_labels(markup)[-4:] == ["▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
-    assert [button for row in markup["inline_keyboard"] for button in row][-2] == {"text": "🎓 Академия", "callback_data": "acad:home"}
+    assert tg_labels(markup)[-4:] == ["🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
+    assert [button for row in markup["inline_keyboard"] for button in row][-3] == {"text": "🎓 Академия", "callback_data": "acad:home"}
 
 
 async def test_the_academy_button_is_in_the_menu_word_and_in_max(max_world, whieda_tenant, whieda_bot_binding):
@@ -1193,8 +1194,8 @@ async def test_the_academy_button_is_in_the_menu_word_and_in_max(max_world, whie
     result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", ""), "t1")
     assert result["stage"] == "guest"
     buttons = [b for row in max_world.max_sent[-1][1] for b in row]
-    assert [b["text"] for b in buttons][-4:] == ["▶ Показ системы", "🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
-    assert buttons[-2].get("url", "").endswith("/academy/")
+    assert [b["text"] for b in buttons][-4:] == ["🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
+    assert buttons[-3].get("url", "").endswith("/academy/")
     max_world.academy = False
     await max_processor.handle_max_message(MAX_TENANT, max_event("message", "меню"), "t1")
     assert "🎓 Академия" not in [b["text"] for row in max_world.max_sent[-1][1] for b in row]
@@ -1206,7 +1207,7 @@ async def test_partners_do_not_get_a_guest_academy_button(world, whieda_tenant, 
     await start_telegram(world, whieda_tenant, whieda_bot_binding)
     flat = tg_labels(world.sent[-1][2])
     assert flat.count("🎓 Академия") <= 1  # у партнёра WWC Академия — кнопка кабинета, у партнёра WHIEDA — «Курс «Запуск WWC»»
-    assert "▶ Показ системы" not in flat
+    assert "▶ Карта системы" not in flat and "Я уже партнёр WHIEDA" not in flat
 
 
 async def test_the_lead_start_screen_shows_the_academy_button_too(monkeypatch, stages_on):
@@ -1215,7 +1216,7 @@ async def test_the_lead_start_screen_shows_the_academy_button_too(monkeypatch, s
     world = Start(monkeypatch, lead=make_lead())
     monkeypatch.setattr("app.funnel.lead_start.academy_button", AsyncMock(return_value=ACADEMY))
     result = await world.run()
-    assert labels(result.reply.rows)[-3:] == ["🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос"]
+    assert labels(result.reply.rows)[-4:] == ["🤝 Личный разбор", "🎓 Академия", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
     monkeypatch.setattr("app.funnel.lead_start.academy_button", AsyncMock(return_value=None))
     assert "🎓 Академия" not in labels((await world.run()).reply.rows)
 
@@ -1337,7 +1338,7 @@ async def test_the_menu_goes_out_even_if_set_my_commands_hangs(world, whieda_ten
             timeout=2.0,
         )
     assert result["route"] == "guest_menu"
-    assert world.sent[-1][1].startswith("Вы в WWC: Whieda World Club")  # меню у человека
+    assert world.sent[-1][1].startswith("Здравствуйте. Это бот WWC")  # меню у человека
     await asyncio.sleep(0)
     assert started == ["setMyCommands"] and stages_tg._background_tasks  # вызов начат и всё ещё висит, ответу он не мешал
     gate.set()
@@ -1377,7 +1378,7 @@ async def test_the_menu_goes_out_even_if_set_my_commands_fails_and_a_second_star
     first = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     second = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     assert first["route"] == "guest_menu" and second["route"] == "guest_menu"
-    assert [chat for chat, text, _ in world.sent if text.startswith("Вы в WWC")] == [str(USER), str(USER)]  # оба меню у человека
+    assert [chat for chat, text, _ in world.sent if text.startswith("Здравствуйте. Это бот WWC")] == [str(USER), str(USER)]  # оба меню у человека
     failing.assert_awaited_once()  # неудача запомнена на несколько минут, на втором /start вызова нет
 
 

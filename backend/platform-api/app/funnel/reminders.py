@@ -3,10 +3,12 @@
 Записанным (``meeting_registrations.status = 'registered'``) на живую запланированную встречу напоминание приходит
 в тот мессенджер, где человек записался (Telegram — строка ``platform_outbox``, Max — ``enqueue_max_notification``):
 
-  day        за 24 часа, окно 45 минут;
-  two_hours  за 2 часа, окно 30 минут;
-  hour       за 1 час, окно 20 минут, кнопка «Присоединиться»;
+  day        за 24 часа, окно 45 минут, кнопки «Перенести» и «Отменить запись»;
+  two_hours  за 2 часа, окно 30 минут, кнопка «Перенести»;
+  hour       за 1 час, окно 20 минут, кнопка «Присоединиться», в тексте подпись в Zoom «Гость Имя» / «Партнёр Имя»;
   five       за 5 минут, окно 10 минут (но не позже начала), кнопка «Присоединиться».
+
+Тексты — ТЗ 28, раздел 4. «Утром в день встречи» (4.3, кружок 4) в расписании нет и не добавлялось.
 
 Окна и порядок — как у вебинаров Академии (``app/academy/webinars.py: REMINDERS``), сам код ALMIRA не тронут. Напоминание
 уходит, пока ``время ≤ сейчас < время + окно`` (опоздавший воркер не пришлёт «через час» за 40 минут). Ключ outbox
@@ -32,9 +34,10 @@ from typing import Any
 from app.crm.service import safe_error
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.funnel import texts
-from app.funnel.guest import Rows
+from app.funnel.guest import Rows, control_rows
 from app.funnel.outbound import enqueue_guest_message
-from app.meetings.service import format_msk, as_msk
+from app.funnel.people import is_partner_person, person_name
+from app.meetings.service import as_msk
 from app.telegram.bindings import BotBindingContext
 
 logger = logging.getLogger("whieda.funnel.reminders")
@@ -55,7 +58,7 @@ KINDS = tuple(kind for kind, *_ in REMINDERS)
 HORIZON = timedelta(hours=24)
 
 _CANDIDATES_SQL = """
-    select r.registration_id, r.channel, r.channel_user_id, r.registered_at, r.reminders_sent,
+    select r.registration_id, r.lead_id::text as lead_id, r.channel, r.channel_user_id, r.registered_at, r.reminders_sent,
            m.meeting_id, m.starts_at
     from meeting_registrations r
     join meetings m on m.tenant_id = r.tenant_id and m.meeting_id = r.meeting_id
@@ -108,25 +111,38 @@ def due_kinds(
     return due
 
 
-def reminder_text(kind: str, starts_at: datetime, *, now: datetime | None = None) -> str:
-    """Текст напоминания. Время и дата — московские (``format_msk``)."""
-    when = format_msk(starts_at, now=now)
-    time = f"{as_msk(starts_at):%H:%M}"
+def zoom_label(name: str, *, partner: bool) -> str:
+    """«Гость Анна» / «Партнёр Анна»; без имени — пустая строка (фразы про подпись в Zoom не будет)."""
+    if not name:
+        return ""
+    return (texts.ZOOM_PARTNER_LABEL if partner else texts.ZOOM_GUEST_LABEL).format(name=name)
+
+
+def reminder_text(kind: str, starts_at: datetime, *, now: datetime | None = None, zoom: str = "") -> str:
+    """Текст напоминания. Время и дата — московские. ``zoom`` — подпись в Zoom для напоминания «за час» (``zoom_label``)."""
+    local = as_msk(starts_at)
+    date = f"{local:%d.%m}" + (f".{local.year}" if local.year != as_msk(now or datetime.now(timezone.utc)).year else "")
+    time = f"{local:%H:%M}"
     if kind == "day":
-        return texts.REMINDER_DAY.format(when=when)
+        return texts.REMINDER_DAY.format(date=date, time=time)
     if kind == "two_hours":
         return texts.REMINDER_TWO_HOURS.format(time=time)
     if kind == "hour":
-        return texts.REMINDER_HOUR.format(time=time)
+        return texts.REMINDER_HOUR + (texts.REMINDER_HOUR_ZOOM.format(label=zoom) if zoom else "")
     if kind == "five":
         return texts.REMINDER_FIVE
     raise ValueError("unknown reminder kind")
 
 
 def reminder_rows(kind: str, registration_id: int) -> Rows:
-    """«Присоединиться» (``mjoin:<запись>``) под напоминаниями «за час» и «за 5 минут»; у остальных кнопок нет."""
+    """«Присоединиться» (``mjoin:<запись>``) под напоминаниями «за час» и «за 5 минут»; «Перенести» и «Отменить запись»
+    под «за сутки», «Перенести» под «за 2 часа» (``mmove:`` / ``mcancel:``, ``app/funnel/registration.py``)."""
     if any(k == kind and with_button for k, _, _, with_button in REMINDERS):
         return [[(texts.JOIN_BUTTON, f"{texts.JOIN_CALLBACK_PREFIX}{int(registration_id)}")]]
+    if kind == "day":
+        return control_rows(registration_id)
+    if kind == "two_hours":
+        return [[(texts.GUEST_MOVE_BUTTON, f"{texts.MOVE_CALLBACK_PREFIX}{int(registration_id)}")]]
     return []
 
 
@@ -151,6 +167,12 @@ async def remind_one(
     claimed = await fetch_one(conn, _CLAIM_SQL, (kind, now.isoformat(), tenant_id, registration_id, kind))
     if claimed is None:
         return "raced"
+    zoom = ""
+    if kind == "hour":
+        channel, user = str(row["channel"]), int(row["channel_user_id"])
+        name = await person_name(conn, tenant_id, channel, user, lead_id=row.get("lead_id"))
+        if name:
+            zoom = zoom_label(name, partner=await is_partner_person(conn, tenant_id, channel, user))
     queued = await enqueue_guest_message(
         conn,
         tenant_id=tenant_id,
@@ -159,7 +181,7 @@ async def remind_one(
         user_id=int(row["channel_user_id"]),
         idempotency_key=reminder_key(registration_id, kind),
         event_type=EVENT_TYPE,
-        text=reminder_text(kind, row["starts_at"], now=now),
+        text=reminder_text(kind, row["starts_at"], now=now, zoom=zoom),
         rows=reminder_rows(kind, registration_id),
         due_at=now,
     )

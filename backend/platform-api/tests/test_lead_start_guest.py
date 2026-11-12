@@ -76,8 +76,10 @@ def labels(rows: list[list[tuple[str, str]]]) -> list[str]:
     return [label for row in rows for label, _ in row]
 
 
-MENU_LABELS = ["Показ системы", "Личный разбор", "Задать вопрос"]
-MENU_DATA = ["funnel:tour", "funnel:consult", "funnel:ask"]
+MENU_LABELS = ["Карта системы", "Личный разбор", "Задать вопрос", "Я уже партнёр WHIEDA"]
+MENU_DATA = ["funnel:tour", "funnel:consult", "funnel:ask", "funnel:partner"]
+# с датами в приветствии появляется «Записаться на встречу» (funnel:meet) сразу после карты
+MENU_DATA_BOOK = ["funnel:tour", "funnel:meet", "funnel:consult", "funnel:ask", "funnel:partner"]
 
 
 @asynccontextmanager
@@ -106,6 +108,7 @@ def test_the_lead_start_token_is_parsed(token, expected):
     ("mmoveto:7:13", GuestAction("move_to", registration_id=7, meeting_id=13)),
     ("mcancel:7", GuestAction("cancel", registration_id=7)),
     ("funnel:meet", GuestAction("meet")), ("funnel:tour", GuestAction("tour")), ("funnel:ask", GuestAction("ask")),
+    ("funnel:partner", GuestAction("partner")),
     (" mreg:12 ", GuestAction("register", meeting_id=12)),
 ])
 def test_guest_buttons_are_parsed(data, expected):
@@ -126,7 +129,7 @@ def test_every_max_prefix_of_the_guest_resolves_to_the_guest_handler_and_consult
         assert found is not None and found[1] is guest_bot.max_guest_callback, prefix
     assert max_processor.resolve_max_callback("funnel:consult")[1] is system_word.max_funnel_callback
     assert set(GUEST_MAX_PREFIXES) == {
-        "mreg:", "mmove:", "mmoveto:", "mcancel:", "mjoin:", "funnel:meet", "funnel:tour", "funnel:ask",
+        "mreg:", "mmove:", "mmoveto:", "mcancel:", "mjoin:", "funnel:meet", "funnel:tour", "funnel:ask", "funnel:partner",
     }
 
 
@@ -145,23 +148,55 @@ def test_other_text_is_not_the_menu_word(text):
 
 def test_the_guest_menu_names_the_partner_and_lists_two_meetings_with_the_three_buttons():
     reply = guest_menu_reply("Ольга Смирнова", registration=None, open_meetings=[TUE, THU], now=NOW)
-    assert reply.text == "Вас пригласил партнёр: Ольга Смирнова.\n\nВыберите ближайшую живую встречу."
-    assert labels(reply.rows) == ["Записаться: вт 03.11 19:30", "Записаться: чт 05.11 19:30", *MENU_LABELS]
-    assert callback_data(reply.rows) == ["mreg:11", "mreg:12", *MENU_DATA]
+    assert reply.text == texts.GREETING_PARTNER.format(name="Ольга Смирнова")
+    assert labels(reply.rows) == ["Карта системы", "Записаться на встречу", "Личный разбор", "Задать вопрос", "Я уже партнёр WHIEDA"]
+    assert callback_data(reply.rows) == MENU_DATA_BOOK
     assert all(len(row) == 1 for row in reply.rows)
+    assert len(reply.text) <= 350
 
 
-def test_without_a_partner_the_guest_is_simply_in_wwc():
+def test_without_a_partner_the_guest_gets_the_bot_greeting():
     for name in (None, ""):
         reply = guest_menu_reply(name, registration=None, open_meetings=[TUE], now=NOW)
-        assert reply.text.startswith("Вы в WWC.\n\n")
+        assert reply.text == texts.GREETING_AD
+        assert reply.text.startswith("Здравствуйте. Это бот WWC, сообщества партнёров WHIEDA.")
+        assert len(reply.text) <= 350
+
+
+@pytest.mark.parametrize("tag", ["art-ashwagandha", "site-club", "ART-x"])
+def test_the_search_greeting_asks_for_a_question_first_and_adds_the_partner_phrase(tag):
+    reply = guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW, start_tag=tag)
+    assert reply.text == texts.GREETING_ASK
+    assert callback_data(reply.rows) == ["funnel:ask", "funnel:tour", "funnel:meet", "funnel:partner"]   # без «Личного разбора»
+    with_partner = guest_menu_reply("Ольга Смирнова", registration=None, open_meetings=[TUE], now=NOW, start_tag=tag)
+    assert with_partner.text == "Вас пригласил Ольга Смирнова. " + texts.GREETING_ASK
+    assert len(with_partner.text) <= 350
+
+
+@pytest.mark.parametrize("tag", ["vk", "tiktok", "unknown", "artist", None, ""])
+def test_other_sources_get_the_ordinary_greeting(tag):
+    assert guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW, start_tag=tag).text == texts.GREETING_AD
+
+
+def test_the_meeting_button_is_there_only_when_there_are_dates_and_the_partner_button_always():
+    no_dates = guest_menu_reply("Ольга", registration=None, open_meetings=[], now=NOW)
+    assert callback_data(no_dates.rows) == MENU_DATA and no_dates.text.endswith(texts.GUEST_NO_MEETINGS)
+    assert no_dates.rows[-1] == [("Я уже партнёр WHIEDA", "funnel:partner")]
+
+
+def test_the_greeting_has_no_old_words():
+    for reply in (
+        guest_menu_reply("Ольга", registration=None, open_meetings=[TUE], now=NOW),
+        guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW),
+        guest_menu_reply(None, registration=None, open_meetings=[TUE], now=NOW, start_tag="art-x"),
+    ):
+        for word in ("МЛМ", "сетев", "бот WHIEDA", "Карта системы WHIEDA"):
+            assert word not in reply.text
 
 
 def test_an_active_registration_replaces_the_meeting_list_with_move_and_cancel():
     reply = guest_menu_reply("Ольга", registration=(make_registration(7, 12), THU), open_meetings=[], now=NOW)
-    assert reply.text == (
-        "Вас пригласил партнёр: Ольга.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
-    )
+    assert reply.text == "Вас пригласил Ольга.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
     assert reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(reply.rows[1:]) == MENU_DATA
     assert "mreg:" not in " ".join(callback_data(reply.rows))
@@ -169,18 +204,19 @@ def test_an_active_registration_replaces_the_meeting_list_with_move_and_cancel()
 
 def test_no_meetings_at_all_is_said_plainly_and_the_menu_stays():
     reply = guest_menu_reply(None, registration=None, open_meetings=[], now=NOW)
-    assert reply.text == "Вы в WWC.\n\nБлижайших живых встреч пока нет. Загляните сюда чуть позже."
+    assert reply.text == texts.GREETING_AD + "\n\n" + texts.GUEST_NO_MEETINGS
+    assert texts.GUEST_NO_MEETINGS == "Живых встреч пока нет. Загляните сюда чуть позже."
     assert callback_data(reply.rows) == MENU_DATA
 
 
 def test_a_note_goes_under_the_greeting():
     reply = guest_menu_reply("Ольга", registration=None, open_meetings=[TUE], now=NOW, note=texts.GUEST_MEETING_GONE)
-    assert reply.text.split("\n\n")[:2] == ["Вас пригласил партнёр: Ольга.", "Встреча, на которую вы записывались, уже прошла или отменена."]
+    assert reply.text.split("\n\n")[:2] == [texts.GREETING_PARTNER.format(name="Ольга"), "Встреча, на которую вы записывались, уже прошла или отменена."]
 
 
 def test_register_buttons_mark_the_meeting_the_person_is_already_on():
     rows = guest.register_rows([TUE, THU], frozenset({12}), now=NOW)
-    assert labels(rows) == ["Записаться: вт 03.11 19:30", "Вы записаны: чт 05.11 19:30"]
+    assert labels(rows) == ["Записаться на вт 03.11 19:30", "Вы записаны: чт 05.11 19:30"]
     assert callback_data(rows) == ["mreg:11", "mreg:12"]  # обе кнопки — mreg: повтор отвечает «уже записаны»
 
 
@@ -202,7 +238,7 @@ def test_rows_become_a_telegram_keyboard_and_max_buttons():
 
 def test_every_guest_text_is_marked_for_the_funnel_owner():
     source = open(texts.__file__, encoding="utf-8").read()
-    for name in ("GUEST_FROM_PARTNER", "GUEST_IN_WWC", "REGISTRATION_CONFIRMED", "MOVE_DONE", "CANCEL_DONE", "ASK_PROMPT", "GUEST_ERROR"):
+    for name in ("GREETING_PARTNER", "GREETING_AD", "GREETING_ASK", "REGISTRATION_CONFIRMED", "MOVE_DONE", "CANCEL_DONE", "ASK_PROMPT", "GUEST_ERROR"):
         before = source.split(f"\n{name} = ")[0].rsplit("\n", 3)[-3:]
         assert any("# текст: воронка" in line for line in before), name
 
@@ -335,7 +371,7 @@ async def test_a_lead_with_a_partner_and_a_meeting_attributes_registers_and_gree
     assert start.event.await_args.args[2:4] == ("card-1", "registered")
     assert start.event.await_args.kwargs["starts_at"] == THU["starts_at"]
     assert result.reply.text == (
-        "Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
+        "Вас пригласил Игорь Волков.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
     )
     assert result.reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(result.reply.rows[1:]) == MENU_DATA
@@ -361,7 +397,7 @@ async def test_the_organic_owner_is_not_a_partner_and_nobody_is_attributed(start
     card.assert_not_awaited()                  # профиль organic-владельца даже не читается
     start.accept.assert_not_awaited()
     start.invite.assert_not_awaited()
-    assert result.reply.text.startswith("Вы в WWC.")
+    assert result.reply.text.startswith("Здравствуйте. Это бот WWC")
 
 
 async def test_an_owner_without_a_partner_profile_means_in_wwc(start):
@@ -370,7 +406,7 @@ async def test_an_owner_without_a_partner_profile_means_in_wwc(start):
     result = await start.run()
     assert result.inviter_name is None and result.attribution is None
     start.accept.assert_not_awaited()
-    assert result.reply.text.startswith("Вы в WWC.")
+    assert result.reply.text.startswith("Здравствуйте. Это бот WWC")
 
 
 async def test_a_lead_without_an_owner_is_in_wwc(start):
@@ -394,7 +430,7 @@ async def test_a_failed_attribution_does_not_stop_the_registration_and_the_greet
     result = await start.run()
     assert result.attribution == "error" and result.status == "registered"
     start.register.assert_awaited_once()
-    assert result.reply.text.startswith("Вас пригласил партнёр: Игорь Волков.")
+    assert result.reply.text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
 
 
 async def test_a_lead_without_a_meeting_shows_the_two_nearest_meetings(start):
@@ -405,7 +441,7 @@ async def test_a_lead_without_a_meeting_shows_the_two_nearest_meetings(start):
     assert result.status == "menu"
     start.register.assert_not_awaited()
     start.event.assert_not_awaited()
-    assert callback_data(result.reply.rows) == ["mreg:11", "mreg:12", *MENU_DATA]
+    assert callback_data(result.reply.rows) == MENU_DATA_BOOK
 
 
 @pytest.mark.parametrize("problem", ["closed", "not_found"])
@@ -416,7 +452,7 @@ async def test_a_meeting_that_is_gone_is_said_politely_and_other_meetings_are_of
     assert result.status == "closed"
     start.event.assert_not_awaited()
     assert "Встреча, на которую вы записывались, уже прошла или отменена." in result.reply.text
-    assert callback_data(result.reply.rows) == ["mreg:11", "mreg:13", *MENU_DATA]
+    assert callback_data(result.reply.rows) == MENU_DATA_BOOK
 
 
 async def test_a_forwarded_link_registers_the_new_person_without_the_lead_and_without_touching_the_card(start):
@@ -493,7 +529,7 @@ async def test_the_meeting_list_has_three_buttons_and_marks_the_registered_one(r
     result = await registration.list_meetings("whieda", "telegram", USER, now=NOW)
     assert result.status == "listed"
     assert result.reply.text == "Выберите ближайшую живую встречу."
-    assert labels(result.reply.rows) == ["Записаться: вт 03.11 19:30", "Вы записаны: чт 05.11 19:30", "Записаться: вт 10.11 19:30"]
+    assert labels(result.reply.rows) == ["Записаться на вт 03.11 19:30", "Вы записаны: чт 05.11 19:30", "Записаться на вт 10.11 19:30"]
     assert callback_data(result.reply.rows) == ["mreg:11", "mreg:12", "mreg:13"]
     assert reg.open_mock.await_args.kwargs["limit"] == 3
 
@@ -501,7 +537,7 @@ async def test_the_meeting_list_has_three_buttons_and_marks_the_registered_one(r
 async def test_the_meeting_list_without_meetings_says_so_and_skips_the_second_query(reg):
     reg.open = []
     result = await registration.list_meetings("whieda", "telegram", USER, now=NOW)
-    assert result.status == "no_meetings" and result.reply.rows == []
+    assert result.status == "no_meetings" and result.reply.rows == [[("Задать вопрос", "funnel:ask")]]
     assert result.reply.text == texts.GUEST_NO_MEETINGS
     reg.active_mock.assert_not_awaited()
 
@@ -509,7 +545,8 @@ async def test_the_meeting_list_without_meetings_says_so_and_skips_the_second_qu
 async def test_registering_confirms_with_the_date_and_offers_move_and_cancel(reg):
     result = await registration.register("whieda", "telegram", USER, 12, now=NOW)
     assert result.status == "registered" and result.clear_keyboard is False
-    assert result.reply.text == "Вы записаны на Живую встречу: чт 05.11 19:30 МСК.\nНапоминание о встрече придёт сюда."
+    assert result.reply.text == texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
+    assert "«Присоединиться»" in result.reply.text and "гостей до восьми" in result.reply.text and len(result.reply.text) <= 350
     assert result.reply.rows == [[("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]]
     assert reg.register_mock.await_args.kwargs["lead_id"] == "00000000-0000-0000-0000-00000000aaaa"
     # карточка CRM: метка и заметка
@@ -554,7 +591,7 @@ async def test_a_gone_meeting_with_no_others_says_so(reg):
     reg.register_outcome = RegisterOutcome("closed", None, None)
     reg.open = []
     result = await registration.register("whieda", "telegram", USER, 99, now=NOW)
-    assert result.reply.text == "Эта встреча уже прошла или отменена.\nБлижайших живых встреч пока нет. Загляните сюда чуть позже."
+    assert result.reply.text == "Эта встреча уже прошла или отменена.\nЖивых встреч пока нет. Загляните сюда чуть позже."
     assert result.reply.rows == []
 
 
@@ -690,6 +727,7 @@ def tg(whieda_bot_binding):
         stack.enter_context(patch.object(guest_bot, "answer_callback_query", state.answer))
         stack.enter_context(patch.object(guest_bot, "_call_telegram", state.call))
         stack.enter_context(patch.object(guest_bot, "send_tour_telegram", state.tour))
+        stack.enter_context(patch.object(guest_bot, "is_partner_viewer", AsyncMock(return_value=False)))
         stack.enter_context(binding_context_scope(whieda_bot_binding))
         yield state
 
@@ -771,6 +809,7 @@ def guest_world(monkeypatch, *, guest_context: GuestContext | None, view=(None, 
     monkeypatch.setattr(guest_bot, "tenant_connection", fake_connection)
     monkeypatch.setattr(guest_bot, "resolve_guest", resolve)
     monkeypatch.setattr(guest_bot, "load_guest_view", AsyncMock(return_value=view))
+    monkeypatch.setattr(guest_bot, "load_start_tag", AsyncMock(return_value=None))
     monkeypatch.setattr(guest_bot, "owner_card", AsyncMock(return_value=card))
 
 
@@ -783,10 +822,8 @@ async def test_a_guest_gets_the_guest_menu_instead_of_the_cabinet(tg, monkeypatc
     result = await guest_bot.try_handle_guest_menu_text(TENANT, tg_msg(text), trace_id="t1")
     assert result == {"ok": True, "route": "guest_menu", "status": "shown", "trace_id": "t1"}
     sent = tg.text.await_args.kwargs
-    assert sent["text"].startswith("Вас пригласил партнёр: Игорь Волков.\n\nВыберите ближайшую живую встречу.")
-    assert callback_data([[(b["text"], b["callback_data"])] for row in sent["reply_markup"]["inline_keyboard"] for b in row]) == [
-        "mreg:11", "mreg:12", *MENU_DATA,
-    ]
+    assert sent["text"] == texts.GREETING_PARTNER.format(name="Игорь Волков")
+    assert callback_data([[(b["text"], b["callback_data"])] for row in sent["reply_markup"]["inline_keyboard"] for b in row]) == MENU_DATA_BOOK
 
 
 @pytest.mark.parametrize("text", ["товары", "как дела", "сколько стоит ref", "/cabinet", "/start ref_abcdefgh", "система", "меню бота"])
@@ -882,7 +919,7 @@ async def test_a_failed_action_answers_with_an_apology_and_does_not_raise(tg, mo
 async def test_the_tour_button_sends_the_tour_the_same_way_as_the_word(tg):
     result = await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:tour"), trace_id="t1")
     assert result["status"] == "tour" and result["tour"] == "tour"
-    tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1")
+    tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1", partner=False)
 
 
 ASK_TEXT = "Напишите вопрос одним сообщением — передам Виктору"
@@ -1161,7 +1198,7 @@ async def test_the_bare_start_of_a_guest_opens_the_guest_menu_and_not_the_cabine
     assert result["route"] == "guest_menu"
     mocks["dashboard"].assert_not_awaited()
     mocks["legacy_keyboard"].assert_not_awaited()
-    assert tg.text.await_args.kwargs["text"].startswith("Вы в WWC.")
+    assert tg.text.await_args.kwargs["text"].startswith("Здравствуйте. Это бот WWC")
 
 
 async def test_the_bare_start_of_a_partner_or_a_stranger_opens_the_cabinet_as_before(tg, whieda_tenant, whieda_bot_binding, monkeypatch):
@@ -1247,6 +1284,7 @@ def mx(monkeypatch):
     )
     monkeypatch.setattr(guest_bot, "send_max_text", state.text)
     monkeypatch.setattr(guest_bot, "send_tour_max", state.tour)
+    monkeypatch.setattr(guest_bot, "is_partner_viewer", AsyncMock(return_value=False))
     monkeypatch.setattr(max_processor, "send_max_text", state.text)
     monkeypatch.setattr(max_processor, "answer_max_callback", state.answered)
     monkeypatch.setattr(max_processor, "ensure_channel_actor", state.actor)
@@ -1310,8 +1348,9 @@ async def test_the_bare_max_start_of_a_guest_shows_the_guest_menu(mx, monkeypatc
     guest_world(monkeypatch, guest_context=dataclasses.replace(GUEST, channel="max"), view=(None, [TUE]), card=None)
     result = await max_processor.handle_max_start(TENANT, max_event(text=""), "t1")
     assert result == {"ok": True, "route": "max_guest_menu", "status": "shown", "trace_id": "t1"}
-    assert mx.text.await_args.kwargs["text"].startswith("Вы в WWC.")
-    assert mx.text.await_args.kwargs["buttons"][0] == [max_button_callback("Записаться: вт 03.11 19:30", "mreg:11")]
+    assert mx.text.await_args.kwargs["text"].startswith("Здравствуйте. Это бот WWC")
+    assert mx.text.await_args.kwargs["buttons"][1] == [max_button_callback("Записаться на встречу", "funnel:meet")]
+    assert mx.text.await_args.kwargs["buttons"][-1] == [max_button_callback("Я уже партнёр WHIEDA", "funnel:partner")]
 
 
 async def test_the_bare_max_start_of_a_stranger_is_the_old_welcome(mx, monkeypatch):
@@ -1366,7 +1405,7 @@ async def test_each_max_button_calls_its_action(mx, monkeypatch, payload, name, 
 
 async def test_the_max_tour_button(mx):
     await max_processor.process_max_event(TENANT, max_callback("funnel:tour"), "t1")
-    mx.tour.assert_awaited_once_with(TENANT, chat_id=555, user_id=USER, trace_id="t1")
+    mx.tour.assert_awaited_once_with(TENANT, chat_id=555, user_id=USER, trace_id="t1", partner=False)
     mx.text.assert_not_awaited()
 
 
@@ -1430,15 +1469,15 @@ def foreign_guest(monkeypatch, *, blocked: bool = True):
 
 def test_a_guest_of_a_foreign_partner_sees_no_meetings_and_no_consult_but_the_partner_line_and_the_question():
     reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE, THU], now=NOW, own_network=False)
-    assert reply.text == f"Вас пригласил партнёр: Игорь Волков.\n\n{texts.GUEST_PARTNER_WILL_CONTACT}"
-    assert "Ваш партнёр свяжется с вами" in reply.text
-    assert callback_data(reply.rows) == ["funnel:tour", "funnel:ask"]   # ни mreg:, ни funnel:consult
+    assert reply.text == f"{texts.GREETING_PARTNER_PLAIN.format(name='Игорь Волков')}\n\n{texts.GUEST_PARTNER_WILL_CONTACT}"
+    assert "на связи и ответит на ваши вопросы" in reply.text and "свяжется" not in reply.text and "Живую встречу" not in reply.text.split("\n\n")[0]
+    assert callback_data(reply.rows) == ["funnel:tour", "funnel:ask", "funnel:partner"]   # ни mreg:, ни funnel:meet, ни funnel:consult
     assert not any(data.startswith(("mreg:", "funnel:consult")) for data in callback_data(reply.rows))
 
 
 def test_the_own_network_menu_is_unchanged():
     reply = guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE], now=NOW)
-    assert callback_data(reply.rows)[0] == "mreg:11" and callback_data(reply.rows)[1:] == MENU_DATA
+    assert callback_data(reply.rows) == MENU_DATA_BOOK
     assert guest_menu_reply("Игорь Волков", registration=None, open_meetings=[TUE], now=NOW, own_network=True) == reply
 
 
@@ -1451,8 +1490,8 @@ def test_a_registration_made_earlier_is_still_shown_to_a_guest_of_a_foreign_part
 
 def test_the_three_menus_variant_of_the_foreign_guest_screen(stages_on):
     reply = guest_menu_reply("Игорь", registration=None, open_meetings=[TUE], now=NOW, own_network=False)
-    assert labels(reply.rows) == [texts.STAGE_TOUR_BUTTON, texts.STAGE_ASK_BUTTON]
-    assert texts.STAGE_GUEST_INTRO in reply.text and texts.GUEST_PARTNER_WILL_CONTACT in reply.text
+    assert labels(reply.rows) == [texts.STAGE_TOUR_BUTTON, texts.STAGE_ASK_BUTTON, texts.GUEST_ALREADY_PARTNER_BUTTON]
+    assert texts.GREETING_PARTNER_PLAIN.format(name="Игорь") in reply.text and texts.GUEST_PARTNER_WILL_CONTACT in reply.text
 
 
 async def test_the_guest_view_of_a_foreign_guest_does_not_read_the_meetings(monkeypatch):
@@ -1489,7 +1528,7 @@ async def test_move_cancel_still_work_for_a_foreign_guest_who_registered_earlier
 async def test_the_tour_of_a_foreign_guest_is_sent_without_the_meeting_and_consult_buttons(tg, monkeypatch):
     foreign_guest(monkeypatch)
     await guest_bot.try_handle_guest_callback(TENANT, tg_cb("funnel:tour"), trace_id="t1")
-    tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1", offers=False)
+    tg.tour.assert_awaited_once_with(TENANT, USER, trace_id="t1", offers=False, partner=False)
 
 
 async def test_the_meeting_buttons_do_not_answer_a_guest_of_a_foreign_partner_in_max(mx, monkeypatch):
@@ -1529,21 +1568,38 @@ async def test_the_consult_dialog_in_max_is_closed_to_a_guest_of_a_foreign_partn
 
 
 def test_the_tour_keyboard_has_no_meeting_and_consult_buttons_when_offers_are_off():
-    assert system_word.telegram_markup(offers=False) == {}
-    assert system_word.max_buttons(offers=False) == []
-    only_link = system_word.telegram_markup(presentation=True, offers=False)
+    # гость чужого партнёра: только «Задать вопрос»; партнёру без предложений — пусто, как раньше
+    foreign = system_word.telegram_markup(offers=False)
+    assert [[b["text"] for b in row] for row in foreign["inline_keyboard"]] == [["Задать вопрос"]]
+    assert system_word.telegram_markup(offers=False, partner=True) == {} and system_word.max_buttons(offers=False, partner=True) == []
+    only_link = system_word.telegram_markup(presentation=True, offers=False, partner=True)
     assert [[b["text"] for b in row] for row in only_link["inline_keyboard"]] == [[texts.SYSTEM_TOUR_FALLBACK_BUTTON]]
-    assert len(system_word.telegram_markup()["inline_keyboard"]) == 2
+    # холодный гость: «Записаться на встречу», «Личный разбор», «Задать вопрос»; партнёр: «Живая встреча», «Личный разбор»
+    guest = system_word.telegram_markup()
+    assert [[b["text"] for b in row] for row in guest["inline_keyboard"]] == [["Записаться на встречу"], ["Личный разбор"], ["Задать вопрос"]]
+    assert [[b["callback_data"] for b in row] for row in guest["inline_keyboard"]] == [["funnel:meet"], ["funnel:consult"], ["funnel:ask"]]
+    partner = system_word.telegram_markup(partner=True)
+    assert [[b["text"] for b in row] for row in partner["inline_keyboard"]] == [["Живая встреча"], ["Личный разбор"]]
 
 
 async def test_the_tour_without_offers_has_a_plain_caption_and_no_keyboard(monkeypatch, whieda_bot_binding):
     send = AsyncMock(return_value={"ok": True, "kind": "video"})
     monkeypatch.setattr(system_word, "send_media", send)
     await system_word.send_tour_telegram(TENANT, USER, offers=False)
-    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION_PLAIN and send.await_args.kwargs["reply_markup"] is None
+    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION_GUEST_PLAIN
+    assert [b["text"] for row in send.await_args.kwargs["reply_markup"]["inline_keyboard"] for b in row] == ["Задать вопрос"]
     await system_word.send_tour_max(TENANT, chat_id=555, user_id=USER, trace_id="t1", offers=False)
-    assert send.await_args.kwargs["buttons"] is None and "встреч" not in send.await_args.kwargs["caption"].lower()
+    assert "встреч" not in send.await_args.kwargs["caption"].lower()
+    # партнёр без предложений: прежняя подпись без кнопок
+    await system_word.send_tour_telegram(TENANT, USER, offers=False, partner=True)
+    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION_PLAIN and send.await_args.kwargs["reply_markup"] is None
+    await system_word.send_tour_max(TENANT, chat_id=555, user_id=USER, trace_id="t1", offers=False, partner=True)
+    assert send.await_args.kwargs["buttons"] is None
+    # холодный гость: подпись ТЗ 28, 1.4; партнёр: прежняя
     await system_word.send_tour_telegram(TENANT, USER)
+    assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION_GUEST and send.await_args.kwargs["reply_markup"]
+    assert len(texts.SYSTEM_TOUR_CAPTION_GUEST) <= 150  # подпись под картой: до 150 знаков (ТЗ 28)
+    await system_word.send_tour_telegram(TENANT, USER, partner=True)
     assert send.await_args.kwargs["caption"] == texts.SYSTEM_TOUR_CAPTION and send.await_args.kwargs["reply_markup"]
 
 
@@ -1564,8 +1620,8 @@ async def test_a_lead_start_of_a_foreign_partner_shows_no_meetings_and_no_consul
     monkeypatch.setattr(lead_start, "is_own_network", own)
     monkeypatch.setattr(lead_start, "academy_button", AsyncMock(return_value=None))
     result = await start.run()
-    assert texts.GUEST_PARTNER_WILL_CONTACT in result.reply.text and "Вас пригласил партнёр: Игорь Волков." in result.reply.text
-    assert callback_data(result.reply.rows) == ["funnel:tour", "funnel:ask"]
+    assert texts.GUEST_PARTNER_WILL_CONTACT in result.reply.text and "Вас пригласил Игорь Волков." in result.reply.text
+    assert callback_data(result.reply.rows) == ["funnel:tour", "funnel:ask", "funnel:partner"]
     assert start.guest_view.await_args.kwargs["own_network"] is False
     own.assert_awaited_once()
 
@@ -1575,4 +1631,4 @@ async def test_a_lead_start_of_the_own_network_is_unchanged(start, monkeypatch):
     start.view = (None, [TUE])
     monkeypatch.setattr(lead_start, "academy_button", AsyncMock(return_value=None))
     result = await start.run()
-    assert callback_data(result.reply.rows)[0] == "mreg:11" and callback_data(result.reply.rows)[1:] == MENU_DATA
+    assert callback_data(result.reply.rows) == MENU_DATA_BOOK

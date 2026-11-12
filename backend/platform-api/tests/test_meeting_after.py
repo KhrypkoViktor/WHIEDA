@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from app.funnel.guest import consult_rows
 from app.funnel import after_meeting, partner_card, texts
 from app.funnel.after_meeting import after_key, no_show_message, summary_key, summary_text
 from app.funnel.partner_card import OwnerCard, build_card, card_intro, card_rows, card_text, guest_cards, safe_https_url
@@ -127,9 +128,22 @@ def test_the_card_text_buttons_and_intros():
     ]
     assert card_rows(ELENA) == [[("Написать в Max", "https://max.ru/u/elena")]]
     assert card_rows(OwnerCard(None, "x", "Имя")) == []
-    assert card_intro(IGOR, position=0, partner=True).startswith("Спасибо, что были на Живой встрече!\nВаш партнёр WWC — Игорь Волков.")
-    assert card_intro(VIKTOR, position=0, partner=False) == "Спасибо, что были на Живой встрече!\nВиктор Хрипко — на связи по любым вопросам."
-    assert card_intro(ELENA, position=1, partner=False) == "Елена — тоже на связи по любым вопросам."
+    own = card_intro(IGOR, partner=True)
+    assert own.startswith("Спасибо, что были на Живой встрече. Ваш партнёр — Игорь Волков: он на связи и ответит на ваши вопросы. Напишите ему.")
+    assert own.endswith("Если хотите разобрать свой случай подробнее, нажмите «Личный разбор».")
+    foreign = card_intro(IGOR, partner=True, consult=False)       # «Личный разбор» — только своей сети
+    assert "Личный разбор" not in foreign and foreign.endswith("Напишите ему.")
+    assert card_intro(VIKTOR, partner=False) == texts.AFTER_THANKS
+    assert len(own) <= 350 and "WWC" not in own
+
+
+def test_the_buttons_of_a_guest_from_ads_are_write_to_viktor_and_to_elena():
+    assert partner_card.ad_card_rows([VIKTOR, ELENA]) == [
+        [("Написать Виктору", "https://t.me/khripko")], [("Написать Елене", "https://max.ru/u/elena")],
+    ]
+    assert partner_card.ad_card_rows([OwnerCard(None, "x", "Имя"), ELENA]) == [[("Написать Елене", "https://max.ru/u/elena")]]
+    assert partner_card.ad_card_rows([]) == []
+    assert len(texts.AFTER_AD_TEXT) <= 350 and "Личный разбор" in texts.AFTER_AD_TEXT
 
 
 # ---- какие визитки получает гость ------------------------------------------------------------------
@@ -203,11 +217,12 @@ def test_the_default_extra_card_is_onlineelena(settings_env):
 
 
 def test_the_summary_lists_who_came_and_who_did_not_and_skips_empty_lines():
+    tail = "Поговорите с каждым в течение суток, пока встреча в памяти."
     assert summary_text("чт 05.11 19:30 МСК", ["Анна", "Олег"], ["Ирина"]) == (
-        "Живая встреча чт 05.11 19:30 МСК:\nБыли: Анна, Олег.\nЗаписались, но не пришли: Ирина."
+        f"Живая встреча чт 05.11 19:30 МСК.\nБыли: Анна, Олег.\nЗаписались, но не пришли: Ирина.\n{tail}"
     )
-    assert summary_text("чт 05.11 19:30 МСК", [], ["Ирина"]) == "Живая встреча чт 05.11 19:30 МСК:\nЗаписались, но не пришли: Ирина."
-    assert summary_text("чт 05.11 19:30 МСК", ["Анна"], []) == "Живая встреча чт 05.11 19:30 МСК:\nБыли: Анна."
+    assert summary_text("чт 05.11 19:30 МСК", [], ["Ирина"]) == f"Живая встреча чт 05.11 19:30 МСК.\nЗаписались, но не пришли: Ирина.\n{tail}"
+    assert summary_text("чт 05.11 19:30 МСК", ["Анна"], []) == f"Живая встреча чт 05.11 19:30 МСК.\nБыли: Анна.\n{tail}"
     anon = summary_text("чт 05.11 19:30 МСК", ["Анна"], [], anonymous_attended=2, anonymous_no_show=1)
     assert "Были: Анна, из бота без заявки — 2." in anon and "Записались, но не пришли: из бота без заявки — 1." in anon
 
@@ -215,7 +230,7 @@ def test_the_summary_lists_who_came_and_who_did_not_and_skips_empty_lines():
 def test_a_long_list_of_names_is_cut():
     names = [f"Гость{i}" for i in range(45)]
     text = summary_text("чт 05.11 19:30 МСК", names, [])
-    assert "Гость29" in text and "Гость30" not in text and "…и ещё 15" in text
+    assert "Гость29" in text and "Гость30" not in text and "…и ещё 15" in text and text.endswith(texts.SUMMARY_TAIL)
 
 
 def test_the_keys_of_the_messages():
@@ -225,15 +240,23 @@ def test_the_keys_of_the_messages():
 
 def test_the_no_show_message_gives_the_recording_and_the_nearest_meetings():
     text, rows = no_show_message(meeting(), [NEXT_TUE], frozenset(), now=AFTER_NOW)
-    assert text == "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли. Ничего страшного!\nБлижайшие встречи — выберите удобную."
-    assert rows == [[("▶️ Смотреть запись", RECORDING)], [("Записаться: вт 10.11 19:30", "mreg:13")]]
+    assert text == (
+        "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не получилось прийти. Бывает. "
+        "Запись встречи по кнопке ниже. Следующая встреча: вт 10.11 19:30 МСК."
+    )
+    assert len(text) <= 350
+    assert rows == [[("▶️ Смотреть запись", RECORDING)], [("Записаться на вт 10.11 19:30", "mreg:13")]]
+    later = dict(NEXT_TUE, meeting_id=14, starts_at=NEXT_TUE["starts_at"] + timedelta(days=7))
+    two = no_show_message(meeting(), [NEXT_TUE, later], frozenset(), now=AFTER_NOW)
+    assert len(two[1]) == 2 and "вт 10.11 19:30" in two[0] and "17.11" not in two[0]   # одна кнопка записи: на ближайшую встречу
     registered = no_show_message(meeting(), [NEXT_TUE], frozenset({13}), now=AFTER_NOW)[1]
     assert registered[-1] == [("Вы записаны: вт 10.11 19:30", "mreg:13")]
 
 
 def test_the_no_show_message_without_a_recording_or_meetings():
     text, rows = no_show_message(meeting(recording_url=None), [], frozenset(), now=AFTER_NOW)
-    assert text.endswith("Ближайших живых встреч пока нет. Загляните сюда чуть позже.") and rows == []
+    # даты нет и записи нет: только «не получилось прийти» (обещание «напишем сюда» — когда будет лист ожидания)
+    assert text == "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не получилось прийти. Бывает." and rows == []
     assert no_show_message(meeting(recording_url="не ссылка"), [], frozenset(), now=AFTER_NOW)[1] == []
 
 
@@ -308,7 +331,10 @@ class AfterDb:
             if self.summary_rows is not None:
                 return self.summary_rows
             return [
-                {"status": r["status"], "name": r.get("name"), "assigned_owner_id": r.get("assigned_owner_id")}
+                {
+                    "status": r["status"], "channel": r["channel"], "channel_user_id": r["channel_user_id"],
+                    "lead_id": r.get("lead_id"), "name": r.get("name"), "assigned_owner_id": r.get("assigned_owner_id"),
+                }
                 for r in self.registrations.values() if r["claimed"]
             ]
         raise AssertionError(f"unexpected query: {q[:120]}")
@@ -376,7 +402,15 @@ def world(settings_env):
     async def crm_button(conn, tenant_id, telegram_user_id):
         return state.crm.get(telegram_user_id)
 
+    async def inviter(conn, tenant_id, channel, user_id, lead_owner):
+        return lead_owner
+
+    async def name_of(conn, tenant_id, channel, user_id, *, lead_id=None, lead_name=None):
+        return lead_name or ""
+
     with ExitStack() as stack:
+        stack.enter_context(patch.object(after_meeting, "guest_inviter_owner", inviter))
+        stack.enter_context(patch.object(after_meeting, "person_name", name_of))
         stack.enter_context(patch.object(after_meeting, "guest_cards", guest_cards_stub))
         stack.enter_context(patch.object(after_meeting, "enqueue_guest_message", enqueue))
         stack.enter_context(patch.object(after_meeting, "enqueue_outbox_event", enqueue_outbox))
@@ -413,9 +447,11 @@ async def test_a_joined_guest_becomes_attended_and_gets_the_partner_card(world):
     (message,) = world.messages
     assert message["idempotency_key"] == "mafter:7:1" and message["event_type"] == "meeting_after"
     assert (message["channel"], message["user_id"], message["binding_id"]) == ("telegram", USER, "whieda-advisor-bot")
-    assert message["text"].startswith("Спасибо, что были на Живой встрече!\nВаш партнёр WWC — Игорь Волков.")
+    assert message["text"].startswith("Спасибо, что были на Живой встрече. Ваш партнёр — Игорь Волков: он на связи и ответит на ваши вопросы.")
+    assert "Личный разбор" in message["text"]            # партнёр своей сети
     assert "Телефон: +7 999 111-22-33" in message["text"] and "Почта: igor@example.com" in message["text"]
-    assert message["rows"] == card_rows(IGOR) and message["photo_url"] == "https://wwc.best/media/igor.jpg"
+    assert message["rows"] == [*card_rows(IGOR), *consult_rows()] and consult_rows()[0][0][1] == "funnel:consult"
+    assert message["photo_url"] == "https://wwc.best/media/igor.jpg"
     assert message["due_at"] == AFTER_NOW
     assert world.card_events == [("card-1", "attended", START)]
     assert ctx.counts == {"attended": 1, "no_show": 0, "summaries": 1}
@@ -427,17 +463,17 @@ async def test_a_guest_who_did_not_press_becomes_no_show_and_gets_the_recording_
     assert processed == 1 and db.registrations[8]["status"] == "no_show"
     (message,) = world.messages
     assert message["idempotency_key"] == "mafter:8:1" and message["channel"] == "max" and message["user_id"] == USER + 1
-    assert message["text"].startswith("Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли.")
-    assert message["rows"] == [[("▶️ Смотреть запись", RECORDING)], [("Записаться: вт 10.11 19:30", "mreg:13")]]
+    assert message["text"].startswith("Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не получилось прийти. Бывает.")
+    assert message["rows"] == [[("▶️ Смотреть запись", RECORDING)], [("Записаться на вт 10.11 19:30", "mreg:13")]]
     assert world.card_events == [("card-1", "no_show", START)]
 
 
 def test_the_no_show_message_of_a_foreign_guest_has_the_recording_but_no_new_meetings():
     text, rows = no_show_message(meeting(), [NEXT_TUE], frozenset(), now=AFTER_NOW, offer_meetings=False)
-    assert text == "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли. Ничего страшного!"
+    assert text == "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не получилось прийти. Бывает. Запись встречи по кнопке ниже."
     assert rows == [[("▶️ Смотреть запись", RECORDING)]]
     assert no_show_message(meeting(recording_url=None), [], frozenset(), now=AFTER_NOW, offer_meetings=False) == (
-        "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не дошли. Ничего страшного!", []
+        "Вы записывались на Живую встречу чт 05.11 19:30 МСК, но не получилось прийти. Бывает.", []
     )
 
 
@@ -448,21 +484,21 @@ async def test_a_no_show_guest_of_a_foreign_partner_gets_no_next_meetings(world,
     await run_meeting(world, db)
     (message,) = world.messages
     assert message["rows"] == [[("▶️ Смотреть запись", RECORDING)]]
-    assert "Ближайшие встречи" not in message["text"] and "mreg:" not in str(message["rows"])
+    assert "Следующая встреча" not in message["text"] and "mreg:" not in str(message["rows"])
     assert own.await_args.kwargs["owner_id"] is None or isinstance(own.await_args.kwargs["owner_id"], str)
 
 
-async def test_a_guest_from_ads_gets_two_cards_in_a_row_viktor_first(world):
+async def test_a_guest_from_ads_gets_one_message_with_viktor_elena_and_the_consult_button(world):
     db = AfterDb([pending(7, "joined", owner=None, name=None, card=None)])
     await run_meeting(world, db)
-    first, second = world.messages
-    assert (first["idempotency_key"], second["idempotency_key"]) == ("mafter:7:1", "mafter:7:2")
-    assert first["text"].startswith("Спасибо, что были на Живой встрече!\nВиктор Хрипко — на связи по любым вопросам.")
-    assert second["text"].startswith("Елена — тоже на связи по любым вопросам.") and "Телефон: +375291112233" in second["text"]
-    assert first["rows"] == [[("Написать в Telegram", "https://t.me/khripko")], [("Сайт", "https://wwc.best")]]
-    assert second["rows"] == [[("Написать в Max", "https://max.ru/u/elena")]]
-    assert first["photo_url"] is None
-    assert second["due_at"] - first["due_at"] == timedelta(seconds=2)   # порядок виден и по времени отправки
+    (message,) = world.messages
+    assert message["idempotency_key"] == "mafter:7:1"
+    assert message["text"] == texts.AFTER_AD_TEXT
+    assert [row[0][0] for row in message["rows"][:2]] == ["Написать Виктору", "Написать Елене"]
+    assert message["rows"][2:] == consult_rows()
+    assert message["rows"][0] == [("Написать Виктору", "https://t.me/khripko")]
+    assert message["rows"][-1][0][1] == "funnel:consult"
+    assert not message.get("photo_url")
     assert world.card_events == []                                       # карточки CRM нет — события нет
 
 
@@ -497,13 +533,13 @@ async def test_after_the_last_registration_partners_get_the_summary_and_the_meet
     assert igor["event_type"] == "meeting_summary" and igor["due_at"] == AFTER_NOW
     assert igor["payload"] == {
         "chat_id": "7001",
-        "text": "Живая встреча чт 05.11 19:30 МСК:\nБыли: Анна, Ирина.\nЗаписались, но не пришли: Олег.",
+        "text": f"Живая встреча чт 05.11 19:30 МСК.\nБыли: Анна, Ирина.\nЗаписались, но не пришли: Олег.\n{texts.SUMMARY_TAIL}",
         "binding_id": "whieda-advisor-bot",
         "reply_markup": {"inline_keyboard": [[{"text": "📋 Открыть CRM", "url": "https://igor.wwc.best/crm/"}]]},
         "site_login_user_id": 7001,
     }
     viktor = by_key["msum:12:viktor"]["payload"]
-    assert viktor["text"] == "Живая встреча чт 05.11 19:30 МСК:\nЗаписались, но не пришли: из бота без заявки — 1."
+    assert viktor["text"] == f"Живая встреча чт 05.11 19:30 МСК.\nЗаписались, но не пришли: из бота без заявки — 1.\n{texts.SUMMARY_TAIL}"
     assert "reply_markup" not in viktor and "site_login_user_id" not in viktor     # CRM у владельца закрыта — кнопки нет
     done = [sql for sql, params in world.conn.executed if sql.startswith("update meetings set status = 'done'")]
     assert len(done) == 1 and world.conn.executed[-1][1] == ("whieda", 12)
@@ -754,3 +790,36 @@ async def test_a_message_without_an_image_is_sent_once_as_before_and_a_bad_store
         await max_outbox.send_max_outbox_payload(max_payload(image_url="http://insecure.example/a.jpg"))
     assert send.await_count == 2
     assert all(call.kwargs["attachments"] is None for call in send.await_args_list)
+
+
+async def test_an_attended_guest_of_a_foreign_partner_gets_the_card_without_the_consult(world, monkeypatch):
+    # «Личный разбор» — только своей сети (ТЗ 28, решение 4): у чужого партнёра остаются его контакты
+    monkeypatch.setattr(after_meeting, "is_own_network", AsyncMock(return_value=False))
+    await run_meeting(world, AfterDb([pending(7, "joined")]))
+    (message,) = world.messages
+    assert "Личный разбор" not in message["text"] and "Напишите ему." in message["text"]
+    assert message["rows"] == card_rows(IGOR)
+
+
+async def test_the_summary_goes_to_the_partner_the_person_is_attached_to_and_to_nobody_else(world, monkeypatch):
+    # у гостя нет заявки с владельцем, но его закрепила ссылка партнёра: итог — этому партнёру (один адресат)
+    async def inviter(conn, tenant_id, channel, user_id, lead_owner):
+        return lead_owner or ("igor-actor" if user_id == USER else None)
+
+    monkeypatch.setattr(after_meeting, "guest_inviter_owner", inviter)
+    db = AfterDb([
+        pending(7, "joined", owner=None, name="Анна"),
+        pending(8, "registered", owner=None, name=None, user=USER + 1, card=None),    # без партнёра: владелец WWC
+    ])
+    await run_meeting(world, db)
+    keys = {o["idempotency_key"] for o in world.outbox}
+    assert keys == {"msum:12:igor-actor", "msum:12:viktor"}
+    by_key = {o["idempotency_key"]: o["payload"]["text"] for o in world.outbox}
+    assert "Были: Анна." in by_key["msum:12:igor-actor"] and "Анна" not in by_key["msum:12:viktor"]
+    assert by_key["msum:12:igor-actor"].endswith(texts.SUMMARY_TAIL)
+
+
+async def test_the_summary_of_one_meeting_never_goes_to_two_addressees_for_the_same_person(world):
+    db = AfterDb([pending(7, "joined", owner="igor-actor", name="Анна")])
+    await run_meeting(world, db)
+    assert [o["idempotency_key"] for o in world.outbox] == ["msum:12:igor-actor"]

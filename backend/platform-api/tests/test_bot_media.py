@@ -751,13 +751,24 @@ def test_other_text_is_not_the_word(text):
 
 
 def test_the_two_buttons_are_the_same_in_telegram_and_max():
-    assert system_word.telegram_markup() == {"inline_keyboard": [
+    # партнёру — прежние две кнопки; холодному гостю (ТЗ 28, 1.4) — «Записаться на встречу», «Личный разбор», «Задать вопрос»
+    assert system_word.telegram_markup(partner=True) == {"inline_keyboard": [
         [{"text": "Живая встреча", "callback_data": "funnel:meet"}],
         [{"text": "Личный разбор", "callback_data": "funnel:consult"}],
     ]}
-    assert system_word.max_buttons() == [
+    assert system_word.max_buttons(partner=True) == [
         [max_button_callback("Живая встреча", "funnel:meet")],
         [max_button_callback("Личный разбор", "funnel:consult")],
+    ]
+    assert system_word.telegram_markup() == {"inline_keyboard": [
+        [{"text": "Записаться на встречу", "callback_data": "funnel:meet"}],
+        [{"text": "Личный разбор", "callback_data": "funnel:consult"}],
+        [{"text": "Задать вопрос", "callback_data": "funnel:ask"}],
+    ]}
+    assert system_word.max_buttons() == [
+        [max_button_callback("Записаться на встречу", "funnel:meet")],
+        [max_button_callback("Личный разбор", "funnel:consult")],
+        [max_button_callback("Задать вопрос", "funnel:ask")],
     ]
 
 
@@ -768,16 +779,18 @@ def test_without_the_tour_the_first_button_is_a_link_to_the_company_video_and_th
     """Тура нет (текст-заглушка): сверху кнопка-ссылка на ролик о компании, ниже прежние «Живая встреча» и «Личный разбор»."""
     assert texts.SYSTEM_TOUR_FALLBACK_URL == PRESENTATION_URL and texts.SYSTEM_TOUR_FALLBACK_BUTTON == "▶ Смотреть (6 мин)"
     assert texts.SYSTEM_TOUR_PENDING == "Видео о системе скоро будет здесь. А пока — 6 минут о компании WHIEDA."
-    assert system_word.telegram_markup(presentation=True) == {"inline_keyboard": [
+    assert system_word.telegram_markup(presentation=True, partner=True) == {"inline_keyboard": [
         [{"text": "▶ Смотреть (6 мин)", "url": PRESENTATION_URL}],
         [{"text": "Живая встреча", "callback_data": "funnel:meet"}],
         [{"text": "Личный разбор", "callback_data": "funnel:consult"}],
     ]}
-    assert system_word.max_buttons(presentation=True) == [
+    assert system_word.max_buttons(presentation=True, partner=True) == [
         [max_button_link("▶ Смотреть (6 мин)", PRESENTATION_URL)],
         [max_button_callback("Живая встреча", "funnel:meet")],
         [max_button_callback("Личный разбор", "funnel:consult")],
     ]
+    guest = system_word.telegram_markup(presentation=True)["inline_keyboard"]
+    assert [row[0]["text"] for row in guest] == ["▶ Смотреть (6 мин)", "Записаться на встречу", "Личный разбор", "Задать вопрос"]
 
 
 def test_the_tour_buttons_have_no_link_to_the_company_video():
@@ -814,7 +827,7 @@ async def test_telegram_word_sends_the_tour_with_caption_and_two_buttons(tg_bot)
     assert result == {"ok": True, "route": "funnel_system", "trace_id": "t1", "status": "tour", "kind": "video"}
     tg_bot.media.assert_awaited_once_with(
         None, "whieda", "system_tour", channel="telegram", chat_id=42,
-        caption=texts.SYSTEM_TOUR_CAPTION, reply_markup=system_word.telegram_markup(),
+        caption=texts.SYSTEM_TOUR_CAPTION_GUEST, reply_markup=system_word.telegram_markup(),
     )
     assert "url" not in repr(tg_bot.media.await_args.kwargs["reply_markup"])   # ссылка на ролик — только когда тура нет
     tg_bot.text.assert_not_awaited()
@@ -903,7 +916,7 @@ async def test_max_word_sends_the_tour_with_the_same_caption_and_buttons(max_bot
     assert result == {"ok": True, "route": "max_funnel_system", "trace_id": "t1", "status": "tour", "kind": "video"}
     max_bot.media.assert_awaited_once_with(
         None, "whieda", "system_tour", channel="max", chat_id=555, user_id=42,
-        caption=texts.SYSTEM_TOUR_CAPTION, buttons=system_word.max_buttons(),
+        caption=texts.SYSTEM_TOUR_CAPTION_GUEST, buttons=system_word.max_buttons(),
     )
     assert all(b["type"] == "callback" for row in max_bot.media.await_args.kwargs["buttons"] for b in row)   # без ссылки на ролик
     max_bot.text.assert_not_awaited()

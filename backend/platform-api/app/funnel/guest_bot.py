@@ -31,13 +31,14 @@ from app.advisor.sql.text import detect_service_intent
 from app.bot_stages.service import STAGE_GUEST, resolve_stage, stages_enabled
 from app.crm.service import safe_error
 from app.db import tenant_connection
-from app.funnel import registration, texts
+from app.funnel import partner_answer, registration, texts
 from app.funnel.guest import (
     Reply,
     academy_button,
     guest_menu_reply,
     is_guest_menu_word,
     load_guest_view,
+    load_start_tag,
     owner_card,
     resolve_guest,
     rows_to_max,
@@ -45,7 +46,7 @@ from app.funnel.guest import (
 )
 from app.funnel.lead_start import start_from_lead
 from app.funnel.network import guest_inviter_owner, guest_offers_blocked, is_own_network, partner_contact_reply
-from app.funnel.system_word import FUNNEL_TENANT_ID, send_tour_max, send_tour_telegram
+from app.funnel.system_word import FUNNEL_TENANT_ID, is_partner_viewer, send_tour_max, send_tour_telegram
 from app.leads.channels import accept_channel_referral_start
 from app.leads.meeting_leads import load_lead_by_channel_user, plain_no_links
 from app.max.client import send_max_text
@@ -66,7 +67,7 @@ logger = logging.getLogger("whieda.funnel.guest")
 # остаётся у system_word.
 _ID = r"(\d{1,18})"
 _ACTION_RE = re.compile(
-    rf"^(?:(mreg|mmove|mcancel|mjoin):{_ID}|(mmoveto):{_ID}:{_ID}|(funnel):(meet|tour|ask))$"
+    rf"^(?:(mreg|mmove|mcancel|mjoin):{_ID}|(mmoveto):{_ID}:{_ID}|(funnel):(meet|tour|ask|partner))$"
 )
 
 # Префиксы для диспетчера Max (register_max_callback): самый длинный подходящий побеждает, так что
@@ -80,6 +81,7 @@ GUEST_MAX_PREFIXES = (
     texts.FUNNEL_MEET_CALLBACK,
     texts.FUNNEL_TOUR_CALLBACK,
     texts.FUNNEL_ASK_CALLBACK,
+    texts.FUNNEL_PARTNER_CALLBACK,
 )
 
 
@@ -90,7 +92,7 @@ OFFER_KINDS = ("register", "meet")
 
 @dataclass(frozen=True)
 class GuestAction:
-    kind: str  # register | move_list | move_to | cancel | join | meet | tour | ask
+    kind: str  # register | move_list | move_to | cancel | join | meet | tour | ask | partner
     registration_id: int | None = None
     meeting_id: int | None = None
 
@@ -157,13 +159,15 @@ async def _guest_menu(tenant_id: str, channel: str, user_id: int) -> Reply | Non
                 conn, tenant_id, channel, user_id, own_network=own_network
             )
             academy = await academy_button(conn, tenant_id, channel, user_id)
+            start_tag = await load_start_tag(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001 — партнёрам и всем остальным бот отвечает как прежде
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
     return guest_menu_reply(
-        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network
+        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network,
+        start_tag=start_tag,
     )
 
 
@@ -184,13 +188,15 @@ async def stage_menu(tenant_id: str, channel: str, user_id: int) -> tuple[str | 
                 conn, tenant_id, channel, user_id, own_network=own_network
             )
             academy = await academy_button(conn, tenant_id, channel, user_id)
+            start_tag = await load_start_tag(conn, tenant_id, channel, user_id)
         card = await owner_card(tenant_id, guest.owner_actor_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("guest_menu_failed", extra={"channel": channel, **safe_error(exc)})
         return None, None
     inviter_name = ((card.display_name if card else "") or "").strip() or None
     return stage, guest_menu_reply(
-        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network
+        inviter_name, registration=registration_view, open_meetings=open_meetings, academy=academy, own_network=own_network,
+        start_tag=start_tag,
     )
 
 
@@ -352,11 +358,15 @@ async def try_handle_guest_callback(
     base: dict[str, Any] = {"ok": True, "route": "guest_callback", "trace_id": trace_id}
     if callback.chat_type != "private":
         return {**base, "status": "private_chat_required"}
+    if action.kind == "partner":
+        # «Я уже партнёр WHIEDA» (ТЗ 28, раздел 8): отметка, карта с прежней подписью, ролик и цены.
+        return {**base, **await partner_answer.answer_telegram(tenant, callback.chat_id, callback.user_id, trace_id=trace_id)}
     if action.kind == "tour":
         offers: dict[str, Any] = {}
         if await guest_offers_blocked(tenant.tenant_id, "telegram", callback.user_id):
             offers = {"offers": False}  # гость чужого партнёра: под туром нет «Живой встречи» и «Личного разбора»
-        tour = await send_tour_telegram(tenant, callback.chat_id, trace_id=trace_id, **offers)
+        partner = await is_partner_viewer(tenant.tenant_id, "telegram", callback.user_id)
+        tour = await send_tour_telegram(tenant, callback.chat_id, trace_id=trace_id, partner=partner, **offers)
         return {**base, "status": "tour", "tour": tour.get("status")}
     if action.kind == "ask":
         # «Задать вопрос» → обращение в поддержку у владельца: то же, что кнопка «Поддержка» (тема в форуме или
@@ -463,11 +473,15 @@ async def max_guest_callback(tenant: TenantContext, event: Any, trace_id: str) -
     if str(getattr(event, "chat_type", "dialog") or "dialog") != "dialog":
         return None
     chat_id = event.chat_id or None
+    if action.kind == "partner":
+        await partner_answer.answer_max(tenant, chat_id, event.user_id, trace_id)
+        return None
     if action.kind == "tour":
         offers: dict[str, Any] = {}
         if await guest_offers_blocked(tenant.tenant_id, "max", event.user_id):
             offers = {"offers": False}
-        await send_tour_max(tenant, chat_id=chat_id, user_id=event.user_id, trace_id=trace_id, **offers)
+        partner = await is_partner_viewer(tenant.tenant_id, "max", event.user_id)
+        await send_tour_max(tenant, chat_id=chat_id, user_id=event.user_id, trace_id=trace_id, partner=partner, **offers)
         return None
     if action.kind == "ask":
         # Обращений в поддержку в Max нет (они живут на Telegram-id): ведём в Telegram-бота.

@@ -3,7 +3,7 @@
 Гость — человек, который записался на Живую встречу (есть заявка ``kind = meeting``, открытая им в боте, или
 запись в ``meeting_registrations``) и не партнёр (нет ``referral_profiles``). Голый «/start» и слово «меню»
 показывают ему меню гостя вместо кабинета партнёра: от кого он пришёл, ближайшие встречи или его запись,
-«Показ системы», «Личный разбор», «Задать вопрос».
+«Карта системы», «Личный разбор», «Задать вопрос».
 
 Здесь только то, что не зависит от мессенджера:
   * ``resolve_guest`` — определить гостя;
@@ -113,6 +113,18 @@ def register_rows(meetings: list[dict[str, Any]], registered_ids: frozenset[int]
     return rows
 
 
+def ask_rows() -> Rows:
+    """Одна кнопка «Задать вопрос» (под «встреч пока нет», ТЗ 28, 3.2)."""
+    label = texts.STAGE_ASK_BUTTON if _stages() else texts.GUEST_ASK_BUTTON
+    return [[(label, texts.FUNNEL_ASK_CALLBACK)]]
+
+
+def consult_rows() -> Rows:
+    """Одна кнопка «Личный разбор» (только своей сети: вызывающий решает, показывать ли)."""
+    label = texts.STAGE_CONSULT_BUTTON if _stages() else texts.FUNNEL_CONSULT_BUTTON
+    return [[(label, texts.FUNNEL_CONSULT_CALLBACK)]]
+
+
 def control_rows(registration_id: int) -> Rows:
     """«Перенести» и «Отменить запись» под записью."""
     return [
@@ -123,35 +135,57 @@ def control_rows(registration_id: int) -> Rows:
     ]
 
 
-def menu_rows(*, academy: Button | None = None, own_network: bool = True) -> Rows:
-    """«Показ системы», «Личный разбор», «Задать вопрос» — каждая в своём ряду. Три меню включены и у гостя есть доступ
-    в Академии (``academy_button``) — между «Личным разбором» и «Задать вопрос» ещё «🎓 Академия».
-    Гость чужого партнёра (``own_network=False``, ``app/funnel/network.py``): «Личного разбора» нет."""
-    if _stages():
-        rows: Rows = [[(texts.STAGE_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)]]
-        if own_network:
-            rows.append([(texts.STAGE_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)])
-        if academy is not None:
-            rows.append([academy])
-        rows.append([(texts.STAGE_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)])
-        return rows
-    rows = [[(texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)]]
-    if own_network:
-        rows.append([(texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)])
-    rows.append([(texts.GUEST_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)])
+# Метки источника /start (bot_start_sources.tag), с которых человек пришёл «задать вопрос» из статьи или со страницы сайта:
+# src_art-<статья> и src_site-<страница> (ТЗ 28, 1.3). Метка длиннее 32 знаков в базу попадает как «unknown» (start_sources.py).
+ASK_SOURCE_PREFIXES = ("art-", "site-")
+
+
+def is_ask_source(tag: str | None) -> bool:
+    return str(tag or "").strip().lower().startswith(ASK_SOURCE_PREFIXES)
+
+
+def menu_rows(
+    *, academy: Button | None = None, own_network: bool = True, can_book: bool = False, ask_first: bool = False
+) -> Rows:
+    """Кнопки приветствия гостя (ТЗ 28, 1.1–1.3), каждая в своём ряду: «Карта системы», «Записаться на встречу» (только
+    когда есть даты, ``can_book``), «Личный разбор» (только своей сети), «Задать вопрос»; ``ask_first`` (приветствие из
+    поиска, 1.3) — «Задать вопрос» первой и без «Личного разбора». Доступ в Академию — ещё «🎓 Академия» перед «Задать вопрос».
+    Последний ряд — «Я уже партнёр WHIEDA» (``funnel:partner``). Значки — только те, что уже были у этих кнопок.
+    Гость чужого партнёра (``own_network=False``, ``app/funnel/network.py``): ни записи, ни «Личного разбора»."""
+    stages = _stages()
+    tour = (texts.STAGE_TOUR_BUTTON if stages else texts.GUEST_TOUR_BUTTON, texts.FUNNEL_TOUR_CALLBACK)
+    book = (texts.STAGE_BOOK_BUTTON if stages else texts.GUEST_BOOK_BUTTON, texts.FUNNEL_MEET_CALLBACK)
+    consult = (texts.STAGE_CONSULT_BUTTON if stages else texts.FUNNEL_CONSULT_BUTTON, texts.FUNNEL_CONSULT_CALLBACK)
+    ask = (texts.STAGE_ASK_BUTTON if stages else texts.GUEST_ASK_BUTTON, texts.FUNNEL_ASK_CALLBACK)
+    rows: Rows = []
+    if ask_first:
+        rows.append([ask])
+    rows.append([tour])
+    if can_book and own_network:
+        rows.append([book])
+    if own_network and not ask_first:
+        rows.append([consult])
+    if academy is not None and stages:
+        rows.append([academy])
+    if not ask_first:
+        rows.append([ask])
+    rows.append([(texts.GUEST_ALREADY_PARTNER_BUTTON, texts.FUNNEL_PARTNER_CALLBACK)])
     return rows
 
 
 # ---- экраны ----------------------------------------------------------------------------------------
 
 
-def guest_header(inviter_name: str | None) -> str:
-    if _stages():
-        # «Вас пригласил партнёр: <имя>.» — если партнёр известен; дальше — что такое WWC и «С чего начать?».
-        if not inviter_name:
-            return texts.STAGE_GUEST_INTRO
-        return "\n".join((texts.GUEST_FROM_PARTNER.format(name=inviter_name), texts.STAGE_GUEST_INTRO))
-    return texts.GUEST_FROM_PARTNER.format(name=inviter_name) if inviter_name else texts.GUEST_IN_WWC
+def greeting_text(inviter_name: str | None, *, own_network: bool = True, start_tag: str | None = None) -> str:
+    """Приветствие гостя по источнику (ТЗ 28, 1.1–1.3): из поиска (``src_art-…``, ``src_site-…``) — 1.3, с первой фразой
+    1.1, если есть партнёр; иначе по ссылке партнёра — 1.1; иначе реклама и голый старт — 1.2. Гость чужого партнёра
+    (``own_network=False``): без слов про Живую встречу — встреч ему не предлагают."""
+    if is_ask_source(start_tag):
+        body = texts.GREETING_ASK if own_network else texts.GREETING_ASK_PLAIN
+        return f"{texts.GREETING_ASK_PARTNER_LEAD.format(name=inviter_name)} {body}" if inviter_name else body
+    if inviter_name:
+        return (texts.GREETING_PARTNER if own_network else texts.GREETING_PARTNER_PLAIN).format(name=inviter_name)
+    return texts.GREETING_AD
 
 
 def guest_menu_reply(
@@ -163,29 +197,58 @@ def guest_menu_reply(
     note: str | None = None,
     academy: Button | None = None,
     own_network: bool = True,
+    start_tag: str | None = None,
 ) -> Reply:
-    """Меню гостя. Есть активная запись — её дата и кнопки «Перенести» / «Отменить запись»; нет — ближайшие
-    встречи кнопками «Записаться: …» (или строка, что встреч пока нет). Внизу всегда три кнопки меню.
-    ``note`` — строка под приветствием (например, что встреча из заявки уже прошла).
-    Гость чужого партнёра (``own_network=False``): ни ближайших встреч, ни записи, ни «Личного разбора» — вместо них
-    «Ваш партнёр свяжется с вами» и «Задать вопрос»; запись, сделанную раньше, показываем как есть."""
-    parts = [guest_header(inviter_name)]
-    if note:
-        parts.append(note)
+    """Приветствие гостя и его кнопки. Есть активная запись — вместо приветствия её дата (с первой фразой «Вас пригласил …»,
+    если есть партнёр) и кнопки «Перенести» / «Отменить запись»; нет — приветствие по источнику (``greeting_text``) и
+    «Записаться на встречу», если есть даты (кнопка ведёт к списку дат); дат нет — строка, что встреч пока нет.
+    ``note`` — строка под приветствием (например, что встреча из заявки уже прошла). Гость чужого партнёра
+    (``own_network=False``): ни записи, ни «Личного разбора»; вместо них «Ваш партнёр на связи» и «Задать вопрос»;
+    запись, сделанную раньше, показываем как есть."""
+    parts: list[str] = []
     rows: Rows = []
     if registration is not None:
         reg, meeting = registration
+        if inviter_name:
+            parts.append(texts.GREETING_ASK_PARTNER_LEAD.format(name=inviter_name))
         parts.append(texts.REGISTRATION_CONFIRMED.format(when=format_msk(meeting["starts_at"], now=now)))
+        if note:
+            parts.append(note)
         rows.extend(control_rows(reg.registration_id))
-    elif not own_network:
-        parts.append(texts.GUEST_PARTNER_WILL_CONTACT)
-    elif open_meetings:
-        parts.append(texts.GUEST_PICK_MEETING)
-        rows.extend(register_rows(open_meetings, now=now))
     else:
-        parts.append(texts.GUEST_NO_MEETINGS)
-    rows.extend(menu_rows(academy=academy, own_network=own_network))
+        parts.append(greeting_text(inviter_name, own_network=own_network, start_tag=start_tag))
+        if note:
+            parts.append(note)
+        if not own_network:
+            parts.append(texts.GUEST_PARTNER_WILL_CONTACT)
+        elif not open_meetings:
+            parts.append(texts.GUEST_NO_MEETINGS)
+    rows.extend(
+        menu_rows(
+            academy=academy,
+            own_network=own_network,
+            can_book=registration is None and bool(open_meetings),
+            ask_first=registration is None and is_ask_source(start_tag),
+        )
+    )
     return Reply("\n\n".join(parts), rows)
+
+
+async def load_start_tag(conn: Any, tenant_id: str, channel: str, channel_user_id: int) -> str | None:
+    """Последняя метка источника человека (``bot_start_sources.tag``: ``vk``, ``art-<статья>``, ``unknown`` …); нет строки
+    или сбой запроса — ``None`` (приветствие 1.2). Запрос идёт под своей точкой отката: сбой не обрывает транзакцию меню."""
+    try:
+        async with conn.transaction():
+            row = await fetch_one(
+                conn,
+                "select tag from bot_start_sources where tenant_id = %s and channel = %s and channel_user_id = %s "
+                "order by start_id desc limit 1",
+                (tenant_id, channel, str(int(channel_user_id))),
+            )
+    except Exception as exc:  # noqa: BLE001 — приветствие важнее метки
+        logger.warning("guest_start_tag_failed", extra={"channel": channel, "error_class": type(exc).__name__})
+        return None
+    return str(row["tag"]) if row and row.get("tag") else None
 
 
 async def load_guest_view(

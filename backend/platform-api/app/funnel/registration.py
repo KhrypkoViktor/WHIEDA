@@ -25,11 +25,12 @@ from datetime import datetime
 from typing import Any
 
 from app.db import tenant_connection
-from app.funnel import texts
+from app.funnel import partner_notice, texts
 from app.funnel.guest import (
     LIST_MEETINGS,
     Reply,
     Rows,
+    ask_rows,
     control_rows,
     register_rows,
     short_when,
@@ -89,7 +90,7 @@ async def list_meetings(tenant_id: str, channel: str, channel_user_id: int, *, n
         ) if meetings else []
     if not meetings:
         _log("meet", channel, channel_user_id, "no_meetings")
-        return ActionResult(Reply(texts.GUEST_NO_MEETINGS), "no_meetings")
+        return ActionResult(Reply(texts.GUEST_NO_MEETINGS, ask_rows()), "no_meetings")
     registered = frozenset(int(meeting["meeting_id"]) for _, meeting in active)
     _log("meet", channel, channel_user_id, "listed", count=len(meetings))
     return ActionResult(Reply(texts.GUEST_PICK_MEETING, register_rows(meetings, registered, now=current)), "listed")
@@ -114,6 +115,13 @@ async def register(
         if outcome.status == "registered" and lead is not None and outcome.meeting is not None:
             await card_registration_event(
                 conn, tenant_id, lead.crm_card, "registered", starts_at=outcome.meeting["starts_at"], now=current
+            )
+        if outcome.status == "registered" and outcome.registration is not None and outcome.meeting is not None:
+            # Партнёру, за кем закреплён человек: «ваш человек записался» (ТЗ 28, 6.1). Сбой записи не ломает.
+            await partner_notice.notify_partner_registered(
+                conn, tenant_id, channel=channel, channel_user_id=channel_user_id,
+                registration_id=outcome.registration.registration_id, starts_at=outcome.meeting["starts_at"],
+                lead=lead, now=current,
             )
         others: list[dict[str, Any]] = []
         if outcome.status in ("closed", "not_found"):

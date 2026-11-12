@@ -118,22 +118,43 @@ def test_the_candidates_are_only_live_planned_meetings_within_a_day():
 
 def test_the_texts_give_the_moscow_date_and_time():
     now = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
-    assert "Завтра, чт 05.11 19:30 МСК" in reminders.reminder_text("day", START, now=now)
-    assert "в 19:30 по Москве" in reminders.reminder_text("two_hours", START, now=now)
-    assert "19:30 по Москве" in reminders.reminder_text("hour", START, now=now)
-    assert "«Присоединиться»" in reminders.reminder_text("hour", START, now=now)
+    assert reminders.reminder_text("day", START, now=now) == (
+        "Завтра, 05.11 в 19:30 МСК, Живая встреча: полчаса показ, полчаса ответы. "
+        "Войти можно кнопкой «Присоединиться», она появится в этом чате за час до начала."
+    )
+    assert reminders.reminder_text("two_hours", START, now=now) == (
+        "Сегодня в 19:30 по Москве Живая встреча. Кнопка «Присоединиться» заработает за час до начала. "
+        "Если не получается прийти, перенесите запись."
+    )
+    assert reminders.reminder_text("hour", START, now=now) == "Через час Живая встреча. Нажмите «Присоединиться», чтобы войти."
     assert "через 5 минут" in reminders.reminder_text("five", START, now=now)
+    for kind in reminders.KINDS:
+        text = reminders.reminder_text(kind, START, now=now, zoom="Гость Анна")
+        assert len(text) <= 350 and "пришлём" not in text and "МЛМ" not in text
     with pytest.raises(ValueError):
         reminders.reminder_text("later", START)
 
 
 def test_year_is_shown_in_the_day_text_only_when_it_is_not_the_current_one():
     january = datetime(2027, 1, 12, 16, 30, tzinfo=UTC)
-    assert "вт 12.01.2027 19:30 МСК" in reminders.reminder_text("day", january, now=datetime(2026, 12, 31, 9, 0, tzinfo=UTC))
+    assert "12.01.2027 в 19:30 МСК" in reminders.reminder_text("day", january, now=datetime(2026, 12, 31, 9, 0, tzinfo=UTC))
+    assert "Завтра, 12.01 в 19:30 МСК" in reminders.reminder_text("day", january, now=datetime(2027, 1, 11, 9, 0, tzinfo=UTC))
 
 
-def test_only_hour_and_five_carry_the_join_button():
-    assert reminders.reminder_rows("day", 7) == [] and reminders.reminder_rows("two_hours", 7) == []
+def test_the_zoom_signature_is_guest_or_partner_and_absent_without_a_name():
+    assert reminders.zoom_label("Анна", partner=False) == "Гость Анна" and reminders.zoom_label("Анна", partner=True) == "Партнёр Анна"
+    assert reminders.zoom_label("", partner=False) == ""
+    now = datetime(2026, 11, 5, 15, 0, tzinfo=UTC)
+    assert reminders.reminder_text("hour", START, now=now, zoom="Партнёр Анна").endswith(
+        "В Zoom подпишитесь, пожалуйста, «Партнёр Анна», так вас найдут сразу."
+    )
+    assert "Zoom" not in reminders.reminder_text("hour", START, now=now)
+
+
+def test_the_buttons_of_each_reminder():
+    # за сутки — «Перенести» и «Отменить запись»; за 2 часа — «Перенести»; за час и за 5 минут — «Присоединиться»
+    assert reminders.reminder_rows("day", 7) == [[("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]]
+    assert reminders.reminder_rows("two_hours", 7) == [[("Перенести", "mmove:7")]]
     for kind in ("hour", "five"):
         assert reminders.reminder_rows(kind, 7) == [[("Присоединиться", "mjoin:7")]]
 
@@ -241,7 +262,9 @@ def row(registration_id: int = 7, channel: str = "telegram", user: int = USER, *
 async def test_remind_one_marks_the_registration_and_queues_the_message_with_the_key():
     claim = AsyncMock(return_value={"registration_id": 7})
     enqueue = AsyncMock(return_value={"created": True})
-    with patch.object(reminders, "fetch_one", claim), patch.object(reminders, "enqueue_guest_message", enqueue):
+    with patch.object(reminders, "fetch_one", claim), patch.object(reminders, "enqueue_guest_message", enqueue), \
+            patch.object(reminders, "person_name", AsyncMock(return_value="Анна")), \
+            patch.object(reminders, "is_partner_person", AsyncMock(return_value=False)):
         outcome = await reminders.remind_one(
             object(), tenant_id="whieda", binding_id="bot", row=row(), kind="hour", now=NOW
         )
@@ -252,7 +275,25 @@ async def test_remind_one_marks_the_registration_and_queues_the_message_with_the
     kwargs = enqueue.await_args.kwargs
     assert kwargs["idempotency_key"] == "mrem:7:hour" and kwargs["channel"] == "telegram" and kwargs["user_id"] == USER
     assert kwargs["rows"] == [[("Присоединиться", "mjoin:7")]] and kwargs["due_at"] == NOW
-    assert kwargs["event_type"] == "meeting_reminder" and "19:30" in kwargs["text"]
+    assert kwargs["event_type"] == "meeting_reminder" and kwargs["text"].endswith("«Гость Анна», так вас найдут сразу.")
+
+
+async def test_the_hour_reminder_of_a_partner_asks_for_the_partner_signature_and_without_a_name_has_none():
+    claim = AsyncMock(return_value={"registration_id": 7})
+    enqueue = AsyncMock(return_value={"created": True})
+    for name, partner, expected in (("Олег", True, "«Партнёр Олег»"), ("", False, None)):
+        with patch.object(reminders, "fetch_one", claim), patch.object(reminders, "enqueue_guest_message", enqueue), \
+                patch.object(reminders, "person_name", AsyncMock(return_value=name)), \
+                patch.object(reminders, "is_partner_person", AsyncMock(return_value=partner)):
+            await reminders.remind_one(object(), tenant_id="whieda", binding_id="bot", row=row(), kind="hour", now=NOW)
+        text = enqueue.await_args.kwargs["text"]
+        assert (expected in text) if expected else ("Zoom" not in text)
+    # другие напоминания имя не читают
+    names = AsyncMock(return_value="Анна")
+    with patch.object(reminders, "fetch_one", claim), patch.object(reminders, "enqueue_guest_message", enqueue), \
+            patch.object(reminders, "person_name", names):
+        await reminders.remind_one(object(), tenant_id="whieda", binding_id="bot", row=row(), kind="five", now=NOW)
+    names.assert_not_awaited()
 
 
 async def test_remind_one_does_nothing_when_the_mark_is_already_there():
@@ -327,6 +368,7 @@ async def test_enqueue_reminders_queues_telegram_and_max_and_survives_one_failur
         stack.enter_context(patch.object(reminders, "fetch_all", AsyncMock(return_value=candidates)))
         stack.enter_context(patch.object(reminders, "fetch_one", AsyncMock(return_value={"registration_id": 1})))
         stack.enter_context(patch.object(reminders, "enqueue_guest_message", AsyncMock(side_effect=enqueue)))
+        stack.enter_context(patch.object(reminders, "person_name", AsyncMock(return_value="")))
         caplog.set_level(logging.INFO, logger="whieda.funnel.reminders")
         queued = await reminders.enqueue_reminders("whieda", "bot", now=NOW)
     assert queued == 2 and conn.rollbacks == 1
@@ -540,7 +582,7 @@ async def test_the_answer_to_a_press_is_the_link_button():
 async def test_without_a_link_the_guest_is_told_it_will_come_a_few_minutes_before():
     for url in (None, "", "   ", "not-a-link", "ftp://x.y/z"):
         result = await run_action(join_outcome("joined", join_url=url))
-        assert result.status == "joined" and result.reply.text == "Ссылку пришлём за несколько минут до начала." and result.reply.rows == []
+        assert result.status == "joined" and result.reply.text == texts.JOIN_NO_LINK and result.reply.rows == []
 
 
 async def test_a_press_outside_the_window_gets_a_polite_answer():

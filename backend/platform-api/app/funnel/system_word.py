@@ -21,7 +21,7 @@ import re
 from typing import Any
 
 from app.bot_media.service import send_media
-from app.bot_stages.service import stages_enabled
+from app.bot_stages.service import STAGE_PARTNER_WHIEDA, STAGE_PARTNER_WWC, person_stage, stages_enabled
 from app.funnel import consult, texts
 from app.funnel.guest import rows_to_max, rows_to_telegram
 from app.funnel.network import guest_offers_blocked, partner_contact_reply
@@ -52,25 +52,51 @@ def _labels() -> tuple[str, str]:
     return texts.FUNNEL_MEET_BUTTON, texts.FUNNEL_CONSULT_BUTTON
 
 
-def _rows(*, presentation: bool, offers: bool = True) -> list[list[tuple[str, str]]]:
-    """Ряды кнопок под туром: «Живая встреча» и «Личный разбор», каждая в своём ряду. Тура нет (``presentation``) —
-    первым рядом кнопка-ссылка на ролик о компании (адрес с ``https://`` rows_to_* превращают в кнопку-ссылку).
-    ``offers=False`` — гость чужого партнёра (app/funnel/network.py): ни встречи, ни разбора."""
+def _rows(*, presentation: bool, offers: bool = True, partner: bool = False) -> list[list[tuple[str, str]]]:
+    """Ряды кнопок под туром, каждая в своём ряду. Партнёру — «Живая встреча» и «Личный разбор». Гостю (ТЗ 28, 1.4) —
+    «Записаться на встречу», «Личный разбор» и «Задать вопрос». Тура нет (``presentation``) — первым рядом кнопка-ссылка
+    на ролик о компании (адрес с ``https://`` rows_to_* превращают в кнопку-ссылку).
+    ``offers=False`` — человек чужого партнёра (app/funnel/network.py): ни встречи, ни разбора; гостю остаётся «Задать вопрос»."""
     meet, consult = _labels()
-    rows = [[(meet, texts.FUNNEL_MEET_CALLBACK)], [(consult, texts.FUNNEL_CONSULT_CALLBACK)]] if offers else []
+    if partner:
+        rows = [[(meet, texts.FUNNEL_MEET_CALLBACK)], [(consult, texts.FUNNEL_CONSULT_CALLBACK)]] if offers else []
+    else:
+        stages = stages_enabled()
+        book = texts.STAGE_BOOK_BUTTON if stages else texts.GUEST_BOOK_BUTTON
+        ask = texts.STAGE_ASK_BUTTON if stages else texts.GUEST_ASK_BUTTON
+        rows = [[(book, texts.FUNNEL_MEET_CALLBACK)], [(consult, texts.FUNNEL_CONSULT_CALLBACK)]] if offers else []
+        rows.append([(ask, texts.FUNNEL_ASK_CALLBACK)])
     if presentation:
         rows.insert(0, [(texts.SYSTEM_TOUR_FALLBACK_BUTTON, texts.SYSTEM_TOUR_FALLBACK_URL)])
     return rows
 
 
-def telegram_markup(*, presentation: bool = False, offers: bool = True) -> dict[str, Any]:
-    """Inline-клавиатура Telegram: две кнопки, каждая в своём ряду; с ``presentation`` — ещё ссылка на ролик сверху."""
-    return rows_to_telegram(_rows(presentation=presentation, offers=offers)) or {}
+def telegram_markup(*, presentation: bool = False, offers: bool = True, partner: bool = False) -> dict[str, Any]:
+    """Inline-клавиатура Telegram: кнопки, каждая в своём ряду; с ``presentation`` — ещё ссылка на ролик сверху."""
+    return rows_to_telegram(_rows(presentation=presentation, offers=offers, partner=partner)) or {}
 
 
-def max_buttons(*, presentation: bool = False, offers: bool = True) -> list[list[dict[str, Any]]]:
+def max_buttons(*, presentation: bool = False, offers: bool = True, partner: bool = False) -> list[list[dict[str, Any]]]:
     """Ряды кнопок Max (callback и link): те же кнопки, что в Telegram."""
-    return rows_to_max(_rows(presentation=presentation, offers=offers)) or []
+    return rows_to_max(_rows(presentation=presentation, offers=offers, partner=partner)) or []
+
+
+def tour_caption(*, offers: bool, partner: bool) -> str:
+    """Подпись к карте: партнёру — прежняя («так это будет работать у вас»), холодному гостю — ТЗ 28, 1.4; гостю чужого
+    партнёра (``offers=False``) — та же без слов про Живую встречу."""
+    if partner:
+        return texts.SYSTEM_TOUR_CAPTION if offers else texts.SYSTEM_TOUR_CAPTION_PLAIN
+    return texts.SYSTEM_TOUR_CAPTION_GUEST if offers else texts.SYSTEM_TOUR_CAPTION_GUEST_PLAIN
+
+
+async def is_partner_viewer(tenant_id: str, channel: str, channel_user_id: int) -> bool:
+    """Партнёр (WHIEDA по слову человека или WWC со своим профилем): ему карта уходит с прежней подписью. Сбой чтения
+    статуса — гость: сбой базы не должен лишать человека карты."""
+    try:
+        return await person_stage(tenant_id, channel, int(channel_user_id)) in (STAGE_PARTNER_WHIEDA, STAGE_PARTNER_WWC)
+    except Exception:  # noqa: BLE001
+        logger.warning("tour_stage_failed", extra={"channel": channel})
+        return False
 
 
 # ---- Telegram --------------------------------------------------------------------------------------
@@ -83,22 +109,23 @@ async def try_handle_system_word(
     if tenant.tenant_id != FUNNEL_TENANT_ID or msg.chat_type != "private" or not is_system_word(msg.text):
         return None
     blocked = await guest_offers_blocked(tenant.tenant_id, "telegram", msg.user_id)
-    return await send_tour_telegram(tenant, msg.chat_id, trace_id=trace_id, offers=not blocked)
+    partner = await is_partner_viewer(tenant.tenant_id, "telegram", msg.user_id)
+    return await send_tour_telegram(tenant, msg.chat_id, trace_id=trace_id, offers=not blocked, partner=partner)
 
 
 async def send_tour_telegram(
-    tenant: TenantContext, chat_id: int, *, trace_id: str | None = None, offers: bool = True
+    tenant: TenantContext, chat_id: int, *, trace_id: str | None = None, offers: bool = True, partner: bool = False
 ) -> dict[str, Any]:
     """Видео-тур в личный чат Telegram с кнопками «Живая встреча» и «Личный разбор» (или текст с ссылкой на ролик о
     компании, если тура нет).
-    Им пользуются слово СИСТЕМА и кнопка «Показ системы» в меню гостя. ``offers=False`` — гость чужого партнёра: без этих
+    Им пользуются слово СИСТЕМА и кнопка «Карта системы» в меню гостя. ``offers=False`` — гость чужого партнёра: без этих
     двух кнопок (под видео ничего, под текстом-заглушкой — только ссылка на ролик о компании)."""
     base: dict[str, Any] = {"ok": True, "route": "funnel_system", "trace_id": trace_id}
     try:
         result = await send_media(
             None, tenant.tenant_id, texts.SYSTEM_TOUR_KEY, channel="telegram", chat_id=chat_id,
-            caption=texts.SYSTEM_TOUR_CAPTION if offers else texts.SYSTEM_TOUR_CAPTION_PLAIN,
-            reply_markup=telegram_markup(offers=offers) or None,
+            caption=tour_caption(offers=offers, partner=partner),
+            reply_markup=telegram_markup(offers=offers, partner=partner) or None,
         )
     except Exception:  # noqa: BLE001 — человек не должен остаться без ответа из-за базы или сети
         logger.exception("funnel_system_media_error", extra={"trace_id": trace_id})
@@ -107,7 +134,8 @@ async def send_tour_telegram(
         return {**base, "status": "tour", "kind": result.get("kind")}
     await send_telegram_text(
         chat_id=str(chat_id), text=texts.SYSTEM_TOUR_PENDING,
-        bot_token=current_bot_binding().bot_token, reply_markup=telegram_markup(presentation=True, offers=offers),
+        bot_token=current_bot_binding().bot_token,
+        reply_markup=telegram_markup(presentation=True, offers=offers, partner=partner),
     )
     return {**base, "status": "pending", "reason": result.get("status")}
 
@@ -146,20 +174,23 @@ async def try_handle_funnel_callback(
 async def handle_system_word_max(tenant: TenantContext, event: Any, trace_id: str) -> dict[str, Any]:
     """«система» в личке Max: тур по токену Max (при первой отправке файл уедет из Telegram в Max) или заглушка."""
     blocked = await guest_offers_blocked(tenant.tenant_id, "max", event.user_id)
-    return await send_tour_max(tenant, chat_id=event.chat_id or None, user_id=event.user_id, trace_id=trace_id, offers=not blocked)
+    partner = await is_partner_viewer(tenant.tenant_id, "max", event.user_id)
+    return await send_tour_max(
+        tenant, chat_id=event.chat_id or None, user_id=event.user_id, trace_id=trace_id, offers=not blocked, partner=partner
+    )
 
 
 async def send_tour_max(
-    tenant: TenantContext, *, chat_id: int | None, user_id: int, trace_id: str, offers: bool = True
+    tenant: TenantContext, *, chat_id: int | None, user_id: int, trace_id: str, offers: bool = True, partner: bool = False
 ) -> dict[str, Any]:
-    """Видео-тур в личку Max с теми же кнопками (слово СИСТЕМА и кнопка «Показ системы» в меню гостя)."""
+    """Видео-тур в личку Max с теми же кнопками (слово СИСТЕМА и кнопка «Карта системы» в меню гостя)."""
     base: dict[str, Any] = {"ok": True, "route": "max_funnel_system", "trace_id": trace_id}
     try:
         result = await send_media(
             None, tenant.tenant_id, texts.SYSTEM_TOUR_KEY, channel="max",
             chat_id=chat_id, user_id=user_id,
-            caption=texts.SYSTEM_TOUR_CAPTION if offers else texts.SYSTEM_TOUR_CAPTION_PLAIN,
-            buttons=max_buttons(offers=offers) or None,
+            caption=tour_caption(offers=offers, partner=partner),
+            buttons=max_buttons(offers=offers, partner=partner) or None,
         )
     except Exception:  # noqa: BLE001
         logger.exception("max_funnel_system_media_error", extra={"trace_id": trace_id})
@@ -167,7 +198,8 @@ async def send_tour_max(
     if result.get("ok"):
         return {**base, "status": "tour", "kind": result.get("kind")}
     await send_max_text(
-        chat_id=chat_id, user_id=user_id, text=texts.SYSTEM_TOUR_PENDING, buttons=max_buttons(presentation=True, offers=offers)
+        chat_id=chat_id, user_id=user_id, text=texts.SYSTEM_TOUR_PENDING,
+        buttons=max_buttons(presentation=True, offers=offers, partner=partner),
     )
     return {**base, "status": "pending", "reason": result.get("status")}
 

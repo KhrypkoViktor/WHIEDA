@@ -33,10 +33,11 @@ from typing import Any
 from app.crm.service import crm_url, load_viewer, lock_reason, safe_error
 from app.db import fetch_all, fetch_one, tenant_connection
 from app.funnel import texts
-from app.funnel.guest import LIST_MEETINGS, Rows, register_rows
+from app.funnel.guest import LIST_MEETINGS, Rows, consult_rows, register_rows
 from app.funnel.network import guest_inviter_owner, is_own_network
 from app.funnel.outbound import enqueue_guest_message
-from app.funnel.partner_card import OwnerCard, card_intro, card_rows, card_text, guest_cards
+from app.funnel.people import person_name
+from app.funnel.partner_card import OwnerCard, ad_card_rows, card_intro, card_rows, card_text, guest_cards
 from app.jobs.outbox import enqueue_outbox_event
 from app.leads.meeting_leads import card_attendance_event, owner_chat, plain_no_links
 from app.meetings import registrations
@@ -96,7 +97,7 @@ _LEFT_SQL = """
 """
 
 _SUMMARY_SQL = """
-    select r.status, l.name, l.assigned_owner_id
+    select r.status, r.channel, r.channel_user_id, r.lead_id::text as lead_id, l.name, l.assigned_owner_id
     from meeting_registrations r
     left join website_leads l on l.tenant_id = r.tenant_id and l.lead_id = r.lead_id
     where r.tenant_id = %s and r.meeting_id = %s and r.status in ('attended', 'no_show')
@@ -137,12 +138,14 @@ def summary_text(
     when: str, attended: list[str], no_show: list[str], *, anonymous_attended: int = 0, anonymous_no_show: int = 0
 ) -> str:
     """«Живая встреча чт 05.11 19:30 МСК:» + строки «Были: …» и «Записались, но не пришли: …» (пустая строка не пишется).
-    Имена уже очищены; гости без заявки считаются числом."""
+    Имена уже очищены; гости без имени считаются числом. Последняя строка — «Поговорите с каждым в течение суток…»
+    (ТЗ 28, 6.2). Строки «Зашли в бот, но не записались» пока нет: списка таких людей в базе воронки нет."""
     lines = [texts.SUMMARY_HEAD.format(when=when)]
     if attended or anonymous_attended:
         lines.append(texts.SUMMARY_ATTENDED.format(names=_names_text(attended, anonymous_attended)))
     if no_show or anonymous_no_show:
         lines.append(texts.SUMMARY_NO_SHOW.format(names=_names_text(no_show, anonymous_no_show)))
+    lines.append(texts.SUMMARY_TAIL)
     return "\n".join(lines)
 
 
@@ -154,19 +157,19 @@ def no_show_message(
     now: datetime,
     offer_meetings: bool = True,
 ) -> tuple[str, Rows]:
-    """Текст и кнопки гостю, который не пришёл: запись (если есть ссылка) и ближайшие встречи кнопками ``mreg:``.
+    """Текст и кнопки гостю, который не пришёл (ТЗ 28, 5.2): запись встречи (если есть ссылка), ближайшая встреча одной
+    кнопкой ``mreg:`` «Записаться на …». Даты нет — строки про следующую встречу нет (лист ожидания не построен).
     ``offer_meetings=False`` — гость чужого партнёра (``app/funnel/network.py``): новых встреч ему не предлагаем."""
     text = texts.AFTER_NO_SHOW.format(when=format_msk(meeting["starts_at"], now=now))
     rows: Rows = []
     recording = normalize_join_url(meeting.get("recording_url"))
     if recording:
+        text += texts.AFTER_NO_SHOW_RECORDING
         rows.append([(texts.AFTER_NO_SHOW_RECORDING_BUTTON, recording)])
-    if offer_meetings:
-        if upcoming:
-            text += "\n" + texts.AFTER_NO_SHOW_NEXT
-            rows.extend(register_rows(upcoming, registered_ids, now=now))
-        else:
-            text += "\n" + texts.GUEST_NO_MEETINGS
+    if offer_meetings and upcoming:
+        following = upcoming[0]
+        text += texts.AFTER_NO_SHOW_NEXT.format(when=format_msk(following["starts_at"], now=now))
+        rows.extend(register_rows([following], registered_ids, now=now))
     return text, rows
 
 
@@ -194,8 +197,32 @@ async def _cards_for(conn: Any, ctx: _Pass, owner_id: str | None) -> tuple[list[
     return ctx.cards[key]
 
 
+async def _guest_owner(conn: Any, ctx: _Pass, row: dict[str, Any]) -> str | None:
+    """Партнёр гостя: владелец заявки, иначе пригласивший по ссылке (первое касание)."""
+    return await _owner_of(conn, ctx.tenant_id, row)
+
+
+async def _owner_of(conn: Any, tenant_id: str, row: dict[str, Any]) -> str | None:
+    """Владелец заявки, а если заявки с владельцем нет — тот, чья ссылка закрепила человека (одним запросом, только когда нужно)."""
+    owner = row.get("assigned_owner_id")
+    if owner:
+        return str(owner)
+    return await guest_inviter_owner(conn, tenant_id, str(row["channel"]), int(row["channel_user_id"]), None)
+
+
+async def _own_network(conn: Any, ctx: _Pass, owner: str | None) -> bool:
+    if owner not in ctx.own:
+        ctx.own[owner] = await is_own_network(conn, ctx.tenant_id, owner_id=owner)
+    return ctx.own[owner]
+
+
 async def _send_attended(conn: Any, ctx: _Pass, row: dict[str, Any]) -> None:
-    cards, partner = await _cards_for(conn, ctx, row.get("assigned_owner_id"))
+    """ТЗ 28, 5.1. Есть партнёр — его визитка (текст «он на связи и ответит на ваши вопросы», контакты, «Личный разбор» —
+    только если партнёр из своей сети). Партнёра нет — одно сообщение «Виктор и Елена на связи» с кнопками «Написать Виктору»,
+    «Написать Елене», «Личный разбор». Визиток нет совсем — просто спасибо."""
+    owner = await _guest_owner(conn, ctx, row)
+    cards, partner = await _cards_for(conn, ctx, owner)
+    own = await _own_network(conn, ctx, owner)
     registration_id = int(row["registration_id"])
     common = {
         "tenant_id": ctx.tenant_id,
@@ -209,16 +236,26 @@ async def _send_attended(conn: Any, ctx: _Pass, row: dict[str, Any]) -> None:
             conn, idempotency_key=after_key(registration_id, 1), text=texts.AFTER_THANKS, due_at=ctx.now, **common
         )
         return
-    for position, card in enumerate(cards):
+    if not partner:
         await enqueue_guest_message(
             conn,
-            idempotency_key=after_key(registration_id, position + 1),
-            text=card_text(card, card_intro(card, position=position, partner=partner)),
-            rows=card_rows(card),
-            photo_url=card.photo_url,
-            due_at=ctx.now + CARD_SPACING * position,
+            idempotency_key=after_key(registration_id, 1),
+            text=texts.AFTER_AD_TEXT,
+            rows=[*ad_card_rows(cards), *consult_rows()],
+            due_at=ctx.now,
             **common,
         )
+        return
+    card = cards[0]
+    await enqueue_guest_message(
+        conn,
+        idempotency_key=after_key(registration_id, 1),
+        text=card_text(card, card_intro(card, partner=True, consult=own)),
+        rows=[*card_rows(card), *(consult_rows() if own else [])],
+        photo_url=card.photo_url,
+        due_at=ctx.now,
+        **common,
+    )
 
 
 async def _send_no_show(conn: Any, ctx: _Pass, row: dict[str, Any]) -> None:
@@ -228,12 +265,10 @@ async def _send_no_show(conn: Any, ctx: _Pass, row: dict[str, Any]) -> None:
         conn, ctx.tenant_id, channel=str(row["channel"]), channel_user_id=int(row["channel_user_id"]), limit=10, now=ctx.now
     )
     registered = frozenset(int(meeting["meeting_id"]) for _, meeting in active)
-    owner = await guest_inviter_owner(
-        conn, ctx.tenant_id, str(row["channel"]), int(row["channel_user_id"]), row.get("assigned_owner_id")
+    owner = await _guest_owner(conn, ctx, row)
+    text, rows = no_show_message(
+        ctx.meeting, ctx.upcoming, registered, now=ctx.now, offer_meetings=await _own_network(conn, ctx, owner)
     )
-    if owner not in ctx.own:
-        ctx.own[owner] = await is_own_network(conn, ctx.tenant_id, owner_id=owner)
-    text, rows = no_show_message(ctx.meeting, ctx.upcoming, registered, now=ctx.now, offer_meetings=ctx.own[owner])
     await enqueue_guest_message(
         conn,
         tenant_id=ctx.tenant_id,
@@ -280,9 +315,13 @@ async def _send_summaries(conn: Any, ctx: _Pass) -> int:
     rows = await fetch_all(conn, _SUMMARY_SQL, (ctx.tenant_id, int(ctx.meeting["meeting_id"])))
     by_owner: dict[str, dict[str, Any]] = {}
     for row in rows:
-        owner = str(row.get("assigned_owner_id") or organic)
+        # Один адресат (ТЗ 28, решение 5): партнёр, за кем закреплён человек (заявка или ссылка), иначе владелец.
+        owner = str(await _owner_of(conn, ctx.tenant_id, row) or organic)
         group = by_owner.setdefault(owner, {"attended": [], "no_show": [], "anon_attended": 0, "anon_no_show": 0})
-        name = plain_no_links(row.get("name"), NAME_MAX) if row.get("name") else ""
+        name = await person_name(
+            conn, ctx.tenant_id, str(row["channel"]), int(row["channel_user_id"]),
+            lead_id=row.get("lead_id"), lead_name=row.get("name"),
+        )
         if name:
             group[row["status"]].append(name)
         else:

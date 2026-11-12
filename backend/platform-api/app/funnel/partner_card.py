@@ -169,12 +169,23 @@ def card_rows(card: OwnerCard) -> Rows:
     return rows
 
 
-def card_intro(card: OwnerCard, *, position: int, partner: bool) -> str:
-    """Первая строка визитки: партнёру гостя, первая и вторая визитка гостю с рекламы."""
-    if partner:
-        return texts.AFTER_CARD_PARTNER.format(name=card.name)
-    template = texts.AFTER_CARD_AD_FIRST if position == 0 else texts.AFTER_CARD_AD_NEXT
-    return template.format(name=card.name)
+def card_intro(card: OwnerCard, *, position: int = 0, partner: bool = True, consult: bool = True) -> str:
+    """Текст визитки партнёра гостю, который был на встрече (ТЗ 28, 5.1): «Ваш партнёр — {имя}: он на связи и ответит на ваши
+    вопросы. Напишите ему.» и, если ``consult`` (гость своей сети), фраза про «Личный разбор». Не партнёр — просто спасибо."""
+    if not partner:
+        return texts.AFTER_THANKS
+    return texts.AFTER_CARD_PARTNER.format(name=card.name) + (texts.AFTER_CARD_CONSULT if consult else "")
+
+
+def ad_card_rows(cards: list[OwnerCard]) -> Rows:
+    """Кнопки гостю с рекламы (ТЗ 28, 5.1): «Написать Виктору» и «Написать Елене» — по порядку визиток (владелец WWC, затем
+    партнёр из ``PLATFORM_MEETING_AD_CARD_REFS``). Ссылка — личный Telegram, иначе Max, иначе сайт; нет ссылок — нет кнопки."""
+    rows: Rows = []
+    for label, card in zip(texts.AFTER_AD_WRITE_BUTTONS, cards):
+        link = f"https://t.me/{card.telegram_username}" if card.telegram_username else (card.max_url or card.site_url)
+        if link:
+            rows.append([(label, link)])
+    return rows
 
 
 # ---- база ------------------------------------------------------------------------------------------

@@ -425,13 +425,13 @@ def test_meeting_registrations_end_to_end(monkeypatch):
 
                 started = await guest_bot.handle_lead_start_telegram(tenant, message(555001), lead_a["public_id"], trace_id="t")
                 assert started == {"ok": True, "route": "lead_start", "status": "registered", "attribution": "attributed", "trace_id": "t"}
-                assert last_text().startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: ")
-                assert last_text().endswith(" МСК.\nНапоминание о встрече придёт сюда.")
+                assert last_text().startswith("Вас пригласил Игорь Волков.\n\nВы записаны на Живую встречу: ")
+                assert last_text().endswith("она заработает за час до начала.")
                 regs = await registrations_of(555001)
                 assert len(regs) == 1 and regs[0]["status"] == "registered" and regs[0]["meeting_id"] == 1
                 assert regs[0]["lead_id"] == str(lead_rows["a"]["lead_id"])
                 assert last_buttons()[:2] == [("Перенести", f"mmove:{regs[0]['registration_id']}"), ("Отменить запись", f"mcancel:{regs[0]['registration_id']}")]
-                assert [d for _, d in last_buttons()[2:]] == ["funnel:tour", "funnel:consult", "funnel:ask"]
+                assert [d for _, d in last_buttons()[2:]] == ["funnel:tour", "funnel:consult", "funnel:ask", "funnel:partner"]
                 # заявка привязана к человеку; партнёр закреплён первым касанием тем же путём, что у ref_<код>
                 lead_after = (await rows("select telegram_user_id, max_user_id, bot_opened_at from website_leads where lead_id = %s", (lead_rows["a"]["lead_id"],)))[0]
                 assert lead_after["telegram_user_id"] == 555001 and lead_after["max_user_id"] is None and lead_after["bot_opened_at"] is not None
@@ -453,7 +453,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 for text in ("/start", "меню", "привет"):
                     shown = await guest_bot.try_handle_guest_menu_text(tenant, message(555001, text), trace_id="t")
                     assert shown["route"] == "guest_menu"
-                    assert last_text().startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу")
+                    assert last_text().startswith("Вас пригласил Игорь Волков.\n\nВы записаны на Живую встречу")
                 async with tenant_connection("whieda") as conn:
                     guest_context = await resolve_guest(conn, "whieda", "telegram", 555001)
                 assert guest_context is not None and guest_context.lead.public_id == lead_a["public_id"]
@@ -505,7 +505,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 meet = await guest_bot.try_handle_guest_callback(tenant, callback(555001, "funnel:meet"), trace_id="t")
                 assert meet["status"] == "listed"
                 assert [d for _, d in last_buttons()] == ["mreg:1", "mreg:2", "mreg:3"]
-                assert [t.split(":")[0] for t, _ in last_buttons()] == ["Записаться", "Вы записаны", "Записаться"]
+                assert [t.startswith("Вы записаны") for t, _ in last_buttons()] == [False, True, False]
 
                 # запись на прошедшую встречу и на несуществующую: вежливый отказ, другие встречи предложены
                 refused = await guest_bot.try_handle_guest_callback(tenant, callback(555001, "mreg:7"), trace_id="t")
@@ -521,7 +521,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 assert (await rows("select body from crm_notes where contact_id = %s::uuid order by created_at desc limit 1", (card_a,)))[0]["body"].startswith("Отменил(а) запись")
                 # меню гостя после отмены: ближайшие встречи кнопками, а не записи
                 await guest_bot.try_handle_guest_menu_text(tenant, message(555001), trace_id="t")
-                assert [d for _, d in last_buttons()][:2] == ["mreg:1", "mreg:2"]
+                assert [d for _, d in last_buttons()][:2] == ["funnel:tour", "funnel:meet"]
                 # и снова записаться на ту же встречу можно: метка возвращается
                 back = await guest_bot.try_handle_guest_callback(tenant, callback(555001, "mreg:2"), trace_id="t")
                 assert back["status"] == "registered"
@@ -561,7 +561,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 gone = await guest_bot.handle_lead_start_telegram(tenant, message(555004), late["public_id"], trace_id="t")
                 assert gone["status"] == "closed"
                 assert "Встреча, на которую вы записывались, уже прошла или отменена." in last_text()
-                assert [d for _, d in last_buttons()] == ["mreg:1", "mreg:2", "funnel:tour", "funnel:consult", "funnel:ask"]
+                assert [d for _, d in last_buttons()] == ["funnel:tour", "funnel:meet", "funnel:consult", "funnel:ask", "funnel:partner"]
                 assert await registrations_of(555004) == []
 
             # ---- 13. старт lead_<id> в Max: organic-заявка, партнёра нет ---------------------------------
@@ -572,8 +572,10 @@ def test_meeting_registrations_end_to_end(monkeypatch):
             assert started_max == {"ok": True, "route": "max_lead_start", "status": "menu", "attribution": None, "trace_id": "t"}
             sent_kwargs = max_sent.await_args.kwargs
             assert sent_kwargs["chat_id"] == 888 and sent_kwargs["user_id"] == 777002
-            assert sent_kwargs["text"].startswith("Вы в WWC.\n\nВыберите ближайшую живую встречу.")
-            assert [b["payload"] for row in sent_kwargs["buttons"] for b in row] == ["mreg:1", "mreg:2", "funnel:tour", "funnel:consult", "funnel:ask"]
+            assert sent_kwargs["text"].startswith("Здравствуйте. Это бот WWC, сообщества партнёров WHIEDA.")
+            assert [b["payload"] for row in sent_kwargs["buttons"] for b in row] == [
+                "funnel:tour", "funnel:meet", "funnel:consult", "funnel:ask", "funnel:partner",
+            ]
             lead_b_after = (await rows("select telegram_user_id, max_user_id from website_leads where lead_id = %s", (lead_rows["b"]["lead_id"],)))[0]
             assert lead_b_after == {"telegram_user_id": None, "max_user_id": 777002}
             assert await rows("select 1 from partner_referral_attributions where invitee_actor_id like %s", ("max:%",)) == []   # organic не закрепляется
@@ -594,7 +596,7 @@ def test_meeting_registrations_end_to_end(monkeypatch):
                 await guest_bot.handle_lead_start_max(
                     tenant, SimpleNamespace(user_id=777003, chat_id=889, username=None, display_name="Яна", text=""), lead_e["public_id"], "t"
                 )
-            assert max_sent.await_args.kwargs["text"].startswith("Вас пригласил партнёр: Игорь Волков.\n\nВы записаны на Живую встречу: ")
+            assert max_sent.await_args.kwargs["text"].startswith("Вас пригласил Игорь Волков.\n\nВы записаны на Живую встречу: ")
             assert (await rows("select inviter_actor_id, source from partner_referral_attributions where invitee_actor_id = 'max:whieda:777003'")) == [
                 {"inviter_actor_id": "igor-actor", "source": "max_deeplink"}
             ]

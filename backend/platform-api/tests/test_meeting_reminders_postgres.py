@@ -169,10 +169,15 @@ def test_meeting_reminders_end_to_end(monkeypatch):
             assert [r["idempotency_key"] for r in day] == [f"mrem:{r['id']}:day" for r in active]
             assert {r["status"] for r in day} == {"scheduled"}
             tg = day[0]["payload"]
-            assert tg["chat_id"] == "5001" and tg["binding_id"] == "whieda-advisor-bot" and "reply_markup" not in tg
+            assert tg["chat_id"] == "5001" and tg["binding_id"] == "whieda-advisor-bot"
+            assert tg["reply_markup"] == {"inline_keyboard": [[
+                {"text": "Перенести", "callback_data": f"mmove:{reg_a['id']}"},
+                {"text": "Отменить запись", "callback_data": f"mcancel:{reg_a['id']}"},
+            ]]}
             assert "Завтра, " in tg["text"] and f"{as_msk(start):%H:%M}" in tg["text"] and "МСК" in tg["text"]
             max_row = next(r for r in day if r["idempotency_key"] == f"mrem:{reg_c['id']}:day")["payload"]
-            assert max_row["channel"] == "max" and max_row["user_id"] == "5003" and "buttons" not in max_row
+            assert max_row["channel"] == "max" and max_row["user_id"] == "5003"
+            assert [b["payload"] for row in max_row["buttons"] for b in row] == [f"mmove:{reg_c['id']}", f"mcancel:{reg_c['id']}"]
             # отметка в записи; отменённая запись и встреча в другой день напоминания не получили
             assert "day" in (await reg_row(reg_a["id"]))["reminders_sent"]
             assert (await reg_row(reg_e["id"]))["reminders_sent"] == {} and (await reg_row(reg_m2["id"]))["reminders_sent"] == {}
@@ -195,7 +200,7 @@ def test_meeting_reminders_end_to_end(monkeypatch):
             max_hour = next(r for r in hour_rows if r["idempotency_key"] == f"mrem:{reg_c['id']}:hour")["payload"]
             assert max_hour["buttons"] == [[{"type": "callback", "text": "Присоединиться", "payload": f"mjoin:{reg_c['id']}"}]]
             two = [r for r in await outbox("meeting_reminder") if r["idempotency_key"].endswith(":two_hours")]
-            assert len(two) == 5 and all("reply_markup" not in r["payload"] and "buttons" not in r["payload"] for r in two)
+            assert len(two) == 5 and all("Перенести" in str(r["payload"]) and "mcancel" not in str(r["payload"]) for r in two)
 
             # ---- 2. «Присоединиться» ---------------------------------------------------------------------
             early = await registration.join("whieda", "telegram", 5002, reg_b["id"], now=at(timedelta(hours=3)))
@@ -223,7 +228,7 @@ def test_meeting_reminders_end_to_end(monkeypatch):
             assert (await registration.join("whieda", "telegram", 5006, reg_f["id"], now=at(timedelta(minutes=2)))).status == "joined"
             # встреча без ссылки: нажатие в окне отмечает, ссылку обещают позже
             no_link = await registration.join("whieda", "telegram", 5001, reg_m2["id"], now=start2 - timedelta(minutes=5))
-            assert no_link.status == "joined" and no_link.reply.rows == [] and "Ссылку пришлём" in no_link.reply.text
+            assert no_link.status == "joined" and no_link.reply.rows == [] and "Ссылка на встречу появится" in no_link.reply.text
             # не в окне: после конца встречи
             late = await registration.join("whieda", "telegram", 5002, reg_b["id"], now=start + timedelta(minutes=61))
             assert late.status == "too_late" and (await reg_row(reg_b["id"]))["status"] == "registered"
@@ -252,37 +257,40 @@ def test_meeting_reminders_end_to_end(monkeypatch):
             after = {r["idempotency_key"]: r for r in await outbox("meeting_after")}
             assert set(after) == {
                 f"mafter:{reg_a['id']}:1", f"mafter:{reg_b['id']}:1", f"mafter:{reg_c['id']}:1", f"mafter:{reg_d['id']}:1",
-                f"mafter:{reg_f['id']}:1", f"mafter:{reg_f['id']}:2",
+                f"mafter:{reg_f['id']}:1",
             }
             # гость партнёра: его визитка, фото, контакты, кнопки (Telegram)
             card_a = after[f"mafter:{reg_a['id']}:1"]["payload"]
             assert card_a["chat_id"] == "5001" and card_a["card_photo"] == IGOR_PHOTO
+            # «Личный разбор» — только своей сети: в этих тестах признак подменён на «своя сеть» (conftest)
             assert card_a["text"] == (
-                "Спасибо, что были на Живой встрече!\nВаш партнёр WWC — Игорь Волков. Напишите ему: он поможет с первыми шагами.\n"
+                "Спасибо, что были на Живой встрече. Ваш партнёр — Игорь Волков: он на связи и ответит на ваши вопросы. Напишите ему. "
+                "Если хотите разобрать свой случай подробнее, нажмите «Личный разбор».\n"
                 "Телефон: +7 999 111-22-33\nПочта: igor@example.com"
             )
-            assert [(b["text"], b["url"]) for row in card_a["reply_markup"]["inline_keyboard"] for b in row] == [
+            assert [(b["text"], b["url"]) for row in card_a["reply_markup"]["inline_keyboard"] for b in row if "url" in b] == [
                 ("Написать в Telegram", "https://t.me/igor_v"), ("Написать в Max", "https://max.ru/u/igor"), ("Сайт", "https://igor.wwc.best/"),
             ]
+            assert [b["callback_data"] for row in card_a["reply_markup"]["inline_keyboard"] for b in row if "callback_data" in b] == ["funnel:consult"]
             # тот же партнёр, гость в Max: картинка по адресу и кнопки-ссылки
             card_c = after[f"mafter:{reg_c['id']}:1"]["payload"]
             assert card_c["channel"] == "max" and card_c["user_id"] == "5003" and card_c["image_url"] == IGOR_PHOTO
-            assert [b["type"] for row in card_c["buttons"] for b in row] == ["link", "link", "link"]
-            # гость с рекламы: две визитки подряд — владелец WWC, затем онлайн-Елена
-            first_card = after[f"mafter:{reg_f['id']}:1"]
-            second_card = after[f"mafter:{reg_f['id']}:2"]
-            assert first_card["payload"]["text"] == "Спасибо, что были на Живой встрече!\nВиктор Хрипко — на связи по любым вопросам."
-            assert [b["url"] for row in first_card["payload"]["reply_markup"]["inline_keyboard"] for b in row] == ["https://t.me/khripko"]
-            assert second_card["payload"]["text"] == "Елена Онлайн — тоже на связи по любым вопросам."
-            assert "card_photo" not in first_card["payload"] and "card_photo" not in second_card["payload"]
-            assert [b["url"] for row in second_card["payload"]["reply_markup"]["inline_keyboard"] for b in row] == [
-                "https://max.ru/u/elena", "https://elena.wwc.best"
+            assert [b["type"] for row in card_c["buttons"] for b in row] == ["link", "link", "link", "callback"]
+            # гость с рекламы: одно сообщение «Виктор и Елена на связи», кнопки «Написать Виктору», «Написать Елене», «Личный разбор»
+            ad = after[f"mafter:{reg_f['id']}:1"]["payload"]
+            assert ad["text"] == (
+                "Спасибо, что были на Живой встрече. Виктор и Елена на связи по любым вопросам. "
+                "Для подробного разговора нажмите «Личный разбор»."
+            )
+            assert "card_photo" not in ad
+            assert [(b["text"], b["url"]) for row in ad["reply_markup"]["inline_keyboard"] for b in row if "url" in b] == [
+                ("Написать Виктору", "https://t.me/khripko"), ("Написать Елене", "https://max.ru/u/elena"),
             ]
-            assert second_card["due_at"] > first_card["due_at"]
+            assert [b["callback_data"] for row in ad["reply_markup"]["inline_keyboard"] for b in row if "callback_data" in b] == ["funnel:consult"]
             # не пришли: запись и ближайшие встречи (встреча 2 — будущая, живая; отменённая 3 не предлагается)
             for reg in (reg_b, reg_d):
                 miss = after[f"mafter:{reg['id']}:1"]["payload"]
-                assert miss["text"].startswith("Вы записывались на Живую встречу") and "не дошли" in miss["text"]
+                assert miss["text"].startswith("Вы записывались на Живую встречу") and "не получилось прийти" in miss["text"]
                 rows_flat = [b for row in miss["reply_markup"]["inline_keyboard"] for b in row]
                 assert rows_flat[0] == {"text": "▶️ Смотреть запись", "url": RECORDING}
                 assert [b["callback_data"] for b in rows_flat[1:]] == ["mreg:2"]
@@ -303,15 +311,16 @@ def test_meeting_reminders_end_to_end(monkeypatch):
             # итог партнёрам: по сообщению владельцу (у igor-actor — CRM открыта, кнопка; у «organic» — как есть)
             summaries = {r["idempotency_key"]: r["payload"] for r in await outbox("meeting_summary")}
             assert set(summaries) == {"msum:1:igor-actor", "msum:1:organic"}
-            head = f"Живая встреча {format_msk(start, now=after_now)}:"
+            head = f"Живая встреча {format_msk(start, now=after_now)}."
+            tail = "Поговорите с каждым в течение суток, пока встреча в памяти."
             igor_sum = summaries["msum:1:igor-actor"]
             assert igor_sum["chat_id"] == "7001" and igor_sum["binding_id"] == "whieda-advisor-bot"
-            assert igor_sum["text"] == f"{head}\nБыли: Анна, Светлана."
+            assert igor_sum["text"] == f"{head}\nБыли: Анна, Светлана.\n{tail}"
             assert igor_sum["reply_markup"]["inline_keyboard"][0][0]["text"] == "📋 Открыть CRM"
             assert igor_sum["reply_markup"]["inline_keyboard"][0][0]["url"].endswith("/crm/") and igor_sum["site_login_user_id"] == 7001
             organic_sum = summaries["msum:1:organic"]
             assert organic_sum["chat_id"] == "7003"
-            assert organic_sum["text"] == f"{head}\nБыли: Фёдор.\nЗаписались, но не пришли: Борис, из бота без заявки — 1."
+            assert organic_sum["text"] == f"{head}\nБыли: Фёдор.\nЗаписались, но не пришли: Борис, из бота без заявки — 1.\n{tail}"
 
             # повторный проход и позже окна — ничего нового
             before = len(await outbox())
