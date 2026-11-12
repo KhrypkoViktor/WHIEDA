@@ -33,15 +33,15 @@ def test_theme_entitlement_requires_telegram_identity_of_the_exact_site_owner() 
     site = {
         "ref_code": "sofiya",
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "sankofa"},
+        "public_profile": {"selected_theme_id": "wwc-legacy"},
     }
 
     owner = entitlement_payload(site, "8421")
     other_partner = entitlement_payload(site, "1428")
 
     assert owner["theme_customization_allowed"] is True
-    assert owner["allowed_theme_ids"] == ["whieda-bright", "sankofa"]
-    assert owner["selected_theme_id"] == "sankofa"
+    assert owner["allowed_theme_ids"] == ["wwc-legacy"]
+    assert owner["selected_theme_id"] == "wwc-legacy"
     assert other_partner["theme_customization_allowed"] is False
     assert other_partner["allowed_theme_ids"] == []
     assert other_partner["selected_theme_id"] == ""
@@ -49,9 +49,9 @@ def test_theme_entitlement_requires_telegram_identity_of_the_exact_site_owner() 
 
 def test_public_theme_omits_identity_and_rejects_invalid_site_ids() -> None:
     payload = public_theme_payload(
-        {"ref_code": "sofiya", "public_profile": {"selected_theme_id": "sankofa"}}
+        {"ref_code": "sofiya", "public_profile": {"selected_theme_id": "wwc-legacy"}}
     )
-    assert payload == {"ok": True, "site_id": "sofiya", "selected_theme_id": "sankofa"}
+    assert payload == {"ok": True, "site_id": "sofiya", "selected_theme_id": "wwc-legacy"}
 
     with pytest.raises(HTTPException) as invalid:
         normalize_site_id("../sofiya")
@@ -120,7 +120,7 @@ async def test_entitlement_endpoint_enables_theme_only_for_the_host_site_owner(
     site = {
         "ref_code": "sofiya",
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "sankofa"},
+        "public_profile": {"selected_theme_id": "wwc-legacy"},
     }
     tenant = TenantContext(
         tenant_id="whieda",
@@ -209,7 +209,7 @@ async def test_temporary_free_grants_verified_non_owner_on_enabled_profiles(
     site = {
         "ref_code": ref_code,
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "sankofa"},
+        "public_profile": {"selected_theme_id": "wwc-legacy"},
     }
     app = _entitlement_app(
         monkeypatch, site=site, telegram_user_id="1428", temporary_free=True
@@ -227,8 +227,8 @@ async def test_temporary_free_grants_verified_non_owner_on_enabled_profiles(
     assert response.status_code == 200
     payload = response.json()
     assert payload["theme_customization_allowed"] is True
-    assert payload["allowed_theme_ids"] == ["whieda-bright", "sankofa"]
-    assert payload["selected_theme_id"] == "sankofa"
+    assert payload["allowed_theme_ids"] == ["wwc-legacy"]
+    assert payload["selected_theme_id"] == "wwc-legacy"
     assert payload["source_status"] == "temporary_free"
 
 
@@ -237,7 +237,7 @@ async def test_flag_off_keeps_owner_only_entitlement(monkeypatch: pytest.MonkeyP
     site = {
         "ref_code": "igoref",
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "sankofa"},
+        "public_profile": {"selected_theme_id": "wwc-legacy"},
     }
     app = _entitlement_app(
         monkeypatch, site=site, telegram_user_id="8421", temporary_free=False
@@ -281,7 +281,7 @@ async def test_guest_without_valid_session_is_rejected(monkeypatch: pytest.Monke
     site = {
         "ref_code": "igoref",
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "sankofa"},
+        "public_profile": {"selected_theme_id": "wwc-legacy"},
     }
     # Even with the temporary free flag on, no valid session means no answer.
     app = _entitlement_app(monkeypatch, site=site, telegram_user_id="", temporary_free=True)
@@ -342,14 +342,14 @@ async def test_save_selected_theme_persists_and_audits(
     site = {
         "ref_code": "igoref",
         "telegram_chat_id": "8421",
-        "public_profile": {"selected_theme_id": "whieda-bright"},
+        "public_profile": {"selected_theme_id": ""},
     }
     captured: dict = {}
 
     async def fake_fetch_one(conn, sql, params=None):
         captured["sql"] = " ".join(sql.split())
         captured["params"] = params
-        return {"ref_code": "igoref", "public_profile": {"selected_theme_id": "sankofa"}}
+        return {"ref_code": "igoref", "public_profile": {"selected_theme_id": "wwc-legacy"}}
 
     @asynccontextmanager
     async def fake_conn(tenant_id: str):
@@ -365,23 +365,23 @@ async def test_save_selected_theme_persists_and_audits(
             "whieda",
             site_id="igoref",
             telegram_user_id="8421",
-            theme_id="sankofa",
+            theme_id="wwc-legacy",
             temporary_free=False,
         )
 
     assert payload["ok"] is True
     assert payload["theme_customization_allowed"] is True
-    assert payload["selected_theme_id"] == "sankofa"
+    assert payload["selected_theme_id"] == "wwc-legacy"
     assert captured["tenant_id"] == "whieda"
     assert "update referral_profiles" in captured["sql"]
-    assert captured["params"][:3] == ("sankofa", "whieda", "igoref")
+    assert captured["params"][:3] == ("wwc-legacy", "whieda", "igoref")
 
     audit = [r.getMessage() for r in caplog.records if "theme_access.theme_saved" in r.getMessage()]
     assert len(audit) == 1
     assert "site_id=igoref" in audit[0]
     assert "telegram_user_id=8421" in audit[0]
-    assert "theme_id=sankofa" in audit[0]
-    assert "previous_theme_id=whieda-bright" in audit[0]
+    assert "theme_id=wwc-legacy" in audit[0]
+    assert "previous_theme_id=" in audit[0]  # был новый вид (пусто)
     assert "granted_via=site_owner" in audit[0]
 
 
@@ -399,7 +399,7 @@ async def test_put_entitlement_saves_for_verified_non_owner_when_temporary_free(
 
     async def fake_fetch_one(conn, sql, params=None):
         captured["params"] = params
-        return {"ref_code": "sofiya", "public_profile": {"selected_theme_id": "sankofa"}}
+        return {"ref_code": "sofiya", "public_profile": {"selected_theme_id": "wwc-legacy"}}
 
     @asynccontextmanager
     async def fake_conn(tenant_id: str):
@@ -419,12 +419,12 @@ async def test_put_entitlement_saves_for_verified_non_owner_when_temporary_free(
             saved = await client.put(
                 "/api/v1/theme-access/entitlement",
                 headers={"X-WWC-Personal-Host": "sofiya.wwc.best"},
-                json={"site_id": "sofiya", "selected_theme_id": "sankofa"},
+                json={"site_id": "sofiya", "selected_theme_id": "wwc-legacy"},
             )
             assert saved.status_code == 200
             payload = saved.json()
             assert payload["theme_customization_allowed"] is True
-            assert payload["selected_theme_id"] == "sankofa"
+            assert payload["selected_theme_id"] == "wwc-legacy"
 
             denied = await client.put(
                 "/api/v1/theme-access/entitlement",
@@ -435,7 +435,7 @@ async def test_put_entitlement_saves_for_verified_non_owner_when_temporary_free(
             assert denied.json()["detail"] == {"error": "theme_not_allowed"}
 
     assert captured["tenant_id"] == "whieda"
-    assert captured["params"][:3] == ("sankofa", "whieda", "sofiya")
+    assert captured["params"][:3] == ("wwc-legacy", "whieda", "sofiya")
     audit = [r.getMessage() for r in caplog.records if "theme_access.theme_saved" in r.getMessage()]
     assert len(audit) == 1
     assert "granted_via=temporary_free" in audit[0]

@@ -30,11 +30,11 @@ ROW = {
     "country_code": "BY",
     "region_code": None,
     "profile_version": 4,
-    "public_profile": {"display_name": "Ольга Самцова", "subdomain": "samtsova", "selected_theme_id": "sankofa"},
+    "public_profile": {"display_name": "Ольга Самцова", "subdomain": "samtsova", "selected_theme_id": "wwc-legacy"},
 }
 SITE = {
     "ref_code": "olga-samtsova",
-    "public_profile": {"subdomain": "samtsova", "selected_theme_id": "sankofa"},
+    "public_profile": {"subdomain": "samtsova", "selected_theme_id": "wwc-legacy"},
     "telegram_chat_id": "525317405",
 }
 
@@ -209,7 +209,7 @@ async def test_public_theme_is_read_once_and_cacheable_by_the_browser(client, si
     second = await client.get(THEME_URL, params=params, headers=PERSONAL)
 
     assert first.status_code == second.status_code == 200
-    assert first.json() == {"ok": True, "site_id": "olga-samtsova", "selected_theme_id": "sankofa"}
+    assert first.json() == {"ok": True, "site_id": "olga-samtsova", "selected_theme_id": "wwc-legacy"}
     assert first.json() == second.json()
     assert first.headers["cache-control"] == "public, max-age=120"
     assert "x-wwc-personal-host" in first.headers["vary"].lower()
@@ -256,15 +256,15 @@ async def test_saving_a_theme_forgets_the_cached_public_profile(client, site_loa
     await client.get(REF_URL, headers=HOST)
     assert len(theme_site_cache) == 1
 
-    db = FakeDb(lambda query, _params: [{"ref_code": "olga-samtsova", "public_profile": {"selected_theme_id": "whieda-bright"}}])
+    db = FakeDb(lambda query, _params: [{"ref_code": "olga-samtsova", "public_profile": {"selected_theme_id": "wwc-legacy"}}])
     monkeypatch.setattr(theme_service, "tenant_connection", db.tenant_connection)
     monkeypatch.setattr(theme_service, "load_theme_site", AsyncMock(return_value=SITE))
 
     saved = await theme_service.save_selected_theme(
-        "whieda", site_id="samtsova", telegram_user_id="525317405", theme_id="whieda-bright"
+        "whieda", site_id="samtsova", telegram_user_id="525317405", theme_id="wwc-legacy"
     )
 
-    assert saved["selected_theme_id"] == "whieda-bright"
+    assert saved["selected_theme_id"] == "wwc-legacy"
     assert len(theme_site_cache) == 0
     assert len(public_ref_cache) == 0
 

@@ -125,7 +125,7 @@ async def test_public_ref_full_public_contract(client, monkeypatch):
                 "access_tier": "pro",
                 "subdomain": "samtsova",
                 "photo_url": "https://media.sysarch.pro/media/partners/olga-samtsova.jpg?v=2",
-                "selected_theme_id": "sankofa",
+                "selected_theme_id": "wwc-legacy",
                 "personal_page_url": "https://samtsova.wwc.best/partner/",
                 "telegram_url": "https://t.me/olga_samtsova",
                 "youtube_url": "https://www.youtube.com/@olga",
@@ -139,7 +139,7 @@ async def test_public_ref_full_public_contract(client, monkeypatch):
 
     assert body["ok"] is True
     assert body["enabled"] is True
-    assert body["theme"] == "sankofa"
+    assert body["theme"] == "wwc-legacy"
     assert body["personalPageUrl"] == "https://samtsova.wwc.best/partner/"
 
     consultant = body["consultant"]

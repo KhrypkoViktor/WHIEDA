@@ -9,7 +9,9 @@ from app.db import fetch_one, tenant_connection
 from app.observability import log_event
 from app.public_cache import forget_public_profiles
 
-ALLOWED_THEME_IDS = ("whieda-bright", "sankofa")
+# Выбор оформления личного сайта (владелец 12.11.2026): только «Прежний WWC» к новому виду по умолчанию (пустое значение).
+# Палитры whieda-bright и sankofa из выбора убраны — их не выбрал ни один партнёр, поддерживать их не будем.
+ALLOWED_THEME_IDS = ("wwc-legacy",)
 _SITE_ID_RE = re.compile(r"^[a-z0-9-]{1,64}$")
 ISSUED_SUBDOMAIN_TO_REF = {
     "ladnaya": "ladnaya",
