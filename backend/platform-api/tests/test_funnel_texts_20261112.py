@@ -202,10 +202,10 @@ async def test_the_search_tag_opens_the_question_greeting_in_telegram_and_max(mo
     for channel in ("telegram", "max"):
         monkeypatch.setattr(guest_bot, "load_start_tag", AsyncMock(return_value="site-club"))
         reply = await guest_bot._guest_menu("whieda", channel, USER)
-        assert reply.text == "Вас пригласил Игорь Волков. " + texts.GREETING_ASK
+        assert reply.text == "Вас пригласил партнёр: Игорь Волков. " + texts.GREETING_ASK
         assert [data for row in reply.rows for _, data in row][:3] == ["funnel:ask", "funnel:tour", "funnel:meet"]
     monkeypatch.setattr(guest_bot, "load_start_tag", AsyncMock(return_value="vk"))
-    assert (await guest_bot._guest_menu("whieda", "telegram", USER)).text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert (await guest_bot._guest_menu("whieda", "telegram", USER)).text.startswith("Вас пригласил партнёр: Игорь Волков. Дарю карту системы")
 
 
 def guest_bot_context():
@@ -249,7 +249,7 @@ async def test_the_partner_is_told_who_registered_with_the_card_button(notice):
     assert kwargs["event_type"] == "meeting_guest_registered" and kwargs["idempotency_key"] == "mnew:7"
     payload = kwargs["payload"]
     assert payload["text"] == (
-        "Анна Петрова записался(ась) на Живую встречу: чт 05.11 19:30 МСК. Делать ничего не нужно: напоминания пришлёт бот. "
+        "Новая запись на Живую встречу чт 05.11 19:30 МСК: Анна Петрова. Делать ничего не нужно: напоминания пришлёт бот. "
         "После встречи придёт список с вашими людьми."
     )
     assert len(payload["text"]) <= 350
@@ -265,7 +265,7 @@ async def test_without_a_card_or_open_crm_there_is_no_button_and_without_a_name_
     notice.name.return_value = ""
     assert await notify(lead=None) is True
     payload = notice.outbox.await_args.kwargs["payload"]
-    assert "reply_markup" not in payload and payload["text"].startswith("Ваш человек записался(ась)")
+    assert "reply_markup" not in payload and payload["text"].startswith("Новая запись на Живую встречу") and ": Ваш человек." in payload["text"]
 
 
 @pytest.mark.parametrize("what", ["no_owner", "organic_owner", "no_chat", "no_bot", "failure"])
@@ -362,4 +362,4 @@ def test_every_greeting_variant_fits_the_limit_with_every_extra_line():
 
 def test_the_registered_guest_text_fits_the_limit():
     reply = guest_menu_reply("Ольга Самцова", registration=(make_registration(7, 12), THU), open_meetings=[], now=NOW)
-    assert len(reply.text) <= 350 and "Вас пригласил Ольга Самцова." in reply.text
+    assert len(reply.text) <= 350 and "Вас пригласил партнёр: Ольга Самцова." in reply.text

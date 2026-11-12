@@ -342,7 +342,7 @@ async def test_telegram_start_of_a_guest_shows_the_guest_menu_and_sets_the_guest
     result = await start_telegram(world, whieda_tenant, whieda_bot_binding)
     assert result["route"] == "guest_menu"
     chat, text, markup = world.sent[-1]
-    assert chat == str(USER) and text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert chat == str(USER) and text.startswith("Вас пригласил партнёр: Игорь Волков. Дарю карту системы")
     assert tg_labels(markup)[-4:] == ["📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
     method, payload = world.calls[-1]
     assert method == "setMyCommands" and payload["scope"] == {"type": "chat", "chat_id": USER}
@@ -414,7 +414,7 @@ async def test_max_start_of_a_guest_shows_the_guest_menu(max_world):
     result = await max_processor.handle_max_start(MAX_TENANT, max_event("start", ""), "t1")
     assert result["route"] == "max_stage_menu" and result["stage"] == "guest"
     text, buttons = max_world.max_sent[-1]
-    assert text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert text.startswith("Вас пригласил партнёр: Игорь Волков. Дарю карту системы")
     assert [b["text"] for row in buttons for b in row][-4:] == ["📅 Записаться на встречу", "🤝 Личный разбор", "✍️ Задать вопрос", "Я уже партнёр WHIEDA"]
 
 

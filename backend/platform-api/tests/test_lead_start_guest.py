@@ -169,7 +169,7 @@ def test_the_search_greeting_asks_for_a_question_first_and_adds_the_partner_phra
     assert reply.text == texts.GREETING_ASK
     assert callback_data(reply.rows) == ["funnel:ask", "funnel:tour", "funnel:meet", "funnel:partner"]   # без «Личного разбора»
     with_partner = guest_menu_reply("Ольга Смирнова", registration=None, open_meetings=[TUE], now=NOW, start_tag=tag)
-    assert with_partner.text == "Вас пригласил Ольга Смирнова. " + texts.GREETING_ASK
+    assert with_partner.text == "Вас пригласил партнёр: Ольга Смирнова. " + texts.GREETING_ASK
     assert len(with_partner.text) <= 350
 
 
@@ -196,7 +196,7 @@ def test_the_greeting_has_no_old_words():
 
 def test_an_active_registration_replaces_the_meeting_list_with_move_and_cancel():
     reply = guest_menu_reply("Ольга", registration=(make_registration(7, 12), THU), open_meetings=[], now=NOW)
-    assert reply.text == "Вас пригласил Ольга.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
+    assert reply.text == "Вас пригласил партнёр: Ольга.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
     assert reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(reply.rows[1:]) == MENU_DATA
     assert "mreg:" not in " ".join(callback_data(reply.rows))
@@ -371,7 +371,7 @@ async def test_a_lead_with_a_partner_and_a_meeting_attributes_registers_and_gree
     assert start.event.await_args.args[2:4] == ("card-1", "registered")
     assert start.event.await_args.kwargs["starts_at"] == THU["starts_at"]
     assert result.reply.text == (
-        "Вас пригласил Игорь Волков.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
+        "Вас пригласил партнёр: Игорь Волков.\n\n" + texts.REGISTRATION_CONFIRMED.format(when="чт 05.11 19:30 МСК")
     )
     assert result.reply.rows[0] == [("Перенести", "mmove:7"), ("Отменить запись", "mcancel:7")]
     assert callback_data(result.reply.rows[1:]) == MENU_DATA
@@ -430,7 +430,7 @@ async def test_a_failed_attribution_does_not_stop_the_registration_and_the_greet
     result = await start.run()
     assert result.attribution == "error" and result.status == "registered"
     start.register.assert_awaited_once()
-    assert result.reply.text.startswith("Вас пригласил Игорь Волков. Дарю карту системы")
+    assert result.reply.text.startswith("Вас пригласил партнёр: Игорь Волков. Дарю карту системы")
 
 
 async def test_a_lead_without_a_meeting_shows_the_two_nearest_meetings(start):
@@ -1620,7 +1620,7 @@ async def test_a_lead_start_of_a_foreign_partner_shows_no_meetings_and_no_consul
     monkeypatch.setattr(lead_start, "is_own_network", own)
     monkeypatch.setattr(lead_start, "academy_button", AsyncMock(return_value=None))
     result = await start.run()
-    assert texts.GUEST_PARTNER_WILL_CONTACT in result.reply.text and "Вас пригласил Игорь Волков." in result.reply.text
+    assert texts.GUEST_PARTNER_WILL_CONTACT in result.reply.text and "Вас пригласил партнёр: Игорь Волков." in result.reply.text
     assert callback_data(result.reply.rows) == ["funnel:tour", "funnel:ask", "funnel:partner"]
     assert start.guest_view.await_args.kwargs["own_network"] is False
     own.assert_awaited_once()
