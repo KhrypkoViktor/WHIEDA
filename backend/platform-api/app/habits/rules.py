@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 LIMIT = 7
 TITLE_MAX = 40
+GOAL_TITLE_MAX = 80
 PAGES_RANGE = (1, 500)
 LITERS_RANGE = (0.6, 9.0)  # 20 кг × 30 мл … 300 кг × 30 мл
 DEFAULT_PAGES = 10
@@ -52,6 +53,7 @@ _TEMPLATE_DEFAULT: dict[str, tuple[str, int]] = {
 }
 
 _TZ_RE = re.compile(r"^[A-Za-z0-9_+\-/]{1,64}$")
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class HabitsError(Exception):
@@ -309,3 +311,73 @@ def clean_patch(current: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]
             raise HabitsError(400, "bad_title")
         out["title"] = clean_title(body["title"])
     return out
+
+
+# ------------------------------------------------------------------ цель (ТЗ §3.5, §5.5)
+
+
+def _goal_day(value: Any, code: str) -> date:
+    """Дата ``ГГГГ-ММ-ДД`` (строго); всё остальное — 400 с кодом ``code``."""
+    if not isinstance(value, str) or not _DAY_RE.fullmatch(value.strip()):
+        raise HabitsError(400, code)
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise HabitsError(400, code) from exc
+
+
+def clean_goal_title(value: Any) -> str:
+    if not isinstance(value, str):
+        raise HabitsError(400, "bad_goal_title")
+    text = unicodedata.normalize("NFC", value)
+    if any(unicodedata.category(ch).startswith("C") for ch in text):
+        raise HabitsError(400, "bad_goal_title")
+    text = " ".join(text.split())
+    if not text or len(text) > GOAL_TITLE_MAX:
+        raise HabitsError(400, "bad_goal_title")
+    return text
+
+
+def clean_goal(body: dict[str, Any], *, today: date, current_start: date | None) -> dict[str, Any]:
+    """Цель из запроса: ``{title, due, start}``.
+
+    ``current_start`` — начало уже стоящей цели (изменение) или ``None`` (создание). Начало ставится
+    только при создании: по умолчанию сегодня, раньше можно, позже сегодня нельзя; при изменении оно
+    остаётся прежним, а другое присланное начало — ``bad_goal_start``. Срок обязателен, не раньше
+    сегодняшнего дня по местному времени и не раньше начала.
+    """
+    title = clean_goal_title(body.get("title"))
+    asked = body.get("start")
+    given = asked is not None and not (isinstance(asked, str) and not asked.strip())
+    if current_start is None:
+        start = _goal_day(asked, "bad_goal_start") if given else today
+        if start > today:
+            raise HabitsError(400, "bad_goal_start")
+    else:
+        if given and _goal_day(asked, "bad_goal_start") != current_start:
+            raise HabitsError(400, "bad_goal_start")
+        start = current_start
+    due = _goal_day(body.get("due"), "bad_goal_due")
+    if due < today or due < start:
+        raise HabitsError(400, "bad_goal_due")
+    return {"title": title, "due": due, "start": start}
+
+
+def goal_counts(start: date, due: date, today: date) -> dict[str, Any]:
+    """Числа цели по местному дню человека (ТЗ §5.5); ничего из этого в базе не хранится.
+
+    осталось = срок − сегодня (0 — «последний день»); прошло = сегодня − начало, не меньше 0 и не больше
+    «всего» (смена пояса может сдвинуть день); всего = срок − начало; процент — целое, половина вверх,
+    при «всего» 0 — 100. Срок вышел, когда сегодня позже срока.
+    """
+    total = (due - start).days
+    expired = today > due
+    passed = min(total, max(0, (today - start).days))
+    percent = 100 if total == 0 else (2 * passed * 100 + total) // (2 * total)
+    return {
+        "left": 0 if expired else (due - today).days,
+        "passed": passed,
+        "total": total,
+        "percent": percent,
+        "expired": expired,
+    }

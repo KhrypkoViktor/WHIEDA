@@ -153,7 +153,7 @@ def test_habits_over_http(monkeypatch):
                     who["uid"] = ANNA
                     empty = await call("GET", f"?tz={MOSCOW}")
                     assert empty == {"ok": True, "enabled": True, "tz": MOSCOW, "today": "2026-11-11",
-                                     "yesterday": "2026-11-10", "limit": 7, "active_count": 0, "habits": []}
+                                     "yesterday": "2026-11-10", "limit": 7, "active_count": 0, "habits": [], "goal": None}
 
                     warmup = await add("warmup")
                     assert warmup == {

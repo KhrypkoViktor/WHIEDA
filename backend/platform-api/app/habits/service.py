@@ -162,6 +162,35 @@ async def _active_count(conn: Any, tenant_id: str, uid: int) -> int:
     return int(row["n"])
 
 
+# ------------------------------------------------------------------ цель (ТЗ §3.5, §5.5)
+
+_GOAL_COLUMNS = "goal_id, title, start_day, due_day"
+
+
+async def _open_goal(conn: Any, tenant_id: str, uid: int) -> dict[str, Any] | None:
+    """Единственная цель человека без ответа (индекс ``habit_goals_one_open``)."""
+    return await fetch_one(
+        conn,
+        f"""
+        select {_GOAL_COLUMNS} from habit_goals
+        where tenant_id = %s and telegram_user_id = %s and outcome is null and deleted_at is null
+        """,
+        (tenant_id, uid),
+    )
+
+
+def _goal_view(row: dict[str, Any] | None, today: date) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {
+        "id": str(row["goal_id"]),
+        "title": row["title"],
+        "start": row["start_day"].isoformat(),
+        "due": row["due_day"].isoformat(),
+        **rules.goal_counts(row["start_day"], row["due_day"], today),
+    }
+
+
 # ------------------------------------------------------------------ запросы
 
 
@@ -170,6 +199,7 @@ async def list_habits(tenant_id: str, uid: int, tz_param: Any) -> dict[str, Any]
         tz, today, yesterday = await _context(conn, tenant_id, uid, tz_param)
         rows = await _rows(conn, tenant_id, uid)
         marks, pauses = await _history(conn, [row["habit_id"] for row in rows])
+        goal = _goal_view(await _open_goal(conn, tenant_id, uid), today)
     habits = [_view(r, marks[r["habit_id"]], pauses[r["habit_id"]], today, yesterday) for r in rows]
     return {
         "ok": True,
@@ -180,6 +210,7 @@ async def list_habits(tenant_id: str, uid: int, tz_param: Any) -> dict[str, Any]
         "limit": rules.LIMIT,
         "active_count": sum(1 for h in habits if h["status"] == "active"),
         "habits": habits,
+        "goal": goal,
     }
 
 
@@ -188,13 +219,87 @@ async def progress(tenant_id: str, uid: int, tz_param: Any) -> dict[str, Any]:
         tz, today, _ = await _context(conn, tenant_id, uid, tz_param)
         rows = await _rows(conn, tenant_id, uid)
         marks, pauses = await _history(conn, [row["habit_id"] for row in rows])
+        goal = _goal_view(await _open_goal(conn, tenant_id, uid), today)
     return {
         "ok": True,
         "enabled": True,
         "tz": tz,
         "today": today.isoformat(),
         "habits": [_progress_item(r, marks[r["habit_id"]], pauses[r["habit_id"]], today) for r in rows],
+        "goal": goal,
     }
+
+
+async def get_goal(tenant_id: str, uid: int, tz_param: Any) -> dict[str, Any]:
+    async with tenant_connection(tenant_id) as conn:
+        _, today, _ = await _context(conn, tenant_id, uid, tz_param)
+        return {"goal": _goal_view(await _open_goal(conn, tenant_id, uid), today)}
+
+
+async def put_goal(tenant_id: str, uid: int, body: dict[str, Any]) -> dict[str, Any]:
+    """Поставить цель или изменить стоящую (текст и срок; начало при изменении не трогаем)."""
+    async with tenant_connection(tenant_id) as conn:
+        await _lock(conn, tenant_id, uid)
+        _, today, _ = await _context(conn, tenant_id, uid, body.get("tz"))
+        current = await _open_goal(conn, tenant_id, uid)
+        clean = rules.clean_goal(body, today=today, current_start=current["start_day"] if current else None)
+        if current:
+            row = await fetch_one(
+                conn,
+                f"""
+                update habit_goals set title = %s, due_day = %s, updated_at = now()
+                where goal_id = %s returning {_GOAL_COLUMNS}
+                """,
+                (clean["title"], clean["due"], current["goal_id"]),
+            )
+        else:
+            row = await fetch_one(
+                conn,
+                f"""
+                insert into habit_goals (tenant_id, telegram_user_id, title, start_day, due_day)
+                values (%s, %s, %s, %s, %s) returning {_GOAL_COLUMNS}
+                """,
+                (tenant_id, uid, clean["title"], clean["start"], clean["due"]),
+            )
+        return {"goal": _goal_view(row, today)}
+
+
+async def answer_goal(tenant_id: str, uid: int, achieved: Any, tz_param: Any) -> dict[str, Any]:
+    """«Да» / «Нет». «Нет» — только когда срок вышел; «Да» (и «Достиг раньше срока») — в любой день.
+
+    Цель остаётся в базе с ответом и днём ответа; на экране её нет, можно ставить новую.
+    """
+    if not isinstance(achieved, bool):
+        raise HabitsError(400, "bad_params")
+    async with tenant_connection(tenant_id) as conn:
+        await _lock(conn, tenant_id, uid)
+        _, today, _ = await _context(conn, tenant_id, uid, tz_param)
+        current = await _open_goal(conn, tenant_id, uid)
+        if current is None:
+            raise HabitsError(404, "goal_not_found")
+        if not achieved and today <= current["due_day"]:
+            raise HabitsError(409, "goal_not_expired")
+        await conn.execute(
+            """
+            update habit_goals set outcome = %s, answered_on = %s, updated_at = now()
+            where goal_id = %s
+            """,
+            ("achieved" if achieved else "missed", today, current["goal_id"]),
+        )
+        return {"goal": None}
+
+
+async def delete_goal(tenant_id: str, uid: int) -> dict[str, Any]:
+    """Снять цель без ответа (мягко: строка остаётся с ``deleted_at``)."""
+    async with tenant_connection(tenant_id) as conn:
+        await _lock(conn, tenant_id, uid)
+        current = await _open_goal(conn, tenant_id, uid)
+        if current is None:
+            raise HabitsError(404, "goal_not_found")
+        await conn.execute(
+            "update habit_goals set deleted_at = now(), updated_at = now() where goal_id = %s", (current["goal_id"],)
+        )
+    return {"ok": True}
 
 
 async def add_habit(tenant_id: str, uid: int, body: dict[str, Any]) -> dict[str, Any]:

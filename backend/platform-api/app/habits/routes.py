@@ -38,6 +38,9 @@ class HabitBody(BaseModel):
     params: Any = None
     tz: Any = None
     done: Any = None
+    due: Any = None
+    start: Any = None
+    achieved: Any = None
 
 
 def enabled_for(telegram_user_id: int) -> bool:
@@ -95,6 +98,33 @@ async def habits_list(request: Request, response: Response, tz: str | None = Non
 @router.get(f"{P}/progress")
 async def habits_progress(request: Request, response: Response, tz: str | None = None) -> Any:
     return await _serve(request, response, lambda t, u: service.progress(t, u, tz))
+
+
+# Цель (ТЗ §7): маршруты стоят до ``/{habit_id}``, чтобы «goal» не принимался за id привычки.
+
+
+@router.get(f"{P}/goal")
+async def goal_get(request: Request, response: Response, tz: str | None = None) -> Any:
+    return await _serve(request, response, _with_ok(lambda t, u: service.get_goal(t, u, tz)))
+
+
+@router.put(f"{P}/goal")
+async def goal_put(request: Request, response: Response, body: HabitBody | None = None) -> Any:
+    given = _given(body, "title", "due", "start", "tz")
+    return await _serve(request, response, _with_ok(lambda t, u: service.put_goal(t, u, given)))
+
+
+@router.post(f"{P}/goal/answer")
+async def goal_answer(request: Request, response: Response, body: HabitBody | None = None) -> Any:
+    given = _given(body, "achieved", "tz")
+    return await _serve(
+        request, response, _with_ok(lambda t, u: service.answer_goal(t, u, given.get("achieved"), given.get("tz")))
+    )
+
+
+@router.delete(f"{P}/goal")
+async def goal_delete(request: Request, response: Response) -> Any:
+    return await _serve(request, response, service.delete_goal)
 
 
 @router.post(P)

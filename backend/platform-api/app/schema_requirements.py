@@ -171,6 +171,8 @@ FEATURE_TABLES: dict[str, frozenset[str]] = {
             "habit_marks",
             "habit_pauses",
             "habit_profile",
+            # Цель в трекере привычек (platform_habit_goals_v53.sql, 12.11.2026).
+            "habit_goals",
             # advisor
             "platform_session_context",
             "advisor_structured_products",

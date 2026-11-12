@@ -84,6 +84,7 @@ MIGRATIONS = (
     "platform_bot_stage_v49.sql",  # статус человека в боте: guest / partner_whieda / partner_wwc (04.11.2026)
     "platform_crm_telegram_v50.sql",  # адрес Telegram и ID в карточке WWC CRM (04.11.2026)
     "platform_habits_v52.sql",  # трекер привычек в /app/: привычки, отметки, паузы, пояс (11.11.2026)
+    "platform_habit_goals_v53.sql",  # цель в трекере привычек: текст, срок, ответ «Да/Нет» (12.11.2026)
 )
 _PREREQUISITES_AFTER = 2  # LEADS_PREREQUISITES runs after this many migrations
 
